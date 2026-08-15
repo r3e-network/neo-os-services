@@ -1,0 +1,4 @@
+# Request/response hub CVM with mainnet + testnet workers/relayers
+id = "ddff154546fe22d15b65667156dd4b7c611e6093"
+compose_file = "deploy/nitro/docker-compose.request-hub.yml"
+env_file = "deploy/nitro/morpheus.hub.env"

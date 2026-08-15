@@ -1,0 +1,11 @@
+[Unit]
+Description=Morpheus DataFeed pusher - Neo X (EVM, key-signed)
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+EnvironmentFile=/opt/morpheus/nitro/feed-pusher.env
+# Neo X lane only - runs on a faster (2 min) cadence than Neo N3 (5 min).
+Environment=FEED_CHAINS=neox
+WorkingDirectory=/opt/neoos/services/deploy/feed-pusher
+ExecStart=/usr/bin/node feed-pusher.mjs

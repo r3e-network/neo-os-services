@@ -1,0 +1,84 @@
+name = "morpheus-control-plane"
+main = "worker.mjs"
+compatibility_date = "2026-03-20"
+account_id = "bf0d7e814f69945157f30505e9fba9fe"
+workers_dev = true
+
+[vars]
+SUPABASE_URL = "https://przhhxbovqwopibssjzr.supabase.co"
+UPSTASH_REDIS_REST_URL = "https://major-sawfish-77541.upstash.io"
+# AA edge migration (see deploy/nitro/AA-EDGE-MIGRATION-RUNBOOK.md): the confidential
+# execution runtime is now the AWS Nitro box (runtime.meshmini.app -> nginx -> vsock
+# -> enclave worker, compute in-TEE). REPLACES the dead legacy runtime + the Vercel
+# "emergency-vercel-runtime" placeholder that oracle.meshmini.app / edge.meshmini.app
+# serve. Apply only AFTER the gateway is live + DNS points runtime.meshmini.app at
+# the box (the runbook gates the order). Comma-separate extra fallbacks if desired.
+MORPHEUS_MAINNET_EXECUTION_BASE_URL = "https://runtime.meshmini.app/mainnet"
+MORPHEUS_TESTNET_EXECUTION_BASE_URL = "https://runtime.meshmini.app/testnet"
+# Feed lane RETIRED: /feeds/tick is a no-op at ingress (worker.mjs) because feeds
+# are pushed on-chain in-TEE by the box feed-pusher. The old
+# MORPHEUS_{MAINNET,TESTNET}_FEED_EXECUTION_BASE_URL pointed at the retired legacy
+# CVM and caused callExecutionFeedPlane to POST the signer WIF + execution token
+# there on every tick (a credential leak) — removed. Do NOT re-add a feed URL
+# without also re-enabling the lane and routing it at the in-TEE box.
+MORPHEUS_APP_BACKEND_URL = "https://neo-morpheus-oracle-web.vercel.app"
+MORPHEUS_CONTROL_PLANE_URL = "https://control.meshmini.app"
+
+[[queues.producers]]
+binding = "MORPHEUS_ORACLE_REQUEST_QUEUE"
+queue = "morpheus-oracle-request"
+
+[[queues.producers]]
+binding = "MORPHEUS_FEED_TICK_QUEUE"
+queue = "morpheus-feed-tick"
+
+# Dead-letter queues must exist before deploy:
+#   wrangler queues create morpheus-oracle-request-dlq
+#   wrangler queues create morpheus-feed-tick-dlq
+[[queues.consumers]]
+queue = "morpheus-oracle-request"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 10
+dead_letter_queue = "morpheus-oracle-request-dlq"
+
+[[queues.consumers]]
+queue = "morpheus-feed-tick"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 10
+dead_letter_queue = "morpheus-feed-tick-dlq"
+
+# Dead-letter consumers: finalize the poison job's Supabase row to
+# 'dead_lettered' (terminal) so the cron recovery path stops re-requeuing it
+# forever. No further dead_letter_queue here — this is the terminal lane.
+[[queues.consumers]]
+queue = "morpheus-oracle-request-dlq"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 1
+
+[[queues.consumers]]
+queue = "morpheus-feed-tick-dlq"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 1
+
+# Cron safety net: requeues overdue queued jobs and stale processing/dispatched
+# jobs (same path as POST /<network>/jobs/recover).
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[workflows]]
+name = "morpheus-callback-broadcast-workflow"
+binding = "CALLBACK_BROADCAST_WORKFLOW"
+class_name = "CallbackBroadcastWorkflow"
+
+[[workflows]]
+name = "morpheus-automation-execute-workflow"
+binding = "AUTOMATION_EXECUTE_WORKFLOW"
+class_name = "AutomationExecuteWorkflow"
+
+[[routes]]
+pattern = "control.meshmini.app/*"
+zone_name = "meshmini.app"

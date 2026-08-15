@@ -1,0 +1,157 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Detect which areas changed so the heavy downstream jobs can skip on docs-only PRs.
+  # Always reports 'yes' on main pushes (full coverage is preserved there) and on PRs that
+  # touch workflow/config code (a ci.yml change could affect any job). Round-2 R2-4.1.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      evm: ${{ steps.filter.outputs.evm }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'apps/**'
+              - 'workers/**'
+              - 'packages/**'
+              - 'contracts/**'
+              - 'contracts-evm/**'
+              - 'scripts/**'
+              - 'deploy/**'
+              - 'config/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/**'
+            evm:
+              - 'contracts-evm/**'
+              - '.github/workflows/**'
+
+  lint-and-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=moderate
+      - name: Guard against package-lock drift
+        run: |
+          npm install --package-lock-only
+          git diff --exit-code package-lock.json
+      - run: node scripts/export-public-runtime-catalog.mjs --output /tmp/morpheus-runtime-catalog.json >/dev/null
+      - run: cmp -s /tmp/morpheus-runtime-catalog.json apps/web/public/morpheus-runtime-catalog.json
+      - run: node scripts/check-web-consistency.mjs
+      - run: npm run format:check
+      - run: npm run lint
+
+  # Run the 7 independent Node/web suites concurrently instead of sequentially. Each suite is
+  # hermetic (no shared writable state — verified: they are isolated node --test / vitest /
+  # next suites with per-test fixtures, not a shared DB). Wall-clock becomes ~max(suite)
+  # instead of the sum. (Round-2 R2-4.3.)
+  web-and-worker:
+    needs: changes
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - shared
+          - nitro-worker
+          - morpheus-relayer
+          - ops
+          - control-plane
+          - web-test
+          - web-build
+    name: web-and-worker (${{ matrix.suite }})
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm --prefix packages/shared test
+        if: matrix.suite == 'shared'
+      - run: npm --prefix workers/nitro-worker test
+        if: matrix.suite == 'nitro-worker'
+      - run: npm --prefix workers/morpheus-relayer test
+        if: matrix.suite == 'morpheus-relayer'
+      - run: npm run test:ops
+        if: matrix.suite == 'ops'
+      - run: npm run test:control-plane
+        if: matrix.suite == 'control-plane'
+      - run: npm --prefix apps/web run test:run
+        if: matrix.suite == 'web-test'
+      - run: npm --prefix apps/web run build
+        if: matrix.suite == 'web-build'
+
+  contracts:
+    needs: changes
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .nvmrc
+      # Cache the NuGet package store + the Neo nccs global tool. Keyed on the nccs version pin
+      # + a hash of all csproj files, so a dependency or contract change invalidates correctly.
+      # Saves the nccs download + full NuGet restore on every contracts run (Round-2 R2-4.2).
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('contracts/**/*.csproj') }}
+          restore-keys: ${{ runner.os }}-nuget-
+      - name: Cache Neo nccs tool
+        uses: actions/cache@v4
+        with:
+          path: ~/.dotnet/tools
+          key: ${{ runner.os }}-nccs-3.9.1
+      # Install nccs idempotently: a cache hit leaves it already installed, so tolerate that
+      # specific failure (a genuine install error still aborts — 'already installed' is the
+      # only non-zero exit we expect when ~/.dotnet/tools is warm).
+      - run: |
+          dotnet tool install --global Neo.Compiler.CSharp --version 3.9.1 \
+            || dotnet tool list --global | grep -q 'Neo.Compiler.CSharp.*3.9.1'
+      - run: echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+      - run: bash contracts/build.sh
+      - run: node --test scripts/contract-build-regressions.test.mjs
+      - run: dotnet test contracts/__tests__/NeoContracts.Tests.csproj
+
+  # Foundry suite for the EVM (Neo X) mirror contracts. Gated on contracts-evm/** changes via
+  # the 'evm' paths-filter output. solc 0.8.35 / evm_version paris are pinned in
+  # contracts-evm/foundry.toml, and the harness is offline (local Vm interface in
+  # test/TestBase.sol, libs = []), so no forge-std submodule fetch is required.
+  contracts-evm:
+    needs: changes
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.evm == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+      - name: forge build
+        run: forge build
+        working-directory: contracts-evm
+      - name: forge test
+        run: forge test
+        working-directory: contracts-evm

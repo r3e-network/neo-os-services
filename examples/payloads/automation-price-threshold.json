@@ -1,0 +1,20 @@
+{
+  "project_slug": "morpheus",
+  "trigger": {
+    "type": "price_threshold",
+    "feed_chain": "neo_n3",
+    "pair": "TWELVEDATA:NEO-USD",
+    "comparator": "cross_above",
+    "threshold": "300",
+    "cooldown_ms": 300000
+  },
+  "execution": {
+    "request_type": "privacy_oracle",
+    "payload": {
+      "url": "<production-api-url>",
+      "json_path": "<json-path>",
+      "target_chain": "neo_n3",
+      "encrypted_params": "<ciphertext>"
+    }
+  }
+}

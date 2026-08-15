@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://morpheus-oracle/deploy/nitro/measurements/manifest.schema.json",
+  "title": "Morpheus Oracle enclave measurements manifest",
+  "description": "Pinned PCR0/1/2 measurements for one enclave EIF release; the attestation verifier compares a live attestation document's PCRs against this committed source of truth.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "release",
+    "app_id",
+    "network",
+    "git_commit",
+    "hash_algorithm",
+    "pcr0",
+    "pcr1",
+    "pcr2",
+    "built_at"
+  ],
+  "properties": {
+    "release": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Release id, e.g. oracle-2026-06-14."
+    },
+    "app_id": {
+      "type": "string",
+      "const": "morpheus-oracle"
+    },
+    "network": {
+      "type": "string",
+      "enum": ["testnet", "mainnet"]
+    },
+    "git_commit": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Full commit SHA (or 'unknown') the EIF was built from."
+    },
+    "image_id": {
+      "type": ["string", "null"],
+      "description": "Docker image id (sha256:...) the EIF was built from."
+    },
+    "eif_sha256": {
+      "type": ["string", "null"],
+      "description": "sha256 of the .eif file.",
+      "pattern": "^[0-9a-f]{64}$|^$"
+    },
+    "hash_algorithm": {
+      "type": "string",
+      "const": "SHA384",
+      "description": "Nitro PCRs are always SHA384."
+    },
+    "pcr0": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{96}$",
+      "description": "Enclave image measurement (kernel + app). SHA384 = 96 hex chars."
+    },
+    "pcr1": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{96}$",
+      "description": "Linux kernel + bootstrap measurement."
+    },
+    "pcr2": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{96}$",
+      "description": "Application measurement."
+    },
+    "pcr8": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{96}$",
+      "description": "Optional signing-cert measurement; present only if the EIF is signed."
+    },
+    "built_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC build timestamp."
+    }
+  }
+}

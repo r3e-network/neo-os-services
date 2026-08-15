@@ -1,0 +1,17 @@
+[Unit]
+Description=NeoOS Nitro compute worker (Morpheus-compatible runtime lanes)
+After=network-online.target morpheus-nitro-signer.service
+
+[Service]
+Type=simple
+User=morpheus
+WorkingDirectory=/opt/neoos/services/workers/nitro-worker
+EnvironmentFile=/opt/morpheus/nitro/nitro-worker.env
+# Fail-closed: activates the child-process sandbox guard (permission-guard.js).
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node src/server.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

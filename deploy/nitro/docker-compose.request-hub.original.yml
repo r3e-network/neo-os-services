@@ -1,0 +1,164 @@
+services:
+  request-worker:
+    image: ${MORPHEUS_NITRO_WORKER_IMAGE}
+    restart: unless-stopped
+    environment:
+      # Fail-closed: activates the child-process sandbox guard (permission-guard.js).
+      NODE_ENV: production
+      PORT: 8080
+      NITRO_SHARED_SECRET: ${NITRO_SHARED_SECRET}
+      NITRO_API_TOKEN: ${NITRO_API_TOKEN}
+      NITRO_USE_DERIVED_KEYS: 'false'
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY}
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      UPSTASH_REDIS_REST_URL: ${UPSTASH_REDIS_REST_URL}
+      UPSTASH_REDIS_REST_TOKEN: ${UPSTASH_REDIS_REST_TOKEN}
+      MORPHEUS_UPSTASH_GUARDS_ENABLED: ${MORPHEUS_UPSTASH_GUARDS_ENABLED}
+      MORPHEUS_UPSTASH_FAIL_CLOSED: ${MORPHEUS_UPSTASH_FAIL_CLOSED}
+      MORPHEUS_FEED_PAIR_REGISTRY_JSON: ${MORPHEUS_FEED_PAIR_REGISTRY_JSON:-}
+      MORPHEUS_RUNTIME_CONFIG_JSON: ${SHARED_RUNTIME_CONFIG_JSON:-{}}
+      MAINNET_RUNTIME_CONFIG_JSON: ${MAINNET_RUNTIME_CONFIG_JSON}
+      TESTNET_RUNTIME_CONFIG_JSON: ${TESTNET_RUNTIME_CONFIG_JSON}
+      CONTRACT_MORPHEUS_DATAFEED_HASH_MAINNET: ${CONTRACT_MORPHEUS_DATAFEED_HASH_MAINNET:-}
+      CONTRACT_MORPHEUS_ORACLE_HASH_MAINNET: ${CONTRACT_MORPHEUS_ORACLE_HASH_MAINNET:-}
+      CONTRACT_MORPHEUS_DATAFEED_HASH_TESTNET: ${CONTRACT_MORPHEUS_DATAFEED_HASH_TESTNET:-}
+      CONTRACT_MORPHEUS_ORACLE_HASH_TESTNET: ${CONTRACT_MORPHEUS_ORACLE_HASH_TESTNET:-}
+      NEO_RPC_URL_MAINNET: ${NEO_RPC_URL_MAINNET:-}
+      NEO_NETWORK_MAGIC_MAINNET: ${NEO_NETWORK_MAGIC_MAINNET:-}
+      NEO_TESTNET_WIF: ${NEO_TESTNET_WIF:-}
+      NEO_N3_WIF: ${NEO_N3_WIF:-}
+      MORPHEUS_WORKER_NEO_N3_WIF: ${MORPHEUS_WORKER_NEO_N3_WIF:-}
+      MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY: ${MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY:-}
+      MORPHEUS_WORKER_NEO_N3_WIF_TESTNET: ${MORPHEUS_WORKER_NEO_N3_WIF_TESTNET:-}
+      MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_TESTNET: ${MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_TESTNET:-}
+      MORPHEUS_WORKER_NEO_N3_WIF_MAINNET: ${MORPHEUS_WORKER_NEO_N3_WIF_MAINNET:-}
+      MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET: ${MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET:-}
+      MORPHEUS_RELAYER_NEO_N3_WIF: ${MORPHEUS_RELAYER_NEO_N3_WIF:-}
+      MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY: ${MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY:-}
+      MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET: ${MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET:-}
+      MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_TESTNET: ${MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_TESTNET:-}
+      MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET: ${MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET:-}
+      MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_MAINNET: ${MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_MAINNET:-}
+      MORPHEUS_UPDATER_NEO_N3_WIF: ${MORPHEUS_UPDATER_NEO_N3_WIF:-}
+      MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY: ${MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY:-}
+      MORPHEUS_UPDATER_NEO_N3_WIF_TESTNET: ${MORPHEUS_UPDATER_NEO_N3_WIF_TESTNET:-}
+      MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_TESTNET: ${MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_TESTNET:-}
+      MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET: ${MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET:-}
+      MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET: ${MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET:-}
+      MORPHEUS_ORACLE_VERIFIER_WIF: ${MORPHEUS_ORACLE_VERIFIER_WIF:-}
+      MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY: ${MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY:-}
+      MORPHEUS_ORACLE_VERIFIER_WIF_TESTNET: ${MORPHEUS_ORACLE_VERIFIER_WIF_TESTNET:-}
+      MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_TESTNET: ${MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_TESTNET:-}
+      MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET: ${MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET:-}
+      MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_MAINNET: ${MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_MAINNET:-}
+      MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY: ${MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY:-}
+      MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_TESTNET: ${MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_TESTNET:-}
+      MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_MAINNET: ${MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_MAINNET:-}
+    expose:
+      - '8080'
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - morpheus-request-data:/data
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  request-router:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      request-worker:
+        condition: service_healthy
+    ports:
+      - '${MORPHEUS_PUBLIC_PORT:-3000}:8088'
+    volumes:
+      - /tmp/request-hub-caddy-data:/data
+      - /tmp/request-hub-caddy-config:/config
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        cat >/etc/caddy/Caddyfile <<'EOF'
+        {
+          auto_https off
+          admin off
+        }
+
+        :8088 {
+          handle /testnet/* {
+            reverse_proxy request-worker:8080 {
+              header_up X-Morpheus-Network testnet
+            }
+          }
+
+          handle /mainnet/* {
+            reverse_proxy request-worker:8080 {
+              header_up X-Morpheus-Network mainnet
+            }
+          }
+
+          handle {
+            reverse_proxy request-worker:8080 {
+              header_up X-Morpheus-Network testnet
+            }
+          }
+        }
+        EOF
+        exec caddy run --config /etc/caddy/Caddyfile
+
+  mainnet-request-relayer:
+    image: ${MORPHEUS_RELAYER_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      request-worker:
+        condition: service_healthy
+    environment:
+      NITRO_API_URL: http://request-worker:8080
+      NITRO_SHARED_SECRET: ${NITRO_SHARED_SECRET}
+      NITRO_API_TOKEN: ${NITRO_API_TOKEN}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY}
+      MORPHEUS_RUNTIME_CONFIG_JSON: ${MAINNET_RUNTIME_CONFIG_JSON}
+      MORPHEUS_RELAYER_MODE: requests_only
+      MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.requests_only.mainnet.json
+      MORPHEUS_NETWORK: mainnet
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - morpheus-request-data:/data
+
+  testnet-request-relayer:
+    image: ${MORPHEUS_RELAYER_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      request-worker:
+        condition: service_healthy
+    environment:
+      NITRO_API_URL: http://request-worker:8080
+      NITRO_SHARED_SECRET: ${NITRO_SHARED_SECRET}
+      NITRO_API_TOKEN: ${NITRO_API_TOKEN}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY}
+      MORPHEUS_RUNTIME_CONFIG_JSON: ${TESTNET_RUNTIME_CONFIG_JSON}
+      MORPHEUS_RELAYER_MODE: requests_only
+      MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.requests_only.testnet.json
+      MORPHEUS_NETWORK: testnet
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - morpheus-request-data:/data
+
+volumes:
+  morpheus-request-data:

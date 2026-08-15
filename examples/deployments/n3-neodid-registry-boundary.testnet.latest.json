@@ -1,0 +1,50 @@
+{
+  "generated_at": "2026-05-03T08:12:51.079Z",
+  "network": "testnet",
+  "rpc_url": "https://testnet1.neo.coz.io:443",
+  "network_magic": 894710606,
+  "oracle_hash": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+  "callback_consumer_hash": "0x8c506f224d82e67200f20d9d5361f767f0756e3b",
+  "registry_hash": "0x836e307fc759d09e7299ac88086242295ff1033d",
+  "request_fee_status": {
+    "request_fee": "1000000",
+    "requester_credit": "20000000",
+    "callback_credit": "140000000",
+    "deposit_amount": "0",
+    "funding_txid": null,
+    "deposit_txid": null
+  },
+  "action_request": {
+    "txid": "0xad5257a1ab90b6e3a6fdeb723572628ed6b4fcbdf1f5a5e0e8416e0348069a0e",
+    "request_id": "5252",
+    "payload": {
+      "provider": "github",
+      "provider_uid": "alice-gh-registry-gap",
+      "disposable_account": "0x6d0656f6dd91469db1c90cc1e574380613f43738",
+      "action_id": "vote:registry-gap:1777795858605"
+    }
+  },
+  "callback_ticket": {
+    "disposable_account": "0x6d0656f6dd91469db1c90cc1e574380613f43738",
+    "action_id": "vote:registry-gap:1777795858605",
+    "action_nullifier": "0x052174e0543bea88842fda58dd8a1dcf31df96d8b47d4d5069b625b078e071e6",
+    "digest": "0x7bb89108f837178a69037723cff4a4ce9b0db0af8231ef029288cd1e141fa6cd",
+    "verification_signature": "b7adeda94ec7251a33b4f703f01fc22e00729ef6d255f1632972484a8a1b3bf64600774686933bd28572403e7ff014d1c1275444bde8ce28757dc78036ad4a0d",
+    "verification_public_key": "02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4"
+  },
+  "wrong_witness_preview": {
+    "state": "FAULT",
+    "exception": "at instruction 2188 (ABORTMSG): ABORTMSG is executed. Reason: unauthorized"
+  },
+  "registry_probe": {
+    "deploy_txid": "0x6f5b284439e8574cde48bc2cc5fa3d42200207ca8b655782511f9f105c6e748f",
+    "set_verifier_txid": "0x54b12089ac1a0e42dce527666110448c51e91a5b092c93446f31ecda0ad054c3",
+    "use_action_ticket_txid": "0x6a5553d503198b8b9ab64d03170846dbd0d6602486bcdb18f9cba8be0ecbd8b4",
+    "preview_state": "FAULT",
+    "preview_exception": "at instruction 1703 (ABORTMSG): ABORTMSG is executed. Reason: invalid verification signature",
+    "system_fee": "576738",
+    "network_fee": "39984",
+    "vmstate": "FAULT",
+    "exception": "at instruction 1703 (ABORTMSG): ABORTMSG is executed. Reason: invalid verification signature"
+  }
+}

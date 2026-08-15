@@ -1,0 +1,7 @@
+{
+  "generated_at": "2026-05-03T08:47:28.484Z",
+  "network": "testnet",
+  "status": "skipped",
+  "reason": "requires-privileged-callback-registration",
+  "error": "Error: Failed to get system fee. Error: Script execution failed. ExecutionEngine state = FAULT. at instruction 515 (ABORTMSG): ABORTMSG is executed. Reason: unauthorized\n    at getSystemFee (/Users/jinghuiliao/git/neo-morpheus-oracle/node_modules/@cityofzion/neon-js/dist/index.js:40143:15)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async addFees (/Users/jinghuiliao/git/neo-morpheus-oracle/node_modules/@cityofzion/neon-js/dist/index.js:40185:33)\n    at async SmartContract.invoke (/Users/jinghuiliao/git/neo-morpheus-oracle/node_modules/@cityofzion/neon-js/dist/index.js:40005:9)\n    at async ensureExampleConsumer (file:///Users/jinghuiliao/git/neo-morpheus-oracle/examples/scripts/test-n3-automation-deposit-exhaustion.mjs:190:18)\n    at async main (file:///Users/jinghuiliao/git/neo-morpheus-oracle/examples/scripts/test-n3-automation-deposit-exhaustion.mjs:531:31)"
+}

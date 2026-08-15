@@ -1,0 +1,10 @@
+{
+  "mode": "script",
+  "script": "function run(input) { return input.left + input.right; }",
+  "entry_point": "run",
+  "input": {
+    "left": 2,
+    "right": 3
+  },
+  "target_chain": "neo_n3"
+}

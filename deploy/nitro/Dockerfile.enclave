@@ -1,0 +1,195 @@
+# Morpheus Oracle — merged compute+sign Nitro Enclave image.
+#
+# Supersedes deploy/nitro/Dockerfile.signer for the MERGED enclave: it carries
+# the worker compute (workers/nitro-worker) AND the signer logic into a single
+# measured boundary, so the result is computed AND signed inside one PCR set with
+# no host hop between compute and signature.
+#
+# REPRODUCIBLE BY CONSTRUCTION so the PCRs (PCR0/1/2 from `nitro-cli
+# build-enclave`) are independently verifiable by a third party who rebuilds this
+# image:
+#   1. Base images are DIGEST-PINNED (@sha256), not tag-pinned (tags float).
+#   2. Node deps come from the committed root package-lock.json via `npm ci`
+#      (deterministic), never a floating `npm install ...@^x`.
+#   3. The Go nsm helper is pinned via a committed go.mod/go.sum (not `go get
+#      ...@latest`).
+#   4. SOURCE_DATE_EPOCH + normalized mtimes remove build-time timestamps.
+#
+# Build context = repo root (see build-enclave-eif.sh, which runs
+#   docker build -f deploy/nitro/Dockerfile.enclave <repo-root>).
+#
+# Reproducibility note: `nitro-cli build-enclave` derives PCR0/1/2 from the
+# docker image, so determinism MUST come from this docker build. Verify locally
+# by building twice and asserting identical image IDs (build-enclave-eif.sh does
+# this when --verify-reproducible is passed and docker can pull the bases).
+
+# ---------------------------------------------------------------------------
+# Stage 1 — build the static NSM attestation helper (no host Go toolchain).
+# ---------------------------------------------------------------------------
+# DIGEST-PIN. golang:1.22-bookworm multi-arch index digest.
+# REFRESH (when bumping Go): docker pull golang:1.22-bookworm &&
+#   docker inspect --format '{{index .RepoDigests 0}}' golang:1.22-bookworm
+#   (or query the registry: GET /v2/library/golang/manifests/1.22-bookworm,
+#    read the Docker-Content-Digest header). Resolved 2026-06-14.
+FROM golang:1.22-bookworm@sha256:3d699e4d15d0f8f13c9195c0632a16702b8cbdece2955af1c23b37ae5d55a253 AS nsmbuild
+WORKDIR /build
+
+# Pin the nsm module + transitive graph via the committed go.mod/go.sum so the
+# helper binary is byte-reproducible. -mod=readonly fails the build if go.mod /
+# go.sum are out of sync (no implicit network mutation of the pinned graph).
+ENV GOFLAGS=-mod=readonly
+ENV GOTOOLCHAIN=local
+ENV CGO_ENABLED=0
+COPY deploy/nitro/nsm-attest/go.mod deploy/nitro/nsm-attest/go.sum ./
+RUN go mod download
+COPY deploy/nitro/nsm-attest/main.go deploy/nitro/nsm-attest/cms.go ./
+# -trimpath strips absolute build paths; -buildvcs=false keeps the binary free of
+# VCS stamps; -ldflags "-s -w" drops the symbol/debug tables. Together these make
+# the binary independent of where/when it was built.
+RUN go build -trimpath -buildvcs=false -ldflags="-s -w" -o /nsm-attest .
+
+# ---------------------------------------------------------------------------
+# Stage 2 — the merged Node compute+sign runtime.
+# ---------------------------------------------------------------------------
+# DIGEST-PIN. node:22-bookworm-slim multi-arch index digest.
+# REFRESH (when bumping Node): docker pull node:22-bookworm-slim &&
+#   docker inspect --format '{{index .RepoDigests 0}}' node:22-bookworm-slim
+#   (or registry: GET /v2/library/node/manifests/22-bookworm-slim,
+#    read Docker-Content-Digest). Resolved 2026-06-14.
+FROM node:22-bookworm-slim@sha256:e21fc383b50d5347dc7a9f1cae45b8f4e2f0d39f7ade28e4eef7d2934522b752
+
+# ca-certificates: enclave does END-TO-END TLS to the real provider hostnames
+# through the host vsock-proxy (the host forwards only ciphertext, cannot MITM).
+# socat: bridges vsock:8787 -> the local Node server (see entrypoint-enclave.sh).
+# Pin apt versions for reproducibility of the OS layer (apt drift changes PCR0).
+# REFRESH: these versions track Debian bookworm and roll on security updates;
+# when the build fails because a pinned version was superseded, look up the
+# current bookworm version (https://sources.debian.org/api/src/<pkg>/ or
+# `apt-cache policy <pkg>` inside the base image) and bump. Verified 2026-06-14.
+#
+# Reproducibility: besides pinning versions, we DELETE the apt/dpkg logs and
+# caches in the SAME layer. /var/log/dpkg.log + /var/log/apt/history.log embed
+# wall-clock timestamps IN THEIR CONTENT (not just mtime), so leaving them makes
+# the layer's diff_id — and therefore PCR0/PCR2 — vary on every build. mtimes are
+# normalized globally by the final SOURCE_DATE_EPOCH pass below.
+# iproute2: a Nitro enclave boots with the loopback interface DOWN, so the
+# entrypoint must `ip link set dev lo up` before anything uses 127.0.0.1 (the
+# node server + the localhost socat bridges). The slim base has no `ip`.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+       ca-certificates=20230311+deb12u1 \
+       socat=1.7.4.4-2 \
+       iproute2=6.1.0-3 \
+  && rm -rf /var/lib/apt/lists/* /var/log/* /var/cache/* /var/lib/dpkg/*-old
+
+WORKDIR /app
+
+# --- Deterministic node_modules via `npm ci` from the committed lockfile. ---
+# The merged server imports the worker (`@r3e-network/neo-os-services-shared/utils`,
+# ethers, jose, @aws-sdk/client-secrets-manager, @cityofzion/neon-js) and the
+# relayer digest libs. These resolve through npm WORKSPACES, so we copy the root
+# manifest + lockfile AND every workspace package.json the install graph touches,
+# then `npm ci` (which links the workspaces into node_modules deterministically).
+# Copying only package.json files first keeps this layer cached across src edits.
+COPY package.json package-lock.json ./
+COPY packages/shared/package.json ./packages/shared/package.json
+COPY workers/nitro-worker/package.json ./workers/nitro-worker/package.json
+COPY workers/morpheus-relayer/package.json ./workers/morpheus-relayer/package.json
+# Install ONLY the workspaces the enclave actually loads (shared + the two
+# workers). apps/web (Next.js + sharp/@sentry native installs) is NOT needed in
+# the enclave and is deliberately excluded to keep the image small and the build
+# offline-deterministic. `npm ci` is deterministic from package-lock.json (v3).
+# --omit=dev drops the toolchain (the worker's runtime deps ethers/jose/aws-sdk/
+# neon-js are `dependencies`, so they are kept). --ignore-scripts blocks
+# postinstall scripts from running arbitrary build-time code (reproducibility +
+# supply-chain). --no-audit/--no-fund keep it offline-friendly and quiet.
+# NOTE: workers/phala-worker is in the lockfile as `extraneous` (removed from
+# disk); it is intentionally not copied/installed.
+# Two cleanups are REQUIRED for reproducibility, both done in this same layer:
+#  - rm -rf /root/.npm: `npm ci` fills the npm content cache (~/.npm/_cacache,
+#    whose index records embed per-insert timestamps) and writes
+#    ~/.npm/_logs/<ISO-timestamp>.log. Both flip this layer's diff_id every build.
+#  - NODE_DISABLE_COMPILE_CACHE=1 + rm of os.tmpdir()/node-compile-cache: npm 10
+#    self-enables Node 22's V8 module compile cache, writing non-deterministic
+#    bytecode blobs to /tmp/node-compile-cache. Disabling it for this invocation
+#    (and removing any residue) keeps the layer byte-stable.
+# node_modules under /app is itself content-stable from the lockfile.
+RUN NODE_DISABLE_COMPILE_CACHE=1 npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
+      --workspace @r3e-network/neo-os-services-shared \
+      --workspace @r3e-network/neo-os-nitro-worker \
+      --workspace @r3e-network/neo-os-relayer \
+      --include-workspace-root \
+  && rm -rf /root/.npm /tmp/node-compile-cache
+
+# --- Source: the post-ac75d1a worker tree + relayer digest libs + shared pkg. ---
+# Carrying ac75d1a = copying the current working tree; no cherry-pick.
+COPY packages/shared/src ./packages/shared/src
+COPY workers/nitro-worker/src ./workers/nitro-worker/src
+# Only the digest/result builders + their workspace deps are needed from the
+# relayer (router.js/neox.js are IMPORTED by enclave-server.mjs for byte-exact
+# digest reproduction). neox.js pulls @r3e-network/neo-os-services-shared/utils (copied
+# above). We copy the package.json (above) + just these two modules.
+COPY workers/morpheus-relayer/src/router.js ./workers/morpheus-relayer/src/router.js
+COPY workers/morpheus-relayer/src/neox.js ./workers/morpheus-relayer/src/neox.js
+COPY config ./config
+COPY scripts/lib-neo-signers.mjs ./scripts/lib-neo-signers.mjs
+
+# The /feed/sign route in enclave-server.mjs imports planFeedUpdate from the
+# feed-pusher (the SAME decision the host feed-pusher runs), guarded by
+# FEED_PUSHER_SKIP_MAIN so importing it does not start a live push cycle. It is a
+# single self-contained module (only @cityofzion/neon-js + node builtins), so we
+# copy just the one file, not the whole feed-pusher dir.
+COPY deploy/feed-pusher/feed-pusher.mjs ./deploy/feed-pusher/feed-pusher.mjs
+
+# --- The merged compute+sign server + the signer it folds in + entrypoint. ---
+# enclave-server.mjs is the Phase 0 long-lived server (compute via worker handler
+# + atomic sign via the imported canonical digest builders). nitro-signer-server
+# is carried for the signer module / standalone /attestation health surface.
+COPY deploy/nitro/enclave-server.mjs ./deploy/nitro/enclave-server.mjs
+COPY deploy/nitro/nitro-signer-server.mjs ./deploy/nitro/nitro-signer-server.mjs
+COPY deploy/nitro/entrypoint-enclave.sh ./deploy/nitro/entrypoint-enclave.sh
+COPY --from=nsmbuild /nsm-attest /app/bin/nsm-attest
+
+RUN chmod +x /app/deploy/nitro/entrypoint-enclave.sh /app/bin/nsm-attest
+
+# --- Reproducibility: strip build-time timestamps across the WHOLE rootfs. ---
+# SOURCE_DATE_EPOCH = 2026-06-14T00:00:00Z (1749859200). nitro-cli derives
+# PCR0/PCR2 from the FLATTENED image filesystem, so every file's final mtime must
+# be fixed — not just /app. The apt layer (ca-certificates/socat + dpkg metadata
+# under /usr,/etc,/var) otherwise carries build-time mtimes that flip PCR2 on each
+# rebuild. This final pass normalizes the entire root device (-xdev skips the
+# runtime-only /proc,/sys,/dev mounts) to the fixed epoch, so the flattened mtimes
+# are deterministic regardless of which layer wrote each file. The cost is a
+# whole-rootfs copy-up in this layer (build-host disk only); the EIF is unchanged.
+# --no-dereference touches symlinks themselves (e.g. /etc/ssl/certs/*.0).
+ENV SOURCE_DATE_EPOCH=1749859200
+RUN find / -xdev -exec touch --no-dereference --date=@1749859200 {} + 2>/dev/null || true
+
+# Force the no-MITM posture inside the enclave (see vsock-proxy.allowlist.yaml /
+# design §3): never honor a host-supplied provider base-URL override. The full
+# HTTPS-only network override is applied via runtime env on the box; this default
+# closes the most dangerous override at the image level.
+ENV MORPHEUS_ALLOW_UNSAFE_PROVIDER_BASE_URL_OVERRIDE=
+# Fail-closed: marks the enclave as production so the child-process permission
+# model (workers/nitro-worker/src/platform/permission-guard.js) cannot be
+# disabled by any runtime env override.
+ENV NODE_ENV=production
+ENV MORPHEUS_NETWORK=testnet
+# Public vsock port the host bridges to (entrypoint forwards it to the internal
+# Node port). PORT here is the worker's own default; the entrypoint overrides
+# PORT/ENCLAVE_PORT to the internal localhost port at runtime.
+ENV NITRO_SIGNER_VSOCK_PORT=8787
+ENV ENCLAVE_INTERNAL_PORT=8081
+ENV NITRO_ATTEST_BIN=/app/bin/nsm-attest
+# Outbound egress (in-enclave HTTPS_PROXY -> parent vsock -> host allow-list
+# proxy). The entrypoint sets HTTPS_PROXY/NODE_USE_ENV_PROXY from these. CID 3 is
+# the Nitro parent instance. These are defaults; the entrypoint honors overrides.
+ENV ENCLAVE_HOST_CID=3
+ENV ENCLAVE_EGRESS_VSOCK_PORT=8788
+ENV ENCLAVE_PROXY_PORT=3128
+# enclave-server.mjs imports planFeedUpdate from feed-pusher.mjs only as a pure
+# function; this guard keeps the feed-pusher's live push cycle from running on
+# import (feed-pusher.mjs:460).
+ENV FEED_PUSHER_SKIP_MAIN=1
+
+ENTRYPOINT ["/app/deploy/nitro/entrypoint-enclave.sh"]

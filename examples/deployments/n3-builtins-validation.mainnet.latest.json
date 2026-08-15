@@ -1,0 +1,171 @@
+{
+  "generated_at": "2026-03-15T07:50:09.249Z",
+  "network": "mainnet",
+  "target_chain": "neo_n3",
+  "consumer_hash": "0x89b05cac00804648c666b47ecb1c57bc185821b7",
+  "oracle_hash": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+  "request_fee": "1000000",
+  "request_credit": "18000000",
+  "request_credit_deposit": "17000000",
+  "builtins": [
+    {
+      "name": "hash.sha256",
+      "txid": "0x9627b2f7907278e4493cb456bbe5eb886d266a9532864c5f5357d2fbc3bd9f47",
+      "request_id": "200",
+      "result": {
+        "digest": "f9a8e3c50a373fff6540a8bd7fde4c6094936d54f9a1d76b978319f84bedc9dd"
+      }
+    },
+    {
+      "name": "hash.keccak256",
+      "txid": "0xcf4261ae5a9ce3bd648c93b5ce2cc6b85d80a75af5eddf070e339b30db63b4f4",
+      "request_id": "201",
+      "result": {
+        "digest": "0x75c8c3fb2792afb3e58d9f00944fe82beadc4b2d75905ee68530d4e8aa6f1066"
+      }
+    },
+    {
+      "name": "crypto.rsa_verify",
+      "txid": "0xe16da8a4739d75a61188d4f478245fd81a12905a806f2625f2916eccd2c6f0b0",
+      "request_id": "202",
+      "result": {
+        "is_valid": true
+      }
+    },
+    {
+      "name": "math.modexp",
+      "txid": "0xb894e3dc959f9e02700e43a18ed7ca6637afb93c27caec3b089c150b88715fa2",
+      "request_id": "203",
+      "result": {
+        "value": "4"
+      }
+    },
+    {
+      "name": "math.polynomial",
+      "txid": "0xc9e006ee3bd6b57f5d7db00b661e063a8d8e436101f3f73bdbaa17b2c4516f9c",
+      "request_id": "204",
+      "result": {
+        "value": "15"
+      }
+    },
+    {
+      "name": "matrix.multiply",
+      "txid": "0xb85a6b7271963ead7a937527a6738846af557d5968991d0356040eba1c6d6eff",
+      "request_id": "205",
+      "result": {
+        "matrix": [
+          [19, 22],
+          [43, 50]
+        ]
+      }
+    },
+    {
+      "name": "vector.cosine_similarity",
+      "txid": "0x9c240ebb25118bb81ff038f1a5f64379d5ce715b42b946a5b38f263ea9ea0407",
+      "request_id": "206",
+      "result": {
+        "similarity": 1
+      }
+    },
+    {
+      "name": "merkle.root",
+      "txid": "0xeb98e97ee3d4721b9dd770871b8abc7a93460f3907a8f6d5fb6612dd2acf7a9a",
+      "request_id": "207",
+      "result": {
+        "root": "d31a37ef6ac14a2db1470c4316beb5592e6afd4465022339adafda76a18ffabe"
+      }
+    },
+    {
+      "name": "zkp.public_signal_hash",
+      "txid": "0x188eaf2951498e59dade0e05a9acb4d0788f0c1c7b3ccfeb34aa2d95be062bad",
+      "request_id": "208",
+      "result": {
+        "digest": "96bec0b6442d3eb5be3b0ed884c8df07835adc41ba13374cc12ba5a364d604ef"
+      }
+    },
+    {
+      "name": "zkp.proof_digest",
+      "txid": "0xa2d20b6f08c69d72883fea55ded666ea2c83407e619c84cb7c7a343b29ecbee4",
+      "request_id": "209",
+      "result": {
+        "digest": "545c3fac1e0066329f385ea3ac4497f89cf970ae00ba176d89cefec7d47f064d"
+      }
+    },
+    {
+      "name": "zkp.witness_digest",
+      "txid": "0x96fbfa6385c05c72bb472c8cc7473e6b495dcdbfb4eee17d4776324f3b3eebe2",
+      "request_id": "210",
+      "result": {
+        "digest": "634346f5df11df8fdae3a57a110545fc38c8abae35bdbeda91cdd873c716914a"
+      }
+    },
+    {
+      "name": "zkp.groth16.prove.plan",
+      "txid": "0xdf77baf6c6bf9d1d9bae53d89d2cfa0ce784d0eded73fac60f94350f35bb5cee",
+      "request_id": "211",
+      "result": {
+        "constraints": 100000,
+        "witness_count": 5000,
+        "estimated_segments": 2,
+        "estimated_memory_mb": 5
+      }
+    },
+    {
+      "name": "zkp.plonk.prove.plan",
+      "txid": "0x1647cac3890749a2d334eb87057c6f7dbae909aafda26b48480530e6df52432d",
+      "request_id": "212",
+      "result": {
+        "gates": 131072,
+        "estimated_polynomials": 2,
+        "estimated_memory_mb": 5
+      }
+    },
+    {
+      "name": "fhe.batch_plan",
+      "txid": "0x807e1c30d427ae2011261695f23ddd82bfb0149f96873daf493337305a370271",
+      "request_id": "213",
+      "result": {
+        "slot_count": 16,
+        "ciphertext_count": 3,
+        "slots_per_ciphertext": 6
+      }
+    },
+    {
+      "name": "fhe.noise_budget_estimate",
+      "txid": "0x493ffd1164f88d660db0a81017e4e272135c16a278ce6ce008cdb130d2c2e052",
+      "request_id": "214",
+      "result": {
+        "multiplicative_depth": 2,
+        "scale_bits": 40,
+        "modulus_bits": 218,
+        "estimated_noise_budget": 138
+      }
+    },
+    {
+      "name": "fhe.rotation_plan",
+      "txid": "0x81b6f375849f531f4f1d2f0254dc8f4770bb251871959cff6b0c68a4fb0692f1",
+      "request_id": "215",
+      "result": {
+        "indices": [1, -1, 4, 1],
+        "unique_rotations": [-1, 1, 4],
+        "key_switch_steps": 4
+      }
+    },
+    {
+      "name": "privacy.mask",
+      "txid": "0x6db63e9330c09d84f458f7cc508c347a9a3ced96bec1e192294b3cc7f2a3be61",
+      "request_id": "216",
+      "result": {
+        "masked": "sec************34"
+      }
+    },
+    {
+      "name": "privacy.add_noise",
+      "txid": "0xf2bd8239dd9ca4ed6dec798418bf61bb4f43e1aa227a71683aa29be5528304cf",
+      "request_id": "217",
+      "result": {
+        "noisy_value": 11.001201278037168
+      }
+    }
+  ]
+}

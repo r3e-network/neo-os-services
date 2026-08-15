@@ -1,0 +1,24 @@
+{
+  auto_https off
+  admin off
+}
+
+:8088 {
+  handle /testnet/* {
+    reverse_proxy testnet-request-worker:8080 {
+      header_up X-Morpheus-Network testnet
+    }
+  }
+
+  handle /mainnet/* {
+    reverse_proxy mainnet-request-worker:8080 {
+      header_up X-Morpheus-Network mainnet
+    }
+  }
+
+  handle {
+    reverse_proxy testnet-request-worker:8080 {
+      header_up X-Morpheus-Network testnet
+    }
+  }
+}

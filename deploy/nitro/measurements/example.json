@@ -1,0 +1,13 @@
+{
+  "release": "oracle-EXAMPLE-not-a-real-release",
+  "app_id": "morpheus-oracle",
+  "network": "testnet",
+  "git_commit": "0000000000000000000000000000000000000000",
+  "image_id": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "eif_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "hash_algorithm": "SHA384",
+  "pcr0": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "pcr1": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "pcr2": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "built_at": "2026-06-14T00:00:00Z"
+}

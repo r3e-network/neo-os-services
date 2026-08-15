@@ -1,0 +1,8 @@
+[Unit]
+Description=Morpheus Neo X callback-registration monitor (alerts on MiniAppRegistered hijack/reuse)
+[Service]
+Type=oneshot
+# run from the repo checkout so the contracts-evm build records resolve
+WorkingDirectory=/opt/neoos/services
+EnvironmentFile=-/opt/morpheus/nitro/callback-monitor.env
+ExecStart=/usr/bin/node deploy/evm/callback-monitor.mjs

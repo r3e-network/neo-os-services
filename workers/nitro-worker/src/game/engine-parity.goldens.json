@@ -1,0 +1,3048 @@
+{
+  "tool": "scripts/capture-miniapp-engine-goldens.mjs",
+  "surface": "workers/nitro-worker/src/game/wrappers ABI (deal/applyOp/applyUndo/replay/score)",
+  "note": "Frozen behavior of the reviewed engines. Regenerate only with a reviewed rule change; engine-parity.test.mjs asserts the live tree reproduces these vectors.",
+  "engines": {
+    "miniapp-sudoku": {
+      "vectors": [
+        {
+          "name": "partial solve + undo",
+          "seed": "sudoku-alpha",
+          "difficulty": 0,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "place",
+              "cell": 0,
+              "digit": 6
+            },
+            {
+              "type": "place",
+              "cell": 2,
+              "digit": 5
+            },
+            {
+              "type": "place",
+              "cell": 4,
+              "digit": 8
+            },
+            {
+              "type": "place",
+              "cell": 5,
+              "digit": 4
+            },
+            {
+              "type": "place",
+              "cell": 6,
+              "digit": 7
+            },
+            {
+              "type": "place",
+              "cell": 7,
+              "digit": 1
+            },
+            {
+              "type": "undo"
+            },
+            {
+              "type": "place",
+              "cell": 7,
+              "digit": 1
+            }
+          ],
+          "outcome": {
+            "startViewHash": "d97ac0ddda09e13e06a3aab8fc1764780b8371ec877fb6f142edfa8e4d42753e",
+            "initialStateHash": "32cf6e4ea234b7bfc85686e82602a8a5cde8dde030d1d87a75762b6cc74266c2",
+            "liveStateHash": "32cf6e4ea234b7bfc85686e82602a8a5cde8dde030d1d87a75762b6cc74266c2",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "1bf60fc5a07b1070cdc398ba774f3ec350d227966129c0ec0d19f53914188524"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "585e58331330efe2cb8e2754fe79ace46851cd50a422c524903ab94668ae1b23"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "e6d74acbabf586c187edbb0e3f531ed44d0360fd57de1f36ae39240ee5ebb107"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "4cda7d2644a0095cc4d85d3f29b411300d3a7e84cafe440843892a641ff0f238"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "e274085ca95988d0fe77b0ba876712e9d293c6b90555ef4a04dc6f94ac9c0239"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "32cf6e4ea234b7bfc85686e82602a8a5cde8dde030d1d87a75762b6cc74266c2"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "e274085ca95988d0fe77b0ba876712e9d293c6b90555ef4a04dc6f94ac9c0239"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "32cf6e4ea234b7bfc85686e82602a8a5cde8dde030d1d87a75762b6cc74266c2"
+              }
+            ],
+            "replay": {
+              "stateHash": "32cf6e4ea234b7bfc85686e82602a8a5cde8dde030d1d87a75762b6cc74266c2"
+            },
+            "score": {
+              "rejected": "answer must be an 81-char string of digits 1-9",
+              "status": 400
+            }
+          }
+        },
+        {
+          "name": "full solve",
+          "seed": "sudoku-beta",
+          "difficulty": 2,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "place",
+              "cell": 1,
+              "digit": 4
+            },
+            {
+              "type": "place",
+              "cell": 2,
+              "digit": 1
+            },
+            {
+              "type": "place",
+              "cell": 3,
+              "digit": 6
+            },
+            {
+              "type": "place",
+              "cell": 5,
+              "digit": 7
+            },
+            {
+              "type": "place",
+              "cell": 7,
+              "digit": 2
+            },
+            {
+              "type": "place",
+              "cell": 9,
+              "digit": 2
+            },
+            {
+              "type": "place",
+              "cell": 11,
+              "digit": 6
+            },
+            {
+              "type": "place",
+              "cell": 12,
+              "digit": 5
+            },
+            {
+              "type": "place",
+              "cell": 14,
+              "digit": 3
+            },
+            {
+              "type": "place",
+              "cell": 15,
+              "digit": 1
+            },
+            {
+              "type": "place",
+              "cell": 16,
+              "digit": 4
+            },
+            {
+              "type": "place",
+              "cell": 17,
+              "digit": 8
+            },
+            {
+              "type": "place",
+              "cell": 19,
+              "digit": 3
+            },
+            {
+              "type": "place",
+              "cell": 21,
+              "digit": 4
+            },
+            {
+              "type": "place",
+              "cell": 22,
+              "digit": 2
+            },
+            {
+              "type": "place",
+              "cell": 23,
+              "digit": 1
+            },
+            {
+              "type": "place",
+              "cell": 24,
+              "digit": 6
+            },
+            {
+              "type": "place",
+              "cell": 25,
+              "digit": 9
+            },
+            {
+              "type": "place",
+              "cell": 26,
+              "digit": 7
+            },
+            {
+              "type": "place",
+              "cell": 27,
+              "digit": 6
+            },
+            {
+              "type": "place",
+              "cell": 28,
+              "digit": 5
+            },
+            {
+              "type": "place",
+              "cell": 29,
+              "digit": 7
+            },
+            {
+              "type": "place",
+              "cell": 30,
+              "digit": 9
+            },
+            {
+              "type": "place",
+              "cell": 31,
+              "digit": 3
+            },
+            {
+              "type": "place",
+              "cell": 34,
+              "digit": 8
+            },
+            {
+              "type": "place",
+              "cell": 35,
+              "digit": 1
+            },
+            {
+              "type": "place",
+              "cell": 36,
+              "digit": 4
+            },
+            {
+              "type": "place",
+              "cell": 37,
+              "digit": 9
+            },
+            {
+              "type": "place",
+              "cell": 38,
+              "digit": 2
+            },
+            {
+              "type": "place",
+              "cell": 39,
+              "digit": 1
+            },
+            {
+              "type": "place",
+              "cell": 40,
+              "digit": 5
+            },
+            {
+              "type": "place",
+              "cell": 41,
+              "digit": 8
+            },
+            {
+              "type": "place",
+              "cell": 42,
+              "digit": 3
+            },
+            {
+              "type": "place",
+              "cell": 47,
+              "digit": 3
+            },
+            {
+              "type": "place",
+              "cell": 49,
+              "digit": 6
+            },
+            {
+              "type": "place",
+              "cell": 51,
+              "digit": 9
+            },
+            {
+              "type": "place",
+              "cell": 52,
+              "digit": 5
+            },
+            {
+              "type": "place",
+              "cell": 54,
+              "digit": 3
+            },
+            {
+              "type": "place",
+              "cell": 55,
+              "digit": 8
+            },
+            {
+              "type": "place",
+              "cell": 56,
+              "digit": 9
+            },
+            {
+              "type": "place",
+              "cell": 58,
+              "digit": 4
+            },
+            {
+              "type": "place",
+              "cell": 59,
+              "digit": 6
+            },
+            {
+              "type": "place",
+              "cell": 60,
+              "digit": 7
+            },
+            {
+              "type": "place",
+              "cell": 63,
+              "digit": 7
+            },
+            {
+              "type": "place",
+              "cell": 65,
+              "digit": 5
+            },
+            {
+              "type": "place",
+              "cell": 67,
+              "digit": 1
+            },
+            {
+              "type": "place",
+              "cell": 68,
+              "digit": 9
+            },
+            {
+              "type": "place",
+              "cell": 70,
+              "digit": 3
+            },
+            {
+              "type": "place",
+              "cell": 71,
+              "digit": 4
+            },
+            {
+              "type": "place",
+              "cell": 73,
+              "digit": 2
+            },
+            {
+              "type": "place",
+              "cell": 76,
+              "digit": 7
+            },
+            {
+              "type": "place",
+              "cell": 77,
+              "digit": 5
+            },
+            {
+              "type": "place",
+              "cell": 78,
+              "digit": 8
+            },
+            {
+              "type": "place",
+              "cell": 79,
+              "digit": 6
+            },
+            {
+              "type": "place",
+              "cell": 80,
+              "digit": 9
+            }
+          ],
+          "outcome": {
+            "startViewHash": "6d00b7b147fba98b8f4cce872e33e5dd5622ee5b0e07e3ade1d7b8b174ef316a",
+            "initialStateHash": "75ae4417f13e807718e3a595816e747b94ea3ac399424926a56871bdac2f50bc",
+            "liveStateHash": "75ae4417f13e807718e3a595816e747b94ea3ac399424926a56871bdac2f50bc",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "3144ed492072a34341e62dcc136e9c1050d2d223d60ca00bef1501cf36f22e59"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "ed1f9c99b1c68e6365e06364c65c23b39ad36e7674e13d0b6a6f2515b0868cdc"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "aababcc319698022ab9db548a2561f3be1503bf41a3c9857f08d638548db1cf4"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "f19e6c9bd18e4a657deb860c601ba7919704355fcd9f3258f779408b9b0b8b0a"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "a87916ee08276c625e6b964136f59a2698ccd409db8a2cb07dc5dfe9f5782dc2"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "e1dd03b902da29b5c6a6eebd318e6db87b4742c41d9275d7f5522bcd0528d301"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "e25ac1f7be3169b93ef3e80bce24d6fef17ae65dc83381b70ebaf860f044877f"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "56142d12a1fce3c3a95f9a6d970cad3137a0334b3a9f833e44cb2be3d387a3b8"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "32a588b9c04110c8d0dd9d09364116ba874221b952291de7d6754e4022d328b9"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "629136750e78df4e2c837b3ce18a927fae0ac08d8bc0d587c4dbb1f1f91d1ddc"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "1b776681a36a57e7bbcd8e17c05f7a6b55d48547d802526eaf015f76de4acbb7"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "e2cd1b02ce40ba8e31a974f51e2608478c69c078721d251aaa265249b72b4795"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "9edfb45cae4c37c5d030445b920738452938f9d7e2a6b53e7c31b411f945d02f"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "0f41e23d66abb007cc4282dbc02403d70799230f6701f4d584ec5dfebb779efb"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "8fa29ad17403271e2032fcfff9b5c4c0c76213df10a1604cc6bdc642e0c88e23"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "d762fe34271d8bf440d2ddc7f63319e76b968137eda2fa63ca0c0fd1985b76d1"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "fd6cce405b6d7584ae5614880add00d76c6d50061b1ba4c0966e94660edc98e0"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "6271fb9519ec74ca410a4062f65dfb4c42b423594702e5717e3e7c897e568bcf"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "04c5f032526090a3dc0a172e8b6dd41c101e6e22b59331a97feed6e240e25749"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "9bdd6575c3ce5a10404fd2c7d636ef16cfd075920d66296a918fa5814c0e326c"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "3bbda14d749deb48565bafe679cb0b844fdd482443f6f3c9502bcad8b6eb3072"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "311f4742646efa574d557e194a08a3402e55aa4c4ecc790ba096d3ab97b5b5dc"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "e40864e320da54f41172f72a514b4fcf14f6a376cdbe56c0c8b943d3debc7c54"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "9106f03495e7b06982d4e66b8aff2434e641e23b3e27ea01bf7eca37c3925025"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "d6ce4e36ea7b09aaf02e5da94d6f8900136ed2fcbf2a2f93a063753177774fef"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "465397ad02b65710d3c9bd925d73702c838f1430352d44f83471456653aec66f"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "2cc7e8bfb4d4432079feb9f5332c07175a5c73ad55507bbf610864ef187a4389"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "989795326f8eec1a09e0ade6d48ba622dea2fd8de230208062b9d4dce839ea55"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "7d226be121af394f72047cb8e71961f1ba0dc6e79e4aed71c6750841fe2e7372"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "d3cb8c1f8d4963d99f83a2dbabdbe127c803b98dd2aa72bf0f9ec57043785f45"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "f4da6e0783c5dc98724c7edf44324c2e6d3e30b82dfc27f1efe8d7afdda98944"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "d5c49c5093318a2906d317ffdf79a8f1235596cff5488811aaf3ab5a28bac4f2"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "58a3d90c593fdd7796a860676d4fd41dced888b0f65753db575b8cd083355e6c"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "b96a8467197a68c6732a9b2694bcd2e7900bc91159e8cf6e30f68172e85f229c"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "02fc7b6e17fe329acb48b8ab31303866b70819612af225ac9490510ecd0fe76c"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "04ed41d17a30a0028b533446d92de4a98adef6c968f6420bf4db4c8333ca53d9"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "c4a12211e3bbda5a52197518d0c95eb11084c6db7f15876dc5a1e2c4d3d5001b"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "c0e2a115b2a94855f58b5fffef1c53e61983b9b1d816c74e1e064de4e7a3813e"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "69b7c01ce3a85eb38c065855b18a1cebfe694318d6b95bf946765c2b20a24a18"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "f407445216b8ecd0ebb356b3e569c66db58ad35d5c2bc3e00103dd0ae85ec21b"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "d6d1f30805e5b03e977d9453bb934564feef38cee79255a766eee58ca8a6e446"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "78f86e120c037a605b9b740dd75162b5ba3b4f9f001dd7a88a767eed245afb4b"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "b7f24cb404ff89194e869982a4e28d5b12929f7bae73e205661d8d05fac2a894"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "6a9e4608125b3406b6864e566bf5fac630b6ba2fdb2bbe44ed80725092249963"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "9cac4f5993e83f148fa0f636b40ba160187af547ab656a9be5be90890da9bf5c"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "5769da5ff73f1f874a2103c41041e965128a38aa2fd4f5517560eff1acd56eb0"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "800de5cd7509646231632d8510a2aeaa6bcdbb01963c36f5b2fe25060f5c59a6"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "3e3f2b0727089ce0276284fe2361eb642075f9b19db1f9d28e4fbc51fc8894ee"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "a06987e8069205258b68ca063124a8962e4a486ae66b6781c8a5ae0456c6f467"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "add56b707ca9b1e65414e3959308129b090b00d63204f704d7511b2bc929b0a7"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "d861a17c19b03ec2cc8e86915e784502ae3d3dc9857980d37a94ee2ff2e21da8"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "5a162e0a7269d2f754e3f224f7527366be5ccd87a5616d7efdb6e5b4bfd2c203"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "b84fb848c9bbf8070bb6648708adbcf81f315fc2c0c097b1466a083256ec8717"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "0c8f6f6f79f903a9160f82ff6809e1a9095d9aa20988440ffbc59eb69c79ee37"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "75ae4417f13e807718e3a595816e747b94ea3ac399424926a56871bdac2f50bc"
+              }
+            ],
+            "replay": {
+              "stateHash": "75ae4417f13e807718e3a595816e747b94ea3ac399424926a56871bdac2f50bc"
+            },
+            "score": {
+              "result": {
+                "answerHash": {
+                  "$bytes": [
+                    15, 228, 150, 98, 42, 170, 73, 109, 89, 221, 221, 176, 26, 31, 115, 180, 99, 32,
+                    49, 214, 132, 20, 195, 81, 21, 141, 64, 58, 2, 143, 147, 166
+                  ]
+                },
+                "score": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "miniapp-game-2048": {
+      "vectors": [
+        {
+          "name": "cycled moves + undo",
+          "seed": "g2048-alpha",
+          "difficulty": 0,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "move",
+              "dir": 0
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 3
+            },
+            {
+              "type": "move",
+              "dir": 0
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 3
+            },
+            {
+              "type": "move",
+              "dir": 0
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "undo"
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 3
+            }
+          ],
+          "outcome": {
+            "startViewHash": "a99e3ee866725a3f5032dfe1877e3306176dea3e2a3ee4252ce1d576ef71f9a6",
+            "initialStateHash": "45f8deda8ddbf1b536a1b2955e87d5cb5afa0187ddbe33d590cdce17b82e81aa",
+            "liveStateHash": "45f8deda8ddbf1b536a1b2955e87d5cb5afa0187ddbe33d590cdce17b82e81aa",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "38667e60226bf99701916900a2a265233dcc014e1206c173ade921d608824b53",
+                "stateHash": "d8cf1dd1fff54057386c69f66dbd569c2f29925de99936469a4f912846f38a41"
+              },
+              {
+                "rejected": null,
+                "viewHash": "75bf349b4a24ae0787ee29f88c9458bbbe43e661652fbe8976ccb18ef05a216f",
+                "stateHash": "e8ec727bac88de630f4c4353a021ae897dcdc14e31c7dde923e265669f8f50ae"
+              },
+              {
+                "rejected": null,
+                "viewHash": "aac21f240afa5252c43e12948a573655010e9b56500cccf0e0f9233c6045da9c",
+                "stateHash": "5f60b8055ed7689775a42f34055a32e6293d92e28bbff3b7719f6df338507ef6"
+              },
+              {
+                "rejected": null,
+                "viewHash": "6939628dc39f2d03b63a702fae8398f35ad3a95813e1c5f7e3bec9dff3947740",
+                "stateHash": "dc3c9227987148d736bd7ed9a7b6b43d5a4218816a3dce5df567d7e018507276"
+              },
+              {
+                "rejected": null,
+                "viewHash": "b64006ab5ce1313f2fb23da737529d28ce867f45733be7b206cdb47b47203260",
+                "stateHash": "423217104e93a6a08b6589060b466005b0b20060febaacfad018eee9e44b8330"
+              },
+              {
+                "rejected": null,
+                "viewHash": "1e71bac3da713d40df09f909f0f01b5d4baa42959704141d0a28a8ca4c470f9c",
+                "stateHash": "950f5fa1ab192eca4e31d43eca170b7202ef9cbdcd798c935bdc782846fc5da7"
+              },
+              {
+                "rejected": null,
+                "viewHash": "149669d1dd2a37c9e99c39976546476f92a2aa2dd565df1b0e3d49bd20bf4bfb",
+                "stateHash": "cc937cad017e888d0034eab77a8b37d70dd989edb72bc7bdf06b84a8b6e5ef89"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4a35acabdcf0f1b383e7db7534af10481fd5bad4f6de15fe860661e12a15ec95",
+                "stateHash": "90b19ce35ba8f44b7352fe4b8ab58eb12eaac4b8ecddf8e20bab42b55beee36e"
+              },
+              {
+                "rejected": null,
+                "viewHash": "8f30712902eda6d8ed626fb1485fd84fd9798c3924c259522f63fd3b58e5f5d0",
+                "stateHash": "860f03190a2062215115f26cfc18c9075082bef8e29f1ba2c5b44d6b8612599e"
+              },
+              {
+                "rejected": null,
+                "viewHash": "e4402416553d644c6f3ed6f0bae3258033c0097d0b1deb89764d5f3b27faf9ae",
+                "stateHash": "fe0fadcbc5a1bf138187e33f0b83581f516fbcff8358d30ecdc175a745720948"
+              },
+              {
+                "rejected": null,
+                "viewHash": "910b355a3b28fad5a2346fb6525e6b610557e3cf45cbfd792baff2a2bb82e1f9",
+                "stateHash": "860f03190a2062215115f26cfc18c9075082bef8e29f1ba2c5b44d6b8612599e"
+              },
+              {
+                "rejected": null,
+                "viewHash": "32837f2f4ad29274391eb77bb948eef339cc77adf628ba905b29a1b5d663267d",
+                "stateHash": "b3ea9358b872727446623c8256d8566aeeb11565abef74bb6041eab0e3d70ec7"
+              },
+              {
+                "rejected": null,
+                "viewHash": "0e5feb516bbd1633d5f7a925a626781f23da3b540df8814c4c5a964ce7b14c7a",
+                "stateHash": "45f8deda8ddbf1b536a1b2955e87d5cb5afa0187ddbe33d590cdce17b82e81aa"
+              }
+            ],
+            "replay": {
+              "stateHash": "45f8deda8ddbf1b536a1b2955e87d5cb5afa0187ddbe33d590cdce17b82e81aa"
+            },
+            "score": {
+              "rejected": "target tile not reached",
+              "status": 403
+            }
+          }
+        },
+        {
+          "name": "wall-hugging run",
+          "seed": "g2048-beta",
+          "difficulty": 1,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 0
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 3
+            },
+            {
+              "type": "move",
+              "dir": 3
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 0
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 3
+            },
+            {
+              "type": "move",
+              "dir": 0
+            },
+            {
+              "type": "move",
+              "dir": 0
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 1
+            }
+          ],
+          "outcome": {
+            "startViewHash": "ded7451337f815c92dffd17b7981ce0ff5e368c87cab6b6c6b9fa8562526c087",
+            "initialStateHash": "481b212517efb8a8b6a48467b653b50a450b04c7fc240ca6e6289f32098b35da",
+            "liveStateHash": "481b212517efb8a8b6a48467b653b50a450b04c7fc240ca6e6289f32098b35da",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "d036cb63c874c0324c7096f7196bcf11bd69d51c1a429a9907aec4e4de2e34a4",
+                "stateHash": "c9d33c875a17cf69d7081279cc10bf5f6f57858179ac52ac217e780131be669a"
+              },
+              {
+                "rejected": null,
+                "viewHash": "df70a15165d2248d5aed36641f007f0be927c18f8c930fd16fd659a47668edbf",
+                "stateHash": "77b166266db967e4756480f352981716f97a2fbe32bd9c014ba682b41851fdcc"
+              },
+              {
+                "rejected": null,
+                "viewHash": "e9094084019c30c3d74b7599480e0e488fae3ce99e4f07b9d94fccee1f8d06ae",
+                "stateHash": "48839278a73f4ed99ec3a9b05ef37341a93707b0f6e65818ecca62d0c92b2198"
+              },
+              {
+                "rejected": null,
+                "viewHash": "d229e7bb60116d604c6d2605e879044900c8892714947136afb4246761cdce89",
+                "stateHash": "81c3068fb010db777af73a17dfff41d8823d075d538cfdcea086822ec6575bca"
+              },
+              {
+                "rejected": null,
+                "viewHash": "98522b5974b19d7a4fe3709244eba914675f39f746eba878db090321b3d4ea06",
+                "stateHash": "39f8fc0dde8cd0bf67e7aeab172986d625bdaaa87b6347db9145b65a2eca6c37"
+              },
+              {
+                "rejected": null,
+                "viewHash": "a96a6ea7496305611586d238fbe30c0f0c885dc92b9faebdc433e1e2e7f0fd9d",
+                "stateHash": "dcca1a495531fd92f27e6855d060c62c6dffade8fc91f27378df661823e888ab"
+              },
+              {
+                "rejected": null,
+                "viewHash": "7e809222bfed02f0318fd5e535c9c69da923ecd48856ba1ab1556761c9871660",
+                "stateHash": "631851dab83884853f7dffd0aeafea3a72a03bc8272547ac56e530a4bddf1625"
+              },
+              {
+                "rejected": null,
+                "viewHash": "6b2e6beefc01c4e286ee75d7e84bc604f7ffe9b4b19c851b01eb8acb2cbebaab",
+                "stateHash": "03f6bd2e766021bdad53fa029b5290472f2c111d1d0add4a4b3478d34a5cde88"
+              },
+              {
+                "rejected": null,
+                "viewHash": "2c036e77a3656ba39784aaf4c3da196c9526ff3ebf3e71c84b44cdbdb335fef7",
+                "stateHash": "ca954dd7db2cd8a5079676d66795f8a472b59137c36c89bd2a594301b2fd0f11"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4b17fe3512591dfce877fead7a751fcb88ed4f288087de1db1566b19bc07e773",
+                "stateHash": "b1a85eeaac95bac6fa39b660907f7fdaf4092f808f137f849c48021d531c050d"
+              },
+              {
+                "rejected": null,
+                "viewHash": "f7f8af6e0c8feb7c4a693c93daec7723ec22909cd52e6f6474fa554d543dc742",
+                "stateHash": "5e9821be24c169a0e9404f8c57b7f8ec77c6847f9b530c931271bf0280218385"
+              },
+              {
+                "rejected": null,
+                "viewHash": "cae6f41815e52ea0e32c2c0581ea7c8e1213f4f53b14005d5c51b90c018ae368",
+                "stateHash": "a5a5f1f7b3f6c1ff55229917627edd5ba3f65eea064306e72cce0f2e3db9e9f7"
+              },
+              {
+                "rejected": null,
+                "viewHash": "6282580dd4fb68a51a75d2022fd50884f4a264f27eeaeae414218778fdc1a52c",
+                "stateHash": "56d5622091e8728851204a86e5a5d15e5c0530a5b1e7004f8e224ee71dc4f11f"
+              },
+              {
+                "rejected": null,
+                "viewHash": "da7e51b0ddb9a367bffe946abc08ffa915df3eb14f4f622ce45a2964f176eb52",
+                "stateHash": "ae126694aa34e2d2ed7e5893cd391b3fda9e426c18f50bc05788e9589be33e1e"
+              },
+              {
+                "rejected": null,
+                "viewHash": "871741251fda773e33010ffae65edefe81758f9addec84077e4686a3a737ed0d",
+                "stateHash": "3e9edcc9461e28c2e84ff491a7f5e4d52b601d9d05d88e3f581c7618ff6cf16b"
+              },
+              {
+                "rejected": null,
+                "viewHash": "5e7eaf946da2a30ad747efd7eaf23fd906a6d87332194bb9756d5b7e7163ad5e",
+                "stateHash": "481b212517efb8a8b6a48467b653b50a450b04c7fc240ca6e6289f32098b35da"
+              }
+            ],
+            "replay": {
+              "stateHash": "481b212517efb8a8b6a48467b653b50a450b04c7fc240ca6e6289f32098b35da"
+            },
+            "score": {
+              "rejected": "target tile not reached",
+              "status": 403
+            }
+          }
+        }
+      ]
+    },
+    "miniapp-flappy-dash": {
+      "vectors": [
+        {
+          "name": "steady cadence",
+          "seed": "flappy-alpha",
+          "difficulty": 0,
+          "spacingMs": 480,
+          "ops": [
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            }
+          ],
+          "outcome": {
+            "startViewHash": "25ddbbb6621e991e4a7f42175b208c48b5bbf87f2358ff1f4959d11a7762bfc6",
+            "initialStateHash": "8ca2be349fe407e09150a664754861ac0d0f5413486a2fc3cf7a07fc2587bfe0",
+            "liveStateHash": "8ca2be349fe407e09150a664754861ac0d0f5413486a2fc3cf7a07fc2587bfe0",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "acc1cefc0a1ac88f12e2c0daa37687e80988f8120451b0647feb9017d12c3cc7"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "0f7c5afd4a181f787067d3f1d247af5e2830fea73d0d5fcfa4b401426a22d2a5"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "bb11920972994ac42d5e3447ec5cdce31f90178277fa49c76ab1be0f9da437d0"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "b8c94210c9157c15aa7dfb88805f3d3da857a9e33a5af45a2bc1ee227c4e05e6"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "788534c5e08fdb8e291158448f0f052fce1d258dd01f0e73256e130d7a9ae417"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "75386e62cf2c2c0ea37c97eb35bb7278295c0dee2372cf8b748ed283c778a895"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "a108159b3f9a148dc2623a48f7b08c1678cbdbc07130eb1689f99ae8bcedf4da"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "b77a857008a415032bd8c1eb170dcaaaebf0ea88fcb7385051161e7f4b2dac42"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "421af5bb36d72005a37ee8eb04aac49b206aaa615bce5cab3ebe98d70512b566"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "1fb62513dc597fc4751d948c107c7aeeca01ea91883754330d148a29af8bce29"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "7c2c5f84db35b2bdbf3a2ea8d1a3a4a2c0f7de870cc9b59482d1969d6dba2e7d"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "4f3f98283df44e57f8b25e86bf42dd1030f0e90ba6b565c3e002bf1a96d9be18"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "67dc01cff6b9ec2c189ba938db2593757e731eb00f7c581e3884fa331fd4d3d9"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "8ca2be349fe407e09150a664754861ac0d0f5413486a2fc3cf7a07fc2587bfe0"
+              }
+            ],
+            "replay": {
+              "stateHash": "f839fb34c7af06847d24e0cade6dec50fb61b9a2d4d4f0aab0079c2a95cf7885"
+            },
+            "score": {
+              "rejected": "target pipes not reached",
+              "status": 403
+            }
+          }
+        },
+        {
+          "name": "sparse flaps hard",
+          "seed": "flappy-beta",
+          "difficulty": 2,
+          "spacingMs": 700,
+          "ops": [
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            },
+            {
+              "type": "flap"
+            }
+          ],
+          "outcome": {
+            "startViewHash": "2cc94012e432e64cbc675e3a3437ee0de225b2ab111e228b60517b2ce03f46bc",
+            "initialStateHash": "146cf62490b79844d31cc6417ef3e47a3e06c7b8d3927ec5072645a2476ab9e0",
+            "liveStateHash": "146cf62490b79844d31cc6417ef3e47a3e06c7b8d3927ec5072645a2476ab9e0",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "b6f7b0feb9c8ae2bec695bc6db7a9788f829e92cb18a1854fcef7e0378f921ce"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "68427c3a027bc5799eb63683fa43a5bf34ae64ba71065abff2151c04e64d191d"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "e85f5f72991d407421a1039d4c4477246b74940d9cdeb62b418f3652fd32d41f"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "c23c0b994ac4fa9fafc9b714f8cdde3848fd96128a661d557cbc735712f048ff"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "1e28b81c6913f34936206b1f0ac8e390e48958a00d12d7ccd727752aff044342"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "6c53eac90d8c0feeec0ab7a9d3c83643e535cd1bb17d63b5bb14935a0ec105ce"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "a83c7a84128ec9cacde62a90f0e2560fd1b00297cf35cd2ebd73ddf9f5825613"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "178d0e9be09a11a386e7a08ba9a4234b086cff814dc6a9420d389a14d224eafb"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "146cf62490b79844d31cc6417ef3e47a3e06c7b8d3927ec5072645a2476ab9e0"
+              }
+            ],
+            "replay": {
+              "stateHash": "0da446afcc0bc099d262fce617a71002ff18c99d825919589f0660ab2bc9d163"
+            },
+            "score": {
+              "rejected": "target pipes not reached",
+              "status": 403
+            }
+          }
+        }
+      ]
+    },
+    "miniapp-snake-bounty": {
+      "vectors": [
+        {
+          "name": "spiral-ish run + undo",
+          "seed": "snake-alpha",
+          "difficulty": 0,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 0
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 3
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 0
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "undo"
+            }
+          ],
+          "outcome": {
+            "startViewHash": "260ce0df73bb03c4eb1a408e9d2b9a2e11dae3f45e51677f59f2ed9f4138bdea",
+            "initialStateHash": "5c65023893df4bae25e19b04c8b151b43585691582d54b112065a15142007355",
+            "liveStateHash": "5c65023893df4bae25e19b04c8b151b43585691582d54b112065a15142007355",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "4e8ae2e5c324abeba169f365df56b25598a93a8c2ad16284ff0a0d31f47cf85b",
+                "stateHash": "38219662fa302230cf5fdc60a68da1211387e0ed9e66c79d9c79b8d4fcba4359"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4a4fc22dd6aeaf83d0a6c344f4edc16d8ae0fd9632ca6c7db337ca3298ffd01b",
+                "stateHash": "3f9612ce22ee8c2a237f37dfc4c4ffe7a34340e6822b6ff719dc03d36cc0123b"
+              },
+              {
+                "rejected": null,
+                "viewHash": "a2f39a60f62ca6856bf76194d9e0ed9c4944b4966c5d4682e33296ea448f6547",
+                "stateHash": "7cfb8c8192c7789e536aa07752107e874fa666cee3b879a68ca6d41b54d19c41"
+              },
+              {
+                "rejected": null,
+                "viewHash": "02b755605bde996e1708d41c9ac4db9442542b76cce16e9f9616ea3f5dfba4dd",
+                "stateHash": "99577dfa6e3a08e2544efaf056e54d2d6fc45c20e80427dff37925a573d23c7a"
+              },
+              {
+                "rejected": null,
+                "viewHash": "dd2a720ccc73846d03a91d0b1ba7126b325a2b51c8a646b59bf3542240ff7acf",
+                "stateHash": "8d86a35809fec0d0dbd8cad325a90bde8fdab5bd351a66c07b3f3220bcefb380"
+              },
+              {
+                "rejected": null,
+                "viewHash": "6e4b0ffd0aff64469e93a5df11efd7091e8b9608840ad47aa3a53ba124ec4fbe",
+                "stateHash": "48645e66fe97574de4923a1d2dd5d757029728255895e282a58ba9a744698f95"
+              },
+              {
+                "rejected": null,
+                "viewHash": "43472a20dd7c22c384a4cda24bd741581bf7a6fa41d4d2c61395aaa6dba43f68",
+                "stateHash": "05b5b74da88e88073ee64915a310490023fd6751e7c2e928834d56c46fbf82bb"
+              },
+              {
+                "rejected": null,
+                "viewHash": "1c1a40e2b1025f392fd7e14e939f86e11f133ee61608f0d224ed30b99aa8ef18",
+                "stateHash": "6ea1d5f3407c220e64e5f3f9d9e0d13afbe39b4c3f07af3c1ce11e18b012121e"
+              },
+              {
+                "rejected": null,
+                "viewHash": "f993909ea4be8f99a4b0119ca5b5d9d512cf8b8c657e5ba2d5802840511e9662",
+                "stateHash": "1db0210fdd53abbe8ff07874304f70a64181acfa1a0126142fa25773acf6adee"
+              },
+              {
+                "rejected": null,
+                "viewHash": "96ac9aeb7cd2e098444e62258991f6aa22a14bceeb2f5b84ae32c25ed6efd907",
+                "stateHash": "c94afec104bf211fed013c1a5bd0f19ebfb638dcc1c5b063f63aa73d738df33a"
+              },
+              {
+                "rejected": null,
+                "viewHash": "1fea6fbdf8cb866c8e538950dcdd3bdbb0c4112e482de3cc0a5fbebf33fc1f37",
+                "stateHash": "1ce5264bdab09484a99456a04beb76f8c8863c9199f883c2e1d867e6c5c7719d"
+              },
+              {
+                "rejected": null,
+                "viewHash": "e9789abb708949b0c54628f03b31709406bd865c58eb15c8889a5ddeeb6b7554",
+                "stateHash": "ea31e9af79bd00f44c10c88eb7cd13888cdceb36475d27d6661da50ef7ba3957"
+              },
+              {
+                "rejected": null,
+                "viewHash": "9c448c6a66f7611c97cd92d290310f6ccbaa8d4f1694cda299ab8351209b9028",
+                "stateHash": "3e1956347f66e34205ad12dc72bfa1a7e6a41e3c2d2e2ca0622a624c0c117490"
+              },
+              {
+                "rejected": null,
+                "viewHash": "e917d8a9f4fd7e36ad2e6cdaae0875e7e24137a469b5360a85ffde10157a3c1c",
+                "stateHash": "7797754719690798d9e8c3c63b446179cb80362aaf92f7c61954e7fad704b17b"
+              },
+              {
+                "rejected": null,
+                "viewHash": "7aae58e604ea7b3b3702fdf6013ec5cde74695568ed79d217c28e0eb923b8956",
+                "stateHash": "5c65023893df4bae25e19b04c8b151b43585691582d54b112065a15142007355"
+              },
+              {
+                "rejected": null,
+                "viewHash": "7aae58e604ea7b3b3702fdf6013ec5cde74695568ed79d217c28e0eb923b8956",
+                "stateHash": "4f4595d8bdb39dbd103c7db42d566457a43331170a3b390baad8fd86e51e13ef"
+              },
+              {
+                "rejected": null,
+                "viewHash": "997049bed512493f49608cddf5b68318a59fc8ec8fc59552b88e309546bfb6e0",
+                "stateHash": "5c65023893df4bae25e19b04c8b151b43585691582d54b112065a15142007355"
+              }
+            ],
+            "replay": {
+              "stateHash": "5c65023893df4bae25e19b04c8b151b43585691582d54b112065a15142007355"
+            },
+            "score": {
+              "rejected": "target length not reached",
+              "status": 403
+            }
+          }
+        },
+        {
+          "name": "long patrol",
+          "seed": "snake-beta",
+          "difficulty": 1,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 0
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 0
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 3
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 3
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 0
+            },
+            {
+              "type": "move",
+              "dir": 0
+            },
+            {
+              "type": "move",
+              "dir": 3
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 1
+            },
+            {
+              "type": "move",
+              "dir": 2
+            },
+            {
+              "type": "move",
+              "dir": 2
+            }
+          ],
+          "outcome": {
+            "startViewHash": "94cbe3d05a6db218cc61ca661224d398d25af3bec2baa870c08cce2c72458355",
+            "initialStateHash": "f38142fca033fc2f367f46e531774772890e52c56d4f19354b71f8f678ae8afd",
+            "liveStateHash": "f38142fca033fc2f367f46e531774772890e52c56d4f19354b71f8f678ae8afd",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "da7a026ae0351ff9809fe574066064441d7210d6c260e7ce4386a312e3f76c6c",
+                "stateHash": "87023c652abaa11883828ba54b1558068a95e2acb9fa226e8a59cec8ddc92a44"
+              },
+              {
+                "rejected": null,
+                "viewHash": "c38f3dbf8a7fcf2c8fee8bf37839771c86e21496acd875064135ee163fb1c8ef",
+                "stateHash": "a05c5f62d459a14d2b2795cda12571b28fb0bf9d71ed71a9f53e3dce4ac093c0"
+              },
+              {
+                "rejected": null,
+                "viewHash": "b4954639c7638377bec5126b74e7658acb0f2c839a4b3422a174217167895d6e",
+                "stateHash": "9510f5eb2391689b9056f54fa12766ba077454ab8371c0d66144a051b3128803"
+              },
+              {
+                "rejected": null,
+                "viewHash": "650356aa82b024513a90fbbf72f9b22d98e5b2dcc939adc100bc92d766567c2e",
+                "stateHash": "c20222631e81d7eec75322633d4a69edf24d4d8734bdb156de6957ba22d93edd"
+              },
+              {
+                "rejected": null,
+                "viewHash": "125beec2a6b33f54e8726f73cf02ae47bcb531c7e0b1b6c7e4a2dcc3007984dd",
+                "stateHash": "ed03e708dd8db164abf0da3fe9f5fe9d57141dacaf1638cd090f4386ba9d73fd"
+              },
+              {
+                "rejected": null,
+                "viewHash": "dd97b5b40383544bc8313c2b7aafb7cdbeaee73e1069abaaf54b2e7d2eb54af3",
+                "stateHash": "2d5777a1968c39870678948e5e6fd57874eecee7a588962c84986d7242355a68"
+              },
+              {
+                "rejected": null,
+                "viewHash": "41f925f77259595001383c1ae5b0dcc947425a06a56a3e4a343bf8118c57be00",
+                "stateHash": "71c52be2dc9238bf9f15dc47b61064bc6789bd8c650a9b1c343b013ac05e3822"
+              },
+              {
+                "rejected": null,
+                "viewHash": "c140434cb5e93c44e32336fd9fb90618dd84aed82a93b5ce9fca42df852820c2",
+                "stateHash": "0dd0384f78f71d6bc4c81c204ffaf08afde82dcebd11c22133dc5372011b2b22"
+              },
+              {
+                "rejected": null,
+                "viewHash": "c140434cb5e93c44e32336fd9fb90618dd84aed82a93b5ce9fca42df852820c2",
+                "stateHash": "909f703dc5360d3a049eba26c965e89b67febd657cf01589e8e69ae56e5e7bf7"
+              },
+              {
+                "rejected": null,
+                "viewHash": "f58a4c824fc8aa9fce94a72fb8c611524aad1bdb0f3f2af43cf401234a7ac011",
+                "stateHash": "1d3df535d636fd144b8b8d06fcd797db766318c251a913504d5327167e1af40d"
+              },
+              {
+                "rejected": null,
+                "viewHash": "70bef723732a3e65864159215e7fd5565e3e73e1bc3987b558e6ebdc6d7c2796",
+                "stateHash": "e3e6c585c960fb547b270bfc0314c3467a0f2efc9c507b3a185a214e317360b0"
+              },
+              {
+                "rejected": null,
+                "viewHash": "b57cb704a1c0505dfc3540227cd06ce5f9cff6dc30bcc851130c5a220c39ffd6",
+                "stateHash": "f22d55e3b4087d74c096bfa2c2aa9fa35fb8f0fabbe368dc0b5e419fbb7ef5a7"
+              },
+              {
+                "rejected": null,
+                "viewHash": "b57cb704a1c0505dfc3540227cd06ce5f9cff6dc30bcc851130c5a220c39ffd6",
+                "stateHash": "9d79058c4fb36284e6c78ad2996ffe8fe84361beca71004c0de4f6c426b4e9bd"
+              },
+              {
+                "rejected": null,
+                "viewHash": "b57cb704a1c0505dfc3540227cd06ce5f9cff6dc30bcc851130c5a220c39ffd6",
+                "stateHash": "e60cd34e1c37d12d564ecd48e885c61ed5951872d295a20dd7e0176abe076651"
+              },
+              {
+                "rejected": null,
+                "viewHash": "c64e3d3d8faad8aba4f52a1d7ba53bbe18dcd164bcb6f60de4dcd002c514f825",
+                "stateHash": "a877c4a795a4b8484296cd5bf0c83b0083e18f4218597d9ded5729a45dc569db"
+              },
+              {
+                "rejected": null,
+                "viewHash": "c64e3d3d8faad8aba4f52a1d7ba53bbe18dcd164bcb6f60de4dcd002c514f825",
+                "stateHash": "99ee392ea42d678813b19f5113d31a222771a4133d7ec0d47f5c9ee8fd27d866"
+              },
+              {
+                "rejected": null,
+                "viewHash": "c64e3d3d8faad8aba4f52a1d7ba53bbe18dcd164bcb6f60de4dcd002c514f825",
+                "stateHash": "1e62b927334e275a2adf0b3dabe2927f1107c7383e9ae80450a7124956c84afa"
+              },
+              {
+                "rejected": null,
+                "viewHash": "636f53e04d637df819cb0309f95599e5ce09aa8559d1c25ad44ad05a3d4957a2",
+                "stateHash": "193f8dc422d9708fa16bfdb372fcaa958db8b48e34efa58871489a7c11525d08"
+              },
+              {
+                "rejected": null,
+                "viewHash": "3de344d17c18376504e5f2d03eb573f036828d823626096278b24c9c8996b25b",
+                "stateHash": "007ff848e1c1e0073fd574ce2d2d8777ce2b7549a1e71f418e528d1fba0c10f5"
+              },
+              {
+                "rejected": null,
+                "viewHash": "3a549d344e829eeb614fe07284caa0e34506da3d08aab8aa6a7b56f8b24b6474",
+                "stateHash": "5c3575b7eb8ad7e719aab8c5748e10c92e7d4d2aac3a30f9665db472bbb36781"
+              },
+              {
+                "rejected": null,
+                "viewHash": "d19fe2f5eee58fb043a984c2081551db4ecdc176b795ebcf95896673fd2f09c7",
+                "stateHash": "ef52ed0923504901e6412c3e4eb83920bdfe3e1f532e77548c7c6744acd46bbe"
+              },
+              {
+                "rejected": null,
+                "viewHash": "08438c5e66d4b249c96514e3e43ce640c3aa716fea3594ff6066e5533a7e7c87",
+                "stateHash": "6514eb7d35be88feb727851f7d3f791b92c8ae770724df6fb1d054bbdd620515"
+              },
+              {
+                "rejected": null,
+                "viewHash": "08766b35df5abb4841a2b3f07d194dd3d878185f2e085c627abbd0356094e21c",
+                "stateHash": "3ff470dd663791f2b9f20ea9a2e2caf475d318fa6d9f7cf82de8282bc953a411"
+              },
+              {
+                "rejected": null,
+                "viewHash": "14b8fb92b212366b67497508d12fd3a7c34037a4c530df3b9ade316f028d546e",
+                "stateHash": "f38142fca033fc2f367f46e531774772890e52c56d4f19354b71f8f678ae8afd"
+              }
+            ],
+            "replay": {
+              "stateHash": "f38142fca033fc2f367f46e531774772890e52c56d4f19354b71f8f678ae8afd"
+            },
+            "score": {
+              "rejected": "target length not reached",
+              "status": 403
+            }
+          }
+        }
+      ]
+    },
+    "miniapp-aim-master": {
+      "vectors": [
+        {
+          "name": "rapid shots",
+          "seed": "aim-alpha",
+          "difficulty": 0,
+          "spacingMs": 350,
+          "ops": [
+            {
+              "type": "aim",
+              "position": 150
+            },
+            {
+              "type": "aim",
+              "position": 150
+            },
+            {
+              "type": "aim",
+              "position": 150
+            },
+            {
+              "type": "aim",
+              "position": 150
+            },
+            {
+              "type": "aim",
+              "position": 150
+            },
+            {
+              "type": "aim",
+              "position": 150
+            },
+            {
+              "type": "aim",
+              "position": 150
+            },
+            {
+              "type": "aim",
+              "position": 150
+            },
+            {
+              "type": "aim",
+              "position": 150
+            },
+            {
+              "type": "aim",
+              "position": 150
+            },
+            {
+              "type": "aim",
+              "position": 150
+            },
+            {
+              "type": "aim",
+              "position": 150
+            }
+          ],
+          "outcome": {
+            "startViewHash": "2333dbc461eeb24c3e19d13868b618eb23ff850b02db5a408e02768d4ee41cde",
+            "initialStateHash": "0f9920558cf70fef534e1b6b5ed54d0c9b4c4cd3d0ebab454d52adbc20603fdd",
+            "liveStateHash": "0f9920558cf70fef534e1b6b5ed54d0c9b4c4cd3d0ebab454d52adbc20603fdd",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "d8f5b6cb8a8d0dd44266781641cb93030606a1fd26701b3cdb511a64783b0f1c"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "a2d469397438f527870c2f311bcdec3cfb3ef744aca7f6d527e9a2f416c45dd8"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "96747ffede7708d0d8dbcf370d5beaa4bd43659e0df0ef46c655f1d738947686"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "faf6af3e7b51ea410ae0943d76e49a91ef342117d828576682bc8aa5d1ec5879"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "8465d10107f5c0c0ecf583ca6682c14144c28ff881936a0098d8658db86081ad"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "f1f055d5cd3e109a28dd445742ad464d00acc7437c9acb765cda82fa377bd915"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "14a9e1e930a1ee93435873391d416c5cbd1655124efce343a5fb085546246ad0"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "4b41411f23f6b4d4a18d53a6b17fdc15b97067049bf8b23d2764af9d59263a69"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "77f21fb9794f49c176b7b237b2ef5e6234e21de1fd278a3394a94d64bef1160e"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "84f6dab65697524c361a1423542d0263b544ff6f30cea16f82efb519d21d908f"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "d8b85c81bba2eac0eb9e96377643e5844bfbc2d2ffc2b21fb6e935ca07132371"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "0f9920558cf70fef534e1b6b5ed54d0c9b4c4cd3d0ebab454d52adbc20603fdd"
+              }
+            ],
+            "replay": {
+              "stateHash": "61aaccfd63b4c2a443e75436a942180fa89ac5b2fa703c461d626bb80572aee5"
+            },
+            "score": {
+              "result": {
+                "answerHash": {
+                  "$bytes": [
+                    225, 64, 234, 61, 111, 132, 53, 110, 245, 178, 87, 22, 158, 120, 33, 186, 48,
+                    214, 42, 236, 88, 188, 18, 235, 172, 35, 49, 173, 99, 91, 14, 181
+                  ]
+                },
+                "score": 7,
+                "scoreField": {
+                  "rings_hit": 7
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "slow shots hard",
+          "seed": "aim-beta",
+          "difficulty": 2,
+          "spacingMs": 620,
+          "ops": [
+            {
+              "type": "aim",
+              "position": 0
+            },
+            {
+              "type": "aim",
+              "position": 37
+            },
+            {
+              "type": "aim",
+              "position": 74
+            },
+            {
+              "type": "aim",
+              "position": 111
+            },
+            {
+              "type": "aim",
+              "position": 148
+            },
+            {
+              "type": "aim",
+              "position": 185
+            },
+            {
+              "type": "aim",
+              "position": 222
+            },
+            {
+              "type": "aim",
+              "position": 259
+            },
+            {
+              "type": "aim",
+              "position": 296
+            },
+            {
+              "type": "aim",
+              "position": 33
+            }
+          ],
+          "outcome": {
+            "startViewHash": "a50be51f11ae297b0318c69339f42f4a2ebba2ce826b7ccd42703a7eeec28197",
+            "initialStateHash": "002b89e48696ad8f28c15dba6b8c8745b7aa8d0a35f65a10d9bb34f3c53038b0",
+            "liveStateHash": "002b89e48696ad8f28c15dba6b8c8745b7aa8d0a35f65a10d9bb34f3c53038b0",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "fe3697f83cbb25d2f960b6c7dcdbda0f1d6225252be4596ba8ac03cef313fc1b"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "f47f6a992d6e61b776b9327ecfdc2a9308ea15f8441cd2a2e59008e5867d66d2"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "2211168ee91a0a84294fea737638865ca9f54b2ea97c4f1205db0bde9384d700"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "2ce9ef9d3bbd0ece1a2ba13d6fb40a6b82c50d06d8ad5c393e625a0761b637c8"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "b9a66b6c520e788a05d341643418a49b3ac4019466693f37d23ad514430e1e42"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "8030f49da708ad7855dc3a53216b047e4b12350dc8afb9e3fc5006e9fad3697b"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "6bb900f6ca2ab65fa92eef0f3c55dc69d58e493d85c38b73e526e1e83b32fea1"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "9f5c9728d78925a4b93d0db7af433834fd1a44af43bf4c0d012403218d6a8fd6"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "d8f7f4192a769d24301f9ec401e8d81065b629ff497cd5e39b463ef38367a643"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+                "stateHash": "002b89e48696ad8f28c15dba6b8c8745b7aa8d0a35f65a10d9bb34f3c53038b0"
+              }
+            ],
+            "replay": {
+              "stateHash": "8801eadacefef4839e972518124b397b6dc9387864f9d59d3f241c750426705d"
+            },
+            "score": {
+              "rejected": "accuracy target not reached",
+              "status": 403
+            }
+          }
+        }
+      ]
+    },
+    "miniapp-color-clash": {
+      "vectors": [
+        {
+          "name": "three rounds then a mistake",
+          "seed": "color-alpha",
+          "difficulty": 0,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "press",
+              "color": 3
+            },
+            {
+              "type": "press",
+              "color": 3
+            },
+            {
+              "type": "press",
+              "color": 0
+            },
+            {
+              "type": "press",
+              "color": 3
+            },
+            {
+              "type": "press",
+              "color": 0
+            },
+            {
+              "type": "press",
+              "color": 3
+            },
+            {
+              "type": "press",
+              "color": 0
+            }
+          ],
+          "outcome": {
+            "startViewHash": "bb7296e0cf7cf1b2ecae85d0af8fd26466c5c74d92accb522d944bfadf8ffc13",
+            "initialStateHash": "b6a019d6c18e076b6d5c80ff5b1b6d66b37628438e09d019b5d0ec111f5dade2",
+            "liveStateHash": "b6a019d6c18e076b6d5c80ff5b1b6d66b37628438e09d019b5d0ec111f5dade2",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "a66bb18787db682d11ca904a3a74b5c61554dbf5c794fa3355345b0a8904e6ec",
+                "stateHash": "36189b6740d77d9f0a04560df0243d7c7a07bd3f3cd9174903e08397d7088d8d"
+              },
+              {
+                "rejected": null,
+                "viewHash": "c167bd3b9eb30b100b95a4b88fd0e7d68278420295167a4c7f8cf71b39ada5a9",
+                "stateHash": "8de1795f6f010023cbd4931303d66d448063d24fbccff134954f860c9e269a54"
+              },
+              {
+                "rejected": null,
+                "viewHash": "2a2e08841cc4f720f943c1d2301d100cee63c1c4e11490110251d6e49300d82d",
+                "stateHash": "9be2e28344e18ef8e1df5ccfc27fb67826169cc6e2762ff2b2ac669e65f9713a"
+              },
+              {
+                "rejected": null,
+                "viewHash": "b209736f974f217a5fc52aa9d49f6c204f9fa3a1992e51e8abf46739dc51cdf3",
+                "stateHash": "555817407b15f391c3a9d402237c52f6db354cd59d4516890ef858b48bc28f8c"
+              },
+              {
+                "rejected": null,
+                "viewHash": "b209736f974f217a5fc52aa9d49f6c204f9fa3a1992e51e8abf46739dc51cdf3",
+                "stateHash": "9a912cc7328807b154f4af0641387ac4bc1e0979245b688867667520cfda4b03"
+              },
+              {
+                "rejected": null,
+                "viewHash": "70c34d78201f5e735bdd30fabade7de7a9173e461b2d5df9f753074fb18767c1",
+                "stateHash": "cb8043537094550f29fcbdf7d2300eee40b7fdc16af9179e42286697000154e6"
+              },
+              {
+                "rejected": null,
+                "viewHash": "2fa0ecb6c9664b69355cf995dc939b58d6026aa79478cb6cd50be517436bbe3c",
+                "stateHash": "b6a019d6c18e076b6d5c80ff5b1b6d66b37628438e09d019b5d0ec111f5dade2"
+              }
+            ],
+            "replay": {
+              "stateHash": "b6a019d6c18e076b6d5c80ff5b1b6d66b37628438e09d019b5d0ec111f5dade2"
+            },
+            "score": {
+              "rejected": "sequence target not reached",
+              "status": 403
+            }
+          }
+        },
+        {
+          "name": "undo mid round",
+          "seed": "color-beta",
+          "difficulty": 1,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "press",
+              "color": 0
+            },
+            {
+              "type": "press",
+              "color": 0
+            },
+            {
+              "type": "undo"
+            },
+            {
+              "type": "press",
+              "color": 0
+            },
+            {
+              "type": "press",
+              "color": 2
+            }
+          ],
+          "outcome": {
+            "startViewHash": "bb7296e0cf7cf1b2ecae85d0af8fd26466c5c74d92accb522d944bfadf8ffc13",
+            "initialStateHash": "7120a4fc274e7c4744293ac0e4f72602d1ab847b930d203f83bfeaddc566e2a8",
+            "liveStateHash": "7120a4fc274e7c4744293ac0e4f72602d1ab847b930d203f83bfeaddc566e2a8",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "0ee74bb5aa6d66fdbd60283d6123e75332b4aeae5e7432f59930ca7696f9a11e",
+                "stateHash": "42b6e7625b8a8ce4a83989ba88ab34c8dcecda118c84cbb195ac3d871177cf7d"
+              },
+              {
+                "rejected": null,
+                "viewHash": "c167bd3b9eb30b100b95a4b88fd0e7d68278420295167a4c7f8cf71b39ada5a9",
+                "stateHash": "e1467e4a047fb78911ec85afc592c00e79e3ad4fcbcad4616b9ce0e9faf53da2"
+              },
+              {
+                "rejected": null,
+                "viewHash": "9d0c6e07953344d74bc3ca4eff15c2e4a4e45dd90653db68788af19d24f74803",
+                "stateHash": "42b6e7625b8a8ce4a83989ba88ab34c8dcecda118c84cbb195ac3d871177cf7d"
+              },
+              {
+                "rejected": null,
+                "viewHash": "c167bd3b9eb30b100b95a4b88fd0e7d68278420295167a4c7f8cf71b39ada5a9",
+                "stateHash": "e1467e4a047fb78911ec85afc592c00e79e3ad4fcbcad4616b9ce0e9faf53da2"
+              },
+              {
+                "rejected": null,
+                "viewHash": "2a2e08841cc4f720f943c1d2301d100cee63c1c4e11490110251d6e49300d82d",
+                "stateHash": "7120a4fc274e7c4744293ac0e4f72602d1ab847b930d203f83bfeaddc566e2a8"
+              }
+            ],
+            "replay": {
+              "stateHash": "7120a4fc274e7c4744293ac0e4f72602d1ab847b930d203f83bfeaddc566e2a8"
+            },
+            "score": {
+              "rejected": "sequence target not reached",
+              "status": 403
+            }
+          }
+        }
+      ]
+    },
+    "miniapp-merge-kingdom": {
+      "vectors": [
+        {
+          "name": "greedy legal moves",
+          "seed": "merge-alpha",
+          "difficulty": 0,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "move",
+              "from": {
+                "row": 0,
+                "col": 0
+              },
+              "to": {
+                "row": 0,
+                "col": 1
+              }
+            },
+            {
+              "type": "move",
+              "from": {
+                "row": 0,
+                "col": 1
+              },
+              "to": {
+                "row": 0,
+                "col": 2
+              }
+            },
+            {
+              "type": "move",
+              "from": {
+                "row": 0,
+                "col": 2
+              },
+              "to": {
+                "row": 0,
+                "col": 3
+              }
+            },
+            {
+              "type": "move",
+              "from": {
+                "row": 0,
+                "col": 3
+              },
+              "to": {
+                "row": 1,
+                "col": 3
+              }
+            },
+            {
+              "type": "move",
+              "from": {
+                "row": 1,
+                "col": 0
+              },
+              "to": {
+                "row": 1,
+                "col": 1
+              }
+            },
+            {
+              "type": "move",
+              "from": {
+                "row": 1,
+                "col": 1
+              },
+              "to": {
+                "row": 1,
+                "col": 2
+              }
+            },
+            {
+              "type": "move",
+              "from": {
+                "row": 1,
+                "col": 2
+              },
+              "to": {
+                "row": 2,
+                "col": 2
+              }
+            },
+            {
+              "type": "move",
+              "from": {
+                "row": 2,
+                "col": 2
+              },
+              "to": {
+                "row": 3,
+                "col": 2
+              }
+            },
+            {
+              "type": "move",
+              "from": {
+                "row": 1,
+                "col": 3
+              },
+              "to": {
+                "row": 2,
+                "col": 3
+              }
+            },
+            {
+              "type": "move",
+              "from": {
+                "row": 2,
+                "col": 3
+              },
+              "to": {
+                "row": 3,
+                "col": 3
+              }
+            }
+          ],
+          "outcome": {
+            "startViewHash": "9609e286c3423d200bb8088eb19d04592dde8c73608b414ca5ace4576bb967d5",
+            "initialStateHash": "56ae34df0154cb4dfc3e3c9fd210a8f582a4c35f85325979f7712df1d2d60ee4",
+            "liveStateHash": "56ae34df0154cb4dfc3e3c9fd210a8f582a4c35f85325979f7712df1d2d60ee4",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "49a8a22721fcc503576ab51add46f5c252f6703cf916f9bfd1af2ea06610e660",
+                "stateHash": "f74de0c8fec76e0ea659e735bd9e4cdf18a46e8f833df7bb1b219a729097d137"
+              },
+              {
+                "rejected": null,
+                "viewHash": "3558ba629ee289f549acb9b63f7ff150027418fa880e11ad1ea332a18853985e",
+                "stateHash": "083f028d758cf48c521a10bbdf851b350b92d7713725186c10127566851f0f4c"
+              },
+              {
+                "rejected": null,
+                "viewHash": "457f4dbbfba19e01bf53c9c87ae9559b2b09e26d0d858e5534079e37c75ae967",
+                "stateHash": "d618423bbde2036d92717c6c25eee1f2ea0a93e875cc4ccad1a1950f2e346258"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4aabb72c8d720a132e842f47fa864d94dffcc23bfa033e5234613009aaa4de56",
+                "stateHash": "13091e1aa318d0497a65b706aef5c91e3bcb70f709f6db8e9ed6c756a0030d58"
+              },
+              {
+                "rejected": null,
+                "viewHash": "8cbe188af4b8d418c9b982f34eb9c81f94b6f1abe77a2630636d76dae0c8c087",
+                "stateHash": "cfbf12c45daa035a432c5971d6ea899896130ba95684a23f2cc6c15dafd42241"
+              },
+              {
+                "rejected": null,
+                "viewHash": "b4e6715e7cc7708023d43027ef61d7130390414e54fc8c54b6b4e011a9147ff3",
+                "stateHash": "2c3d03a1a113ba61caed3c8a991160f68d0650fa8063b9b0b2d9ba2bcc103ddb"
+              },
+              {
+                "rejected": null,
+                "viewHash": "7aa2f83457467bddb8cce0b8bc080d7fd25036149f109b1e2476cacfdf79edc6",
+                "stateHash": "7cec5fb0080514b3056fc49a2d9f3421bf2138f043d84b98d3d450ed576d90c0"
+              },
+              {
+                "rejected": null,
+                "viewHash": "7206b17bede24920b09a2ea3e21493fcd1eb9f922af83311adf57accd4d4b367",
+                "stateHash": "803a76144ade0fe689963f157edf047849ae1beb0a60eb5bb16509969a6d4f69"
+              },
+              {
+                "rejected": null,
+                "viewHash": "f56a05678ecc3e9640cc5d1ef4b785c83ae833a87daf118e9db956b28e14f3c0",
+                "stateHash": "4e1878b9735bdd74f10735772d72197ba0fc73a91e869614ae58521d74ac96c0"
+              },
+              {
+                "rejected": null,
+                "viewHash": "5311a39d822d711827a03780534794963bdacd30121eac6a852ce2d893a575d0",
+                "stateHash": "56ae34df0154cb4dfc3e3c9fd210a8f582a4c35f85325979f7712df1d2d60ee4"
+              }
+            ],
+            "replay": {
+              "stateHash": "56ae34df0154cb4dfc3e3c9fd210a8f582a4c35f85325979f7712df1d2d60ee4"
+            },
+            "score": {
+              "rejected": "target tile not reached",
+              "status": 403
+            }
+          }
+        },
+        {
+          "name": "fixed moves with an illegal one",
+          "seed": "merge-beta",
+          "difficulty": 1,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "move",
+              "from": {
+                "row": 0,
+                "col": 0
+              },
+              "to": {
+                "row": 0,
+                "col": 1
+              }
+            },
+            {
+              "type": "move",
+              "from": {
+                "row": 3,
+                "col": 3
+              },
+              "to": {
+                "row": 3,
+                "col": 2
+              }
+            },
+            {
+              "type": "move",
+              "from": {
+                "row": 1,
+                "col": 1
+              },
+              "to": {
+                "row": 2,
+                "col": 1
+              }
+            },
+            {
+              "type": "move",
+              "from": {
+                "row": 0,
+                "col": 0
+              },
+              "to": {
+                "row": 2,
+                "col": 2
+              }
+            },
+            {
+              "type": "move",
+              "from": {
+                "row": 2,
+                "col": 0
+              },
+              "to": {
+                "row": 2,
+                "col": 1
+              }
+            }
+          ],
+          "outcome": {
+            "startViewHash": "6b6223996ed333a7bf872f995b929c0627fafc2d292bd68cd6fbefe15b7ffec5",
+            "initialStateHash": "1a9cbebd6d9c21251c79ed6dd3caddc18ff57a4fdbbfdf94646ddfc9053dfb6c",
+            "liveStateHash": "1a9cbebd6d9c21251c79ed6dd3caddc18ff57a4fdbbfdf94646ddfc9053dfb6c",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "38667e60226bf99701916900a2a265233dcc014e1206c173ade921d608824b53",
+                "stateHash": "455db8b0648438ce3d08a694b01a95a0881c9447a7b46f27a2aaa92dcc729d43"
+              },
+              {
+                "rejected": null,
+                "viewHash": "a2146393d5da4c5d78ee3acef8c4d95d6a826bfd2895fc76682ec45dd0882b7f",
+                "stateHash": "1a9cbebd6d9c21251c79ed6dd3caddc18ff57a4fdbbfdf94646ddfc9053dfb6c"
+              },
+              {
+                "rejected": null,
+                "viewHash": "38667e60226bf99701916900a2a265233dcc014e1206c173ade921d608824b53",
+                "stateHash": "1a9cbebd6d9c21251c79ed6dd3caddc18ff57a4fdbbfdf94646ddfc9053dfb6c"
+              },
+              {
+                "rejected": null,
+                "viewHash": "38667e60226bf99701916900a2a265233dcc014e1206c173ade921d608824b53",
+                "stateHash": "1a9cbebd6d9c21251c79ed6dd3caddc18ff57a4fdbbfdf94646ddfc9053dfb6c"
+              },
+              {
+                "rejected": null,
+                "viewHash": "38667e60226bf99701916900a2a265233dcc014e1206c173ade921d608824b53",
+                "stateHash": "1a9cbebd6d9c21251c79ed6dd3caddc18ff57a4fdbbfdf94646ddfc9053dfb6c"
+              }
+            ],
+            "replay": {
+              "stateHash": "1a9cbebd6d9c21251c79ed6dd3caddc18ff57a4fdbbfdf94646ddfc9053dfb6c"
+            },
+            "score": {
+              "rejected": "target tile not reached",
+              "status": 403
+            }
+          }
+        }
+      ]
+    },
+    "miniapp-pet-potion": {
+      "vectors": [
+        {
+          "name": "balanced care cadence",
+          "seed": "pet-alpha",
+          "difficulty": 0,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "feed"
+            },
+            {
+              "type": "play"
+            },
+            {
+              "type": "rest"
+            },
+            {
+              "type": "pet"
+            },
+            {
+              "type": "feed"
+            },
+            {
+              "type": "play"
+            },
+            {
+              "type": "rest"
+            },
+            {
+              "type": "pet"
+            },
+            {
+              "type": "feed"
+            },
+            {
+              "type": "play"
+            }
+          ],
+          "outcome": {
+            "startViewHash": "3b3eaa836a3088a75704e33c438c00a2033cd5f62e094b6a30c7ff7590666744",
+            "initialStateHash": "3604b2a0ec11a38d6ea1f6c26244a43e45092cb1380c5ee115468160f03dcb38",
+            "liveStateHash": "3604b2a0ec11a38d6ea1f6c26244a43e45092cb1380c5ee115468160f03dcb38",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "1ea4a6bf6b849814c972f62285825e831a3684f434a93484f354f31360f12968",
+                "stateHash": "282d552c1e80ce55bcccd02c9569c177052aa68035c3b8f566df4ed1d0368785"
+              },
+              {
+                "rejected": null,
+                "viewHash": "f9e8e97af75c5d6bab2aadd432a5d81232fab90710bebd8c47d7eb79a2909b34",
+                "stateHash": "052ff032abadf296979b6f704e194c48b2658350e717b28c7cee13dd279cd666"
+              },
+              {
+                "rejected": null,
+                "viewHash": "2aa205f7a971068921afcdbaa00ed80efaf2c8c952166c5335c88a51f7324c9c",
+                "stateHash": "23cad987a75979c79c26e85eb516e06363bd63439ef87aadd803da4fc825dc1d"
+              },
+              {
+                "rejected": null,
+                "viewHash": "e59166c7b96667875c710e79dd831486c6a466eb5b20d8953a703673a0557787",
+                "stateHash": "52be526390359df131deb21567a5911273a275039005bbe87bf016a66839a89a"
+              },
+              {
+                "rejected": null,
+                "viewHash": "3390703f0b4abbc6cb507a7fd51ed85167b94f6c2c70d4733967acd4dff19517",
+                "stateHash": "c2c2d0a6d6729d16e6fcfdb12bde384469b58583a5cf5b01828e669e24926d36"
+              },
+              {
+                "rejected": null,
+                "viewHash": "4dd81f2f03bda7ad387dc526c1b3188557be2a0cee35b89cb343607b1dbbf37d",
+                "stateHash": "de1a5813a70c512de43dd0fa284c3a9fd65cf9c9a1af569de5e5722780eecde4"
+              },
+              {
+                "rejected": null,
+                "viewHash": "1f93368e34ca828aa0062faabd678654dbb4d0df8bb0a3102555802a5d55c7d1",
+                "stateHash": "7b04c73f8ac3e0ccfc96e1d8aa4cac72d564ed8e0001905a1d39983040205701"
+              },
+              {
+                "rejected": null,
+                "viewHash": "1a1cbf51d385149f77ca5379d9a8e9abccb511c26e1c0903efa83fe8cb99c0f5",
+                "stateHash": "f448d0b9d8606c6cb3addd26142bea04a94de4257064b5f08d8e18b37d68918d"
+              },
+              {
+                "rejected": null,
+                "viewHash": "14895431d55b208b91c461e2bb63a7a25570297a4d635b8511b2b46f8dec6986",
+                "stateHash": "b0d4a9d2cc25d2210716fa9bc76cb1cce4fc1559112c6eaccb9af2ad27b40b2b"
+              },
+              {
+                "rejected": null,
+                "viewHash": "c936f8a34f49b4ab4d7cae4d44dd6f321f7443574d6a7f5fbc8aeabcba57d338",
+                "stateHash": "3604b2a0ec11a38d6ea1f6c26244a43e45092cb1380c5ee115468160f03dcb38"
+              }
+            ],
+            "replay": {
+              "stateHash": "07b8401df7bfefe7628fcae5acf835332b123d907709e96edb6ba619d25d1ff1"
+            },
+            "score": {
+              "result": {
+                "answerHash": {
+                  "$bytes": [
+                    64, 229, 216, 229, 52, 156, 25, 205, 222, 122, 173, 80, 58, 139, 76, 142, 122,
+                    235, 104, 218, 237, 39, 63, 196, 183, 152, 31, 229, 79, 47, 110, 5
+                  ]
+                },
+                "score": 92,
+                "scoreField": {
+                  "happiness_achieved": 92
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "burst rejected by the spacing gate",
+          "seed": "pet-beta",
+          "difficulty": 1,
+          "spacingMs": 800,
+          "ops": [
+            {
+              "type": "feed"
+            },
+            {
+              "type": "play"
+            },
+            {
+              "type": "pet"
+            },
+            {
+              "type": "rest"
+            },
+            {
+              "type": "feed"
+            },
+            {
+              "type": "play"
+            }
+          ],
+          "outcome": {
+            "startViewHash": "3b3eaa836a3088a75704e33c438c00a2033cd5f62e094b6a30c7ff7590666744",
+            "initialStateHash": "425e8604befc5575d45fbdfbedf080eb904cef677c09b0794e6a970ba088767f",
+            "liveStateHash": "425e8604befc5575d45fbdfbedf080eb904cef677c09b0794e6a970ba088767f",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "1ea4a6bf6b849814c972f62285825e831a3684f434a93484f354f31360f12968",
+                "stateHash": "7f1d502125030b7ea31235a0eb665fdaf877838f44f2b94f0df03b4ba38de6d4"
+              },
+              {
+                "rejected": {
+                  "message": "care actions must be spaced out",
+                  "status": 429
+                },
+                "viewHash": null,
+                "stateHash": "7f1d502125030b7ea31235a0eb665fdaf877838f44f2b94f0df03b4ba38de6d4"
+              },
+              {
+                "rejected": null,
+                "viewHash": "b232d1dc2baca8681559e2b8bafdde9258052a28c285a1922fc7f9f29fab91f4",
+                "stateHash": "2b4027dc7d1ab0d2d32df34ec9df2b4deb738b3206a7aae949ed62c8a117fe67"
+              },
+              {
+                "rejected": {
+                  "message": "care actions must be spaced out",
+                  "status": 429
+                },
+                "viewHash": null,
+                "stateHash": "2b4027dc7d1ab0d2d32df34ec9df2b4deb738b3206a7aae949ed62c8a117fe67"
+              },
+              {
+                "rejected": null,
+                "viewHash": "dd96bdd1e63531aaf33738280667521affee54224cb7bd663aa58fca48e77ca2",
+                "stateHash": "425e8604befc5575d45fbdfbedf080eb904cef677c09b0794e6a970ba088767f"
+              },
+              {
+                "rejected": {
+                  "message": "care actions must be spaced out",
+                  "status": 429
+                },
+                "viewHash": null,
+                "stateHash": "425e8604befc5575d45fbdfbedf080eb904cef677c09b0794e6a970ba088767f"
+              }
+            ],
+            "replay": {
+              "stateHash": "e328fdc71e1d4fb1d172ab5746d3cc25e2d428f572efc7e53018eb93c584fe99"
+            },
+            "score": {
+              "rejected": "happiness target not reached",
+              "status": 403
+            }
+          }
+        }
+      ]
+    },
+    "miniapp-sheep-solitaire": {
+      "vectors": [
+        {
+          "name": "pick every exposed card",
+          "seed": "sheep-alpha",
+          "difficulty": 0,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "pick",
+              "cardId": 16
+            },
+            {
+              "type": "pick",
+              "cardId": 17
+            },
+            {
+              "type": "pick",
+              "cardId": 18
+            },
+            {
+              "type": "pick",
+              "cardId": 19
+            },
+            {
+              "type": "pick",
+              "cardId": 20
+            },
+            {
+              "type": "pick",
+              "cardId": 21
+            }
+          ],
+          "outcome": {
+            "startViewHash": "bc81871909ad8c142ea39f3f6cd4055108fdcb9f25b7c4fbba770078f24f51e9",
+            "initialStateHash": "0ac8449464d7a166397a0f7f88fa47de7820e982bb4f82f7029bde76a7d76336",
+            "liveStateHash": "0ac8449464d7a166397a0f7f88fa47de7820e982bb4f82f7029bde76a7d76336",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "54ad0043d2ef714725039a4ddd481b8e8e4ad51c72b453c1351a40b3ff547617",
+                "stateHash": "eeda59e6fd743170adc30af28bf7bf8de67b116810a13db112123de33e0bc310"
+              },
+              {
+                "rejected": null,
+                "viewHash": "149c9556ec42220605de38b61161d267adc59581ed3c2bcc9029f5376f72b1b5",
+                "stateHash": "c82fad54f1c520ab4314051aaa57442092e082ba38fb4afc72bcb90a1061a255"
+              },
+              {
+                "rejected": null,
+                "viewHash": "682e2b6dd21e0d40163cf4fbba3f705ebb2e22f10ac203f8f06c81940e46c796",
+                "stateHash": "f489ec58974ccfec2aa7fb7a73a75366b0c770e3136f2d014ec8e8510168a08d"
+              },
+              {
+                "rejected": null,
+                "viewHash": "226de7314542ce90afd9bbde02ce4292834751c1e09b8a7b51b0c871c863cb50",
+                "stateHash": "9bf914e205d518dc2de78e68a710eec58d7733190eabdd84c13b0d197e622043"
+              },
+              {
+                "rejected": null,
+                "viewHash": "a992b8cf5281ed8ac4c1667fc73c22cb93795a904c4d47cca2868933d1365787",
+                "stateHash": "92ec3e605240371c80702123b0892db9f6b15600d9466b37a5015facd422f091"
+              },
+              {
+                "rejected": null,
+                "viewHash": "37fdcb3ad34d7267701d7d8be75e6e7eaff05c015178f3b1e600407d471b0833",
+                "stateHash": "0ac8449464d7a166397a0f7f88fa47de7820e982bb4f82f7029bde76a7d76336"
+              }
+            ],
+            "replay": {
+              "stateHash": "0ac8449464d7a166397a0f7f88fa47de7820e982bb4f82f7029bde76a7d76336"
+            },
+            "score": {
+              "rejected": "game not won — all cards must be cleared",
+              "status": 403
+            }
+          }
+        },
+        {
+          "name": "picks with shuffle and remove3",
+          "seed": "sheep-beta",
+          "difficulty": 1,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "pick",
+              "cardId": 24
+            },
+            {
+              "type": "pick",
+              "cardId": 25
+            },
+            {
+              "type": "pick",
+              "cardId": 26
+            },
+            {
+              "type": "shuffle"
+            },
+            {
+              "type": "pick",
+              "cardId": 27
+            },
+            {
+              "type": "pick",
+              "cardId": 28
+            },
+            {
+              "type": "pick",
+              "cardId": 29
+            },
+            {
+              "type": "remove3"
+            },
+            {
+              "type": "pick",
+              "cardId": 30
+            },
+            {
+              "type": "pick",
+              "cardId": 31
+            }
+          ],
+          "outcome": {
+            "startViewHash": "2caf2acd33df68f90b3b89c0cc490bdc307cecc6422555194c864c1f7a22946d",
+            "initialStateHash": "2a5ac04948a31da41c05924e435d0b359e4bea5ef68bc426824a1627eb7b4ebc",
+            "liveStateHash": "2a5ac04948a31da41c05924e435d0b359e4bea5ef68bc426824a1627eb7b4ebc",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "cb3c7a1d177a95a6424209e28c396cd6148a8180801873920f5b73f0d4d79b2b",
+                "stateHash": "b004f9b2e43560ad2cb369cbc41c75abc460d7eb88dec9c8ab40c96413c827af"
+              },
+              {
+                "rejected": null,
+                "viewHash": "57801e6c08ecbfa1f708de500476b1f4d50d139be823383ca706b43d78a6d52a",
+                "stateHash": "c812835239be5204c9ef034e31688b6d05043ae29afff1c525d5c8d92845d0a9"
+              },
+              {
+                "rejected": null,
+                "viewHash": "c57a44131456dc5ed93ccbc3cc3267ea14fcd37fbea8c7ac3a17ca6e93c1920b",
+                "stateHash": "9a8d5abf32f502562671cae237bac82af07da7233a8d648d20d9420d23f2d9ee"
+              },
+              {
+                "rejected": null,
+                "viewHash": "a45521c2a4859739ea3761931a9d31d5238f2b5d41341dde35fbe7b28361860f",
+                "stateHash": "4fac4fba0ea5b480b97e6b893af14e8e77c69dd5cd9b0ab7761ce26fe23e2424"
+              },
+              {
+                "rejected": null,
+                "viewHash": "f5e594be915b5e447960d2108c269417ecf4d222df17cf44af639b3de21c561f",
+                "stateHash": "d44fca6e51e1dc4b36d32a8882c694066966b7792461536e8b805a233e8eef45"
+              },
+              {
+                "rejected": null,
+                "viewHash": "09c6495a1e7d0958cfcb6f2749eee447954168e98aee017a1aef3e6a3f2010b6",
+                "stateHash": "22dd33e1e5a8f3bcb735ead8060aeeaa54a4c7e8ecb93f2a60f08e5c75b2c3ed"
+              },
+              {
+                "rejected": null,
+                "viewHash": "ca3206c0b13c3cf061ee5b9283edf0cc966ae2842ff421e9282f4a7f962de568",
+                "stateHash": "780f6478c67336ee13a030d3a0029134f65d18ad380fe0f411f8cedb5b4315b0"
+              },
+              {
+                "rejected": null,
+                "viewHash": "069052a3acf2680997f762bb39fb7532c5640784865331854a4cb01657119bdb",
+                "stateHash": "8c919279e29c64ef0d3a6367edd17adbd054b1a68667335c4c0b296505ec2cf3"
+              },
+              {
+                "rejected": null,
+                "viewHash": "e91c2f79be171556dfea30ac89d00ec930d0526678c89a7ee0eae94b2ac3e8d0",
+                "stateHash": "51d161738f8bb3e12146183c13ae1572ae7f669f18c29ad88fd15e2010971196"
+              },
+              {
+                "rejected": null,
+                "viewHash": "e4c60da21f0e5345d7e4b661c7b9a05944f4da389cf9199af786992e8a38fd5b",
+                "stateHash": "2a5ac04948a31da41c05924e435d0b359e4bea5ef68bc426824a1627eb7b4ebc"
+              }
+            ],
+            "replay": {
+              "stateHash": "2a5ac04948a31da41c05924e435d0b359e4bea5ef68bc426824a1627eb7b4ebc"
+            },
+            "score": {
+              "rejected": "game not won — all cards must be cleared",
+              "status": 403
+            }
+          }
+        }
+      ]
+    },
+    "miniapp-jump-rush": {
+      "vectors": [
+        {
+          "name": "ideal charges then misses",
+          "seed": "jump-alpha",
+          "difficulty": 0,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "jump",
+              "chargeLevel": 69.5
+            },
+            {
+              "type": "jump",
+              "chargeLevel": 70.5
+            },
+            {
+              "type": "jump",
+              "chargeLevel": 67.75
+            },
+            {
+              "type": "jump",
+              "chargeLevel": 77.75
+            },
+            {
+              "type": "jump",
+              "chargeLevel": 79
+            },
+            {
+              "type": "jump",
+              "chargeLevel": 10
+            },
+            {
+              "type": "jump",
+              "chargeLevel": 95
+            }
+          ],
+          "outcome": {
+            "startViewHash": "45f58dc853eca3f2b23c8c687e85046bc759b4483fd432efb2fb9b49a5257156",
+            "initialStateHash": "c5df5fd7a24042756e7706e3a02f3769c510147f24e3b54776fd82edbf6e8b3a",
+            "liveStateHash": "c5df5fd7a24042756e7706e3a02f3769c510147f24e3b54776fd82edbf6e8b3a",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "57268016860fb97659366759233a6fc6cbb0dc46e2e586a6ac6bc1cfffea6dff",
+                "stateHash": "b171da15a5c12cf6113525469d8a5fc595532b0b0926f0209c6f2ef5de86923b"
+              },
+              {
+                "rejected": null,
+                "viewHash": "d8b99c9417805b9a850c39037520f709c8d347035cfe9613a38fcd91e4ac4a1b",
+                "stateHash": "0b9262137c7edad6a2fb54ff191835d8e52155547a9e205ad60051568e20c7dd"
+              },
+              {
+                "rejected": null,
+                "viewHash": "9b6c55ef037d99e4d48972d7eaf64b59f6ba33ea5063c4afc7587ee02bc7f87b",
+                "stateHash": "ae6b685177044d9e789a9d27520203925a65b25bff88ed2e331c8e247f238fdb"
+              },
+              {
+                "rejected": null,
+                "viewHash": "f597683133b69595dfd51edbac4177dccc35dd8806d490d2fa2811921c35fab3",
+                "stateHash": "98c3c6a400f74dd8e13c47e04562f46a4ab0e2e82446c0c69278e18a8e5f23b4"
+              },
+              {
+                "rejected": null,
+                "viewHash": "29ba2cb6bd782ed4185d15ee0cf9dae66bb5a71170d0b8fac28fe688c82d1bb8",
+                "stateHash": "81261ba5822b467ce856cacba0aaf3edc11564b07787b227a736d0ec6a67a7fb"
+              },
+              {
+                "rejected": null,
+                "viewHash": "e7f2b47e75148acf452831b7e1845b6e61099208d1ef4610a1b418fb19cbcf73",
+                "stateHash": "c5df5fd7a24042756e7706e3a02f3769c510147f24e3b54776fd82edbf6e8b3a"
+              },
+              {
+                "rejected": {
+                  "message": "game is already over",
+                  "status": 409
+                },
+                "viewHash": null,
+                "stateHash": "c5df5fd7a24042756e7706e3a02f3769c510147f24e3b54776fd82edbf6e8b3a"
+              }
+            ],
+            "replay": {
+              "stateHash": "81261ba5822b467ce856cacba0aaf3edc11564b07787b227a736d0ec6a67a7fb"
+            },
+            "score": {
+              "rejected": "course not completed — reach the target platform count to win",
+              "status": 403
+            }
+          }
+        },
+        {
+          "name": "fixed charges hard",
+          "seed": "jump-beta",
+          "difficulty": 2,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "jump",
+              "chargeLevel": 55
+            },
+            {
+              "type": "jump",
+              "chargeLevel": 62
+            },
+            {
+              "type": "jump",
+              "chargeLevel": 48
+            },
+            {
+              "type": "jump",
+              "chargeLevel": 70
+            },
+            {
+              "type": "jump",
+              "chargeLevel": 51
+            },
+            {
+              "type": "jump",
+              "chargeLevel": 66
+            },
+            {
+              "type": "jump",
+              "chargeLevel": 58
+            },
+            {
+              "type": "jump",
+              "chargeLevel": 44
+            }
+          ],
+          "outcome": {
+            "startViewHash": "3f1b664926d3fd7b2f202b0385d5476b64a580fc387eec5ac17dcc5232155136",
+            "initialStateHash": "6b63c010f9616b93a6cb82f44ec1c8eee840896c0ecd687c89225372fb8ed684",
+            "liveStateHash": "6b63c010f9616b93a6cb82f44ec1c8eee840896c0ecd687c89225372fb8ed684",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "a44ab9461de2eb41a75b88a8dd9ab224578c37811d9907e7ce150def9ca94ead",
+                "stateHash": "6b63c010f9616b93a6cb82f44ec1c8eee840896c0ecd687c89225372fb8ed684"
+              },
+              {
+                "rejected": {
+                  "message": "game is already over",
+                  "status": 409
+                },
+                "viewHash": null,
+                "stateHash": "6b63c010f9616b93a6cb82f44ec1c8eee840896c0ecd687c89225372fb8ed684"
+              },
+              {
+                "rejected": {
+                  "message": "game is already over",
+                  "status": 409
+                },
+                "viewHash": null,
+                "stateHash": "6b63c010f9616b93a6cb82f44ec1c8eee840896c0ecd687c89225372fb8ed684"
+              },
+              {
+                "rejected": {
+                  "message": "game is already over",
+                  "status": 409
+                },
+                "viewHash": null,
+                "stateHash": "6b63c010f9616b93a6cb82f44ec1c8eee840896c0ecd687c89225372fb8ed684"
+              },
+              {
+                "rejected": {
+                  "message": "game is already over",
+                  "status": 409
+                },
+                "viewHash": null,
+                "stateHash": "6b63c010f9616b93a6cb82f44ec1c8eee840896c0ecd687c89225372fb8ed684"
+              },
+              {
+                "rejected": {
+                  "message": "game is already over",
+                  "status": 409
+                },
+                "viewHash": null,
+                "stateHash": "6b63c010f9616b93a6cb82f44ec1c8eee840896c0ecd687c89225372fb8ed684"
+              },
+              {
+                "rejected": {
+                  "message": "game is already over",
+                  "status": 409
+                },
+                "viewHash": null,
+                "stateHash": "6b63c010f9616b93a6cb82f44ec1c8eee840896c0ecd687c89225372fb8ed684"
+              },
+              {
+                "rejected": {
+                  "message": "game is already over",
+                  "status": 409
+                },
+                "viewHash": null,
+                "stateHash": "6b63c010f9616b93a6cb82f44ec1c8eee840896c0ecd687c89225372fb8ed684"
+              }
+            ],
+            "replay": {
+              "stateHash": "8c2f89437f86183f29fe389ef989b6d484c08005d9545c23812ac3a7eaba0b3d"
+            },
+            "score": {
+              "rejected": "course not completed — reach the target platform count to win",
+              "status": 403
+            }
+          }
+        }
+      ]
+    },
+    "miniapp-curve-arrow": {
+      "vectors": [
+        {
+          "name": "single-pair shots",
+          "seed": "arrow-alpha",
+          "difficulty": 0,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "shot",
+              "holds": [8, 30]
+            },
+            {
+              "type": "shot",
+              "holds": [12, 44]
+            },
+            {
+              "type": "shot",
+              "holds": [0, 18]
+            },
+            {
+              "type": "shot",
+              "holds": [20, 55]
+            }
+          ],
+          "outcome": {
+            "startViewHash": "d76bdc5d75e1012fac777c712a6fa560c31dc12ab30b79c6add1ece4c5aef370",
+            "initialStateHash": "ad51373b17989590cf80a9eb38da489d94882079462f1099eecca42e3f0fa839",
+            "liveStateHash": "ad51373b17989590cf80a9eb38da489d94882079462f1099eecca42e3f0fa839",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "16f6aaa8e479b6edbc6c4e97296380c2977dd3b58c1632a5ed2b8f3cd87ffb74",
+                "stateHash": "ff4d916d74f9095b94546b2d952c9136909296f69db7e0d3fba7353f668a0e33"
+              },
+              {
+                "rejected": null,
+                "viewHash": "1ce5a18981f7cdc80a54e38d5d627f8c948558224a10ce7c01707bd063b50045",
+                "stateHash": "d548fa93d55b7979682663a9faf1fa59082135ef6c82a8f1f7da5b0d5b22af89"
+              },
+              {
+                "rejected": null,
+                "viewHash": "a97dc589ffdcecd828d083b6dfa9c2b3b129ff3858fb2ac8b07e57f225b8ef4a",
+                "stateHash": "45c9fa930d3e024c9941ad3e48b285292543ee1aa01de2bc37429341cf17856b"
+              },
+              {
+                "rejected": null,
+                "viewHash": "8d5bcf0545b510d46b644be6651eeccc0e0ca53de4b4c5592cfdf857ca4d0d6d",
+                "stateHash": "ad51373b17989590cf80a9eb38da489d94882079462f1099eecca42e3f0fa839"
+              }
+            ],
+            "replay": {
+              "stateHash": "ad51373b17989590cf80a9eb38da489d94882079462f1099eecca42e3f0fa839"
+            },
+            "score": {
+              "rejected": "target not reached",
+              "status": 403
+            }
+          }
+        },
+        {
+          "name": "multi-pair shots hard",
+          "seed": "arrow-beta",
+          "difficulty": 2,
+          "spacingMs": 2000,
+          "ops": [
+            {
+              "type": "shot",
+              "holds": [0, 12, 40, 60]
+            },
+            {
+              "type": "shot",
+              "holds": [5, 25, 60, 90]
+            },
+            {
+              "type": "shot",
+              "holds": [30, 70]
+            }
+          ],
+          "outcome": {
+            "startViewHash": "260b6912371a3afcc9cf219ee82d662bba6f041df5219ecdf819b9bb084e0d3e",
+            "initialStateHash": "e91f9b701f1a3681ffde278792bb537a5989e05daceae22427186752667fb232",
+            "liveStateHash": "e91f9b701f1a3681ffde278792bb537a5989e05daceae22427186752667fb232",
+            "ops": [
+              {
+                "rejected": null,
+                "viewHash": "16f6aaa8e479b6edbc6c4e97296380c2977dd3b58c1632a5ed2b8f3cd87ffb74",
+                "stateHash": "838fe5dfc4f62aec009625e1ce491fb54d81ef3b913f7c9d8f892b9e2efcff33"
+              },
+              {
+                "rejected": null,
+                "viewHash": "1ce5a18981f7cdc80a54e38d5d627f8c948558224a10ce7c01707bd063b50045",
+                "stateHash": "e0daf523bc2f8424d7c5399c3ba1eb9e21113d5f5cebcbf469e97dadba8e8391"
+              },
+              {
+                "rejected": null,
+                "viewHash": "a97dc589ffdcecd828d083b6dfa9c2b3b129ff3858fb2ac8b07e57f225b8ef4a",
+                "stateHash": "e91f9b701f1a3681ffde278792bb537a5989e05daceae22427186752667fb232"
+              }
+            ],
+            "replay": {
+              "stateHash": "e91f9b701f1a3681ffde278792bb537a5989e05daceae22427186752667fb232"
+            },
+            "score": {
+              "rejected": "target not reached",
+              "status": 403
+            }
+          }
+        }
+      ]
+    }
+  }
+}

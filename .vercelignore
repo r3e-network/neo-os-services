@@ -1,0 +1,24 @@
+# Vercel builds apps/web from this monorepo root. Production configuration is
+# managed by the linked project and must never be uploaded from local files.
+.env
+.env.*
+**/.env
+**/.env.*
+.vercel/
+**/.vercel/
+
+# Reproducible local dependency, build, test, and diagnostic outputs.
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+coverage/
+**/coverage/
+test-results/
+**/test-results/
+playwright-report/
+**/playwright-report/
+*.log
+**/*.log
+*.tsbuildinfo
+**/*.tsbuildinfo

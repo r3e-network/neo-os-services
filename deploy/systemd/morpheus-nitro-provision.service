@@ -1,0 +1,19 @@
+[Unit]
+Description=Morpheus Nitro Enclave compute provisioning (worker config + AWS creds)
+# Run after the enclave is up (signer service) and after the egress proxy, and
+# tear down / re-run together with the signer so an enclave restart always
+# re-provisions the compute config.
+After=morpheus-nitro-signer.service morpheus-nitro-egress.service
+PartOf=morpheus-nitro-signer.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/neoos/services/deploy/nitro/provision-enclave-compute.sh
+User=root
+Group=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=morpheus-nitro-signer.service multi-user.target

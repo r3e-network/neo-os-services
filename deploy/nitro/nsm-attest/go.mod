@@ -1,0 +1,40 @@
+// Pinned module graph for the NSM attestation helper so the EIF build is
+// reproducible and the resulting PCRs are independently verifiable.
+//
+// REFRESH: to update the pinned `github.com/hf/nsm` version, run inside a Go
+// toolchain (Go is intentionally NOT required on the host; the EIF build runs Go
+// in the `golang:1.22-bookworm@sha256:...` stage):
+//
+//   cd deploy/nitro/nsm-attest
+//   GOFLAGS=-mod=mod go get github.com/hf/nsm@<commit-or-pseudo-version>
+//   go mod tidy
+//
+// then commit the regenerated go.mod + go.sum. The version below is the latest
+// available (the module ships no semver tags, only this pseudo-version):
+//   proxy.golang.org/github.com/hf/nsm/@latest -> v0.0.0-20220930140112-cd181bd646b9
+module nsm-attest
+
+go 1.22
+
+require (
+	github.com/aws/aws-sdk-go-v2/config v1.31.12
+	github.com/aws/aws-sdk-go-v2/service/kms v1.45.6
+	github.com/hf/nsm v0.0.0-20220930140112-cd181bd646b9
+)
+
+require (
+	github.com/aws/aws-sdk-go-v2 v1.39.2 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.18.16 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.9 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.9 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.9 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.9 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.29.6 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.38.6 // indirect
+	github.com/aws/smithy-go v1.23.0 // indirect
+	github.com/fxamacker/cbor/v2 v2.2.0 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
+)

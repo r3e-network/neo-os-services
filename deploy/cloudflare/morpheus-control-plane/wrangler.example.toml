@@ -1,0 +1,69 @@
+name = "morpheus-control-plane"
+main = "worker.mjs"
+compatibility_date = "2026-03-20"
+
+[vars]
+SUPABASE_URL = ""
+MORPHEUS_CONTROL_PLANE_API_KEY = ""
+UPSTASH_REDIS_REST_URL = ""
+UPSTASH_REDIS_REST_TOKEN = ""
+MORPHEUS_MAINNET_EXECUTION_BASE_URL = ""
+MORPHEUS_TESTNET_EXECUTION_BASE_URL = ""
+MORPHEUS_EXECUTION_TOKEN = ""
+MORPHEUS_APP_BACKEND_URL = ""
+MORPHEUS_APP_BACKEND_TOKEN = ""
+
+[[queues.producers]]
+binding = "MORPHEUS_ORACLE_REQUEST_QUEUE"
+queue = "morpheus-oracle-request"
+
+[[queues.producers]]
+binding = "MORPHEUS_FEED_TICK_QUEUE"
+queue = "morpheus-feed-tick"
+
+# Dead-letter queues must exist before deploy:
+#   wrangler queues create morpheus-oracle-request-dlq
+#   wrangler queues create morpheus-feed-tick-dlq
+[[queues.consumers]]
+queue = "morpheus-oracle-request"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 10
+dead_letter_queue = "morpheus-oracle-request-dlq"
+
+[[queues.consumers]]
+queue = "morpheus-feed-tick"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 10
+dead_letter_queue = "morpheus-feed-tick-dlq"
+
+# Dead-letter consumers: finalize the poison job's Supabase row to
+# 'dead_lettered' (terminal) so the cron recovery path stops re-requeuing it
+# forever. No further dead_letter_queue here — this is the terminal lane.
+[[queues.consumers]]
+queue = "morpheus-oracle-request-dlq"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 1
+
+[[queues.consumers]]
+queue = "morpheus-feed-tick-dlq"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 1
+
+# Cron safety net: requeues overdue queued jobs and stale processing/dispatched
+# jobs (same path as POST /<network>/jobs/recover).
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[workflows]]
+name = "morpheus-callback-broadcast-workflow"
+binding = "CALLBACK_BROADCAST_WORKFLOW"
+class_name = "CallbackBroadcastWorkflow"
+
+[[workflows]]
+name = "morpheus-automation-execute-workflow"
+binding = "AUTOMATION_EXECUTE_WORKFLOW"
+class_name = "AutomationExecuteWorkflow"

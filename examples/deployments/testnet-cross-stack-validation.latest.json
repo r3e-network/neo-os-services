@@ -1,0 +1,97 @@
+{
+  "generated_at": "2026-03-25T01:11:45.000Z",
+  "network": "testnet",
+  "status": "passed",
+  "repos": {
+    "neo-morpheus-oracle": {
+      "core_validation": [
+        "test:worker",
+        "test:relayer",
+        "test:control-plane",
+        "apps/web:test",
+        "apps/web:build",
+        "smoke:n3",
+        "smoke:control-plane",
+        "verify:n3"
+      ],
+      "advanced_validation": [
+        "examples:test:n3:privacy",
+        "examples:test:n3:automation",
+        "examples:test:n3:callback-boundary",
+        "examples:test:n3:attack-regression"
+      ],
+      "latest_reports": {
+        "privacy": "examples/deployments/n3-privacy-validation.testnet.latest.json",
+        "automation": "examples/deployments/n3-automation-validation.testnet.latest.json",
+        "callback_boundary": "examples/deployments/n3-callback-boundary.testnet.latest.json",
+        "encrypted_ref_boundary": "examples/deployments/n3-encrypted-ref-boundary.testnet.latest.json",
+        "fulfillment_replay": "examples/deployments/n3-fulfillment-replay.testnet.latest.json",
+        "aa_session_oracle_boundary": "examples/deployments/n3-aa-session-oracle-boundary.testnet.latest.json",
+        "aa_paymaster_automation_oracle": "examples/deployments/n3-aa-paymaster-automation-oracle.testnet.latest.json",
+        "integrated_attack_regression": "examples/deployments/n3-integrated-attack-regression.testnet.latest.json",
+        "control_plane_smoke": "examples/deployments/control-plane-smoke.testnet.latest.json"
+      }
+    },
+    "neo-abstract-account": {
+      "core_validation": [
+        "dotnet test neo-abstract-account.sln -c Release --nologo",
+        "npm --prefix frontend test -- --run",
+        "npm --prefix frontend run build",
+        "npm --prefix sdk/js test",
+        "npm --prefix sdk/js run testnet:validate"
+      ],
+      "latest_reports": {
+        "validation_suite": "../neo-abstract-account/sdk/docs/reports/v3-testnet-validation-suite.latest.json",
+        "plugin_matrix": "../neo-abstract-account/sdk/docs/reports/v3-testnet-plugin-matrix.latest.json",
+        "paymaster_policy": "../neo-abstract-account/sdk/docs/reports/v3-testnet-paymaster-policy.latest.json"
+      }
+    },
+    "neo-miniapps-platform": {
+      "core_validation": [
+        "npm test --silent",
+        "go test ./test/...",
+        "dotnet test contracts/__tests__/NeoContracts.Tests.csproj -c Release --nologo",
+        "test:testnet:direct",
+        "test:testnet:full-stack",
+        "test:flagship-deployed-abi (testnet)",
+        "test:flagship-active-state (testnet)",
+        "test:flagship-live-user-flows (testnet)"
+      ],
+      "flagship_live_targets": [
+        "dailyCheckin",
+        "lastSurvivor",
+        "gasBox",
+        "fogPlay",
+        "redEnvelope",
+        "selfLoan",
+        "neoPay"
+      ],
+      "canonical_testnet_contracts": {
+        "miniapp-last-survivor": "0xd55df731978582ea81719a5d87ce49b248e91275",
+        "miniapp-gasbox": "0x49ec8536ba331d744a16b8da2a6ed4263ef4e89c",
+        "miniapp-redenvelope": "0xfa1b7240fead2a63999c02defa3aec5eb274a919",
+        "miniapp-dailycheckin": "0xaba84da240a55410d284a656fc8dae044e6ec1a5",
+        "miniapp-fogplay": "0xb115dd775a7591bb0eedef6dbf50428d50e7bc07",
+        "miniapp-self-loan": "0xd097c63ea89251d23632826ebed99a7e7ce536f7",
+        "miniapp-neo-pay": "0x27a81e6d2f01a1d241b9aef5bed74c93f3a5ca5e"
+      }
+    }
+  },
+  "shared_testnet_endpoints": {
+    "oracle_runtime": "https://oracle.meshmini.app/testnet",
+    "edge_runtime": "https://edge.meshmini.app/testnet",
+    "control_plane": "https://control.meshmini.app/testnet"
+  },
+  "shared_testnet_contracts": {
+    "oracle": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+    "datafeed": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
+    "aa_core": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
+    "aa_web3auth_verifier": "0x7147f9a508594a7656a25f45d0a7a7dede7c227f",
+    "aa_session_key_verifier": "0xed44c88535650b4dd6b8d59776e6ed045462cab6"
+  },
+  "notes": [
+    "Oracle testnet encryption key drift was corrected; on-chain and runtime keys now match.",
+    "Encrypted oracle payload and encrypted ref live paths were revalidated after the key correction.",
+    "The integrated attack regression summary was finalized by referencing fresh stage artifacts generated during this testnet validation run."
+  ]
+}

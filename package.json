@@ -1,0 +1,153 @@
+{
+  "name": "@r3e-network/neo-os-services",
+  "private": true,
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "workspaces": [
+    "apps/*",
+    "workers/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "lint": "eslint . --ext .js,.mjs,.ts,.tsx",
+    "lint:fix": "eslint . --ext .js,.mjs,.ts,.tsx --fix",
+    "verify:repo": "bash scripts/verify_repo.sh",
+    "format": "prettier --write \"**/*.{js,mjs,ts,tsx,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{js,mjs,ts,tsx,json,md,yml,yaml}\"",
+    "dev:web": "npm --prefix apps/web run dev",
+    "build:web": "npm --prefix apps/web run build",
+    "check:brand": "node scripts/check-branding.mjs",
+    "check:web-content": "node scripts/check-web-consistency.mjs",
+    "start:web": "npm --prefix apps/web run start",
+    "check:worker": "npm --prefix workers/nitro-worker run check",
+    "test:worker": "npm --prefix workers/nitro-worker test",
+    "check:relayer": "npm --prefix workers/morpheus-relayer run check",
+    "test:relayer": "npm --prefix workers/morpheus-relayer test",
+    "start:relayer": "npm --prefix workers/morpheus-relayer run start",
+    "once:relayer": "npm --prefix workers/morpheus-relayer run once",
+    "metrics:relayer": "npm --prefix workers/morpheus-relayer run metrics",
+    "metrics:relayer:prom": "npm --prefix workers/morpheus-relayer run metrics:prom",
+    "start:relayer:metrics": "npm --prefix workers/morpheus-relayer run serve:metrics",
+    "install:code-path-compat": "node scripts/ops/install-code-path-compat.mjs",
+    "publish:oracle-key": "node scripts/publish-oracle-public-key.mjs",
+    "publish:oracle-verifier-key": "node scripts/publish-oracle-verifier-key.mjs",
+    "upgrade:datafeed:n3": "node scripts/upgrade-morpheus-datafeed.mjs",
+    "audit:feeds": "node scripts/audit-feed-freshness.mjs",
+    "audit:feeds:drift": "node scripts/audit-feed-registry-drift.mjs",
+    "check:feeds:freshness": "node scripts/check-feed-freshness.mjs",
+    "backfill:feeds": "node scripts/backfill-feed-pairs.mjs",
+    "write:addresses": "node scripts/write-address-registry.mjs",
+    "verify:n3": "node scripts/verify-morpheus-n3.mjs",
+    "set:updater:n3": "node scripts/set-neo-n3-updater.mjs",
+    "smoke:n3": "node scripts/smoke-oracle-n3.mjs",
+    "smoke:all": "node scripts/smoke-all.mjs",
+    "examples:deploy:n3": "node examples/scripts/deploy-n3-examples.mjs",
+    "examples:test:n3": "node examples/scripts/test-n3-examples.mjs",
+    "examples:test:n3:neodid": "node examples/scripts/test-n3-neodid-oracle-matrix.mjs",
+    "examples:test:n3:privacy": "node examples/scripts/test-n3-privacy-matrix.mjs",
+    "examples:test:n3:automation": "node examples/scripts/test-n3-automation.mjs",
+    "examples:test:n3:builtins": "node examples/scripts/test-n3-builtins.mjs",
+    "examples:test:n3:callback-boundary": "node examples/scripts/test-n3-callback-boundary.mjs",
+    "examples:test:n3:aa-callback-replay-boundary": "node examples/scripts/test-n3-aa-callback-replay-boundary.mjs",
+    "examples:test:n3:aa-session-oracle-boundary": "node examples/scripts/test-n3-aa-session-oracle-boundary.mjs",
+    "examples:test:n3:neodid-registry-boundary": "node examples/scripts/test-n3-neodid-registry-boundary.mjs",
+    "examples:test:n3:neodid-registry-v1": "node examples/scripts/test-n3-neodid-registry-v1.mjs",
+    "examples:test:n3:encrypted-ref-boundary": "node examples/scripts/test-n3-encrypted-ref-boundary.mjs",
+    "examples:test:n3:automation-deposit-exhaustion": "node examples/scripts/test-n3-automation-deposit-exhaustion.mjs",
+    "examples:test:n3:fulfillment-replay": "node examples/scripts/test-n3-fulfillment-replay-isolated.mjs",
+    "examples:test:n3:attack-regression": "node examples/scripts/test-n3-integrated-attack-regression.mjs",
+    "examples:test:feed-source": "node examples/scripts/validate-feed-source-mappings.mjs",
+    "examples:test:all": "node examples/scripts/test-all-examples.mjs",
+    "examples:live": "node examples/scripts/deploy-and-test-all.mjs",
+    "examples:all": "node examples/scripts/deploy-and-test-all.mjs",
+    "render:nitro-compose-env": "node scripts/render-nitro-compose-env.mjs --network mainnet --output deploy/nitro/morpheus.mainnet.env",
+    "render:nitro-compose-env:testnet": "node scripts/render-nitro-compose-env.mjs --network testnet --output deploy/nitro/morpheus.testnet.env",
+    "render:nitro-compose-env:mainnet": "node scripts/render-nitro-compose-env.mjs --network mainnet --output deploy/nitro/morpheus.mainnet.env",
+    "render:nitro-hub-env": "node scripts/render-nitro-hub-env.mjs --output deploy/nitro/morpheus.hub.env",
+    "verify:cloudflare-token": "node scripts/verify-cloudflare-token.mjs",
+    "verify:edge-gateway": "node scripts/verify-edge-gateway.mjs",
+    "check:checkly": "node scripts/checkly-list-checks.mjs",
+    "sync:checkly": "node scripts/checkly-sync-api-checks.mjs",
+    "sync:checkly:browser": "node scripts/checkly-sync-browser-checks.mjs",
+    "check:betterstack": "node scripts/betterstack-list-heartbeats.mjs",
+    "sync:betterstack": "node scripts/betterstack-sync-heartbeats.mjs",
+    "check:web-cron-env": "node scripts/check-web-cron-env.mjs",
+    "check:web-production-env": "node scripts/check-web-production-env.mjs",
+    "check:betterstack:monitors": "node scripts/betterstack-list-monitors.mjs",
+    "sync:betterstack:monitors": "node scripts/betterstack-sync-monitors.mjs",
+    "check:betterstack:sources": "node scripts/betterstack-list-sources.mjs",
+    "sync:betterstack:sources": "node scripts/betterstack-sync-sources.mjs",
+    "export:saas": "node scripts/export-saas-inventory.mjs",
+    "smoke:control-plane": "node scripts/smoke-control-plane.mjs",
+    "stress:runtime": "node scripts/stress-oracle-runtime.mjs",
+    "test:runtime:matrix": "node --test scripts/runtime-service-matrix.test.mjs",
+    "test:game-engine-sync": "node --test scripts/sync-miniapp-game-engines.test.mjs",
+    "test:testnet:runtime-services": "node scripts/live-validate-runtime-services.mjs",
+    "db:runtime:analyze": "node scripts/cleanup-supabase-runtime-data.mjs",
+    "db:runtime:cleanup": "node scripts/cleanup-supabase-runtime-data.mjs --apply --vacuum",
+    "start:testnet-rng-local": "bash scripts/run-testnet-rng-local.sh",
+    "check:env": "node scripts/check-root-env.mjs",
+    "check:audit:root": "node scripts/check-root-audit-allowlist.mjs",
+    "audit:signers:files": "node scripts/audit-neo-n3-signer-files.mjs",
+    "render:nitro-env": "node scripts/render-nitro-env.mjs",
+    "check:control-plane": "node scripts/check-control-plane-env.mjs",
+    "check:control-plane:strict": "node scripts/check-control-plane-env.mjs --strict",
+    "check:signers": "node scripts/check-neo-signers.mjs",
+    "check:nitro-env": "node scripts/check-nitro-env.mjs",
+    "check:nitro-prereqs": "node scripts/check-nitro-prereqs.mjs",
+    "generate:nitro-signer-identity": "node scripts/generate-nitro-signer-identity.mjs",
+    "test:control-plane": "node --test deploy/cloudflare/morpheus-control-plane/worker.test.mjs",
+    "test:ops": "node deploy/evm/compile.mjs MiniAppCreditsV2 && node --test deploy/feed-pusher/*.test.mjs deploy/nitro/*.test.mjs deploy/evm/*.test.mjs",
+    "test:testnet:local-gates": "bash scripts/run_local_validation_gates.sh",
+    "test:testnet:live": "bash scripts/run_live_testnet_validation.sh",
+    "test:testnet:full": "bash scripts/run_full_testnet_validation.sh",
+    "test:workspace:local": "bash scripts/run_workspace_local_validation.sh",
+    "test:workspace:live": "bash scripts/run_workspace_live_validation.sh",
+    "test:workspace:full": "bash scripts/run_workspace_full_validation.sh",
+    "test:scripts": "node --test scripts/*.test.mjs",
+    "test:web": "npm --prefix apps/web run test:run"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.57.1",
+    "@typescript-eslint/parser": "^8.57.1",
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.0",
+    "solc": "0.8.35"
+  },
+  "overrides": {
+    "h3": {
+      ".": "1.15.9",
+      "defu": "6.1.7"
+    },
+    "socket.io-parser": "4.2.6",
+    "anymatch": {
+      "picomatch": "2.3.2"
+    },
+    "readdirp": {
+      "picomatch": "2.3.2"
+    },
+    "tinyglobby": {
+      "picomatch": "4.0.4",
+      "fdir": {
+        "picomatch": "4.0.4"
+      }
+    },
+    "fast-uri": "3.1.5",
+    "sharp": "0.35.0",
+    "lodash": "4.18.1",
+    "next": {
+      "postcss": "8.5.26"
+    },
+    "postcss": "8.5.26",
+    "nanoid": "3.3.18",
+    "@opentelemetry/core": "2.9.0",
+    "@opentelemetry/instrumentation-http": {
+      "@opentelemetry/core": "2.9.0"
+    },
+    "tmp": "0.2.7"
+  },
+  "dependencies": {
+    "ethers": "^6.13.0"
+  }
+}

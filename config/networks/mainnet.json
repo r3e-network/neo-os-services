@@ -1,0 +1,78 @@
+{
+  "network": "mainnet",
+  "nitro": {
+    "cvm_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+    "cvm_name": "oracle-morpheus-neo-r3e",
+    "public_api_url": "https://oracle.meshmini.app/mainnet",
+    "edge_public_url": "https://edge.meshmini.app/mainnet",
+    "control_plane_url": "https://control.meshmini.app",
+    "oracle_attestation_explorer_url": "",
+    "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
+    "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
+    "datafeed_attestation_explorer_url": ""
+  },
+  "neo_n3": {
+    "rpc_url": "https://api.n3index.dev/mainnet",
+    "rpc_urls": [
+      "https://api.n3index.dev/mainnet",
+      "https://mainnet1.neo.coz.io:443",
+      "https://mainnet2.neo.coz.io:443",
+      "http://seed1.neo.org:10332",
+      "http://seed2.neo.org:10332",
+      "http://seed3.neo.org:10332"
+    ],
+    "network_magic": 860833102,
+    "domains": {
+      "morpheus_oracle": "oracle.morpheus.neo",
+      "morpheus_callback_consumer": "callback.morpheus.neo",
+      "morpheus_datafeed": "pricefeed.morpheus.neo",
+      "morpheus_aa": "smartwallet.neo",
+      "morpheus_aa_alias": "aa.morpheus.neo",
+      "morpheus_neodid": "neodid.morpheus.neo"
+    },
+    "aa_subdomains": {
+      "core": "core.smartwallet.neo",
+      "web3auth": "web3auth.smartwallet.neo",
+      "recovery": "recovery.smartwallet.neo",
+      "tee": "teeverifier.smartwallet.neo",
+      "session": "sessionkey.smartwallet.neo",
+      "webauthn": "webauthn.smartwallet.neo",
+      "multisig": "multisig.smartwallet.neo",
+      "subscription": "subscription.smartwallet.neo",
+      "credential_hook": "credential.smartwallet.neo",
+      "whitelist_hook": "whitelist.smartwallet.neo",
+      "daily_limit_hook": "dailylimit.smartwallet.neo",
+      "token_hook": "tokenhook.smartwallet.neo",
+      "multi_hook": "multihook.smartwallet.neo",
+      "market": "market.smartwallet.neo",
+      "paymaster": "paymaster.smartwallet.neo"
+    },
+    "contracts": {
+      "morpheus_oracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+      "oracle_callback_consumer": "0xe1226268f2fe08bea67fb29e1c8fda0d7c8e9844",
+      "morpheus_datafeed": "0x03013f49c42a14546c8bbe58f9d434c3517fccab",
+      "abstract_account": "0x0268a387913b250166ddec032b03332690a1ef78",
+      "morpheus_neodid": "0xb81f31ea81e279793b30411b82c2e82078b63105",
+      "aa_address_market": "0xae7afe3a85ab08bfd1d4907b35ae8b80c75b3a69",
+      "aa_paymaster": "0xa0defa2bc6d7a71ba1e237149287c8ca4ff46caf"
+    },
+    "aa_runtime": {
+      "display_name": "UnifiedSmartWalletV3",
+      "abi_generation": "v3",
+      "core_deploy_tx": "0x029403034a14cd86f956c6e52dbd253476b3a70c3cfa41444c36255078d4ca11",
+      "core_update_tx": "",
+      "latest_mainnet_smoke_tx": "0xaabcfdf91e77f320bee204ea59ca0c98114b9c71c875a4cdac4abdbd4443ee57",
+      "legacy_core_hash": "0x9742b4ed62a84a886f404d36149da6147528ee33",
+      "legacy_core_update_tx": "0xb0e163734ffd0641b44c6091f373f0b09acdde03c693f465c97e6659f2dda035"
+    },
+    "aa_verifiers": {
+      "web3auth": "0xf5c452cd4ba29dcdc47026383568c0d8b38d9272",
+      "social_recovery": "0x198b3a9cec9bccc2110d19bd929b10374a9d034d",
+      "session_key": "0x3ba8333406e59f9fd83cf378b33706a33d9f3755"
+    },
+    "examples": {
+      "oracle_callback_consumer": "0x89b05cac00804648c666b47ecb1c57bc185821b7",
+      "feed_reader": "0x11e454261c21a32f1c9262472ca72a3156f9051f"
+    }
+  }
+}

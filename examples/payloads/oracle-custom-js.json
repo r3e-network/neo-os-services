@@ -1,0 +1,7 @@
+{
+  "provider": "twelvedata",
+  "symbol": "NEO-USD",
+  "json_path": "price",
+  "script": "function process(data) { return Number(data.price) > 2.5; }",
+  "target_chain": "neo_n3"
+}

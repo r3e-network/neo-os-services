@@ -1,0 +1,206 @@
+services:
+  mainnet-feed-worker:
+    image: ${MORPHEUS_NITRO_WORKER_IMAGE}
+    restart: unless-stopped
+    environment:
+      # Fail-closed: activates the child-process sandbox guard (permission-guard.js).
+      NODE_ENV: production
+      PORT: 8080
+      NITRO_SHARED_SECRET: ${NITRO_SHARED_SECRET}
+      NITRO_API_TOKEN: ${NITRO_API_TOKEN}
+      TWELVEDATA_API_KEY: ${TWELVEDATA_API_KEY:-}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY}
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      UPSTASH_REDIS_REST_URL: ${UPSTASH_REDIS_REST_URL}
+      UPSTASH_REDIS_REST_TOKEN: ${UPSTASH_REDIS_REST_TOKEN}
+      MORPHEUS_UPSTASH_GUARDS_ENABLED: ${MORPHEUS_UPSTASH_GUARDS_ENABLED}
+      MORPHEUS_UPSTASH_FAIL_CLOSED: ${MORPHEUS_UPSTASH_FAIL_CLOSED}
+      MORPHEUS_FEED_PAIR_REGISTRY_JSON: ${MORPHEUS_FEED_PAIR_REGISTRY_JSON:-}
+      MORPHEUS_RUNTIME_CONFIG_JSON: ${MAINNET_RUNTIME_CONFIG_JSON}
+      MORPHEUS_NETWORK: mainnet
+      CONTRACT_MORPHEUS_DATAFEED_HASH_MAINNET: ${CONTRACT_MORPHEUS_DATAFEED_HASH_MAINNET:-}
+      CONTRACT_MORPHEUS_ORACLE_HASH_MAINNET: ${CONTRACT_MORPHEUS_ORACLE_HASH_MAINNET:-}
+      NEO_RPC_URL_MAINNET: ${NEO_RPC_URL_MAINNET:-}
+      NEO_NETWORK_MAGIC_MAINNET: ${NEO_NETWORK_MAGIC_MAINNET:-}
+    expose:
+      - '8080'
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - morpheus-feed-data:/data
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  testnet-feed-worker:
+    image: ${MORPHEUS_NITRO_WORKER_IMAGE}
+    restart: unless-stopped
+    environment:
+      # Fail-closed: activates the child-process sandbox guard (permission-guard.js).
+      NODE_ENV: production
+      PORT: 8080
+      NITRO_SHARED_SECRET: ${NITRO_SHARED_SECRET}
+      NITRO_API_TOKEN: ${NITRO_API_TOKEN}
+      TWELVEDATA_API_KEY: ${TWELVEDATA_API_KEY:-}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY}
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      UPSTASH_REDIS_REST_URL: ${UPSTASH_REDIS_REST_URL}
+      UPSTASH_REDIS_REST_TOKEN: ${UPSTASH_REDIS_REST_TOKEN}
+      MORPHEUS_UPSTASH_GUARDS_ENABLED: ${MORPHEUS_UPSTASH_GUARDS_ENABLED}
+      MORPHEUS_UPSTASH_FAIL_CLOSED: ${MORPHEUS_UPSTASH_FAIL_CLOSED}
+      MORPHEUS_FEED_PAIR_REGISTRY_JSON: ${MORPHEUS_FEED_PAIR_REGISTRY_JSON:-}
+      MORPHEUS_RUNTIME_CONFIG_JSON: ${TESTNET_RUNTIME_CONFIG_JSON}
+      MORPHEUS_NETWORK: testnet
+    expose:
+      - '8080'
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - morpheus-feed-data:/data
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  feed-router:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      mainnet-feed-worker:
+        condition: service_healthy
+      testnet-feed-worker:
+        condition: service_healthy
+    ports:
+      - '${MORPHEUS_PUBLIC_PORT:-3000}:8088'
+    volumes:
+      - /tmp/feed-hub-caddy-data:/data
+      - /tmp/feed-hub-caddy-config:/config
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        cat >/etc/caddy/Caddyfile <<'EOF'
+        {
+          auto_https off
+          admin off
+        }
+
+        :8088 {
+          handle /testnet/* {
+            reverse_proxy testnet-feed-worker:8080 {
+              header_up X-Morpheus-Network testnet
+            }
+          }
+
+          handle /mainnet/* {
+            reverse_proxy mainnet-feed-worker:8080 {
+              header_up X-Morpheus-Network mainnet
+            }
+          }
+
+          handle {
+            reverse_proxy testnet-feed-worker:8080 {
+              header_up X-Morpheus-Network testnet
+            }
+          }
+        }
+        EOF
+        exec caddy run --config /etc/caddy/Caddyfile
+
+  mainnet-feed-relayer:
+    image: ${MORPHEUS_RELAYER_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      mainnet-feed-worker:
+        condition: service_healthy
+    environment:
+      NITRO_API_URL: http://mainnet-feed-worker:8080
+      NITRO_SHARED_SECRET: ${NITRO_SHARED_SECRET}
+      NITRO_API_TOKEN: ${NITRO_API_TOKEN}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY}
+      MORPHEUS_RUNTIME_CONFIG_JSON: ${MAINNET_RUNTIME_CONFIG_JSON}
+      MORPHEUS_HEARTBEAT_TIMEOUT_MS: ${MORPHEUS_HEARTBEAT_TIMEOUT_MS:-3000}
+      MORPHEUS_BETTERSTACK_RELAYER_HEARTBEAT_URL: ${MORPHEUS_BETTERSTACK_RELAYER_HEARTBEAT_URL:-}
+      MORPHEUS_BETTERSTACK_RELAYER_FEED_HEARTBEAT_URL: ${MORPHEUS_BETTERSTACK_RELAYER_FEED_HEARTBEAT_URL:-}
+      MORPHEUS_BETTERSTACK_RELAYER_FAILURE_URL: ${MORPHEUS_BETTERSTACK_RELAYER_FAILURE_URL:-}
+      # The mainnet DataFeed contract currently authorizes the worker key as
+      # its on-chain updater, while request fulfillment uses the oracle updater
+      # identity. Pin the feed-only relayer to the DataFeed updater identity so a
+      # shared hub env cannot accidentally select the request updater signer.
+      MORPHEUS_UPDATER_NEO_N3_WIF: ${MORPHEUS_WORKER_NEO_N3_WIF_MAINNET:-}
+      MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY: ${MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET:-}
+      MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET: ${MORPHEUS_WORKER_NEO_N3_WIF_MAINNET:-}
+      MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET: ${MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET:-}
+      MORPHEUS_RELAYER_NEO_N3_WIF: ${MORPHEUS_WORKER_NEO_N3_WIF_MAINNET:-}
+      MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY: ${MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET:-}
+      MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET: ${MORPHEUS_WORKER_NEO_N3_WIF_MAINNET:-}
+      MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_MAINNET: ${MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET:-}
+      MORPHEUS_RELAYER_MODE: feed_only
+      MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.feed_only.mainnet.json
+      MORPHEUS_NETWORK: mainnet
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - morpheus-feed-data:/data
+    healthcheck:
+      test: ['CMD', 'node', 'workers/morpheus-relayer/src/healthcheck.js']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+  testnet-feed-relayer:
+    image: ${MORPHEUS_RELAYER_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      testnet-feed-worker:
+        condition: service_healthy
+    environment:
+      NITRO_API_URL: http://testnet-feed-worker:8080
+      NITRO_SHARED_SECRET: ${NITRO_SHARED_SECRET}
+      NITRO_API_TOKEN: ${NITRO_API_TOKEN}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY}
+      MORPHEUS_RUNTIME_CONFIG_JSON: ${TESTNET_RUNTIME_CONFIG_JSON}
+      MORPHEUS_HEARTBEAT_TIMEOUT_MS: ${MORPHEUS_HEARTBEAT_TIMEOUT_MS:-3000}
+      MORPHEUS_BETTERSTACK_RELAYER_HEARTBEAT_URL: ${MORPHEUS_BETTERSTACK_RELAYER_HEARTBEAT_URL:-}
+      MORPHEUS_BETTERSTACK_RELAYER_FEED_HEARTBEAT_URL: ${MORPHEUS_BETTERSTACK_RELAYER_FEED_HEARTBEAT_URL:-}
+      MORPHEUS_BETTERSTACK_RELAYER_FAILURE_URL: ${MORPHEUS_BETTERSTACK_RELAYER_FAILURE_URL:-}
+      MORPHEUS_RELAYER_MODE: feed_only
+      MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.feed_only.testnet.json
+      MORPHEUS_NETWORK: testnet
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - morpheus-feed-data:/data
+    healthcheck:
+      test: ['CMD', 'node', 'workers/morpheus-relayer/src/healthcheck.js']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+volumes:
+  morpheus-feed-data:

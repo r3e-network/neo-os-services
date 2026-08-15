@@ -1,0 +1,33 @@
+{
+  "updated_at": "2026-07-17T14:09:28Z",
+  "neo_n3": {
+    "deployed_at": "2026-03-13T11:19:31.204Z",
+    "rpc_url": "https://testnet1.neo.coz.io:443",
+    "network_magic": 894710606,
+    "deployer_address": "NTmHjwiadq4g3VHpJ5FQigQcD4fF5m8TyX",
+    "deployer_script_hash": "0c3146e78efc42bfb7d4cc2e06e3efd063c01c56",
+    "oracle_hash": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+    "legacy_oracle_v1_hash": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+    "datafeed_hash": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
+    "abstract_account_hash": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
+    "aa_web3auth_verifier_hash": "0x7147f9a508594a7656a25f45d0a7a7dede7c227f",
+    "example_consumer_hash": "0x8c506f224d82e67200f20d9d5361f767f0756e3b",
+    "example_feed_reader_hash": "0xae9c17da3d8d1cc45b2a95f77ddce391b9bdcad4",
+    "allowlisted": true,
+    "consumer_oracle": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+    "consumer_oracle_note": "verified on-chain 2026-07-18: the example callback consumer is bound to the retired legacy v1 oracle (requestFromCallback lane), not the v2 kernel",
+    "aa_runtime": {
+      "display_name": "UnifiedSmartWalletV3",
+      "testnet_manifest_name": "UnifiedSmartWalletV3Testnet",
+      "updatecounter": 0
+    },
+    "transactions": {
+      "abstract_account_deploy": "0xbcee817781bb57e66d7373c25c1b951bbe7bce9ebc355fb38f7d23b21cc515c0",
+      "aa_web3auth_verifier_deploy": "0x94989befcc936007d32c49048087196f6fcfdb6bcceafce3fcbfd9a0ea10d211",
+      "consumer_deploy": null,
+      "feed_reader_deploy": null,
+      "allow_callback": null,
+      "set_oracle": null
+    }
+  }
+}

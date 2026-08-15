@@ -1,0 +1,15 @@
+# Production configuration is supplied by the linked Vercel project. Never
+# upload developer credentials or environment snapshots from this checkout.
+.env
+.env.*
+.vercel/
+
+# Local dependency, build, test, and diagnostic outputs are reproducible and
+# must not become deployment inputs.
+node_modules/
+.next/
+coverage/
+test-results/
+playwright-report/
+*.log
+*.tsbuildinfo

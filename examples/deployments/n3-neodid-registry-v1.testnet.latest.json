@@ -1,0 +1,54 @@
+{
+  "generated_at": "2026-05-03T08:15:05.271Z",
+  "network": "testnet",
+  "rpc_url": "https://testnet1.neo.coz.io:443",
+  "network_magic": 894710606,
+  "oracle_hash": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+  "callback_consumer_hash": "0x8c506f224d82e67200f20d9d5361f767f0756e3b",
+  "registry_hash": "0xce78439c990aa064dfe7ddb0e0769dcd253e2a0f",
+  "request_fee_status": {
+    "request_fee": "1000000",
+    "callback_credit": "139000000",
+    "deposit_amount": "0",
+    "deposit_txid": null,
+    "funding_txid": null
+  },
+  "action_request": {
+    "txid": "0xf08e53e04c9965b04fb476fe034439f6aeccb915d8c0521ca20f701e38153c32",
+    "request_id": "5253",
+    "payload": {
+      "provider": "github",
+      "provider_uid": "alice-gh-registry-v1",
+      "disposable_account": "0x6d0656f6dd91469db1c90cc1e574380613f43738",
+      "action_id": "vote:registry-v1:1777795978737",
+      "callback_encoding": "neo_n3_action_v1"
+    }
+  },
+  "compact_ticket": {
+    "disposable_account": "0x6d0656f6dd91469db1c90cc1e574380613f43738",
+    "action_id": "vote:registry-v1:1777795978737",
+    "action_nullifier": "0x9c2c949e992d3c58de1947b0f1de68624652686da2f8596f983dd3beced008d2",
+    "signature": "0x711d75aaa24a11e0b3d269e4c7b7e45fd338258e246f8643bd95ae7080e5e58c92050f239214a3302497d1d9ed6297e5fb09ab83e39593c90fb8b23a11a53119"
+  },
+  "wrong_witness_preview": {
+    "state": "FAULT",
+    "exception": "at instruction 2188 (ABORTMSG): ABORTMSG is executed. Reason: unauthorized"
+  },
+  "consume_probe": {
+    "set_verifier_txid": "0xfc102d5b8fcd165cd8bc8cca84879584fda3861839eaaaab3d459e0888f3f256",
+    "txid": "0xa2ac113ae69b8bca15936deba1e9f752d237133696040c6c1afb1b4318cb32ca",
+    "vmstate": "HALT",
+    "stack": [
+      {
+        "type": "Boolean",
+        "value": true
+      }
+    ],
+    "exception": ""
+  },
+  "replay_probe": {
+    "txid": "0xc0f83d00f6c0680b6db1d3a5af51faa17a9a148f24af86274de607d6841317a7",
+    "vmstate": "FAULT",
+    "exception": "at instruction 2229 (ABORTMSG): ABORTMSG is executed. Reason: action nullifier already used"
+  }
+}

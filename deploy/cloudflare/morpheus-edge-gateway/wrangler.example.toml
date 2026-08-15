@@ -1,0 +1,16 @@
+name = "morpheus-edge-gateway"
+main = "worker.mjs"
+compatibility_date = "2026-03-19"
+
+[vars]
+MORPHEUS_ORIGIN_URL = "https://your-default-nitro-worker.example.com"
+MORPHEUS_MAINNET_ORIGIN_URL = "https://your-mainnet-nitro-worker.example.com"
+MORPHEUS_TESTNET_ORIGIN_URL = "https://your-testnet-nitro-worker.example.com"
+MORPHEUS_MAINNET_FEED_ORIGIN_URL = "https://your-mainnet-datafeed-worker.example.com"
+MORPHEUS_TESTNET_FEED_ORIGIN_URL = "https://your-testnet-datafeed-worker.example.com"
+MORPHEUS_ORIGIN_TOKEN = "replace-me"
+UPSTASH_REDIS_REST_URL = ""
+
+[[routes]]
+pattern = "oracle.example.com/*"
+zone_name = "example.com"

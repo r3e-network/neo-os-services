@@ -1,0 +1,6 @@
+[Unit]
+Description=Morpheus feed freshness + updater GAS monitor (fails visibly on stale/low)
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/neoos/services/deploy/feed-pusher
+ExecStart=/usr/bin/node feed-monitor.mjs

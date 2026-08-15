@@ -1,0 +1,256 @@
+{
+  "generated_at": "2026-03-17T15:28:47.676Z",
+  "network": "testnet",
+  "aa_suite": {
+    "report_path": "../neo-abstract-account/sdk/docs/reports/v3-testnet-validation-suite.latest.json",
+    "stages": [
+      {
+        "id": "smoke",
+        "title": "V3 Smoke"
+      },
+      {
+        "id": "plugin_matrix",
+        "title": "V3 Plugin Matrix"
+      },
+      {
+        "id": "paymaster_policy",
+        "title": "V3 Paymaster Policy"
+      },
+      {
+        "id": "paymaster",
+        "title": "V3 Paymaster Relay"
+      }
+    ],
+    "smoke": {
+      "address": "NTmHjwiadq4g3VHpJ5FQigQcD4fF5m8TyX",
+      "coreHash": "0x9dea21b70f9b26b9e1e121a8a7d0a5d8e531fa32",
+      "web3AuthHash": "0xda11e67c71ff7c3cf107f1d53b5d8c3132480f3c",
+      "whitelistHash": "0x569519499ebf9a620bc3a907b2c074f4a25f1252",
+      "accountId": "0x9792e1be4c5fcee54421e63268fe6b2481165f84",
+      "virtualAddress": "NPHCKBEVHET6uGUxLsZL6yvebX7cJdh9qs",
+      "txids": {
+        "registerAccount": "0x0a0da79651849fdfd81e94ed22d9378eb77f083f8d40ee05fab564706d28a1d1",
+        "nativeExecute": "0xb7f69521e55a5e41540f29c4e2a7f44b0d58aae58b0eea85b4f383aa7f341a59",
+        "hookExecute": "0xb8234523eea22b995dff6813ebfd45186b279920c9ecb18b972e87d3a69efe4f",
+        "evmExecute": "0x663c489eabb5422e5f08c2d70de0def4288bc24f4c578c2276e2a751b6a3e118"
+      }
+    },
+    "plugin_matrix": {
+      "reportPath": "../neo-abstract-account/sdk/docs/reports/v3-testnet-plugin-matrix.latest.json",
+      "core": "0x1e3767bde710932db1e66ffbebf452e24e664584",
+      "mockTarget": "0xdb161689a758489bb848079e428fc6ffaa73a633",
+      "scenarios": [
+        "directConfigGuards",
+        "web3Auth",
+        "teeVerifier",
+        "webAuthnVerifier",
+        "sessionKeyVerifier",
+        "multiSigVerifier",
+        "subscriptionVerifier",
+        "zkEmailVerifier",
+        "whitelistHook",
+        "dailyLimitHook",
+        "tokenRestrictedHook",
+        "multiHook",
+        "neoDidCredentialHook"
+      ]
+    },
+    "paymaster_policy": {
+      "reportPath": "../neo-abstract-account/sdk/docs/reports/v3-testnet-paymaster-policy.latest.json",
+      "policyId": "testnet-aa",
+      "accountId": "0x0c3146e78efc42bfb7d4cc2e06e3efd063c01c56",
+      "approvalDigest": "4e6f87401838f21de14798e50a6eee0182c5a0877fd8461a306cb686254c1d49",
+      "attestationHash": "edfb69425055f7201d3c471c1c2b908ddaeec9f41c13f9ec5b4a9ebe4fe72a5f",
+      "deniedCases": [
+        "missingOperationHash",
+        "wrongDappId",
+        "wrongAccountId",
+        "wrongTargetContract",
+        "wrongMethod",
+        "gasTooHigh",
+        "wrongTargetChain"
+      ]
+    },
+    "paymaster_relay": {
+      "txid": "0xa04a52e2cc2c1ded62902e3766768b14c610c5cd4e56b333c89e1fc6a31b85c4",
+      "accountId": "0x0c3146e78efc42bfb7d4cc2e06e3efd063c01c56",
+      "policyId": "testnet-aa",
+      "approvalDigest": "1f2f0ffe978ababa1488a3b329fb7331aa14b8c87a12c4277977a8c160e29276",
+      "attestationHash": "f7ab98517618ab5cb9acf2e3455dc4236cb6186e077159051cb10b32199bc090",
+      "appId": "ddff154546fe22d15b65667156dd4b7c611e6093",
+      "vmstate": "HALT",
+      "stack": [
+        {
+          "type": "ByteString",
+          "value": "R0FT"
+        }
+      ]
+    }
+  },
+  "morpheus": {
+    "neodid": {
+      "report_path": "examples/deployments/n3-neodid-oracle-matrix.testnet.latest.json",
+      "total_cases": 7,
+      "successful_cases": 6,
+      "expected_failure_cases": 1,
+      "request_ids": ["159", "161", "162", "165", "167", "170", "171"]
+    },
+    "privacy": {
+      "report_path": "examples/deployments/n3-privacy-validation.testnet.latest.json",
+      "total_cases": 7,
+      "passing_cases": 7,
+      "request_ids": ["151", "152", "153", "154", "155", "156", "157"]
+    },
+    "builtins": {
+      "report_path": "examples/deployments/n3-builtins-validation.testnet.latest.json",
+      "total_builtins": 18,
+      "names": [
+        "hash.sha256",
+        "hash.keccak256",
+        "crypto.rsa_verify",
+        "math.modexp",
+        "math.polynomial",
+        "matrix.multiply",
+        "vector.cosine_similarity",
+        "merkle.root",
+        "zkp.public_signal_hash",
+        "zkp.proof_digest",
+        "zkp.witness_digest",
+        "zkp.groth16.prove.plan",
+        "zkp.plonk.prove.plan",
+        "fhe.batch_plan",
+        "fhe.noise_budget_estimate",
+        "fhe.rotation_plan",
+        "privacy.mask",
+        "privacy.add_noise"
+      ]
+    },
+    "automation": {
+      "report_path": "examples/deployments/n3-automation-validation.testnet.latest.json",
+      "register_request_id": "188",
+      "queued_request_id": "189",
+      "cancel_request_id": "194",
+      "register_success": true,
+      "queued_success": true,
+      "cancel_success": true
+    },
+    "automation_idempotency": {
+      "report_path": "examples/deployments/n3-automation-idempotency.testnet.latest.json",
+      "automation_id": "automation:neo_n3:e166c107-7322-45c9-bc30-ed6eba35b059",
+      "queued_request_key": "automation:neo_n3:automation:neo_n3:e166c107-7322-45c9-bc30-ed6eba35b059:1",
+      "queued_chain_request_id": "2221",
+      "queued_callback_success": true,
+      "execution_count": 1
+    },
+    "automation_cancel_race": {
+      "report_path": "examples/deployments/n3-automation-cancel-race.testnet.latest.json",
+      "automation_id": null,
+      "queued_chain_request_id": "3218",
+      "executed_after_cancel": false
+    },
+    "automation_deposit_exhaustion": {
+      "report_path": "examples/deployments/n3-automation-deposit-exhaustion.testnet.latest.json",
+      "shared_requester_hash": "0xa13e179ceef45703b25b3ed71fa039ccb0318e58",
+      "queued_runs": 1,
+      "failed_runs": 1,
+      "queued_chain_request_id": "3613",
+      "failed_error": "at instruction 2827 (ABORTMSG): ABORTMSG is executed. Reason: request fee not paid"
+    },
+    "callback_boundary": {
+      "report_path": "examples/deployments/n3-callback-boundary.testnet.latest.json",
+      "txid": "0x534ab2df0a94b01a4c52ded24c1a39635b6f7db2e394d7015713bd2b2598f227",
+      "vmstate": "FAULT",
+      "exception": "at instruction 966 (ABORTMSG): ABORTMSG is executed. Reason: unauthorized caller"
+    },
+    "neodid_registry_boundary": {
+      "report_path": "examples/deployments/n3-neodid-registry-boundary.testnet.latest.json",
+      "request_txid": "0xc1154a054a229dc8d17ccf1cb7d0090ababdf47d244b8e22d2aac828919dc700",
+      "registry_hash": "0x848d71cae70fdcb98b380bbeb74ec56584a5a536",
+      "wrong_witness_exception": "at instruction 2188 (ABORTMSG): ABORTMSG is executed. Reason: unauthorized",
+      "mismatch_txid": "0xd5e4918388059efea68b2f3c874ad14e2b19ea1e0c185891779a96cc34b22656",
+      "mismatch_exception": "at instruction 1703 (ABORTMSG): ABORTMSG is executed. Reason: invalid verification signature"
+    },
+    "neodid_registry_v1": {
+      "report_path": "examples/deployments/n3-neodid-registry-v1.testnet.latest.json",
+      "request_txid": "0xa488c763c511f0ed229817165d4476e28cf5695371ede9f6a0aa123608f1cd86",
+      "registry_hash": "0xf9c741aba8a07569aa77d65ab34926cf111316bd",
+      "consume_txid": "0x8f26c9e4b56721b96cdff924bdc429e1fec6aa4dc494475387d5e17eb8bf0916",
+      "consume_vmstate": "HALT",
+      "replay_txid": "0x3dcec34a6d0f83f814e7705c3b184c31ef846597404887d3dd7850bff85f61a4",
+      "replay_exception": "at instruction 2229 (ABORTMSG): ABORTMSG is executed. Reason: action nullifier already used"
+    },
+    "encrypted_ref_boundary": {
+      "report_path": "examples/deployments/n3-encrypted-ref-boundary.testnet.latest.json",
+      "matching_txid": "0xd96ca87ffe62c5bdfc7530e95f8a09393d30a199b5eae05d82f8d4c2db98532a",
+      "wrong_requester_txid": "0xa5efceb1f7f928953a4b1d662a13aa9bd7892d4ab4ec97d8a9d2c88419339143",
+      "wrong_requester_error": "encrypted ref requester mismatch",
+      "wrong_callback_txid": "0x342285c841711d072a2093568c7940bc00a9a40903b58a70c5932ae1af35e2cf",
+      "wrong_callback_error": "encrypted ref callback mismatch"
+    },
+    "fulfillment_replay": {
+      "report_path": "examples/deployments/n3-fulfillment-replay.testnet.latest.json",
+      "replay_txid": "0x6cdfe638dfc3fbaf26f4436b4dd695095a55bfa4e5e47ffde12b4c05b1d35ccd",
+      "replay_exception": "at instruction 4105 (ABORTMSG): ABORTMSG is executed. Reason: invalid verification signature",
+      "fulfill_txid": "0x571bda18695762a745b16a635caf794cfcf36aa2235f5bc615ffe10e18c55362",
+      "fulfill_vmstate": "HALT"
+    },
+    "aa_session_oracle_boundary": {
+      "report_path": "examples/deployments/n3-aa-session-oracle-boundary.testnet.latest.json",
+      "execute_txid": "0x5805fbe908d57f1d6933dbc0d0d939fd079a7d46ee663f9d56a204e4c8900199",
+      "request_id": "3948",
+      "wrong_target_exception": "at instruction 525 (ABORTMSG): ABORTMSG is executed. Reason: Target contract not permitted",
+      "wrong_method_exception": "at instruction 566 (ABORTMSG): ABORTMSG is executed. Reason: Method not permitted"
+    },
+    "aa_callback_replay_boundary": {
+      "report_path": "examples/deployments/n3-aa-callback-replay-boundary.testnet.latest.json",
+      "replay_txid": "0xe0011eacc573754f163100e9b399602eadff7b7c5dd941d5dbfe319891ef6b8b",
+      "replay_exception": "at instruction 3841 (ABORTMSG): ABORTMSG is executed. Reason: invalid verification signature",
+      "unlocked_a": true,
+      "unlocked_b": false
+    },
+    "aa_recovery_cross_account_boundary": {
+      "report_path": "examples/deployments/n3-aa-recovery-cross-account-boundary.testnet.latest.json",
+      "recovery_verifier_hash": "0x9e08c858774b7eb2844810247b61812d44604424",
+      "recovery_request_id": null,
+      "wrong_account_state": null,
+      "wrong_account_exception": null
+    },
+    "aa_paymaster_automation_oracle": {
+      "report_path": "examples/deployments/n3-aa-paymaster-automation-oracle.testnet.latest.json",
+      "paymaster_policy_id": "testnet-aa",
+      "relay_txid": "0xaccf0567ffeeb56c1beabba4779caca4d8cdde982351aab95f084154eefdf53b",
+      "automation_id": "automation:neo_n3:08aa0748-1f0d-4f1c-b34a-e2e6f0e1db10",
+      "queued_request_id": "3950",
+      "queued_mode": "scheduler",
+      "queued_callback_success": true
+    },
+    "integrated_attack_regression": {
+      "report_path": "examples/deployments/n3-integrated-attack-regression.testnet.latest.json",
+      "stage_count": 13,
+      "failed_stages": []
+    }
+  },
+  "executed_coverage": [
+    "AA V3 smoke execution",
+    "AA verifier and hook adversarial matrix",
+    "AA paymaster deny-path policy matrix",
+    "AA paymaster-sponsored relay execution",
+    "NeoDID Oracle callback binding and ticket issuance",
+    "Privacy oracle encrypted parameter and custom function matrix",
+    "Builtin compute catalog",
+    "Automation register / queue / cancel flow",
+    "Sequential automation duplicate-queue suppression under back-to-back relayer ticks",
+    "Automation cancellation-race execution probe",
+    "Automation shared-credit deposit exhaustion fail-closed probe",
+    "Callback consumer direct injection rejection",
+    "NeoDID action ticket JSON callback boundary rejection",
+    "NeoDID compact action ticket registry consumption and replay rejection",
+    "encrypted_params_ref requester and callback binding enforcement",
+    "fulfillment signature request-id replay rejection",
+    "AA session-key downstream Morpheus Oracle boundary enforcement",
+    "AA-bound callback replay rejection with account-scoped pending context",
+    "AA recovery ticket cross-account replay rejection",
+    "AA paymaster-sponsored automation registration with downstream Oracle execution proof"
+  ],
+  "remaining_integrated_gaps": []
+}

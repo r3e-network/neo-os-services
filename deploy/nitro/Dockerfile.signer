@@ -1,0 +1,40 @@
+# Stage 1: build the static NSM attestation helper (no host Go toolchain needed).
+FROM golang:1.22-bookworm AS nsmbuild
+WORKDIR /build
+COPY deploy/nitro/nsm-attest/main.go ./main.go
+RUN go mod init nsm-attest \
+  && go get github.com/hf/nsm@latest \
+  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /nsm-attest .
+
+# Stage 2: the Node signer runtime.
+FROM node:22-bookworm-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates socat \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm install --omit=dev --no-audit --no-fund @cityofzion/neon-js@^5.8.1
+
+COPY config ./config
+# scripts/lib-neo-signers.mjs is a thin shim that imports the shared core via the
+# relative path ../packages/shared/src/neo-signers-core.js (no workspace symlink in
+# this minimal image), so the core file must be shipped at that exact location.
+COPY scripts/lib-neo-signers.mjs ./scripts/lib-neo-signers.mjs
+# package.json (type: module) + the core file: lets the .js core resolve as ESM in
+# this image (the root package.json has no "type"). No deps are installed from it.
+COPY packages/shared/package.json ./packages/shared/package.json
+COPY packages/shared/src/neo-signers-core.js ./packages/shared/src/neo-signers-core.js
+COPY deploy/nitro/nitro-signer-server.mjs ./deploy/nitro/nitro-signer-server.mjs
+COPY deploy/nitro/entrypoint-signer.sh ./deploy/nitro/entrypoint-signer.sh
+COPY --from=nsmbuild /nsm-attest /app/bin/nsm-attest
+RUN chmod +x /app/deploy/nitro/entrypoint-signer.sh /app/bin/nsm-attest
+
+ENV MORPHEUS_NETWORK=mainnet
+ENV PORT=8080
+ENV NITRO_SIGNER_VSOCK_PORT=8787
+ENV NITRO_ATTEST_BIN=/app/bin/nsm-attest
+
+ENTRYPOINT ["/app/deploy/nitro/entrypoint-signer.sh"]

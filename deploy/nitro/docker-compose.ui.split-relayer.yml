@@ -1,0 +1,86 @@
+services:
+  nitro-worker:
+    image: ${MORPHEUS_NITRO_WORKER_IMAGE}
+    restart: unless-stopped
+    environment:
+      # Fail-closed: activates the child-process sandbox guard (permission-guard.js).
+      NODE_ENV: production
+      PORT: ${NITRO_WORKER_PORT}
+      NITRO_SHARED_SECRET: ${NITRO_SHARED_SECRET}
+      NITRO_API_TOKEN: ${NITRO_API_TOKEN}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      MORPHEUS_FEED_PAIR_REGISTRY_JSON: ${MORPHEUS_FEED_PAIR_REGISTRY_JSON:-}
+      MORPHEUS_RUNTIME_CONFIG_JSON: ${MORPHEUS_RUNTIME_CONFIG_JSON}
+    expose:
+      - '${NITRO_WORKER_PORT}'
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - morpheus-data:/data
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:' + (process.env.PORT || 8080) + '/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      nitro-worker:
+        condition: service_healthy
+    ports:
+      - '${MORPHEUS_PUBLIC_PORT:-3000}:80'
+    volumes:
+      - /tmp/data:/data
+      - /tmp/config:/config
+    command: |
+      caddy reverse-proxy --from :80 --to nitro-worker:${NITRO_WORKER_PORT}
+
+  morpheus-feed-relayer:
+    image: ${MORPHEUS_RELAYER_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      nitro-worker:
+        condition: service_healthy
+    environment:
+      NITRO_API_URL: http://nitro-worker:${NITRO_WORKER_PORT}
+      NITRO_SHARED_SECRET: ${NITRO_SHARED_SECRET}
+      NITRO_API_TOKEN: ${NITRO_API_TOKEN}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      MORPHEUS_RUNTIME_CONFIG_JSON: ${MORPHEUS_RUNTIME_CONFIG_JSON}
+      MORPHEUS_RELAYER_MODE: feed_only
+      MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.feed_only.${MORPHEUS_NETWORK}.${MORPHEUS_RELAYER_NEO_N3_START_BLOCK}.json
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - morpheus-data:/data
+
+  morpheus-request-relayer:
+    image: ${MORPHEUS_RELAYER_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      nitro-worker:
+        condition: service_healthy
+    environment:
+      NITRO_API_URL: http://nitro-worker:${NITRO_WORKER_PORT}
+      NITRO_SHARED_SECRET: ${NITRO_SHARED_SECRET}
+      NITRO_API_TOKEN: ${NITRO_API_TOKEN}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      MORPHEUS_RUNTIME_CONFIG_JSON: ${MORPHEUS_RUNTIME_CONFIG_JSON}
+      MORPHEUS_RELAYER_MODE: requests_only
+      MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.requests_only.${MORPHEUS_NETWORK}.${MORPHEUS_RELAYER_NEO_N3_START_BLOCK}.json
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - morpheus-data:/data
+
+volumes:
+  morpheus-data:

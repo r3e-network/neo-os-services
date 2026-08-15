@@ -1,0 +1,74 @@
+{
+  "network": "testnet",
+  "nitro": {
+    "cvm_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+    "cvm_name": "oracle-morpheus-neo-r3e",
+    "public_api_url": "https://oracle.meshmini.app/testnet",
+    "edge_public_url": "https://edge.meshmini.app/testnet",
+    "control_plane_url": "https://control.meshmini.app",
+    "oracle_attestation_explorer_url": "",
+    "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
+    "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
+    "datafeed_attestation_explorer_url": ""
+  },
+  "neo_n3": {
+    "rpc_url": "https://api.n3index.dev/testnet",
+    "rpc_urls": [
+      "https://api.n3index.dev/testnet",
+      "https://testnet1.neo.coz.io:443",
+      "http://seed1t5.neo.org:20332",
+      "http://seed2t5.neo.org:20332",
+      "http://seed3t5.neo.org:20332",
+      "http://seed4t5.neo.org:20332",
+      "http://seed5t5.neo.org:20332",
+      "http://seed3.neo.org:20332",
+      "http://seed4.neo.org:20332",
+      "http://seed5.neo.org:20332"
+    ],
+    "network_magic": 894710606,
+    "domains": {
+      "morpheus_oracle": "",
+      "morpheus_datafeed": "",
+      "morpheus_aa": "",
+      "morpheus_aa_alias": "",
+      "morpheus_neodid": ""
+    },
+    "contracts": {
+      "morpheus_oracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+      "morpheus_oracle_legacy_v1_retired": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+      "oracle_callback_consumer": "0x8c506f224d82e67200f20d9d5361f767f0756e3b",
+      "morpheus_datafeed": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
+      "abstract_account": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
+      "morpheus_neodid": ""
+    },
+    "aa_runtime": {
+      "display_name": "UnifiedSmartWalletV3",
+      "abi_generation": "v3",
+      "core_deploy_tx": "0xbcee817781bb57e66d7373c25c1b951bbe7bce9ebc355fb38f7d23b21cc515c0",
+      "core_update_tx": "0x62148cca4a7bb15efa288f6bc80cda4d86e4f7ffcdf99234c7180b5c5daa1202"
+    },
+    "aa_subdomains": {
+      "core": "",
+      "web3auth": "",
+      "recovery": "",
+      "tee": "",
+      "session": "",
+      "webauthn": "",
+      "multisig": "",
+      "subscription": "",
+      "credential_hook": "",
+      "whitelist_hook": "",
+      "daily_limit_hook": "",
+      "token_hook": "",
+      "multi_hook": ""
+    },
+    "aa_verifiers": {
+      "web3auth": "0x7147f9a508594a7656a25f45d0a7a7dede7c227f",
+      "social_recovery": ""
+    },
+    "examples": {
+      "oracle_callback_consumer": "0x8c506f224d82e67200f20d9d5361f767f0756e3b",
+      "feed_reader": "0xae9c17da3d8d1cc45b2a95f77ddce391b9bdcad4"
+    }
+  }
+}

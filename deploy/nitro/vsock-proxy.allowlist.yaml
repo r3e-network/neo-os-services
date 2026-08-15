@@ -1,0 +1,54 @@
+# Morpheus Oracle enclave egress allow-list (vsock-proxy).
+#
+# The Nitro enclave has NO network interface. All outbound traffic goes over
+# vsock to the host's `vsock-proxy`, which forwards ONLY to the host:port entries
+# below. The enclave performs END-TO-END TLS to the real hostname itself (Node
+# fetch/undici with the image's bundled ca-certificates), so the host vsock-proxy
+# forwards opaque TLS bytes and CANNOT MITM. This file is the complete set of
+# destinations the deterministic in-enclave lanes touch — enumerated from the
+# code (file:line cited per entry), verified 2026-06-14.
+#
+# Usage on the box (AWS vsock-proxy supports a YAML allowlist via
+# `--config <file>`):
+#   vsock-proxy <local-vsock-port> <addr> <port> --config vsock-proxy.allowlist.yaml
+# The standard pattern runs one vsock-proxy per destination, all pointed at this
+# single shared allowlist file (the proxy refuses any addr:port not listed here).
+#
+# HARD REQUIREMENTS for the no-MITM guarantee (see design §3) — applied via image
+# ENV + box runtime env, NOT here:
+#   - Force HTTPS-only endpoints in-enclave (drop the seedN.neo.org:10332 HTTP
+#     defaults via config/networks/* override). HTTP plaintext over the proxy is
+#     MITM-able and is intentionally NOT allow-listed.
+#   - MORPHEUS_ALLOW_UNSAFE_PROVIDER_BASE_URL_OVERRIDE is hard-disabled in the
+#     image (Dockerfile.enclave) so a host cannot redirect a provider off-list.
+#   - The arbitrary-URL lane (oracle.fetch / oracle.smart_fetch with payload.url)
+#     DOES reach the in-TEE worker via the execution-plane passthrough; its
+#     outbound host is gated ONLY by THIS allow-list (fail-closed). It is NOT
+#     "excluded by construction" — keep this list tight (and consider also setting
+#     ORACLE_HTTP_ALLOWLIST in the image for an app-layer match). See EGRESS-1.
+
+allowlist:
+  # --- Price / feed providers (workers/nitro-worker/src/oracle/providers.js) ---
+  - { address: api.twelvedata.com, port: 443 } # providers.js:490 (TWELVEDATA_API_KEY)
+  - { address: api1.binance.com, port: 443 } # providers.js:521 (binance-spot default base)
+  - { address: api.coinbase.com, port: 443 } # providers.js:541 (coinbase-spot)
+
+  # --- Neo N3 RPC + indexer ---
+  - { address: api.n3index.dev, port: 443 } # relayer/config.js:24,32,469 (RPC + indexer; live box)
+  - { address: mainnet1.neo.coz.io, port: 443 } # config/networks/mainnet.json
+  - { address: mainnet2.neo.coz.io, port: 443 } # config/networks/mainnet.json
+  - { address: testnet1.neo.coz.io, port: 443 } # config/networks/testnet.json (staging)
+
+  # --- Neo X (EVM) RPC — NeoDID message-reveal lane + relayer neox ---
+  - { address: neoxt4seed1.ngd.network, port: 443 } # relayer/config.js:523,535,540
+  - { address: neoxt4seed2.ngd.network, port: 443 } # relayer/config.js:540
+
+  # --- NeoDID web3auth JWKS (verify id_token in-enclave) ---
+  - { address: api-auth.web3auth.io, port: 443 } # neodid/index.js:182 (createRemoteJWKSet)
+
+  # --- Supabase (provider config + feed snapshots; durable feed baseline) ---
+  - { address: przhhxbovqwopibssjzr.supabase.co, port: 443 } # providers.js:161 + feed-state.js (morpheus project ref)
+
+  # --- AWS (key material + KMS-attested decrypt; us-east-1 default) ---
+  - { address: secretsmanager.us-east-1.amazonaws.com, port: 443 } # platform/nitro-signer.js:86,88 (AWS_REGION default us-east-1)
+  - { address: kms.us-east-1.amazonaws.com, port: 443 } # KMS-attested decrypt of confidential/NeoDID masters

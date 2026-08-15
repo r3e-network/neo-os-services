@@ -1,0 +1,21 @@
+{
+  "schema": "neoos.credits-v2-batch-root-test-vectors/v1",
+  "algorithm": "sha256(abi.encode(string,uint256,address,uint256,uint256,uint256,address[],int256[]))",
+  "domain": "MiniAppCreditsV2:settlement:v1",
+  "vectors": [
+    {
+      "name": "two-sorted-users-negative-deltas",
+      "chainId": "47763",
+      "contract": "0x1111111111111111111111111111111111111111",
+      "epoch": "7",
+      "windowStartExclusive": "42",
+      "windowEndInclusive": "99",
+      "users": [
+        "0x0000000000000000000000000000000000001000",
+        "0x0000000000000000000000000000000000002000"
+      ],
+      "deltas": ["-3", "-125"],
+      "expectedBatchRoot": "0x921e831a353e0d441155568584e4b7c97523308dfeffd1c95fd89bdb2e63f9e1"
+    }
+  ]
+}

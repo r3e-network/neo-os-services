@@ -1,0 +1,16 @@
+{
+  auto_https disable_redirects
+}
+
+:80 {
+  encode zstd gzip
+
+  @health path /health
+  handle @health {
+    reverse_proxy nitro-worker:8080
+  }
+
+  handle {
+    reverse_proxy nitro-worker:8080
+  }
+}

@@ -1,0 +1,13 @@
+# Foundry config for the EVM (Neo X) mirror contracts.
+# Offline test harness — cheatcodes are reached via the built-in vm address with a
+# local Vm interface declaration (test/TestBase.sol), so no forge-std fetch is needed.
+[profile.default]
+src = "."
+test = "test"
+out = "build/forge-out"
+libs = []
+solc = "0.8.35"
+evm_version = "paris"
+optimizer = true
+optimizer_runs = 200
+auto_detect_remappings = false

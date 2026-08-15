@@ -1,0 +1,211 @@
+{
+  "generated_at": "2026-05-03T07:08:44.030Z",
+  "network": "testnet",
+  "neo_n3": {
+    "consumer_hash": "0x8c506f224d82e67200f20d9d5361f767f0756e3b",
+    "feed_reader_hash": "0xae9c17da3d8d1cc45b2a95f77ddce391b9bdcad4",
+    "oracle_hash": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+    "datafeed_hash": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
+    "request_fee": "1000000",
+    "request_credit": "20000000",
+    "provider_request": {
+      "txid": "0x0fa4fc23fb3a3e503fc42c2ed83481b6bc7a92f650655f7de95473eb08405f0d",
+      "request_id": "5207",
+      "callback": {
+        "request_type": "privacy_oracle",
+        "success": true,
+        "result_text": "{\"version\":\"morpheus-result/v1\",\"request_type\":\"privacy_oracle\",\"module_id\":\"oracle.fetch\",\"operation\":\"privacy_oracle\",\"success\":true,\"result\":{\"mode\":\"fetch\",\"target_chain\":\"neo_n3\",\"request_source\":\"morpheus-relayer:neo_n3\",\"upstream_status\":200,\"extracted_value\":\"2.762\",\"result\":\"2.762\"},\"verification\":{\"output_hash\":\"d6666eb233651aef8dee941c8ba1b680ca5581af652f888ce9a641d7d355947b\",\"attestation_hash\":\"d6666eb233651aef8dee941c8ba1b680ca5581af652f888ce9a641d7d355947b\",\"signature\":\"585846b4c1710a845b54de1af552826e7a879859b5bc339d02fd68319aea5c06597e4a07688b5fbf6bfa7c8595c3e482e59a4058de175ab0e0d16a4963e6738f\",\"public_key\":\"02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4\",\"tee_attestation\":{\"app_id\":\"ddff154546fe22d15b65667156dd4b7c611e6093\",\"compose_hash\":\"04d2f04f8068b5ee9e208df5d945e3419655827b5c9c4fc31ba7632607b523ee\",\"report_data\":\"d6666eb233651aef8dee941c8ba1b680ca5581af652f888ce9a641d7d355947b0000000000000000000000000000000000000000000000000000000000000000\",\"quote_hash\":\"8c82fc849b2b6d03bbbb7d1d52fe9f92b95c680b018baed5cef9596058073018\"}}}",
+        "result_json": {
+          "version": "morpheus-result/v1",
+          "request_type": "privacy_oracle",
+          "module_id": "oracle.fetch",
+          "operation": "privacy_oracle",
+          "success": true,
+          "result": {
+            "mode": "fetch",
+            "target_chain": "neo_n3",
+            "request_source": "morpheus-relayer:neo_n3",
+            "upstream_status": 200,
+            "extracted_value": "2.762",
+            "result": "2.762"
+          },
+          "verification": {
+            "output_hash": "d6666eb233651aef8dee941c8ba1b680ca5581af652f888ce9a641d7d355947b",
+            "attestation_hash": "d6666eb233651aef8dee941c8ba1b680ca5581af652f888ce9a641d7d355947b",
+            "signature": "585846b4c1710a845b54de1af552826e7a879859b5bc339d02fd68319aea5c06597e4a07688b5fbf6bfa7c8595c3e482e59a4058de175ab0e0d16a4963e6738f",
+            "public_key": "02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4",
+            "tee_attestation": {
+              "app_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+              "compose_hash": "04d2f04f8068b5ee9e208df5d945e3419655827b5c9c4fc31ba7632607b523ee",
+              "report_data": "d6666eb233651aef8dee941c8ba1b680ca5581af652f888ce9a641d7d355947b0000000000000000000000000000000000000000000000000000000000000000",
+              "quote_hash": "8c82fc849b2b6d03bbbb7d1d52fe9f92b95c680b018baed5cef9596058073018"
+            }
+          }
+        },
+        "error_text": ""
+      }
+    },
+    "compute_request": {
+      "txid": "0x898822352377737073d49815dbebed5a497cf2abc6c3c710f4fb070c2d4a0b9f",
+      "request_id": "5208",
+      "callback": {
+        "request_type": "compute",
+        "success": true,
+        "result_text": "{\"version\":\"morpheus-result/v1\",\"request_type\":\"compute\",\"module_id\":\"compute.run\",\"operation\":\"compute\",\"success\":true,\"result\":{\"mode\":\"builtin\",\"function\":\"math.modexp\",\"target_chain\":\"neo_n3\",\"result\":{\"value\":\"4\"}},\"verification\":{\"output_hash\":\"b0ddf9861e910df24dfde9742431d1b3ec9ba81a7570f3c3c715bec08040266d\",\"attestation_hash\":\"b0ddf9861e910df24dfde9742431d1b3ec9ba81a7570f3c3c715bec08040266d\",\"signature\":\"8280f92fa62cb38bf44fd1622b634f93a7aeee2df590d01abf7870fc4fc48158d0863cbda6d3821dc61eb5050946057102b6216abdda09ec8b313df069c1f65a\",\"public_key\":\"02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4\",\"tee_attestation\":{\"app_id\":\"ddff154546fe22d15b65667156dd4b7c611e6093\",\"compose_hash\":\"04d2f04f8068b5ee9e208df5d945e3419655827b5c9c4fc31ba7632607b523ee\",\"report_data\":\"b0ddf9861e910df24dfde9742431d1b3ec9ba81a7570f3c3c715bec08040266d0000000000000000000000000000000000000000000000000000000000000000\",\"quote_hash\":\"4097468b9d69f3715edabc5f60a4a17f9a0c18ff963eb9f0064d44544b650668\"}}}",
+        "result_json": {
+          "version": "morpheus-result/v1",
+          "request_type": "compute",
+          "module_id": "compute.run",
+          "operation": "compute",
+          "success": true,
+          "result": {
+            "mode": "builtin",
+            "function": "math.modexp",
+            "target_chain": "neo_n3",
+            "result": {
+              "value": "4"
+            }
+          },
+          "verification": {
+            "output_hash": "b0ddf9861e910df24dfde9742431d1b3ec9ba81a7570f3c3c715bec08040266d",
+            "attestation_hash": "b0ddf9861e910df24dfde9742431d1b3ec9ba81a7570f3c3c715bec08040266d",
+            "signature": "8280f92fa62cb38bf44fd1622b634f93a7aeee2df590d01abf7870fc4fc48158d0863cbda6d3821dc61eb5050946057102b6216abdda09ec8b313df069c1f65a",
+            "public_key": "02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4",
+            "tee_attestation": {
+              "app_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+              "compose_hash": "04d2f04f8068b5ee9e208df5d945e3419655827b5c9c4fc31ba7632607b523ee",
+              "report_data": "b0ddf9861e910df24dfde9742431d1b3ec9ba81a7570f3c3c715bec08040266d0000000000000000000000000000000000000000000000000000000000000000",
+              "quote_hash": "4097468b9d69f3715edabc5f60a4a17f9a0c18ff963eb9f0064d44544b650668"
+            }
+          }
+        },
+        "error_text": ""
+      }
+    },
+    "sponsored_provider_request": {
+      "txid": "0x93b2c64d412132973f90778ceb657f63a5c1e09eeb39fbc714a8ff7f8f23677b",
+      "request_id": "5209",
+      "callback": {
+        "request_type": "privacy_oracle",
+        "success": true,
+        "result_text": "{\"version\":\"morpheus-result/v1\",\"request_type\":\"privacy_oracle\",\"module_id\":\"oracle.fetch\",\"operation\":\"privacy_oracle\",\"success\":true,\"result\":{\"mode\":\"fetch\",\"target_chain\":\"neo_n3\",\"request_source\":\"morpheus-relayer:neo_n3\",\"upstream_status\":200,\"extracted_value\":\"2.765\",\"result\":\"2.765\"},\"verification\":{\"output_hash\":\"6c7974841f76cc5b3ee2b6d59674d7850a35ac1f4465de1f6e3ec7fd88a5f831\",\"attestation_hash\":\"6c7974841f76cc5b3ee2b6d59674d7850a35ac1f4465de1f6e3ec7fd88a5f831\",\"signature\":\"4a546dad0ddee3e55b8f7e95e5f28be60955ee40f0f91ab7db9c51fb1b79bc0d45bb942b54f10148945b88e34a3767b77cb1dbda26ab49b6d62048b5743d85fe\",\"public_key\":\"02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4\",\"tee_attestation\":{\"app_id\":\"ddff154546fe22d15b65667156dd4b7c611e6093\",\"compose_hash\":\"04d2f04f8068b5ee9e208df5d945e3419655827b5c9c4fc31ba7632607b523ee\",\"report_data\":\"6c7974841f76cc5b3ee2b6d59674d7850a35ac1f4465de1f6e3ec7fd88a5f8310000000000000000000000000000000000000000000000000000000000000000\",\"quote_hash\":\"7015ea9f12305b6b89347e4373d065ed5e26d8a5246a14ea57d3d20221a740e9\"}}}",
+        "result_json": {
+          "version": "morpheus-result/v1",
+          "request_type": "privacy_oracle",
+          "module_id": "oracle.fetch",
+          "operation": "privacy_oracle",
+          "success": true,
+          "result": {
+            "mode": "fetch",
+            "target_chain": "neo_n3",
+            "request_source": "morpheus-relayer:neo_n3",
+            "upstream_status": 200,
+            "extracted_value": "2.765",
+            "result": "2.765"
+          },
+          "verification": {
+            "output_hash": "6c7974841f76cc5b3ee2b6d59674d7850a35ac1f4465de1f6e3ec7fd88a5f831",
+            "attestation_hash": "6c7974841f76cc5b3ee2b6d59674d7850a35ac1f4465de1f6e3ec7fd88a5f831",
+            "signature": "4a546dad0ddee3e55b8f7e95e5f28be60955ee40f0f91ab7db9c51fb1b79bc0d45bb942b54f10148945b88e34a3767b77cb1dbda26ab49b6d62048b5743d85fe",
+            "public_key": "02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4",
+            "tee_attestation": {
+              "app_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+              "compose_hash": "04d2f04f8068b5ee9e208df5d945e3419655827b5c9c4fc31ba7632607b523ee",
+              "report_data": "6c7974841f76cc5b3ee2b6d59674d7850a35ac1f4465de1f6e3ec7fd88a5f8310000000000000000000000000000000000000000000000000000000000000000",
+              "quote_hash": "7015ea9f12305b6b89347e4373d065ed5e26d8a5246a14ea57d3d20221a740e9"
+            }
+          }
+        },
+        "error_text": ""
+      },
+      "fee_payer_mode": "registered_app_fee_payer",
+      "account_credit_before": "20000000",
+      "account_credit_after": "20000000",
+      "consumer_credit_before": "182000000",
+      "consumer_credit_after": "182000000"
+    },
+    "custom_oracle_request": {
+      "txid": "0xe8f219e916c279e03c47388ef34011310475cff0677f4f1ba276fa19eb7cd6b6",
+      "request_id": "5210",
+      "callback": {
+        "request_type": "oracle",
+        "success": true,
+        "result_text": "{\"version\":\"morpheus-result/v1\",\"request_type\":\"oracle\",\"module_id\":\"oracle.fetch\",\"operation\":\"oracle\",\"success\":true,\"result\":{\"mode\":\"fetch\",\"target_chain\":\"neo_n3\",\"request_source\":\"morpheus-relayer:neo_n3\",\"upstream_status\":200,\"extracted_value\":\"neo-morpheus\",\"result\":\"neo-morpheus\"},\"verification\":{\"output_hash\":\"88f6521f7268720b8d1a27c2c3c75df3007cd8698769e053fd3b0fa9183be8ae\",\"attestation_hash\":\"88f6521f7268720b8d1a27c2c3c75df3007cd8698769e053fd3b0fa9183be8ae\",\"signature\":\"146edf520e91d077cbdd7770a0cf98344c2087eb84cbd9faa5f208665f68fba6736e3b28bb614017cda494c565018f1dcdb3a8e96b8f76de526420b6a2d137ba\",\"public_key\":\"02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4\",\"tee_attestation\":{\"app_id\":\"ddff154546fe22d15b65667156dd4b7c611e6093\",\"compose_hash\":\"04d2f04f8068b5ee9e208df5d945e3419655827b5c9c4fc31ba7632607b523ee\",\"report_data\":\"88f6521f7268720b8d1a27c2c3c75df3007cd8698769e053fd3b0fa9183be8ae0000000000000000000000000000000000000000000000000000000000000000\",\"quote_hash\":\"80b424f545be7db97bcf0bdad41c6b5ac62ddfb4fba586d25f36416e13570e5f\"}}}",
+        "result_json": {
+          "version": "morpheus-result/v1",
+          "request_type": "oracle",
+          "module_id": "oracle.fetch",
+          "operation": "oracle",
+          "success": true,
+          "result": {
+            "mode": "fetch",
+            "target_chain": "neo_n3",
+            "request_source": "morpheus-relayer:neo_n3",
+            "upstream_status": 200,
+            "extracted_value": "neo-morpheus",
+            "result": "neo-morpheus"
+          },
+          "verification": {
+            "output_hash": "88f6521f7268720b8d1a27c2c3c75df3007cd8698769e053fd3b0fa9183be8ae",
+            "attestation_hash": "88f6521f7268720b8d1a27c2c3c75df3007cd8698769e053fd3b0fa9183be8ae",
+            "signature": "146edf520e91d077cbdd7770a0cf98344c2087eb84cbd9faa5f208665f68fba6736e3b28bb614017cda494c565018f1dcdb3a8e96b8f76de526420b6a2d137ba",
+            "public_key": "02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4",
+            "tee_attestation": {
+              "app_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+              "compose_hash": "04d2f04f8068b5ee9e208df5d945e3419655827b5c9c4fc31ba7632607b523ee",
+              "report_data": "88f6521f7268720b8d1a27c2c3c75df3007cd8698769e053fd3b0fa9183be8ae0000000000000000000000000000000000000000000000000000000000000000",
+              "quote_hash": "80b424f545be7db97bcf0bdad41c6b5ac62ddfb4fba586d25f36416e13570e5f"
+            }
+          }
+        },
+        "error_text": ""
+      }
+    },
+    "onchain_feed_snapshot": {
+      "pair": "TWELVEDATA:NEO-USD",
+      "round_id": "1773066711",
+      "price": "2765000",
+      "timestamp": "1777791953",
+      "attestation_hash": "0x8cfd9ec57e51295cf0b50607f0d98f07e8ab2916878a8a03a370b770f875e96b",
+      "source_set_id": "1",
+      "reader_pairs": [
+        "TWELVEDATA:NEO-USD",
+        "TWELVEDATA:GAS-USD",
+        "TWELVEDATA:FLM-USD",
+        "TWELVEDATA:TRX-USD",
+        "TWELVEDATA:SOL-USD",
+        "TWELVEDATA:ETH-USD",
+        "TWELVEDATA:PAXG-USD",
+        "TWELVEDATA:BTC-USD",
+        "TWELVEDATA:WTI-USD",
+        "TWELVEDATA:NATGAS-USD",
+        "TWELVEDATA:COPPER-USD",
+        "0x4453552d544e4552423a4154414445564c455754",
+        "0x4453552d54414548573a4154414445564c455754",
+        "TWELVEDATA:CORN-USD",
+        "TWELVEDATA:BNB-USD",
+        "TWELVEDATA:XRP-USD",
+        "TWELVEDATA:SOY-USD",
+        "TWELVEDATA:USDT-USD",
+        "TWELVEDATA:USDC-USD",
+        "0x4453552d4c474f4f473a4154414445564c455754",
+        "TWELVEDATA:AMZN-USD",
+        "TWELVEDATA:DOGE-USD",
+        "TWELVEDATA:MSFT-USD",
+        "TWELVEDATA:AAPL-USD",
+        "TWELVEDATA:SPY-USD",
+        "TWELVEDATA:QQQ-USD",
+        "TWELVEDATA:META-USD",
+        "TWELVEDATA:NVDA-USD",
+        "TWELVEDATA:TSLA-USD",
+        "TWELVEDATA:JPY-USD",
+        "TWELVEDATA:GLD-USD",
+        "TWELVEDATA:GBP-USD",
+        "TWELVEDATA:EUR-USD",
+        "TWELVEDATA:CNY-USD",
+        "TWELVEDATA:XAG-USD",
+        "TWELVEDATA:XAU-USD"
+      ]
+    }
+  }
+}

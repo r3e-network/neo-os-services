@@ -1,0 +1,21 @@
+[Unit]
+Description=Morpheus Nitro KMS vsock-proxy (in-enclave kmstool-enclave-cli -> AWS KMS)
+Documentation=https://github.com/r3e-network/neo-os-services deploy/nitro/KMS-ATTESTATION-DESIGN.md
+After=network-online.target
+Wants=network-online.target
+# The enclave needs this to reach KMS for attestation-gated key release; tie its
+# lifecycle to the signer/enclave so it is up whenever the enclave runs.
+PartOf=morpheus-nitro-signer.service
+
+[Service]
+Type=simple
+# Listen on vsock port 8001 (parent CID 3) and forward to KMS. The enclave kmstool
+# connects with --proxy-port 8001. 8001 is distinct from the egress bridge (8788).
+ExecStart=/usr/bin/vsock-proxy 8001 kms.us-east-1.amazonaws.com 443 --config /opt/morpheus/nitro/kms-vsock-proxy.allowlist.yaml
+Restart=always
+RestartSec=2
+User=root
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

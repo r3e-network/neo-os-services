@@ -1,0 +1,351 @@
+{
+  "generated_at": "2026-03-14T14:39:14.792Z",
+  "network": "mainnet",
+  "validation": "feed-source-mappings",
+  "provider": "twelvedata",
+  "pair_count": 34,
+  "success_count": 34,
+  "failure_count": 0,
+  "results": [
+    {
+      "pair": "NEO-USD",
+      "display_symbol": "TWELVEDATA:NEO-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "NEO-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=NEO%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "2.558",
+      "ok": true
+    },
+    {
+      "pair": "GAS-USD",
+      "display_symbol": "TWELVEDATA:GAS-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "GAS-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=GAS%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "1.527",
+      "ok": true
+    },
+    {
+      "pair": "FLM-USD",
+      "display_symbol": "TWELVEDATA:FLM-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "FLM-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=FLM%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "0.002477",
+      "ok": true
+    },
+    {
+      "pair": "BTC-USD",
+      "display_symbol": "TWELVEDATA:BTC-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "BTC-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=BTC%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "70768.85",
+      "ok": true
+    },
+    {
+      "pair": "ETH-USD",
+      "display_symbol": "TWELVEDATA:ETH-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "ETH-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=ETH%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "2076.12",
+      "ok": true
+    },
+    {
+      "pair": "SOL-USD",
+      "display_symbol": "TWELVEDATA:SOL-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "SOL-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=SOL%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "86.95",
+      "ok": true
+    },
+    {
+      "pair": "TRX-USD",
+      "display_symbol": "TWELVEDATA:TRX-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "TRX-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=TRX%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "0.297",
+      "ok": true
+    },
+    {
+      "pair": "PAXG-USD",
+      "display_symbol": "TWELVEDATA:PAXG-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "PAXG-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=PAXG%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "5027",
+      "ok": true
+    },
+    {
+      "pair": "WTI-USD",
+      "display_symbol": "TWELVEDATA:WTI-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "WTI-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=WTI%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "99.34450",
+      "ok": true
+    },
+    {
+      "pair": "BRENT-USD",
+      "display_symbol": "TWELVEDATA:BRENT-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "BRENT-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=XBR%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "101.16",
+      "ok": true
+    },
+    {
+      "pair": "NATGAS-USD",
+      "display_symbol": "TWELVEDATA:NATGAS-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "NATGAS-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=NG%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "3.13053",
+      "ok": true
+    },
+    {
+      "pair": "COPPER-USD",
+      "display_symbol": "TWELVEDATA:COPPER-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "COPPER-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=HG1&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "24.40000",
+      "ok": true
+    },
+    {
+      "pair": "WHEAT-USD",
+      "display_symbol": "TWELVEDATA:WHEAT-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "WHEAT-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=W_1&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "613.62670",
+      "ok": true
+    },
+    {
+      "pair": "CORN-USD",
+      "display_symbol": "TWELVEDATA:CORN-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "CORN-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=C_1&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "467.15771",
+      "ok": true
+    },
+    {
+      "pair": "SOY-USD",
+      "display_symbol": "TWELVEDATA:SOY-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "SOY-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=S_1&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "1225.62482",
+      "ok": true
+    },
+    {
+      "pair": "USDT-USD",
+      "display_symbol": "TWELVEDATA:USDT-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "USDT-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=USDT%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "1.00005",
+      "ok": true
+    },
+    {
+      "pair": "USDC-USD",
+      "display_symbol": "TWELVEDATA:USDC-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "USDC-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=USDC%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "0.9998",
+      "ok": true
+    },
+    {
+      "pair": "BNB-USD",
+      "display_symbol": "TWELVEDATA:BNB-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "BNB-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=BNB%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "653.19",
+      "ok": true
+    },
+    {
+      "pair": "XRP-USD",
+      "display_symbol": "TWELVEDATA:XRP-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "XRP-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=XRP%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "1.39171",
+      "ok": true
+    },
+    {
+      "pair": "DOGE-USD",
+      "display_symbol": "TWELVEDATA:DOGE-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "DOGE-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=DOGE%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "0.09521",
+      "ok": true
+    },
+    {
+      "pair": "AAPL-USD",
+      "display_symbol": "TWELVEDATA:AAPL-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "AAPL-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=AAPL&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "250.11501",
+      "ok": true
+    },
+    {
+      "pair": "GOOGL-USD",
+      "display_symbol": "TWELVEDATA:GOOGL-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "GOOGL-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=GOOGL&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "302.22000",
+      "ok": true
+    },
+    {
+      "pair": "MSFT-USD",
+      "display_symbol": "TWELVEDATA:MSFT-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "MSFT-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=MSFT&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "395.60999",
+      "ok": true
+    },
+    {
+      "pair": "AMZN-USD",
+      "display_symbol": "TWELVEDATA:AMZN-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "AMZN-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=AMZN&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "207.71001",
+      "ok": true
+    },
+    {
+      "pair": "TSLA-USD",
+      "display_symbol": "TWELVEDATA:TSLA-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "TSLA-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=TSLA&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "391.17001",
+      "ok": true
+    },
+    {
+      "pair": "META-USD",
+      "display_symbol": "TWELVEDATA:META-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "META-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=META&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "613.63000",
+      "ok": true
+    },
+    {
+      "pair": "NVDA-USD",
+      "display_symbol": "TWELVEDATA:NVDA-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "NVDA-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=NVDA&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "180.26500",
+      "ok": true
+    },
+    {
+      "pair": "SPY-USD",
+      "display_symbol": "TWELVEDATA:SPY-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "SPY-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=SPY&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "662.29999",
+      "ok": true
+    },
+    {
+      "pair": "QQQ-USD",
+      "display_symbol": "TWELVEDATA:QQQ-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "QQQ-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=QQQ&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "593.69000",
+      "ok": true
+    },
+    {
+      "pair": "GLD-USD",
+      "display_symbol": "TWELVEDATA:GLD-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "GLD-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=GLD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "460.79999",
+      "ok": true
+    },
+    {
+      "pair": "EUR-USD",
+      "display_symbol": "TWELVEDATA:EUR-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "EUR-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=EUR%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "1.14473",
+      "ok": true
+    },
+    {
+      "pair": "GBP-USD",
+      "display_symbol": "TWELVEDATA:GBP-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "GBP-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=GBP%2FUSD&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "1.32322",
+      "ok": true
+    },
+    {
+      "pair": "JPY-USD",
+      "display_symbol": "TWELVEDATA:JPY-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "JPY-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=USD%2FJPY&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "159.71724",
+      "ok": true
+    },
+    {
+      "pair": "CNY-USD",
+      "display_symbol": "TWELVEDATA:CNY-USD",
+      "unit_label": null,
+      "provider": "twelvedata",
+      "provider_pair": "CNY-USD",
+      "request_url": "https://api.twelvedata.com/price?symbol=USD%2FCNY&apikey=REDACTED_TWELVEDATA_API_KEY",
+      "raw_price": "6.89609",
+      "ok": true
+    }
+  ]
+}

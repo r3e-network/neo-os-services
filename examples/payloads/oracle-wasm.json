@@ -1,0 +1,8 @@
+{
+  "provider": "twelvedata",
+  "symbol": "NEO-USD",
+  "json_path": "price",
+  "wasm_base64": "<base64-wasm-module>",
+  "wasm_entry": "run",
+  "target_chain": "neo_n3"
+}

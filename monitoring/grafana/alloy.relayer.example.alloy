@@ -1,0 +1,30 @@
+logging {
+  level = "info"
+}
+
+prometheus.scrape "morpheus_relayer" {
+  targets = [
+    {
+      __address__ = "127.0.0.1:9464",
+      job         = "morpheus-relayer",
+      service     = "morpheus-relayer",
+    },
+  ]
+
+  metrics_path = "/metrics"
+  scrape_interval = "30s"
+  scrape_timeout  = "10s"
+
+  forward_to = [prometheus.remote_write.grafana.receiver]
+}
+
+prometheus.remote_write "grafana" {
+  endpoint {
+    url = "https://prometheus-prod-xx.grafana.net/api/prom/push"
+
+    basic_auth {
+      username = env("GRAFANA_CLOUD_PROMETHEUS_USERNAME")
+      password = env("GRAFANA_CLOUD_PROMETHEUS_API_KEY")
+    }
+  }
+}

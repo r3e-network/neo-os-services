@@ -1,0 +1,6 @@
+{
+  "provider": "twelvedata",
+  "symbol": "NEO-USD",
+  "json_path": "price",
+  "target_chain": "neo_n3"
+}

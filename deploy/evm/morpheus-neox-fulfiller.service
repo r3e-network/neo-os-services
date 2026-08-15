@@ -1,0 +1,16 @@
+[Unit]
+Description=NeoOS Neo X oracle fulfiller (watch MorpheusOracleEVM -> work -> sign -> fulfill)
+After=network-online.target morpheus-nitro-worker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/morpheus/nitro/neox-fulfiller.env
+# run from the repo checkout so ethers/neon resolve from its node_modules
+WorkingDirectory=/opt/neoos/services
+ExecStart=/usr/bin/node deploy/evm/neox-fulfiller.mjs
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

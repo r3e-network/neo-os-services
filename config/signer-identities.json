@@ -1,0 +1,52 @@
+{
+  "neo_n3": {
+    "testnet": {
+      "roles": {
+        "worker": {
+          "address": "NiUs458jFbTH1DA3b9QyeDhMaD282h3iJg",
+          "script_hash": "0xe421999c396ee0249a8a8c9dd95bfbdaf55f8bf7",
+          "public_key": "02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4"
+        },
+        "relayer": {
+          "address": "NiUs458jFbTH1DA3b9QyeDhMaD282h3iJg",
+          "script_hash": "0xe421999c396ee0249a8a8c9dd95bfbdaf55f8bf7",
+          "public_key": "02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4"
+        },
+        "updater": {
+          "address": "NiUs458jFbTH1DA3b9QyeDhMaD282h3iJg",
+          "script_hash": "0xe421999c396ee0249a8a8c9dd95bfbdaf55f8bf7",
+          "public_key": "02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4"
+        },
+        "oracle_verifier": {
+          "address": "NiUs458jFbTH1DA3b9QyeDhMaD282h3iJg",
+          "script_hash": "0xe421999c396ee0249a8a8c9dd95bfbdaf55f8bf7",
+          "public_key": "02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4"
+        }
+      }
+    },
+    "mainnet": {
+      "roles": {
+        "worker": {
+          "address": "NR3E4D8NUXh3zhbf5ZkAp3rTxWbQqNih32",
+          "script_hash": "0x6d0656f6dd91469db1c90cc1e574380613f43738",
+          "public_key": "038c80a6a7fb694a78cdbf7eb91477cb0f7b6d372a5ca840b554c803fbc89c8769"
+        },
+        "relayer": {
+          "address": "NVb1nLqLYsjf5HEsrQdocddcpnYS5eTXBG",
+          "script_hash": "0xfb38b8a345c48f5d5818a6127ac13b0899851b6a",
+          "public_key": "0386394d2a7525ad43476f5b7b6bddcd2ad771bb28acbea6c447963fa5538cd0fd"
+        },
+        "updater": {
+          "address": "NLWhBXALQb75DCogsrtUtH5XJLsTsdMVA1",
+          "script_hash": "0xab63fe1186b890e86a8506823248fa94fb329106",
+          "public_key": "02fcd844fb08d57bc8439fa74dd360262ba88e74738f057af9c9800e4774e003ad"
+        },
+        "oracle_verifier": {
+          "address": "NeJpGYLkyYBX4WBfLbvSoBnjkCkTPsgtmX",
+          "script_hash": "0x6a662d7450620d1614074a1561887daa2463c4c9",
+          "public_key": "0252183e08434f69693f6496cb9473eb60e8cd790fadecb774c5485440435c7c98"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,4 @@
+# DataFeed CVM with shared mainnet + testnet feed-only workers and relayers
+id = "ac5b6886a2832df36e479294206611652400178f"
+compose_file = "deploy/nitro/docker-compose.feed-hub.yml"
+env_file = "deploy/nitro/morpheus.hub.env"

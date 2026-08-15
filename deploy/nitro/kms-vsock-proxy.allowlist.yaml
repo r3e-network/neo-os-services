@@ -1,0 +1,7 @@
+# Allow-list for the KMS vsock-proxy that the in-enclave kmstool-enclave-cli uses to
+# reach AWS KMS (Phase C — attestation-gated key release). The enclave kmstool opens a
+# vsock connection to the parent (CID 3) on the proxy port; this proxy forwards ONLY to
+# KMS. Separate from the general egress proxy (morpheus-nitro-egress) which carries the
+# worker's provider/Secrets-Manager traffic. Keep this list to KMS only.
+allowlist:
+  - { address: kms.us-east-1.amazonaws.com, port: 443 }

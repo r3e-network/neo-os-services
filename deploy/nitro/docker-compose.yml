@@ -1,0 +1,77 @@
+services:
+  nitro-worker:
+    image: ${MORPHEUS_NITRO_WORKER_IMAGE:-ghcr.io/r3e-network/neo-os-services-nitro-worker:latest}
+    container_name: morpheus-nitro-worker
+    restart: unless-stopped
+    env_file:
+      - ${MORPHEUS_LOCAL_ENV_FILE:-./morpheus.mainnet.env}
+    environment:
+      # Fail-closed: activates the child-process sandbox guard (permission-guard.js).
+      NODE_ENV: production
+      PORT: ${NITRO_WORKER_PORT:-8080}
+    expose:
+      - '${NITRO_WORKER_PORT:-8080}'
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - morpheus-data:/data
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:' + (process.env.PORT || 8080) + '/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: morpheus-caddy
+    restart: unless-stopped
+    depends_on:
+      nitro-worker:
+        condition: service_healthy
+    profiles: ['edge']
+    ports:
+      - '${MORPHEUS_PUBLIC_PORT:-3000}:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  morpheus-relayer:
+    image: ${MORPHEUS_RELAYER_IMAGE:-ghcr.io/r3e-network/neo-os-services-relayer:latest}
+    container_name: morpheus-relayer
+    restart: unless-stopped
+    depends_on:
+      nitro-worker:
+        condition: service_healthy
+    env_file:
+      - ${MORPHEUS_LOCAL_ENV_FILE:-./morpheus.mainnet.env}
+    environment:
+      NITRO_API_URL: http://nitro-worker:${NITRO_WORKER_PORT:-8080}
+      MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.${MORPHEUS_NETWORK:-mainnet}.${MORPHEUS_RELAYER_NEO_N3_START_BLOCK:-default}.json
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - morpheus-data:/data
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "const http=require('http');const req=http.request({hostname:'nitro-worker',port:process.env.PORT||8080,path:'/health',method:'GET'},res=>process.exit(res.statusCode===200?0:1));req.on('error',()=>process.exit(1));req.end()",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  morpheus-data:
+  caddy-data:
+  caddy-config:

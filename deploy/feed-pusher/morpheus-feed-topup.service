@@ -1,0 +1,6 @@
+[Unit]
+Description=Auto-topup feed updater GAS from dedicated funding key
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/neoos/services/deploy/feed-pusher
+ExecStart=/usr/bin/node feed-topup.mjs

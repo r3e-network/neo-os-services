@@ -1,0 +1,9 @@
+{
+  "wasm_base64": "<base64-wasm-module>",
+  "wasm_entry": "run",
+  "input": {
+    "left": 2,
+    "right": 3
+  },
+  "target_chain": "neo_n3"
+}

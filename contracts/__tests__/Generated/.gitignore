@@ -1,0 +1,5 @@
+# Only the *.artifacts.cs binding classes are consumed by the test suite (each
+# embeds its NEF + manifest inline). The raw nccs side outputs are redundant
+# duplicates of contracts/build/ and must not be tracked here.
+*.nef
+*.manifest.json

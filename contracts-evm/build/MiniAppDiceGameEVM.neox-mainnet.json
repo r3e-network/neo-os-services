@@ -1,0 +1,9 @@
+{
+  "network": "neox-mainnet",
+  "chainId": 47763,
+  "address": "0xFA795F814d38F218153d21838360096f3F5cb774",
+  "deployTx": "0xf3c92aa444cdb68c9c68b37f92ac2d56bf513b94f6f142760817fd893b9e83f2",
+  "deployer": "0x622ae03BDB6d7E2A29BE853c75d625bB25c0139C",
+  "ctorArgs": ["0xeCFC1C652B5cCdBfe3E9314a83156787D92a3fD2"],
+  "deployedAt": "2026-06-07T11:18:42.586Z"
+}

@@ -1,0 +1,31 @@
+{
+  "browser_checks": [
+    {
+      "name": "aa-home",
+      "url": "https://aa.example.com/",
+      "assert_text": "Smart Wallets That Never Lock You Out"
+    },
+    {
+      "name": "aa-identity",
+      "url": "https://aa.example.com/identity",
+      "assert_text": "Web3Auth / NeoDID Workspace"
+    },
+    {
+      "name": "oracle-home",
+      "url": "https://oracle.example.com/",
+      "assert_text": "Hardware-Secured"
+    }
+  ],
+  "api_checks": [
+    {
+      "name": "oracle-runtime-health",
+      "url": "https://oracle.example.com/api/runtime/health",
+      "expect_status": 200
+    },
+    {
+      "name": "control-plane-health-testnet",
+      "url": "https://control.example.com/testnet/health",
+      "expect_status": 200
+    }
+  ]
+}

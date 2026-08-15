@@ -1,0 +1,63 @@
+{
+  "name": "@r3e-network/neo-os-services-shared",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.js"
+    },
+    "./utils": {
+      "types": "./src/utils.d.ts",
+      "default": "./src/utils.js"
+    },
+    "./cbor": {
+      "default": "./src/cbor.js"
+    },
+    "./cose-verify": {
+      "types": "./src/cose-verify.d.ts",
+      "default": "./src/cose-verify.js"
+    },
+    "./confidential-envelope": {
+      "default": "./src/confidential-envelope.js"
+    },
+    "./automation-supervisor": {
+      "types": "./src/automation-supervisor.d.ts",
+      "default": "./src/automation-supervisor.js"
+    },
+    "./callback-methods": {
+      "default": "./src/callback-methods.js"
+    },
+    "./error-codes": {
+      "default": "./src/error-codes.js"
+    },
+    "./neo-encoding": {
+      "default": "./src/neo-encoding.js"
+    },
+    "./neo-signers-core": {
+      "default": "./src/neo-signers-core.js"
+    },
+    "./rate-limit": {
+      "types": "./src/rate-limit.d.ts",
+      "default": "./src/rate-limit.js"
+    },
+    "./public-runtime": {
+      "types": "./src/public-runtime.d.ts",
+      "default": "./src/public-runtime.js"
+    },
+    "./node-runtime": {
+      "types": "./src/node-runtime.d.ts",
+      "default": "./src/node-runtime.js"
+    },
+    "./logger": {
+      "types": "./src/logger/index.d.ts",
+      "default": "./src/logger/index.js"
+    }
+  },
+  "main": "./src/index.js",
+  "types": "./src/index.ts",
+  "scripts": {
+    "test": "node --test"
+  }
+}

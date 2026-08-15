@@ -1,0 +1,13 @@
+[Unit]
+Description=Rotate Morpheus enclave compute provisioning (refresh short-lived AWS creds)
+
+[Timer]
+# The provisioned AWS instance-role creds are short-lived (~6h). Re-provision
+# every 4h so the decrypt/neodid lanes (Secrets Manager via egress) never lapse.
+# Price/VRF/feed lanes need no AWS and are unaffected by cred expiry.
+OnBootSec=10min
+OnUnitActiveSec=4h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

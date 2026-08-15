@@ -1,0 +1,9 @@
+{
+  "extends": ["../../.eslintrc.json", "next/core-web-vitals"],
+  "rules": {
+    "@next/next/no-html-link-for-pages": "off",
+    "@next/next/no-img-element": "off",
+    "react/jsx-no-comment-textnodes": "off",
+    "react/no-unescaped-entities": "off"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "generated_at": "2026-05-03T11:41:08.508Z",
+  "network": "testnet",
+  "rpc_url": "https://testnet1.neo.coz.io:443",
+  "network_magic": 894710606,
+  "attacker_address": "NR3E4D8NUXh3zhbf5ZkAp3rTxWbQqNih32",
+  "attacker_script_hash": "0x6d0656f6dd91469db1c90cc1e574380613f43738",
+  "oracle_hash": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+  "callback_consumer_hash": "0x8c506f224d82e67200f20d9d5361f767f0756e3b",
+  "probe": {
+    "title": "Direct external onOracleResult call should fault",
+    "txid": "0xaf26af4e473713acd192ba367df1de76134561e76b26955d3bef4cd5a419c576",
+    "request_id": "999001",
+    "request_type": "oracle",
+    "preview_state": "FAULT",
+    "preview_exception": "at instruction 966 (ABORTMSG): ABORTMSG is executed. Reason: unauthorized caller",
+    "system_fee": "94071",
+    "network_fee": "37484",
+    "vmstate": "FAULT",
+    "exception": "at instruction 966 (ABORTMSG): ABORTMSG is executed. Reason: unauthorized caller"
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "generated_at": "2026-05-03T08:38:45.031Z",
+  "network": "testnet",
+  "rpc_url": "https://testnet1.neo.coz.io:443",
+  "network_magic": 894710606,
+  "oracle_hash": "0xcea704acc4bb3b9475286fb1a40ba286f6b7b3f8",
+  "aa_core_hash": "0x226af350f237b5d4a4173c6f7e710c5c5f067e10",
+  "session_verifier_hash": "0x62ade8b000c33c40ed7a2b5d55ef3dfdc6410dd2",
+  "callback_consumer_hash": "0xaae51427f7fe7f46b24c6d27fcaf89ac9e2187fb",
+  "request_fee_status": {
+    "request_fee": "1000000",
+    "current_credit": "2000000",
+    "deposit_amount": "2000000"
+  },
+  "setup": {
+    "set_updater_txid": "0x9f719fc4e905db1b12a1e21b83b08f2cfb293c1173c1fffbb0a89006d8b2ea75",
+    "set_verifier_txid": "0x813d6f8e78350c85f7f456fbf1f43a538c5e3972b2514ab7a53f30609a6abe2b",
+    "register_miniapp_txid": "0x63a65a45901e0a3248f052d34e954adf95d03065c8f6614a7d62839fe687e736",
+    "grant_oracle_fetch_txid": "0x11e27ef972bd59a3044a87ca372caed27595c8c6623af82c09f824f82f0123de",
+    "set_oracle_txid": "0x3433afb3d7beb57f3074a11af379159c46912d6a0f1881f1bedf9ca0ffaaecda",
+    "set_aa_core_txid": "0x0df823d43fc6470e42f5d0fffc9f88cf7ff6295e4c04bf69727808da7dbf4ff6"
+  },
+  "accounts": {
+    "account_a": "0x8db306bb555be9a76866085f060b59cfae361a7f",
+    "account_b": "0x24219ed84c3df07a772a15065d7e3f61e8eb6b57"
+  },
+  "requests": {
+    "request_a_txid": "0x388168fa79d10ec0cb56db150ddbd4ba0c0b502f063da6ca3de83c35248a8162",
+    "request_a_id": "1",
+    "request_b_txid": "0x4dde2fa3267fc132f8026a44e22fa0d186bd20e9fc34e5ea7304115a91fc0a65",
+    "request_b_id": "2"
+  },
+  "replay_attempt": {
+    "txid": "0x13ec09d67189d24ab475c7896e66f7c40dfd0ac99835999b95e72135bf2550e3",
+    "vmstate": "FAULT",
+    "exception": "at instruction 8986 (ABORTMSG): ABORTMSG is executed. Reason: invalid verification signature"
+  },
+  "fulfill_a": {
+    "txid": "0x1735cc023430f02102bddabe464d983751f1ed339ed90f0fcfccdfa49a872163",
+    "vmstate": "HALT",
+    "callback": {
+      "request_type": "privacy_oracle",
+      "success": true,
+      "result_text": "{\"version\":\"morpheus-result/v1\",\"request_type\":\"privacy_oracle\",\"module_id\":\"oracle.fetch\",\"operation\":\"privacy_oracle\",\"success\":true,\"result\":{\"mode\":\"fetch\",\"target_chain\":\"neo_n3\",\"request_source\":\"morpheus-relayer:neo_n3\",\"upstream_status\":200,\"extracted_value\":\"2.765\",\"result\":\"2.765\"},\"verification\":{\"output_hash\":\"6c7974841f76cc5b3ee2b6d59674d7850a35ac1f4465de1f6e3ec7fd88a5f831\",\"attestation_hash\":\"6c7974841f76cc5b3ee2b6d59674d7850a35ac1f4465de1f6e3ec7fd88a5f831\",\"signature\":\"4a546dad0ddee3e55b8f7e95e5f28be60955ee40f0f91ab7db9c51fb1b79bc0d45bb942b54f10148945b88e34a3767b77cb1dbda26ab49b6d62048b5743d85fe\",\"public_key\":\"02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4\",\"tee_attestation\":{\"app_id\":\"ddff154546fe22d15b65667156dd4b7c611e6093\",\"compose_hash\":\"04d2f04f8068b5ee9e208df5d945e3419655827b5c9c4fc31ba7632607b523ee\",\"report_data\":\"6c7974841f76cc5b3ee2b6d59674d7850a35ac1f4465de1f6e3ec7fd88a5f8310000000000000000000000000000000000000000000000000000000000000000\",\"quote_hash\":\"0acdb19614b2fcedfb9100344471f2fb70896a4582ceb013fb14bbd2a50bf052\"}}}",
+      "result_json": {
+        "version": "morpheus-result/v1",
+        "request_type": "privacy_oracle",
+        "module_id": "oracle.fetch",
+        "operation": "privacy_oracle",
+        "success": true,
+        "result": {
+          "mode": "fetch",
+          "target_chain": "neo_n3",
+          "request_source": "morpheus-relayer:neo_n3",
+          "upstream_status": 200,
+          "extracted_value": "2.765",
+          "result": "2.765"
+        },
+        "verification": {
+          "output_hash": "6c7974841f76cc5b3ee2b6d59674d7850a35ac1f4465de1f6e3ec7fd88a5f831",
+          "attestation_hash": "6c7974841f76cc5b3ee2b6d59674d7850a35ac1f4465de1f6e3ec7fd88a5f831",
+          "signature": "4a546dad0ddee3e55b8f7e95e5f28be60955ee40f0f91ab7db9c51fb1b79bc0d45bb942b54f10148945b88e34a3767b77cb1dbda26ab49b6d62048b5743d85fe",
+          "public_key": "02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4",
+          "tee_attestation": {
+            "app_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+            "compose_hash": "04d2f04f8068b5ee9e208df5d945e3419655827b5c9c4fc31ba7632607b523ee",
+            "report_data": "6c7974841f76cc5b3ee2b6d59674d7850a35ac1f4465de1f6e3ec7fd88a5f8310000000000000000000000000000000000000000000000000000000000000000",
+            "quote_hash": "0acdb19614b2fcedfb9100344471f2fb70896a4582ceb013fb14bbd2a50bf052"
+          }
+        }
+      },
+      "error_text": ""
+    }
+  },
+  "state_after_replay": {
+    "unlocked_a": true,
+    "unlocked_b": false,
+    "pending_b": "0x24219ed84c3df07a772a15065d7e3f61e8eb6b57"
+  }
+}

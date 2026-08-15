@@ -1,0 +1,19 @@
+[Unit]
+Description=NeoOS Oracle Relayer Metrics Server
+After=network-online.target morpheus-relayer.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/neoos/services
+EnvironmentFile=/opt/morpheus/nitro/morpheus-relayer.env
+ExecStart=/usr/bin/npm --prefix workers/morpheus-relayer run serve:metrics
+Restart=always
+RestartSec=5
+User=morpheus
+Group=morpheus
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,28 @@
+{
+  "name": "@r3e-network/neo-os-relayer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/cli.js loop",
+    "once": "node src/cli.js once",
+    "metrics": "node src/cli.js metrics",
+    "metrics:prom": "node src/cli.js metrics:prom",
+    "serve:metrics": "node src/cli.js serve:metrics",
+    "config:validate": "node src/cli.js config:validate",
+    "config:dump": "node src/cli.js config:dump",
+    "check": "find src \\( -name '*.js' -o -name '*.mjs' \\) -print | sort | xargs -n1 node --check && node --check relayer.test.mjs",
+    "test": "node --test relayer.test.mjs src/*.test.mjs src/*/*.test.mjs"
+  },
+  "dependencies": {
+    "@cityofzion/neon-js": "^5.8.1",
+    "@r3e-network/neo-os-nitro-worker": "*",
+    "@r3e-network/neo-os-services-shared": "*",
+    "ethers": "^6.16.0"
+  },
+  "overrides": {
+    "@cityofzion/neon-core": {
+      "lodash": "4.18.1"
+    }
+  }
+}

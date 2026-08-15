@@ -1,0 +1,17 @@
+{
+  "project_slug": "morpheus",
+  "trigger": {
+    "type": "one_shot",
+    "execute_at": "2026-03-11T00:00:00Z"
+  },
+  "execution": {
+    "request_type": "privacy_oracle",
+    "payload": {
+      "provider": "twelvedata",
+      "symbol": "NEO-USD",
+      "json_path": "price",
+      "target_chain": "neo_n3"
+    }
+  },
+  "max_executions": 1
+}

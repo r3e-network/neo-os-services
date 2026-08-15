@@ -1,0 +1,20 @@
+{
+  "generated_at": "2026-05-03T11:51:27.789Z",
+  "network": "testnet",
+  "rpc_url": "https://testnet1.neo.coz.io:443",
+  "network_magic": 894710606,
+  "oracle_hash": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+  "callback_consumer_hash": "0x8c506f224d82e67200f20d9d5361f767f0756e3b",
+  "aa_core_hash": "0x07c73f916a438b83793dd2cc65f5cd5fe79a8b1e",
+  "session_verifier_hash": "0xa6b3dcd550743abb55c3ce63e99000c6b6f2df46",
+  "account_id": "0x15ffdf7dc4b716216e28bd1e3a86d731ce65974e",
+  "status": "pending_config_timelock",
+  "set_session_txid": "0x5cb129ed0a7cb925fdd3b68398ab018ec2e7ece6515599dfc3eb018d7e7a86a5",
+  "pending_verifier_call": true,
+  "pending_verifier_call_unlock_time": "1777895477981",
+  "request_fee_status": {
+    "request_fee": "1000000",
+    "current_credit": "20000000",
+    "deposit_amount": "0"
+  }
+}

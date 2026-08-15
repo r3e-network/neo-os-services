@@ -1,0 +1,18 @@
+[Unit]
+Description=Morpheus Nitro Enclave Egress Proxy (allow-listed HTTPS CONNECT over vsock)
+After=network-online.target nitro-enclaves-allocator.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/neoos/services
+ExecStart=/opt/neoos/services/deploy/nitro/start-egress-proxy.sh
+Restart=always
+RestartSec=5
+User=root
+Group=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

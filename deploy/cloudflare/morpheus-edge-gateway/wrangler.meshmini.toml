@@ -1,0 +1,29 @@
+name = "morpheus-edge-gateway"
+main = "worker.mjs"
+compatibility_date = "2026-03-19"
+account_id = "bf0d7e814f69945157f30505e9fba9fe"
+workers_dev = true
+
+[vars]
+# Origin is the apps/web public API; the worker's mapToAppBackendPath() rewrites the
+# legacy /<net>/<path> shape onto /api/... routes (which serve trustlessly from
+# on-chain + the attested box). No path suffix here.
+MORPHEUS_ORIGIN_URL = "https://www.morpheus-matrix.dev"
+MORPHEUS_MAINNET_ORIGIN_URL = "https://www.morpheus-matrix.dev"
+MORPHEUS_TESTNET_ORIGIN_URL = "https://www.morpheus-matrix.dev"
+MORPHEUS_MAINNET_FEED_ORIGIN_URL = "https://www.morpheus-matrix.dev"
+MORPHEUS_TESTNET_FEED_ORIGIN_URL = "https://www.morpheus-matrix.dev"
+# Attested box runtime, for the self-gated confidential routes (/oracle/decrypt,
+# /oracle/message-reveal). The edge supplies the box token (MORPHEUS_RUNTIME_BOX_TOKEN
+# secret, falling back to MORPHEUS_ORIGIN_TOKEN); the in-TEE worker enforces
+# recipient/time-lock access per message.
+MORPHEUS_RUNTIME_BOX_URL = "https://runtime.meshmini.app"
+UPSTASH_REDIS_REST_URL = "https://major-sawfish-77541.upstash.io"
+
+[[routes]]
+pattern = "edge.meshmini.app/*"
+zone_name = "meshmini.app"
+
+[[routes]]
+pattern = "oracle.meshmini.app/*"
+zone_name = "meshmini.app"

@@ -1,0 +1,62 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Oracle public-key route uses a fixed public-key test vector."
+condition = "AND"
+regexTarget = "line"
+paths = ['''(^|/)apps/web/__tests__/oracle-public-key-route\.test\.ts$''']
+regexes = ['''KEY_B64[[:space:]]*=''']
+
+[[allowlists]]
+description = "Network verifier fields are public on-chain contract script hashes."
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''(^|/)config/networks/mainnet\.json$''',
+  '''(^|/)config/networks/testnet\.json$''',
+]
+regexes = ['''"(?:web3auth|session_key)"[[:space:]]*:''']
+
+[[allowlists]]
+description = "Published runtime verifier fields are public on-chain contract script hashes."
+condition = "AND"
+regexTarget = "line"
+paths = ['''(^|/)apps/web/public/morpheus-runtime-catalog\.json$''']
+regexes = ['''"aa(?:Web3Auth|SessionKey)Verifier"[[:space:]]*:''']
+
+[[allowlists]]
+description = "Deployment reports contain public contract and transaction hashes."
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''(^|/)examples/deployments/aa-neodid-oracle-integrated-baseline\.testnet\.latest\.json$''',
+  '''(^|/)examples/deployments/mainnet\.json$''',
+  '''(^|/)examples/deployments/testnet-cross-stack-validation\.latest\.json$''',
+  '''(^|/)examples/deployments/testnet\.json$''',
+]
+regexes = ['''"(?:web3AuthHash|aa_web3auth_verifier_hash|aa_web3auth_verifier_deploy|latest_web3auth_verifier_hash|latest_sessionkey_verifier_hash|aa_sessionkey_verifier_deploy|aa_web3auth_domain_set_record|aa_sessionkey_domain_set_record|aa_sessionkey_verifier_hash|aa_web3auth_verifier|aa_session_key_verifier)"[[:space:]]*:''']
+
+[[allowlists]]
+description = "Pinned PKCS8 value is an interoperability-only golden vector in a test file."
+condition = "AND"
+regexTarget = "match"
+paths = ['''(^|/)packages/shared/src/confidential-envelope\.test\.mjs$''']
+regexes = ['''privateKeyPkcs8''']
+
+[[allowlists]]
+description = "Relayer schema key names a PCR configuration field and carries no credential value."
+condition = "AND"
+regexTarget = "line"
+paths = ['''(^|/)workers/morpheus-relayer/src/config-schema\.js$''']
+regexes = ['''key[[:space:]]*:[[:space:]]*['"]nitro\.expectedPcr0['"]''']
+
+[[allowlists]]
+description = "Nitro fallback strings are Secrets Manager identifiers, not secret values."
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''(^|/)workers/morpheus-relayer/src/nitro-signer\.js$''',
+  '''(^|/)workers/nitro-worker/src/platform/nitro-signer\.js$''',
+]
+regexes = ['''env\(['"]NITRO_(?:SIGNER|X25519)_SECRET_ID['"]''']

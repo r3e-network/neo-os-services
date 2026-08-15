@@ -1,0 +1,18 @@
+[Unit]
+Description=NeoOS merged Nitro compute and signer enclave
+After=network-online.target docker.service nitro-enclaves-allocator.service
+Wants=network-online.target docker.service nitro-enclaves-allocator.service
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/morpheus/nitro/morpheus-nitro.env
+ExecStart=/opt/neoos/services/deploy/nitro/start-nitro-signer.sh
+Restart=always
+RestartSec=5
+User=root
+Group=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

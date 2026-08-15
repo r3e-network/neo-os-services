@@ -1,0 +1,174 @@
+<p align="center"><img src="apps/web/public/logo.png" alt="NeoOS" width="96"></p>
+
+# NeoOS Services
+
+`neo-os-services` is the NeoOS confidential services stack. It contains the Morpheus-compatible Neo N3 oracle/datafeed protocol, edge and control planes, relayers, Nitro execution workers, and the operator Web application. The current production design keeps ingress, orchestration, and durability outside the TEE, and reserves confidential VMs for execution only.
+
+`MorpheusOracle`, `MorpheusDataFeed`, `MORPHEUS_*` environment variables, and existing endpoints remain compatibility interfaces for deployed contracts and operators; new repository, package, image, and documentation identities use NeoOS.
+
+Production hosts use `/opt/neoos/services` for code and retain
+`/opt/morpheus/nitro` for secrets and runtime state. The tested
+`npm run install:code-path-compat` migration creates legacy code-path links only
+after validating the canonical checkout and refuses to overwrite existing data.
+
+## Current Design
+
+1. **Cloudflare edge gateway**
+   - public edge entry
+   - cache for safe GET routes
+   - optional abuse controls
+2. **Cloudflare control plane**
+   - `POST /mainnet/*` and `POST /testnet/*` ingress
+   - auth, validation, rate limit, recovery
+   - Cloudflare Queues for `oracle_request` and `feed_tick`
+   - Cloudflare Workflows for `callback_broadcast` and `automation_execute`
+3. **Supabase durable state**
+   - request records
+   - control-plane jobs
+   - relayer jobs
+   - automation runs
+   - feed snapshots
+   - encrypted refs and operation logs
+4. **Confidential execution plane**
+   - **Oracle CVM**: `oracle-morpheus-neo-r3e` / `ddff154546fe22d15b65667156dd4b7c611e6093`
+   - **DataFeed CVM**: `datafeed-morpheus-neo-r3e` / `ac5b6886a2832df36e479294206611652400178f`
+   - Oracle handles confidential request/response work for both mainnet and testnet
+   - DataFeed is isolated so continuous price updates are never blocked by slower request workloads
+
+## Canonical Endpoints
+
+- Oracle runtime:
+  - `https://oracle.meshmini.app/mainnet`
+  - `https://oracle.meshmini.app/testnet`
+- Edge gateway:
+  - `https://edge.meshmini.app/mainnet`
+  - `https://edge.meshmini.app/testnet`
+- Control plane:
+  - `https://control.meshmini.app/mainnet`
+  - `https://control.meshmini.app/testnet`
+- Oracle attestation verification:
+  - in-app `POST /api/attestation/verify` (or the `/verifier` page)
+- DataFeed attestation verification:
+  - in-app `POST /api/attestation/verify` (or the `/verifier` page)
+
+## Active Scope
+
+- Neo N3 is the active supported production path.
+- Network selection is path-based and config-based, not CVM-based.
+- Pricefeeds are operator-driven and highest priority.
+- Oracle and compute requests are asynchronous and callback-based.
+
+## On-Chain MiniApp OS
+
+- `MorpheusOracle` keeps its legacy deployment name, but the contract role is now a shared MiniApp OS kernel.
+- The kernel owns miniapp registration, module registration, capability grants, request routing, inbox delivery, fee credits, and generic app state.
+- `MorpheusDataFeed` is treated as a built-in shared numeric resource module.
+- `OracleCallbackConsumer` is now an optional external adapter for advanced integrations, not a mandatory per-miniapp primitive.
+- The intended integration model is `miniapp-os + miniapps`: generic concerns stay in the system, while miniapps focus on business logic and configuration.
+
+## Network Registry
+
+- `config/networks/mainnet.json` is the canonical mainnet registry.
+- `config/networks/testnet.json` is the canonical testnet registry.
+- `nitro.request-hub.toml` points to the Oracle CVM launcher.
+- `nitro.feed-hub.toml` points to the DataFeed CVM launcher.
+- `deploy/nitro/morpheus.mainnet.env` and `deploy/nitro/morpheus.testnet.env` are generated local env files and must remain uncommitted.
+- `scripts/export-public-network-registry.mjs` emits the canonical public network registry for consumer repos.
+- `scripts/export-public-runtime-catalog.mjs` emits the public workflow and envelope catalog for consumer repos.
+
+## Repository Layout
+
+- `apps/web` — Next.js dashboard, docs, explorer, and backend routes used by the control plane
+- `workers/nitro-worker` — confidential execution runtime
+- `workers/morpheus-relayer` — on-chain async bridge and callback relayer
+- `deploy/cloudflare` — edge gateway and control-plane workers
+- `contracts` — Neo N3 MiniApp OS kernel and built-in modules
+- `supabase/migrations` — schema, policies, control-plane jobs, relayer durability
+- `docs` — canonical architecture, deployment, operations, validation, and specs
+- `scripts` — deployment, verification, SaaS sync, and operator helpers
+
+## Built-In Compute
+
+The compute catalog currently exposes built-ins for:
+
+- hashes and signature verification
+- modular arithmetic and matrix/vector math
+- Merkle helpers
+- ZKP planning and Groth16 verification helpers
+- FHE planning helpers
+- privacy masking and noise helpers
+
+The catalog is designed so additional runtimes can be added later without changing the on-chain request model.
+
+## Quick Start
+
+```bash
+npm install
+cp .env.development.example .env.local
+npm run test:worker
+npm run test:relayer
+npm run dev:web
+```
+
+## Core Verification Commands
+
+```bash
+npm run verify:repo
+npm run check:audit:root
+npm run test:worker
+npm run test:relayer
+npm run test:control-plane
+npm run build:web
+npm run smoke:control-plane
+npm run smoke:n3
+npm run check:signers
+MORPHEUS_NETWORK=testnet npm run verify:n3
+```
+
+## Root Audit Baseline
+
+`npm run verify:repo` is the preferred local verification entrypoint for this repository.
+
+`npm run check:audit:root` is the canonical root production dependency audit gate.
+
+The current accepted root baseline is the explicitly excluded CityOfZion / Neon chain:
+
+- `@cityofzion/neon-js`
+- `@cityofzion/neon-core`
+- `@cityofzion/neon-api`
+- transitive `elliptic`
+- transitive `lodash`
+
+That command enforces no additional production vulnerabilities beyond the excluded CityOfZion baseline and fails if the excluded package set changes unexpectedly.
+
+Targeted regression commands:
+
+```bash
+npm run examples:test:n3:callback-boundary
+npm run examples:test:n3:neodid-registry-boundary
+npm run examples:test:n3:neodid-registry-v1
+npm run examples:test:n3:encrypted-ref-boundary
+npm run examples:test:n3:fulfillment-replay
+npm run examples:test:n3:aa-session-oracle-boundary
+npm run examples:test:n3:attack-regression
+```
+
+## Documentation
+
+- `docs/ARCHITECTURE.md`
+- `docs/MINIAPP_OS_AUDIT.md`
+- `docs/DEPLOYMENT.md`
+- `docs/OPERATIONS.md`
+- `docs/VALIDATION.md`
+- `docs/ENVIRONMENT.md`
+- `docs/ASYNC_PRIVACY_ORACLE_SPEC.md`
+- `docs/ATTESTATION_SPEC.md`
+- `docs/USER_GUIDE.md`
+- `docs/RELAYER.md`
+- `docs/PROVIDERS.md`
+- `docs/PAYMASTER.md`
+- `docs/BUILTIN_COMPUTE.md`
+- `docs/EXAMPLES.md`
+- `docs/SAAS_STACK_INTEGRATION.md`
+- `deploy/nitro/README.md`
+- verifier UI: `/verifier`

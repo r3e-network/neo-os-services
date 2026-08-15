@@ -1,0 +1,24 @@
+{
+  "name": "@r3e-network/neo-os-nitro-worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "bundle": "node src/worker.js",
+    "start": "node src/server.js",
+    "check": "find src \\( -name '*.js' -o -name '*.mjs' \\) -print | sort | xargs -n1 node --check && node --check worker.test.mjs",
+    "test": "node --test worker.test.mjs src/*.test.mjs src/*/*.test.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.700.0",
+    "@cityofzion/neon-js": "^5.8.1",
+    "ethers": "^6.16.0",
+    "jose": "^6.2.1",
+    "undici": "^8.10.0"
+  },
+  "overrides": {
+    "@cityofzion/neon-core": {
+      "lodash": "4.18.1"
+    }
+  }
+}
