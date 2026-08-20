@@ -391,6 +391,38 @@ Accept: application/did+ld+json`}</code>
   "upstream_status": 503
 }`}
       />
+
+      <h3>Staleness</h3>
+      <p>
+        A successful response carries <code>age_seconds</code> and <code>stale_after_seconds</code>{' '}
+        so a caller can apply its own, tighter budget. When the on-chain record is older than its
+        budget the route returns <code>status: &quot;stale&quot;</code> with{' '}
+        <code>cache-control: no-store</code> and <code>x-morpheus-feed-stale: 1</code>. The stale
+        envelope deliberately carries{' '}
+        <strong>
+          no top-level <code>price</code>
+        </strong>{' '}
+        — the last known numbers are nested under <code>stale_record</code>, so a client that reads{' '}
+        <code>price</code> without checking <code>status</code> cannot silently act on an outdated
+        quote.
+      </p>
+
+      <CodeBlock
+        language="json"
+        title="GET /api/feeds/NEO-USD (stale)"
+        code={`{
+  "status": "stale",
+  "degraded": true,
+  "symbol": "NEO-USD",
+  "error": "feed_quote_stale",
+  "error_code": "FEED_QUOTE_STALE",
+  "upstream_status": 503,
+  "age_seconds": 1652577,
+  "stale_after_seconds": 2700,
+  "timestamp_iso": "2026-07-29T00:46:31.000Z",
+  "stale_record": { "price": 2.287, "round_id": "42" }
+}`}
+      />
     </div>
   );
 }

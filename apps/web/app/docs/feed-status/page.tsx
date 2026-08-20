@@ -6,12 +6,23 @@ import { useEffect, useMemo, useState } from 'react';
 type FeedStatusResponse = {
   generated_at: string;
   network: string;
+  status?: 'ok' | 'degraded';
   configured_pair_count: number;
   synced_configured_pair_count: number;
+  fresh_configured_pair_count?: number;
+  stale_configured_pair_count?: number;
+  max_age_seconds?: number | null;
+  oldest_pair?: string | null;
+  alerts?: string[];
   configured: Array<{
     pair: string;
     storage_pair: string;
     synced: boolean;
+    fresh?: boolean;
+    status?: 'fresh' | 'stale' | 'not_synced';
+    age_seconds?: number | null;
+    stale_after_seconds?: number | null;
+    market_closed?: boolean | null;
     descriptor: {
       label: string;
       category: string;
@@ -79,6 +90,33 @@ export default function FeedStatusPage() {
     return '-';
   }
 
+  // Age is the signal this page previously did not have. Before 2026-08 it had
+  // no age column at all and printed a hardcoded 0.00% delta for every pair, so
+  // a 19-day feed outage rendered identically to a healthy feed.
+  function formatAge(seconds: number | null | undefined) {
+    if (typeof seconds !== 'number' || !Number.isFinite(seconds)) return '-';
+    if (seconds < 90) return `${Math.max(seconds, 0)}s`;
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 90) return `${minutes}m`;
+    const hours = Math.round(seconds / 3600);
+    if (hours < 48) return `${hours}h`;
+    return `${(seconds / 86400).toFixed(1)}d`;
+  }
+
+  function rowStatus(item: FeedStatusResponse['configured'][number]) {
+    if (item.status) return item.status;
+    return item.synced ? 'fresh' : 'not_synced';
+  }
+
+  function statusColor(status: string) {
+    if (status === 'fresh') return 'var(--neo-green)';
+    if (status === 'stale') return 'var(--error, #ff5c5c)';
+    return 'var(--warning)';
+  }
+
+  const staleCount = data?.stale_configured_pair_count ?? 0;
+  const degraded = data ? data.status === 'degraded' || staleCount > 0 : false;
+
   return (
     <div className="fade-in">
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem' }}>
@@ -103,15 +141,47 @@ export default function FeedStatusPage() {
         style={{ fontSize: '1.05rem', color: 'var(--text-primary)', marginBottom: '2rem' }}
       >
         Live status for every configured canonical feed pair. This page shows what the pair means,
-        whether it is already synced on-chain, and how the current on-chain value compares with the
-        live TwelveData quote.
+        whether it is synced on-chain, and <strong>how old the on-chain record is</strong> against
+        its staleness budget. A pair is healthy only when it is both synced and inside that budget —
+        &ldquo;synced&rdquo; alone only means a record exists at some age. Delta against an
+        independent quote is not currently measured, so it is reported as &ldquo;n/a&rdquo; rather
+        than as zero.
       </p>
 
       {loading && <p style={{ color: 'var(--text-secondary)' }}>Loading live feed status...</p>}
 
+      {data && degraded && (
+        <div
+          className="card-industrial"
+          style={{
+            marginBottom: '1.5rem',
+            borderColor: 'var(--error, #ff5c5c)',
+            background: 'rgba(255, 92, 92, 0.06)',
+          }}
+        >
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontWeight: 800,
+              color: 'var(--error, #ff5c5c)',
+              marginBottom: '0.5rem',
+            }}
+          >
+            FEED DEGRADED
+          </div>
+          <ul style={{ margin: 0, paddingLeft: '1.1rem', color: 'var(--text-secondary)' }}>
+            {(data.alerts || []).slice(0, 12).map((alert) => (
+              <li key={alert} style={{ fontFamily: 'var(--font-mono)', fontSize: '0.82rem' }}>
+                {alert}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {data && (
         <>
-          <div className="grid grid-3" style={{ gap: '1rem', marginBottom: '2rem' }}>
+          <div className="grid grid-4" style={{ gap: '1rem', marginBottom: '2rem' }}>
             <div className="card-industrial">
               <div
                 style={{
@@ -136,10 +206,38 @@ export default function FeedStatusPage() {
                   marginBottom: '0.4rem',
                 }}
               >
-                SYNCED ON-CHAIN
+                FRESH
               </div>
-              <div style={{ fontSize: '1.8rem', fontWeight: 900 }}>
-                {data.synced_configured_pair_count}
+              <div style={{ fontSize: '1.8rem', fontWeight: 900, color: 'var(--neo-green)' }}>
+                {data.fresh_configured_pair_count ?? '-'}
+              </div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                synced {data.synced_configured_pair_count} (any age)
+              </div>
+            </div>
+            <div className="card-industrial">
+              <div
+                style={{
+                  fontSize: '0.7rem',
+                  color: 'var(--text-secondary)',
+                  fontFamily: 'var(--font-mono)',
+                  marginBottom: '0.4rem',
+                }}
+              >
+                STALE
+              </div>
+              <div
+                style={{
+                  fontSize: '1.8rem',
+                  fontWeight: 900,
+                  color: staleCount > 0 ? 'var(--error, #ff5c5c)' : 'var(--text-primary)',
+                }}
+              >
+                {data.stale_configured_pair_count ?? '-'}
+              </div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                oldest {formatAge(data.max_age_seconds)}
+                {data.oldest_pair ? ` (${data.oldest_pair})` : ''}
               </div>
             </div>
             <div className="card-industrial">
@@ -183,6 +281,8 @@ export default function FeedStatusPage() {
                       <th style={{ padding: '0.85rem 1rem', textAlign: 'left' }}>Meaning</th>
                       <th style={{ padding: '0.85rem 1rem', textAlign: 'left' }}>Chain</th>
                       <th style={{ padding: '0.85rem 1rem', textAlign: 'left' }}>Live</th>
+                      <th style={{ padding: '0.85rem 1rem', textAlign: 'left' }}>Age</th>
+                      <th style={{ padding: '0.85rem 1rem', textAlign: 'left' }}>Status</th>
                       <th style={{ padding: '0.85rem 1rem', textAlign: 'left' }}>Delta</th>
                       <th style={{ padding: '0.85rem 1rem', textAlign: 'left' }}>Unit</th>
                     </tr>
@@ -228,13 +328,40 @@ export default function FeedStatusPage() {
                         <td
                           style={{
                             padding: '0.85rem 1rem',
+                            color: statusColor(rowStatus(item)),
+                            fontFamily: 'var(--font-mono)',
+                          }}
+                          title={
+                            typeof item.stale_after_seconds === 'number'
+                              ? `budget ${formatAge(item.stale_after_seconds)}${
+                                  item.market_closed ? ' (market closed)' : ''
+                                }`
+                              : undefined
+                          }
+                        >
+                          {formatAge(item.age_seconds)}
+                        </td>
+                        <td
+                          style={{
+                            padding: '0.85rem 1rem',
+                            color: statusColor(rowStatus(item)),
+                            fontFamily: 'var(--font-mono)',
+                            fontWeight: 700,
+                          }}
+                        >
+                          {rowStatus(item).toUpperCase().replace('_', ' ')}
+                        </td>
+                        <td
+                          style={{
+                            padding: '0.85rem 1rem',
                             color:
                               item.delta_pct === null ? 'var(--text-muted)' : 'var(--text-primary)',
                             fontFamily: 'var(--font-mono)',
                           }}
+                          title="No independent reference quote is fetched, so no delta is computed."
                         >
                           {item.delta_pct === null
-                            ? '-'
+                            ? 'n/a'
                             : `${item.delta_pct >= 0 ? '+' : ''}${item.delta_pct.toFixed(2)}%`}
                         </td>
                         <td style={{ padding: '0.85rem 1rem', color: 'var(--text-secondary)' }}>

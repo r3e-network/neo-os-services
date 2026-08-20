@@ -1,0 +1,17 @@
+[Unit]
+Description=Deliver a failure alert for %i
+# Templated OnFailure= target. Instantiated by the failing unit as
+# `morpheus-alert@<failed-unit>.service`, so %i is the unit name that failed.
+#
+# Deliberately has NO OnFailure= of its own: if delivery fails this unit stays
+# in the failed state (visible to `systemctl --failed` and to any host-level
+# unit-failure monitor) rather than recursing.
+
+[Service]
+Type=oneshot
+# Holds ALERT_WEBHOOK_URL (comma-separated) and optional ALERT_WEBHOOK_TOKEN /
+# ALERT_SOURCE. `-` so the unit still runs and still journals the alert line on
+# a box where the file has not been created yet.
+EnvironmentFile=-/opt/morpheus/nitro/alert-notify.env
+WorkingDirectory=/opt/neoos/services/deploy/systemd
+ExecStart=/usr/bin/node alert-notify.mjs %i

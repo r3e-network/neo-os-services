@@ -2,6 +2,9 @@
 Description=Morpheus DataFeed pusher - Neo N3 (8787-signed)
 After=network-online.target morpheus-nitro-signer.service
 Wants=network-online.target
+# A pusher that stops writing is the outage; route its exit code to a human.
+OnFailure=morpheus-alert@%n.service
+
 [Service]
 Type=oneshot
 EnvironmentFile=/opt/morpheus/nitro/feed-pusher.env

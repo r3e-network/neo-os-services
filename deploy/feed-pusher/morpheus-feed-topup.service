@@ -1,5 +1,9 @@
 [Unit]
 Description=Auto-topup feed updater GAS from dedicated funding key
+# A failing topup is the leading indicator of the updater running dry, which is
+# exactly what killed the mainnet feed on 2026-07-29.
+OnFailure=morpheus-alert@%n.service
+
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/neoos/services/deploy/feed-pusher

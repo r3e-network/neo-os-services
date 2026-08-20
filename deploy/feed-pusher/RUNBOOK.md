@@ -39,7 +39,13 @@ host (`i-0c52851f134db20ee`) as a systemd timer.
 3. Keep the scripts in `/opt/neoos/services/deploy/feed-pusher/`; copy the `*.service/*.timer` files to `/etc/systemd/system/`.
 4. Create `/opt/morpheus/nitro/feed-pusher.env` from `feed-pusher.env.example` (chmod 600):
    `TD_KEY` (TwelveData), `RUNTIME_TOKEN` = `MORPHEUS_RUNTIME_TOKEN` from `morpheus-relayer.env`.
-5. `systemctl daemon-reload && systemctl enable --now morpheus-feed-pusher.timer morpheus-feed-monitor.timer morpheus-db-prune.timer`.
+5. `systemctl daemon-reload && systemctl enable --now morpheus-feed-pusher.timer morpheus-feed-monitor.timer morpheus-feed-topup.timer morpheus-db-prune.timer`.
+   (`morpheus-feed-topup.timer` was missing from this list until 2026-08, so the
+   auto-topup may never have been installed on the live box — check
+   `systemctl list-timers --all | grep feed-topup` before assuming it runs.)
+   Also install the alert target so unit failures reach a human:
+   `cp ../systemd/morpheus-alert@.service /etc/systemd/system/` and create
+   `/opt/morpheus/nitro/alert-notify.env` from `../systemd/alert-notify.env.example`.
 6. Verify: `node feed-pusher.mjs` once; check `getLatest("TWELVEDATA:NEO-USD")` roundId is fresh.
 
 ## Operations
@@ -48,7 +54,11 @@ host (`i-0c52851f134db20ee`) as a systemd timer.
   monitor warns (`<12 GAS`). Top up from the deployer (it is the contract admin). Recommended
   next step: a dedicated low-value funding key + a 6-hourly auto-topup timer (do NOT put the
   pool-controlling deployer WIF on the box).
-- **Monitor:** `systemctl is-failed morpheus-feed-monitor` / `cat /opt/morpheus/nitro/feed-status.json`.
+- **Feed is stale / dead:** see [`FEED-OUTAGE-RUNBOOK.md`](./FEED-OUTAGE-RUNBOOK.md) — reproduction
+  commands, the exact wallet and GAS amount to restore, and the three checks that prove recovery.
+- **Monitor:** the monitor now routes its non-zero exit to `morpheus-alert@%n.service`
+  (`OnFailure=`), which posts to `ALERT_WEBHOOK_URL`. Polling by hand is the fallback, not the
+  detection mechanism: `systemctl is-failed morpheus-feed-monitor` / `cat /opt/morpheus/nitro/feed-status.json`.
   The monitor checks the **full on-chain pair registry** (via `getAllFeedRecords`), not just NEO-USD;
   `feed-status.json` carries a `pairs[]` array (per-pair `age_min`) alongside the back-compat `feed_age_min`.
   TradFi pairs (forex/commodities in `TRADFI_PAIRS`) get a widened staleness window
