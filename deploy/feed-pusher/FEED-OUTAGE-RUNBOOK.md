@@ -90,14 +90,63 @@ step, and it needs a human with the alerting endpoint.
 
 ### Still-open items this incident exposed
 
-- **Refill the topup key `NZFMvLj6mxTHEn8gRGrjZDeFCDMTm96p6R`** (currently 20
-  GAS, below `TOPUP_AMOUNT` 40). Until then the auto-topup stays failed and the
-  updater's 100 GAS is a ~25-day fuse.
+- ~~**Refill the topup key `NZFMvLj6mxTHEn8gRGrjZDeFCDMTm96p6R`**~~ **Done
+  2026-08-20** — funded to 60 GAS, `morpheus-feed-topup.service` reset and no
+  longer failed. The transfer branch had never once executed in the service's
+  life, so it was exercised deliberately with a temporary drop-in
+  (`TOPUP_THRESHOLD=150`, `TOPUP_AMOUNT=1`): txid
+  `0x58c2c2b294fc031e3351d378cc182b05936888b77f512814715b0d1df69812ea`,
+  updater 99.49063235 -> 100.49063235, funding key 59.99746251 -> 58.99492582.
+  Drop-in removed; defaults (25/40) restored and re-verified.
+
+  **The refill loop delays the outage class, it does not close it.** Measured
+  burn is 0.02474 GAS/cycle x 288 cycles/day = **7.12 GAS/day** (re-measured
+  independently on 2026-08-20 from 36 on-chain fee burns over a 3.07 h window:
+  0.02548 GAS/cycle = **7.17 GAS/day** — same number). The funding key
+  holds 59 GAS = exactly **one** 40-GAS topup, because the script refuses to
+  transfer unless the key holds `TOPUP_AMOUNT + 1` = 41. Timeline from
+  2026-08-20: updater crosses the 25-GAS threshold at ~day 10.6 and gets its one
+  topup (-> 65 GAS); crosses again at ~day 16.2 with the key down to 19 GAS,
+  which reproduces the exact 2026-07-29 failure; feed dies ~day 19.7
+  (**~2026-09-09**). To actually close it the funding key must hold several
+  multiples of `TOPUP_AMOUNT`, or be auto-refilled from treasury — and
+  `ALERT_WEBHOOK_URL` must be set, or the "funding key LOW" alert again reaches
+  nobody.
+
 - **Set `ALERT_WEBHOOK_URL`.** Without it every alert stops at the journal.
-- **The box runs a 92-line `feed-monitor.mjs`; this repo ships a 221-line one.**
-  The per-pair registry walk, TradFi weekend widening and
-  `MONITOR_PROM_TEXTFILE` export documented here are **not running** — the box
-  copy only checks NEO-USD and the GAS balance.
+- ~~**The box runs a 92-line `feed-monitor.mjs`; this repo ships a 221-line one.**~~
+  **Synced 2026-08-20.** Root cause: top-level `feed-pusher.mjs` is a _symlink_
+  into `deploy/feed-pusher/`, but `feed-monitor.mjs` was a plain _copy_ taken
+  2026-06-11 and never refreshed when the source was updated 2026-06-14 — so
+  `ExecStart=/usr/bin/node feed-monitor.mjs` silently resolved to a two-month-old
+  file. Fixed by making it a symlink too, matching the pattern the box already
+  used for the pusher, so future updates propagate and this cannot recur:
+
+  ```bash
+  cd /opt/morpheus/neo-morpheus-oracle
+  cp -a feed-monitor.mjs /opt/morpheus/nitro/feed-monitor.mjs.bak-$(date -u +%Y%m%dT%H%M%SZ)
+  ln -sfn /opt/morpheus/neo-morpheus-oracle/deploy/feed-pusher/feed-monitor.mjs feed-monitor.mjs
+  ```
+
+  Revert = `rm` the symlink and restore the backup under
+  `/opt/morpheus/nitro/feed-monitor.mjs.bak-*`. The unit file was **not**
+  touched: the repo unit's `WorkingDirectory=/opt/neoos/services/deploy/feed-pusher`
+  does not exist on this box, and copying it verbatim would take the feed down.
+
+  Detection was then proven against live data with a temporary
+  `MAX_AGE_SEC` drop-in: at `MAX_AGE_SEC=1` all **36/36** pairs were flagged
+  (NEO-USD included); with defaults, 8. Drop-in removed.
+
+- **The dead-pair set is bigger than CORN, and predates the deviation guard.**
+  The synced monitor reads the full on-chain registry: **36 pairs, 28 fresh
+  (<=28 min), 8 dead.** The dead ones are `BRENT-USD`, `NATGAS-USD`,
+  `COPPER-USD`, `WHEAT-USD`, `CORN-USD`, `SOY-USD` — all stale ~108,620 min
+  (**~75 days**, i.e. they died together around 2026-06-07) — plus two zombie
+  denomination variants nobody had noticed, `1000FLM-USD` and `1000JPY-USD`,
+  stale ~233,330 min (**~162 days**), whose plain `FLM-USD` / `JPY-USD`
+  counterparts are live and fresh. So CORN was already dead 75 days before the
+  deviation rejection below; the rejection is why it cannot _recover_, not why
+  it stopped.
 - **`CORN-USD` is permanently rejected by the deviation guard:**
   `rejected CORN-USD deviation_spike: src=18.73 on-chain=417.41831`. TwelveData's
   `CORN` now returns ~18.73 (the ETF) against an on-chain futures price of
@@ -109,6 +158,23 @@ step, and it needs a human with the alerting endpoint.
   SOY) plus CORN are resolved, and `FLM-USD` — pushed on chain but absent from
   the web list — is added. A permanently red health signal is the same class of
   defect as the one that caused this outage.
+
+  Note that as of the monitor sync this now also applies to
+  `morpheus-feed-monitor.service` itself, which exits 1 every 15 minutes on the
+  8 dead pairs. That is _truthful_ — the previous 92-line monitor reported
+  `"ok": true, "problems": []` while those 8 pairs had been dead for 75-162 days
+  — but a permanently-red monitor cannot signal a _new_ failure. Retiring or
+  re-pointing the 8 pairs is what returns it to green; that decision belongs
+  with the pair-registry reconciliation above, not with the monitor.
+
+- **The Neo X lane is silently down and is not covered by any of the above.**
+  `morpheus-feed-pusher-neox.service` fails every single cycle with
+  `INSUFFICIENT_FUNDS` (balance 0.00234 vs ~0.0189 required per tx), yet the
+  script catches its own error, logs `push error (recovers next cycle)` and
+  exits 0 — 672 "Deactivated successfully" and 0 failures in 24h. `OnFailure=`
+  therefore never fires and it never appears in `systemctl --failed`. This is
+  the same defect class as the 22-day N3 outage, currently live, on a second
+  chain, and the monitor does not watch Neo X.
 
 ---
 
@@ -308,3 +374,53 @@ so every documented monitor knob was inert).
   developer smoke tests from 2026-06-06. If the answer is "paused experiment",
   the correct action may be to retire the feed rather than fund it indefinitely.
 - **Single-box SPOF.** One enclave signer, one updater key, one timer host.
+
+## Independent verification — 2026-08-20 16:12–16:20 UTC
+
+Re-checked from outside the box, against mainnet RPC and the public edge, after
+the pair-registry reconciliation landed. Every number below was read fresh, not
+copied from an earlier pass.
+
+**Feed is live.** `MorpheusDataFeed 0x03013f49c42a14546c8bbe58f9d434c3517fccab`,
+all 32 advertised pairs read directly over public RPC: **27 fresh, 5 stale, 0
+absent**; oldest fresh pair 1740 s against a 2700 s budget; `NEO-USD` 50 s.
+`morpheus-feed-pusher.service` ran at 15:51:03, 15:56:11, 16:01:21, 16:06:31 and
+16:11:41 UTC — an unbroken 5-minute cadence — with **0 failed starts in 24 h**.
+The feed did not go down at any point during this work.
+
+**No agent moved funds.** `getnep17transfers` on both keys: the updater
+`NN8tbpgAx8zm5BNJZEqvi71Rj2Z8LX2RHh` has **0** outbound transfers to any address
+(36 entries, all network-fee burns), and the funding key
+`NZFMvLj6mxTHEn8gRGrjZDeFCDMTm96p6R` has exactly **one** outbound transfer ever —
+the 1.0 GAS the topup _service_ sent itself during the drill
+(`0x58c2c2…9812ea`, 15:01:19 UTC). Its balance 58.99492582 GAS is unchanged since,
+at `lastupdatedblock` 12534793. Both keys were funded by the operator from
+`NhWxcoEc9qtmnjsTLF1fVF6myJ5MZZhSMK` at 13:08 and 14:47 UTC.
+
+**The 5 stale pairs are the enclave-EIF blocker, not a mapping regression.**
+`BRENT`, `NATGAS`, `WHEAT`, `CORN`, `SOY` last _written_ on chain 2026-06-06
+(~75.5 d) carrying quotes already dated 2026-03-11 (~162 d) — the on-chain struct
+holds both a source timestamp (field 1) and a write timestamp (field 3), and they
+diverge by 86.6 days for exactly these pairs. The host now names them every cycle
+(`planned by this host but NOT written by the enclave`), which is the intended
+behaviour of the divergence detector; clearing them needs the EIF rebuild.
+
+**Edge gateway honours origin `no-store`.** Four probes each through
+`oracle.meshmini.app`: stale `CORN-USD` → `cache-control: no-store`,
+`cf-cache-status: DYNAMIC` every time, `x-morpheus-feed-age-seconds` advancing
+6521696 → 6521699 → 6521703 (revalidated, never served from cache). Fresh
+`BTC-USD` → `public, max-age=15`, `DYNAMIC` then `HIT age: 7`. Caching was not
+disabled wholesale. **Still broken:** on a HIT the zone Cache Rule rewrites the
+client-facing header to `public, max-age=14400` — Cloudflare evicts at 15 s but
+browsers are told 4 hours. That is zone configuration, not this worker.
+
+**`systemctl --failed` is NOT empty**, and that is the honest state:
+`morpheus-feed-monitor.service` (exit 1, naming exactly the 5 stale pairs) and
+`morpheus-alert@morpheus-feed-monitor.service.service` (exit 78/CONFIG,
+`ALERT_WEBHOOK_URL` unset — `/opt/morpheus/nitro/alert-notify.env` does not
+exist). `morpheus-feed-topup.service` is **not** failed: last run 15:01:55 UTC,
+`ok: updater 100.5 GAS >= 25, no topup needed`, next 21:01:53 UTC.
+
+**Neo X remains silently down.** Confirmed live at 16:12:14 and 16:14:23 UTC:
+`INSUFFICIENT_FUNDS`, balance 0.00234256 vs a 0.01772 tx cost, and the unit still
+reports `Finished … Deactivated successfully` so `OnFailure=` never fires.
