@@ -22,6 +22,17 @@ host (`i-0c52851f134db20ee`) as a systemd timer.
 
 ## Files
 
+> **Path warning (verified on the live box 2026-08-20).** The table below is the
+> _intended_ layout. `i-0c52851f134db20ee` actually uses
+> `/opt/morpheus/neo-morpheus-oracle` as its repo root — every installed unit has
+> `WorkingDirectory=/opt/morpheus/neo-morpheus-oracle`, with `feed-pusher.mjs`
+> symlinked to `deploy/feed-pusher/feed-pusher.mjs` and `feed-monitor.mjs` /
+> `feed-topup.mjs` / `db-prune.mjs` at that root. Copying this repo's
+> `*.service` files onto that box verbatim points them at a directory that does
+> not exist and takes the feed down. Reconcile the path, or add behaviour with
+> `/etc/systemd/system/<unit>.service.d/` drop-ins — see
+> [`FEED-OUTAGE-RUNBOOK.md`](./FEED-OUTAGE-RUNBOOK.md) §0.
+
 | repo file                               | box path                                                                      |
 | --------------------------------------- | ----------------------------------------------------------------------------- |
 | `feed-pusher.mjs`                       | `/opt/neoos/services/deploy/feed-pusher/feed-pusher.mjs`                      |
@@ -51,7 +62,10 @@ host (`i-0c52851f134db20ee`) as a systemd timer.
 ## Operations
 
 - **GAS:** updater burns ~4 GAS/day. Refund `0x9fb28bdacfaa7fcc0a4d660d0dc990b0e7d46118` when the
-  monitor warns (`<12 GAS`). Top up from the deployer (it is the contract admin). Recommended
+  monitor warns (`<12 GAS`). **The auto-topup cannot do this today:** its funding key
+  `NZFMvLj6mxTHEn8gRGrjZDeFCDMTm96p6R` holds 20 GAS against a `TOPUP_AMOUNT` of 40, so
+  `morpheus-feed-topup.service` has been in the failed state since long before the
+  2026-07-29 outage. Refill that key or the updater has no automatic refill at all. Top up from the deployer (it is the contract admin). Recommended
   next step: a dedicated low-value funding key + a 6-hourly auto-topup timer (do NOT put the
   pool-controlling deployer WIF on the box).
 - **Feed is stale / dead:** see [`FEED-OUTAGE-RUNBOOK.md`](./FEED-OUTAGE-RUNBOOK.md) — reproduction

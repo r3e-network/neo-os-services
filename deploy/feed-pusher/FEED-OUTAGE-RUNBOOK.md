@@ -1,5 +1,119 @@
 # Mainnet price feed outage — restore runbook
 
+**RESOLVED 2026-08-20T13:12:31Z after 22.5 days. Kept as the incident record and
+the procedure for the next time.** What actually happened, verified on the box
+and on chain, is in §0. Everything below §0 is the original 2026-08-17 writeup;
+where it disagrees with §0, §0 wins.
+
+---
+
+## 0. Resolution and the real causal chain
+
+The feed came back **4 minutes after the updater was funded**, on the pusher's own
+5-minute timer, with no operator intervention. There was no second fault.
+
+| Time (UTC, 2026-08-20) | Event                                                                             |
+| ---------------------- | --------------------------------------------------------------------------------- |
+| 13:07:25               | pusher cycle: `sendrawtransaction: {"code":-511,"message":"Insufficient funds"}`  |
+| 13:08:31               | owner funds `NN8tbpgAx8zm5BNJZEqvi71Rj2Z8LX2RHh` with 100 GAS (block 12532641)    |
+| 13:12:37               | pusher cycle: `(enclave) pushed 28 pairs (skipped 1, missing 0), fee 0.05010 GAS` |
+| 13:24:01               | `feed-monitor` returns to `ok feed_age=6min gas=99.9`                             |
+
+A read between 13:08:31 and 13:12:31 shows a funded wallet and a still-stale
+feed. That gap is the timer interval, not a fault — check the pusher journal
+before concluding anything from it.
+
+**The causal chain is one level deeper than "the updater ran out of GAS":**
+
+1. The dedicated topup key `NZFMvLj6mxTHEn8gRGrjZDeFCDMTm96p6R` holds
+   **19.997 GAS** and has not moved since block 11024483.
+2. `TOPUP_AMOUNT` is 40, so `feed-topup.mjs` cannot transfer and instead alerts
+   `updater LOW 0.0 AND funding key LOW 20.0 — REFILL funding key NZFMvLj6…`
+   and exits 1. `morpheus-feed-topup.service` has been in the **failed** state
+   ever since. The auto-topup has therefore never successfully topped up.
+3. The updater drained on 2026-07-29 and stayed empty.
+4. `morpheus-feed-monitor` **did** detect it, every 15 minutes for 22 days:
+   `ALERT: FEED STALE NEO-USD age=32416min | LOW GAS updater=0.0`, exit 1.
+5. Nothing was subscribed to that exit code. Confirmed on the box:
+   `grep -l OnFailure /etc/systemd/system/*.service` returned nothing.
+
+So the outage was detected continuously and reported to no one. **Funding the
+updater buys ~25 days and does not fix this** — without step 1 the same outage
+recurs.
+
+### Box layout — read before copying any unit file
+
+The live host `i-0c52851f134db20ee` does **not** use `/opt/neoos/services`. Its
+repo root is `/opt/morpheus/neo-morpheus-oracle`, with `feed-pusher.mjs`
+symlinked to `deploy/feed-pusher/feed-pusher.mjs` and `feed-monitor.mjs`,
+`feed-topup.mjs`, `db-prune.mjs` sitting at that root. Every installed unit uses
+`WorkingDirectory=/opt/morpheus/neo-morpheus-oracle`.
+
+The `*.service` files in this repo carry `/opt/neoos/services/...`. **Copying
+them onto this box verbatim would point every feed unit at a directory that does
+not exist and take the feed down.** Reconcile the path first, or add behaviour
+with drop-ins as below.
+
+### Alert path — installed 2026-08-20, drill-verified
+
+Installed with drop-ins rather than by replacing the units, precisely because of
+the path mismatch above:
+
+```bash
+BOX=/opt/morpheus/neo-morpheus-oracle
+install -D deploy/systemd/alert-notify.mjs $BOX/deploy/systemd/alert-notify.mjs
+# morpheus-alert@.service with WorkingDirectory=$BOX/deploy/systemd
+for u in morpheus-feed-pusher morpheus-feed-monitor morpheus-feed-topup; do
+  mkdir -p /etc/systemd/system/$u.service.d
+  printf '[Unit]\nOnFailure=morpheus-alert@%%n.service\n' \
+    > /etc/systemd/system/$u.service.d/10-onfailure.conf
+done
+printf '[Service]\nEnvironmentFile=-/opt/morpheus/nitro/feed-pusher.env\n' \
+  > /etc/systemd/system/morpheus-feed-monitor.service.d/20-envfile.conf
+systemctl daemon-reload
+```
+
+Drill (2026-08-20T13:38:15Z), forcing a real monitor failure with a temporary
+`MAX_AGE_SEC=1` drop-in that was removed afterwards:
+
+```
+morpheus-feed-monitor.service          Result=exit-code ExecMainStatus=1
+morpheus-alert@morpheus-feed-monitor…  Result=exit-code ExecMainStatus=78 failed
+node[…]: ALERT "[NeoOS oracle] morpheus-feed-monitor.service FAILED: FEED STALE NEO-USD age=5min"
+node[…]: ALERT_WEBHOOK_URL is not set — no alert was delivered off-box.
+```
+
+The chain works. **It still does not page anybody**: `ALERT_WEBHOOK_URL` in
+`/opt/morpheus/nitro/alert-notify.env` is unset, which is why the notifier exits
+78 and shows up in `systemctl --failed`. Supplying that URL is the one remaining
+step, and it needs a human with the alerting endpoint.
+
+### Still-open items this incident exposed
+
+- **Refill the topup key `NZFMvLj6mxTHEn8gRGrjZDeFCDMTm96p6R`** (currently 20
+  GAS, below `TOPUP_AMOUNT` 40). Until then the auto-topup stays failed and the
+  updater's 100 GAS is a ~25-day fuse.
+- **Set `ALERT_WEBHOOK_URL`.** Without it every alert stops at the journal.
+- **The box runs a 92-line `feed-monitor.mjs`; this repo ships a 221-line one.**
+  The per-pair registry walk, TradFi weekend widening and
+  `MONITOR_PROM_TEXTFILE` export documented here are **not running** — the box
+  copy only checks NEO-USD and the GAS balance.
+- **`CORN-USD` is permanently rejected by the deviation guard:**
+  `rejected CORN-USD deviation_spike: src=18.73 on-chain=417.41831`. TwelveData's
+  `CORN` now returns ~18.73 (the ETF) against an on-chain futures price of
+  ~417 (cents/bushel). The guard is right to refuse; the symbol mapping is what
+  is wrong. Re-point it or deregister the pair — do not raise
+  `MAX_DEVIATION_BPS`, which would let a 22x mispriced quote onto the feed.
+- **`/api/feeds/status` will report `degraded` forever** until the five pairs the
+  web app advertises but the pusher never writes (BRENT, NATGAS, COPPER, WHEAT,
+  SOY) plus CORN are resolved, and `FLM-USD` — pushed on chain but absent from
+  the web list — is added. A permanently red health signal is the same class of
+  defect as the one that caused this outage.
+
+---
+
+## Original writeup (2026-08-17)
+
 **Status when this was written: 2026-08-17, feed DEAD for 19.1 days.**
 
 Everything in this document was verified against mainnet on 2026-08-17 with
