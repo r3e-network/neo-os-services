@@ -1707,25 +1707,30 @@ test('feed quote can invert forex units for direct JPY-USD pricing under 1e6 USD
   assert.equal(body.price, '0.006666666667');
 });
 
+// CORN-USD is the regression subject on purpose: the registry symbol C_1 is CBOT
+// corn futures (~479 US cents/bushel) while the bare ticker CORN is the Teucrium
+// Corn Fund ETF (~$18.9). Deriving the provider symbol from the pair name instead
+// of reading it from the registry is what put the ETF price on a futures series.
 test('feed quote preserves explicit TwelveData futures symbols', async () => {
   global.fetch = async (url) => {
     assert.match(String(url), /api\.twelvedata\.com\/price/);
-    assert.match(String(url), /symbol=HG1(&|%26|$)/);
-    return new Response(JSON.stringify({ price: '25.20000' }), {
+    assert.match(String(url), /symbol=C_1(&|%26|$)/);
+    assert.doesNotMatch(String(url), /symbol=CORN(&|%26|$)/);
+    return new Response(JSON.stringify({ price: '479.06777' }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     });
   };
 
   const res = await handler(
-    new Request('http://local/feeds/price/COPPER-USD?provider=twelvedata', {
+    new Request('http://local/feeds/price/CORN-USD?provider=twelvedata', {
       headers: authHeaders(),
     })
   );
   assert.equal(res.status, 200);
   const body = await res.json();
-  assert.equal(body.pair, 'TWELVEDATA:COPPER-USD');
-  assert.equal(body.price, '25.2');
+  assert.equal(body.pair, 'TWELVEDATA:CORN-USD');
+  assert.equal(body.price, '479.06777');
 });
 
 test('feed quote supports coinbase-spot provider', async () => {

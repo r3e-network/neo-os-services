@@ -140,7 +140,6 @@ Default built-in USD pairs now cover:
   - `TWELVEDATA:WTI-USD`
   - `TWELVEDATA:BRENT-USD`
   - `TWELVEDATA:NATGAS-USD`
-  - `TWELVEDATA:COPPER-USD`
   - `TWELVEDATA:WHEAT-USD`
   - `TWELVEDATA:CORN-USD`
   - `TWELVEDATA:SOY-USD`
@@ -192,13 +191,12 @@ The canonical key format is provider-scoped. For the current main catalog, `TWEL
 | `TWELVEDATA:BNB-USD`    | Crypto    | price of 1 BNB in USD                   | `BNB/USD`         | `1 BNB`                            |                                     |
 | `TWELVEDATA:XRP-USD`    | Crypto    | price of 1 XRP in USD                   | `XRP/USD`         | `1 XRP`                            |                                     |
 | `TWELVEDATA:DOGE-USD`   | Crypto    | price of 1 DOGE in USD                  | `DOGE/USD`        | `1 DOGE`                           |                                     |
-| `TWELVEDATA:WTI-USD`    | Commodity | WTI crude oil reference price in USD    | `WTI/USD`         | `WTI reference unit`               |                                     |
-| `TWELVEDATA:BRENT-USD`  | Commodity | Brent crude spot reference price in USD | `XBR/USD`         | `Brent spot reference unit`        |                                     |
-| `TWELVEDATA:NATGAS-USD` | Commodity | natural gas reference price in USD      | `NG/USD`          | `natural gas reference unit`       |                                     |
-| `TWELVEDATA:COPPER-USD` | Commodity | copper futures proxy in USD             | `HG1`             | `1 copper futures reference unit`  | front-month proxy                   |
-| `TWELVEDATA:WHEAT-USD`  | Commodity | wheat futures proxy in USD              | `W_1`             | `1 wheat futures reference unit`   | front-month proxy                   |
-| `TWELVEDATA:CORN-USD`   | Commodity | corn futures proxy in USD               | `C_1`             | `1 corn futures reference unit`    | front-month proxy                   |
-| `TWELVEDATA:SOY-USD`    | Commodity | soybean futures proxy in USD            | `S_1`             | `1 soybean futures reference unit` | front-month proxy                   |
+| `TWELVEDATA:WTI-USD`    | Commodity | WTI crude oil spot, USD per barrel      | `WTI/USD`         | `1 barrel`                         |                                     |
+| `TWELVEDATA:BRENT-USD`  | Commodity | Brent crude spot, USD per barrel        | `XBR/USD`         | `1 barrel`                         |                                     |
+| `TWELVEDATA:NATGAS-USD` | Commodity | natural gas, USD per MMBtu              | `NG/USD`          | `1 MMBtu`                          |                                     |
+| `TWELVEDATA:WHEAT-USD`  | Commodity | CBOT wheat front-month, US cents/bushel | `W_1`             | `1 bushel (US cents)`              | front-month futures                 |
+| `TWELVEDATA:CORN-USD`   | Commodity | CBOT corn front-month, US cents/bushel  | `C_1`             | `1 bushel (US cents)`              | front-month futures, NOT the `CORN` ETF |
+| `TWELVEDATA:SOY-USD`    | Commodity | CBOT soybean front-month, US cents/bu   | `S_1`             | `1 bushel (US cents)`              | front-month futures                 |
 | `TWELVEDATA:AAPL-USD`   | Equity    | price of 1 AAPL share in USD            | `AAPL`            | `1 share`                          |                                     |
 | `TWELVEDATA:GOOGL-USD`  | Equity    | price of 1 GOOGL share in USD           | `GOOGL`           | `1 share`                          |                                     |
 | `TWELVEDATA:MSFT-USD`   | Equity    | price of 1 MSFT share in USD            | `MSFT`            | `1 share`                          |                                     |

@@ -36,6 +36,7 @@
     "audit:feeds": "node scripts/audit-feed-freshness.mjs",
     "audit:feeds:drift": "node scripts/audit-feed-registry-drift.mjs",
     "check:feeds:freshness": "node scripts/check-feed-freshness.mjs",
+    "check:feeds:registries": "node scripts/check-feed-pair-registries.mjs",
     "backfill:feeds": "node scripts/backfill-feed-pairs.mjs",
     "write:addresses": "node scripts/write-address-registry.mjs",
     "verify:n3": "node scripts/verify-morpheus-n3.mjs",

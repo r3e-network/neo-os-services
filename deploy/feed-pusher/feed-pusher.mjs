@@ -147,31 +147,166 @@ function writeMissingState(counts) {
   } catch {}
 }
 
-// TwelveData serves equities/ETFs (and a few commodity ETFs like CORN) under the
-// BARE ticker (AAPL, GLD, SPY, CORN); crypto / forex / metals use the X/USD pair form.
-// A blanket dash→slash rewrite produces invalid stock symbols like 'AAPL/USD' which
-// TwelveData 404s — that is exactly why the equity/commodity lane went stale (~2026-06)
-// while crypto/forex kept working. Map the bare-ticker assets correctly.
-export const TD_BARE_SYMBOLS = new Set([
-  'AAPL',
-  'GOOGL',
-  'MSFT',
-  'AMZN',
-  'TSLA',
-  'META',
-  'NVDA',
-  'SPY',
-  'QQQ',
-  'GLD',
-  'CORN',
+// TwelveData provider symbols are an EXPLICIT per-pair table, never a guess.
+//
+// Two production faults came from deriving the provider symbol from the pair name:
+//   1. A blanket dash→slash rewrite produced 'AAPL/USD', which TwelveData 404s.
+//      That silently took the whole equity/ETF lane stale from ~2026-06.
+//   2. The fix for (1) added a bare-ticker set that included 'CORN', so CORN-USD
+//      started resolving to CORN = *Teucrium Corn Fund*, an NYSE ETF quoting ~$18.9,
+//      while the on-chain CORN-USD series is CBOT corn futures (C_1, ~479 ¢/bushel).
+//      Every cycle after that was correctly rejected by the deviation guard and the
+//      pair sat permanently stale — a "degraded" health signal nobody could clear.
+// Guessing a provider symbol is how an oracle publishes the wrong asset under the
+// right name. The table below is the ONLY mapping, and an unmapped entry in SYMBOLS
+// is refused loudly rather than guessed at (see the UNMAPPED alert in the cycle).
+//
+// Every mapping was verified against api.twelvedata.com/quote on 2026-08-20; the
+// instrument name TwelveData resolved is recorded so a future silent re-resolution
+// (the exact failure mode above) shows up as a diff instead of a wrong price.
+export const TD_SYMBOLS = new Map([
+  // Crypto — TwelveData 'Synthetic'/exchange-backed X/USD pairs.
+  ['NEO-USD', 'NEO/USD'], // NEO US Dollar (Binance)
+  ['GAS-USD', 'GAS/USD'], // Gas US Dollar (OKEx)
+  ['BTC-USD', 'BTC/USD'], // Bitcoin US Dollar (Binance)
+  ['ETH-USD', 'ETH/USD'], // Ethereum US Dollar (Binance)
+  ['SOL-USD', 'SOL/USD'], // Solana US Dollar (Binance)
+  ['TRX-USD', 'TRX/USD'], // TRON US Dollar (Binance)
+  ['PAXG-USD', 'PAXG/USD'], // PAX Gold US Dollar (Binance)
+  ['USDT-USD', 'USDT/USD'], // Tether US Dollar (Kraken)
+  ['USDC-USD', 'USDC/USD'], // USD Coin US Dollar (Binance)
+  ['BNB-USD', 'BNB/USD'], // Binance Coin US Dollar (Binance)
+  ['XRP-USD', 'XRP/USD'], // XRP US Dollar (Binance)
+  ['DOGE-USD', 'DOGE/USD'], // Dogecoin US Dollar (Binance)
+  // FX — quoted DIRECTLY as base/USD, so no inversion happens anywhere in this
+  // path. JPY/USD and CNY/USD both resolve on TwelveData and match the values
+  // already on chain; do not "fix" these to USD/JPY + invert.
+  ['EUR-USD', 'EUR/USD'], // Euro / US Dollar (Forex)
+  ['GBP-USD', 'GBP/USD'], // British Pound / US Dollar (Forex)
+  ['JPY-USD', 'JPY/USD'], // Japanese Yen / US Dollar (Forex)
+  ['CNY-USD', 'CNY/USD'], // Chinese Yuan / US Dollar (Forex)
+  // Commodities — TwelveData lists these under its 'Forex'/commodities lane.
+  // The `X_1` forms are front-month futures and quote in the exchange's native
+  // unit (US cents per bushel for the grains), NOT in dollars per unit.
+  ['WTI-USD', 'WTI/USD'], // Crude Oil WTI Spot / US Dollar
+  ['BRENT-USD', 'XBR/USD'], // Brent Spot / US Dollar
+  ['NATGAS-USD', 'NG/USD'], // Natural Gas / US Dollar
+  ['WHEAT-USD', 'W_1'], // Wheat Futures (¢/bushel)
+  ['CORN-USD', 'C_1'], // Corn Futures (¢/bushel)  — NOT 'CORN' (Teucrium ETF)
+  ['SOY-USD', 'S_1'], // Soybeans Futures (¢/bushel)
+  // Equities / ETFs — bare ticker; 'AAPL/USD' 404s.
+  ['AAPL-USD', 'AAPL'], // Apple Inc. (NASDAQ)
+  ['GOOGL-USD', 'GOOGL'], // Alphabet Inc. Class A (NASDAQ)
+  ['MSFT-USD', 'MSFT'], // Microsoft Corporation (NASDAQ)
+  ['AMZN-USD', 'AMZN'], // Amazon.com Inc. (NASDAQ)
+  ['TSLA-USD', 'TSLA'], // Tesla, Inc. (NASDAQ)
+  ['META-USD', 'META'], // Meta Platforms, Inc. Class A (NASDAQ)
+  ['NVDA-USD', 'NVDA'], // NVIDIA Corporation (NASDAQ)
+  ['SPY-USD', 'SPY'], // SPDR S&P 500 ETF Trust (NYSE ARCA)
+  ['QQQ-USD', 'QQQ'], // Invesco QQQ Trust, Series 1 (NASDAQ)
+  ['GLD-USD', 'GLD'], // SPDR Gold Shares (NYSE ARCA)
 ]);
+
+// Pairs deliberately NOT pushed, with the reason. Retiring a pair here is the
+// honest alternative to leaving it advertised and permanently stale: a pair the
+// configured provider cannot serve correctly must not appear in SYMBOLS, in the
+// advertised feed list, or in a health count.
+//
+// These are asserted by scripts/check-feed-pair-registries.mjs: a retired pair
+// that reappears in any active registry fails the check.
+export const RETIRED_FEED_PAIRS = new Map([
+  [
+    'COPPER-USD',
+    // TwelveData's /commodities reference lists HG1 as "Copper Spot", but
+    // /price?symbol=HG1 and /quote?symbol=HG1 resolve HG1 to *Homag Group AG*,
+    // a Frankfurt-listed woodworking-machinery stock quoting 24.40 EUR. The
+    // on-chain COPPER-USD record (24.40, last written 2026-06-06) is that equity
+    // price, not copper. Real copper needs /quote?symbol=HG1&exchange=Forex
+    // (6.46 USD/lb), which cannot ride the batched comma-separated /price call
+    // this pusher uses, and re-anchoring 24.40 → 6.46 is a -73.5% move that the
+    // deviation guard correctly refuses. Reinstating it needs BOTH an admin feed
+    // reset for the pair AND a per-symbol disambiguated fetch. Retired until then.
+    'twelvedata HG1 resolves to Homag Group AG (FSX, EUR), not copper; correct copper needs exchange=Forex plus an on-chain reset',
+  ],
+  [
+    'FLM-USD',
+    // TwelveData's /cryptocurrencies reference is explicit: FLM/USD has
+    // currency_base "FolmCoin". It is NOT Flamingo Finance, which is what FLM
+    // means to every Neo consumer of this feed. Cross-check on 2026-08-20:
+    // TwelveData FLM/USD = 0.0025054 while CoinGecko flamingo-finance = 0.00053932
+    // (4.6x apart) with CoinGecko neo = 1.87 vs on-chain NEO-USD = 1.864 confirming
+    // the comparison method. TwelveData has no Flamingo Finance listing at all.
+    // Publishing FolmCoin under the FLM ticker is a wrong-asset defect, so the
+    // pair is retired rather than advertised.
+    'twelvedata FLM/USD is FolmCoin, not Flamingo Finance; no Flamingo listing exists on this provider',
+  ],
+  [
+    '1000FLM-USD',
+    'legacy scaled variant, last written 2026-03-11, superseded and unsourceable (see FLM-USD)',
+  ],
+  ['1000JPY-USD', 'legacy scaled variant, last written 2026-03-11, superseded by JPY-USD'],
+]);
+
 export function toTwelveDataSymbol(symbol) {
-  const ticker = String(symbol).split('-')[0];
-  return TD_BARE_SYMBOLS.has(ticker) ? ticker : String(symbol).replace('-', '/');
+  return TD_SYMBOLS.get(String(symbol).trim().toUpperCase()) || null;
+}
+
+/**
+ * Split a requested symbol list into the ones this pusher can map and the ones it
+ * cannot. Pure + exported so the unmapped-symbol behaviour is unit-testable.
+ * An unmapped symbol is NEVER guessed at: it is reported and dropped.
+ */
+export function partitionMappedSymbols(symbols) {
+  const mapped = [];
+  const unmapped = [];
+  for (const symbol of symbols) {
+    (toTwelveDataSymbol(symbol) ? mapped : unmapped).push(symbol);
+  }
+  return { mapped, unmapped };
+}
+
+/**
+ * Pairs the HOST planned to write that the ENCLAVE did not include in its signed
+ * batch, restricted to pairs whose existing on-chain record is already past the
+ * force-refresh window.
+ *
+ * When MORPHEUS_FEED_PUSHER_ENCLAVE_SIGN=true the enclave fetches its own prices and
+ * plans inside the measured boundary, so the authoritative provider-symbol mapping is
+ * the copy baked into the running EIF — NOT the file on this host. A host that has
+ * been fixed while the enclave still carries an older mapping therefore looks
+ * completely healthy: the cycle succeeds, the log says "pushed N pairs", and the
+ * affected pairs simply never move. That is exactly how CORN-USD and the BRENT /
+ * NATGAS / WHEAT / SOY commodity lane sat 75 days stale while every cycle reported
+ * success.
+ *
+ * A pair the enclave declines for an ordinary reason (its own fetch put the price back
+ * inside the change threshold between the two fetches) is NOT reported: only pairs
+ * that are already stale enough to be due a forced heartbeat and STILL were not
+ * written, which no benign disagreement explains.
+ */
+export function enclaveDroppedStalePairs(plannedPairs, enclavePairs, onchainState, now, staleSec) {
+  const written = new Set((enclavePairs || []).map((pair) => String(pair)));
+  const dropped = [];
+  for (const pair of plannedPairs || []) {
+    if (written.has(pair)) continue;
+    const symbol = String(pair).replace(/^TWELVEDATA:/, '');
+    const record = onchainState[symbol];
+    if (!record) continue;
+    const age = now - Number(record.timestamp || 0);
+    if (Number.isFinite(age) && age > staleSec) dropped.push({ symbol, age_seconds: age });
+  }
+  return dropped;
 }
 
 async function td(syms) {
-  const t = syms.map((s) => toTwelveDataSymbol(s));
+  const { mapped, unmapped } = partitionMappedSymbols(syms);
+  for (const symbol of unmapped) {
+    log(
+      `⚠️ ALERT: ${symbol} has no TwelveData mapping — add it to TD_SYMBOLS (with the resolved instrument verified) or drop it from SYMBOLS. Refusing to guess a provider symbol.`
+    );
+  }
+  if (!mapped.length) return {};
+  const t = mapped.map((s) => toTwelveDataSymbol(s));
   const r = await fetch(
     `https://api.twelvedata.com/price?symbol=${encodeURIComponent(t.join(','))}&apikey=${TD_KEY}`,
     { signal: AbortSignal.timeout(25000) }
@@ -184,7 +319,7 @@ async function td(syms) {
     throw new Error('TwelveData non-JSON (HTTP ' + r.status + ')');
   }
   const o = {};
-  for (const s of syms) {
+  for (const s of mapped) {
     const k = toTwelveDataSymbol(s);
     const e = t.length === 1 ? j : j[k];
     const v = e && e.price;
@@ -495,6 +630,18 @@ export async function pushNeoN3(prices, now) {
         log(
           `[neo-n3] (enclave) pushed ${resp.pairs.length} pairs (skipped ${skipped}, missing ${missing}), fee ${(txParams.systemFee / 1e8 + txParams.networkFee / 1e8).toFixed(5)} GAS, txid ${res && res.hash}`
         );
+        // Host/enclave mapping divergence check — see enclaveDroppedStalePairs.
+        for (const dropped of enclaveDroppedStalePairs(
+          P,
+          resp.pairs,
+          onchainState,
+          now,
+          MAX_STALE_SEC
+        )) {
+          log(
+            `[neo-n3] ⚠️ ALERT: ${dropped.symbol} was planned by this host but NOT written by the enclave, and is ${Math.round(dropped.age_seconds / 3600)}h stale on chain — the enclave EIF is fetching it with a different (older) provider-symbol mapping. Rebuild and re-run the enclave image so its baked feed-pusher.mjs matches this host.`
+          );
+        }
       }
     }
   }

@@ -6,6 +6,34 @@ const FEED_PAIR_ALIASES = {
 };
 const KNOWN_FEED_PROVIDER_PREFIXES = ['TWELVEDATA:', 'BINANCE-SPOT:', 'COINBASE-SPOT:'];
 
+/**
+ * Pairs retired from every active registry, with the reason. Mirrors
+ * RETIRED_FEED_PAIRS in `deploy/feed-pusher/feed-pusher.mjs` and
+ * `apps/web/lib/feed-defaults.ts`; `scripts/check-feed-pair-registries.mjs` fails
+ * if a retired pair reappears in DEFAULT_FEED_PAIRS or if the lists disagree.
+ *
+ * A pair that cannot be sourced correctly must be retired here rather than left in
+ * DEFAULT_FEED_PAIRS to age forever: a permanently stale advertised pair is what
+ * made the feed health signal meaningless.
+ */
+export const RETIRED_FEED_PAIRS = {
+  'COPPER-USD':
+    'twelvedata HG1 resolves to Homag Group AG (FSX, EUR), not copper; correct copper needs exchange=Forex plus an on-chain reset',
+  'FLM-USD':
+    'twelvedata FLM/USD is FolmCoin, not Flamingo Finance; no Flamingo listing exists on this provider',
+  '1000FLM-USD':
+    'legacy scaled variant, last written 2026-03-11, superseded and unsourceable (see FLM-USD)',
+  '1000JPY-USD': 'legacy scaled variant, last written 2026-03-11, superseded by JPY-USD',
+};
+
+/**
+ * The pairs this worker knows how to quote. Must name the same set as
+ * DEFAULT_FEED_BASE_SYMBOLS in `apps/web/lib/feed-defaults.ts` and TD_SYMBOLS in
+ * `deploy/feed-pusher/feed-pusher.mjs`. Where a provider symbol here differs from
+ * the pusher's, the difference must be explained by an explicit `price_transform`
+ * (e.g. JPY-USD is fetched as USD/JPY and inverted here, and as JPY/USD directly by
+ * the pusher — the same instrument either way).
+ */
 export const DEFAULT_FEED_PAIRS = {
   'NEO-USD': {
     providers: {
@@ -21,32 +49,32 @@ export const DEFAULT_FEED_PAIRS = {
   },
   'BTC-USD': {
     providers: {
-      twelvedata: { symbol: 'BTC-USD' },
+      twelvedata: { symbol: 'BTC/USD' },
     },
   },
   'ETH-USD': {
     providers: {
-      twelvedata: { symbol: 'ETH-USD' },
+      twelvedata: { symbol: 'ETH/USD' },
     },
   },
   'SOL-USD': {
     providers: {
-      twelvedata: { symbol: 'SOL-USD' },
+      twelvedata: { symbol: 'SOL/USD' },
     },
   },
   'TRX-USD': {
     providers: {
-      twelvedata: { symbol: 'TRX-USD' },
+      twelvedata: { symbol: 'TRX/USD' },
     },
   },
   'PAXG-USD': {
     providers: {
-      twelvedata: { symbol: 'PAXG-USD' },
+      twelvedata: { symbol: 'PAXG/USD' },
     },
   },
   'WTI-USD': {
     providers: {
-      twelvedata: { symbol: 'WTI-USD' },
+      twelvedata: { symbol: 'WTI/USD' },
     },
   },
   'BRENT-USD': {
@@ -59,17 +87,14 @@ export const DEFAULT_FEED_PAIRS = {
       twelvedata: { symbol: 'NG/USD' },
     },
   },
-  'COPPER-USD': {
-    providers: {
-      twelvedata: { symbol: 'HG1' },
-    },
-  },
   'WHEAT-USD': {
     providers: {
       twelvedata: { symbol: 'W_1' },
     },
   },
   'CORN-USD': {
+    // C_1 is CBOT corn futures (US cents/bushel). The bare ticker CORN is the
+    // Teucrium Corn Fund ETF — a different asset an order of magnitude apart.
     providers: {
       twelvedata: { symbol: 'C_1' },
     },
@@ -81,27 +106,27 @@ export const DEFAULT_FEED_PAIRS = {
   },
   'USDT-USD': {
     providers: {
-      twelvedata: { symbol: 'USDT-USD' },
+      twelvedata: { symbol: 'USDT/USD' },
     },
   },
   'USDC-USD': {
     providers: {
-      twelvedata: { symbol: 'USDC-USD' },
+      twelvedata: { symbol: 'USDC/USD' },
     },
   },
   'BNB-USD': {
     providers: {
-      twelvedata: { symbol: 'BNB-USD' },
+      twelvedata: { symbol: 'BNB/USD' },
     },
   },
   'XRP-USD': {
     providers: {
-      twelvedata: { symbol: 'XRP-USD' },
+      twelvedata: { symbol: 'XRP/USD' },
     },
   },
   'DOGE-USD': {
     providers: {
-      twelvedata: { symbol: 'DOGE-USD' },
+      twelvedata: { symbol: 'DOGE/USD' },
     },
   },
   'AAPL-USD': {

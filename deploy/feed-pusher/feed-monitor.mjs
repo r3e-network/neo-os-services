@@ -26,12 +26,36 @@ const MAX_AGE = Number(process.env.MAX_AGE_SEC || STALE_REFRESH + 900),
 // Mon-open plus margin) when the market is closed; crypto pairs keep MAX_AGE.
 // TRADFI_PAIRS is the configurable suffix list (pair string sans TWELVEDATA:).
 const TRADFI_PAIRS = new Set(
-  (process.env.TRADFI_PAIRS || 'EUR-USD,GBP-USD,JPY-USD,CNY-USD,WTI-USD')
+  (
+    process.env.TRADFI_PAIRS ||
+    'EUR-USD,GBP-USD,JPY-USD,CNY-USD,WTI-USD,BRENT-USD,NATGAS-USD,WHEAT-USD,CORN-USD,SOY-USD'
+  )
     .split(',')
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean)
 );
 const TRADFI_WEEKEND_AGE = Number(process.env.TRADFI_WEEKEND_AGE_SEC || 270000);
+// Retired pairs: records that still exist on chain but that no writer pushes any
+// more, because the configured provider cannot serve them correctly. They age
+// forever by design, so counting them as staleness makes this monitor permanently
+// red — and a monitor that is always red is a monitor nobody reads, which is how a
+// 22-day outage went unnoticed. They are excluded from the ALERT check but still
+// reported in feed-status.json (flagged `retired`) and in the Prometheus text, so
+// they stay visible rather than being hidden.
+//
+// Keep in sync with RETIRED_FEED_PAIRS in feed-pusher.mjs, apps/web/lib/feed-defaults.ts
+// and workers/nitro-worker/src/oracle/feed-registry.js — enforced by
+// scripts/check-feed-pair-registries.mjs.
+const RETIRED_PAIRS = new Set(
+  (process.env.RETIRED_PAIRS || 'COPPER-USD,FLM-USD,1000FLM-USD,1000JPY-USD')
+    .split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean)
+);
+export function isRetiredPair(pair, { retiredPairs = RETIRED_PAIRS } = {}) {
+  return retiredPairs.has(String(pair).toUpperCase());
+}
+
 // Extra holiday dates (UTC YYYY-MM-DD, comma list) on which TradFi markets are
 // closed mid-week — they get the widened window too. Empty by default.
 const TRADFI_HOLIDAYS = new Set(
@@ -181,6 +205,8 @@ if (process.env.FEED_MONITOR_SKIP_MAIN !== '1') {
       rows = [{ pair: 'NEO-USD', ts: Number(v[3].value), age: now - Number(v[3].value) }];
     }
     for (const r of rows) {
+      // A retired pair has no writer, so its age is expected, not a fault.
+      if (isRetiredPair(r.pair)) continue;
       const limit = staleAgeLimit(r.pair, date);
       if (r.age > limit) problems.push(`FEED STALE ${r.pair} age=${(r.age / 60).toFixed(0)}min`);
     }
@@ -201,7 +227,11 @@ if (process.env.FEED_MONITOR_SKIP_MAIN !== '1') {
           // feed_age_min retains its original meaning (NEO-USD age) for back-compat;
           // pairs[] carries the full per-pair view for the new monitoring path.
           feed_age_min: neo ? Math.round(neo.age / 60) : null,
-          pairs: rows.map((r) => ({ pair: r.pair, age_min: Math.round(r.age / 60) })),
+          pairs: rows.map((r) => ({
+            pair: r.pair,
+            age_min: Math.round(r.age / 60),
+            retired: isRetiredPair(r.pair),
+          })),
           updater_gas: gas,
           ok: problems.length === 0,
           problems,
@@ -215,7 +245,7 @@ if (process.env.FEED_MONITOR_SKIP_MAIN !== '1') {
       process.exit(1);
     }
     log(
-      `ok pairs=${rows.length}${neo ? ` feed_age=${Math.round(neo.age / 60)}min` : ''} gas=${gas.toFixed(1)}`
+      `ok pairs=${rows.length} (retired ${rows.filter((r) => isRetiredPair(r.pair)).length})${neo ? ` feed_age=${Math.round(neo.age / 60)}min` : ''} gas=${gas.toFixed(1)}`
     );
   } catch (e) {
     log('monitor RPC error: ' + (e.message || e));

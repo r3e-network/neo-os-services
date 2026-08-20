@@ -28,7 +28,26 @@ export const FEED_STALE_MARGIN_SECONDS = 900;
 // TradFi (forex/commodity) pairs do not trade across a market close, so their
 // on-chain price legitimately ages from Friday close to Monday open.
 export const DEFAULT_TRADFI_WEEKEND_AGE_SECONDS = 270_000;
-export const DEFAULT_TRADFI_PAIRS = ['EUR-USD', 'GBP-USD', 'JPY-USD', 'CNY-USD', 'WTI-USD'];
+// Every non-crypto pair in the advertised set. Forex and the TwelveData commodity
+// lane (WTI/XBR/NG spot and the C_1/W_1/S_1 front-month futures) all stop quoting
+// across a market close, so their on-chain record legitimately ages from Friday
+// close to Monday open. Equities and ETFs are deliberately NOT here: whether
+// TwelveData keeps serving their last close over a weekend has not been observed
+// with a working feed, and widening a staleness budget on a guess is how a real
+// outage gets waved through. If the first weekend after 2026-08-20 shows the
+// equity/ETF pairs ageing out, add them here on that evidence.
+export const DEFAULT_TRADFI_PAIRS = [
+  'EUR-USD',
+  'GBP-USD',
+  'JPY-USD',
+  'CNY-USD',
+  'WTI-USD',
+  'BRENT-USD',
+  'NATGAS-USD',
+  'WHEAT-USD',
+  'CORN-USD',
+  'SOY-USD',
+];
 
 export type FeedAgeClassification = {
   /** Seconds between the on-chain record timestamp and `now`. Null if unparseable. */

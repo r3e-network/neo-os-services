@@ -22,6 +22,10 @@ const {
   rebuildNeoXUpdateFeedsData,
   assertEnclaveNeoXTxMatches,
   toTwelveDataSymbol,
+  partitionMappedSymbols,
+  enclaveDroppedStalePairs,
+  TD_SYMBOLS,
+  RETIRED_FEED_PAIRS,
   __setEnclaveFeedSignForTests,
   __resetEnclaveFeedSignForTests,
   __setN3RpcForTests,
@@ -32,28 +36,112 @@ const PUSHER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'feed-pus
 const OPTS = { thresholdBps: 10, maxStaleSec: 1800 };
 
 test('toTwelveDataSymbol maps equities/ETFs to bare tickers, crypto/forex to X/USD', () => {
-  // Equities + ETFs + CORN must be the bare ticker (TwelveData 404s 'AAPL/USD').
-  for (const s of [
-    'AAPL',
-    'GOOGL',
-    'MSFT',
-    'AMZN',
-    'TSLA',
-    'META',
-    'NVDA',
-    'SPY',
-    'QQQ',
-    'GLD',
-    'CORN',
-  ]) {
+  // Equities + ETFs must be the bare ticker (TwelveData 404s 'AAPL/USD').
+  for (const s of ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'TSLA', 'META', 'NVDA', 'SPY', 'QQQ', 'GLD']) {
     assert.equal(toTwelveDataSymbol(`${s}-USD`), s);
   }
-  // Crypto / forex / metals stay in the X/USD pair form.
+  // Crypto / forex stay in the X/USD pair form.
   assert.equal(toTwelveDataSymbol('BTC-USD'), 'BTC/USD');
   assert.equal(toTwelveDataSymbol('NEO-USD'), 'NEO/USD');
   assert.equal(toTwelveDataSymbol('EUR-USD'), 'EUR/USD');
   assert.equal(toTwelveDataSymbol('WTI-USD'), 'WTI/USD');
   assert.equal(toTwelveDataSymbol('PAXG-USD'), 'PAXG/USD');
+  // FX is quoted directly as base/USD — nothing in this path inverts.
+  assert.equal(toTwelveDataSymbol('JPY-USD'), 'JPY/USD');
+  assert.equal(toTwelveDataSymbol('CNY-USD'), 'CNY/USD');
+});
+
+// Regression pin for the 2026-06 → 2026-08 CORN outage: the bare ticker 'CORN' is
+// the Teucrium Corn Fund ETF (~$18.9), not CBOT corn futures (~479 c/bushel). Mapping
+// CORN-USD to it made every cycle fail the deviation guard against the on-chain
+// futures series, so the pair sat permanently stale and /api/feeds/status could
+// never read healthy. The agricultural futures use the `X_1` symbols.
+test('agricultural + energy commodities map to futures/spot symbols, never the ETF ticker', () => {
+  assert.equal(toTwelveDataSymbol('CORN-USD'), 'C_1');
+  assert.notEqual(toTwelveDataSymbol('CORN-USD'), 'CORN');
+  assert.equal(toTwelveDataSymbol('WHEAT-USD'), 'W_1');
+  assert.equal(toTwelveDataSymbol('SOY-USD'), 'S_1');
+  assert.equal(toTwelveDataSymbol('BRENT-USD'), 'XBR/USD');
+  assert.equal(toTwelveDataSymbol('NATGAS-USD'), 'NG/USD');
+});
+
+// The old heuristic silently invented a provider symbol for anything it was given
+// (`FOO-USD` -> `FOO/USD`), which is how a wrong asset gets published under a right
+// name. An unmapped pair must now be refused, not guessed.
+test('an unmapped symbol is refused rather than guessed at', () => {
+  assert.equal(toTwelveDataSymbol('FOO-USD'), null);
+  const { mapped, unmapped } = partitionMappedSymbols(['NEO-USD', 'FOO-USD', 'CORN-USD']);
+  assert.deepEqual(mapped, ['NEO-USD', 'CORN-USD']);
+  assert.deepEqual(unmapped, ['FOO-USD']);
+});
+
+// Retired pairs are retired *because* the configured provider cannot serve them
+// correctly. Re-adding one to the mapping table would put a wrong-asset price back
+// on chain, so the two tables must stay disjoint.
+test('retired pairs have no provider mapping', () => {
+  assert.ok(RETIRED_FEED_PAIRS.has('COPPER-USD'));
+  assert.ok(RETIRED_FEED_PAIRS.has('FLM-USD'));
+  for (const [pair, reason] of RETIRED_FEED_PAIRS) {
+    assert.equal(TD_SYMBOLS.has(pair), false, `${pair} is retired but still mapped`);
+    assert.ok(String(reason).length > 20, `${pair} needs a real retirement reason`);
+  }
+});
+
+// Distinct pairs sharing one provider symbol would collide in the batched
+// /price?symbol=a,b,c response, which is keyed by provider symbol.
+test('provider symbols are unique across pairs', () => {
+  assert.equal(new Set(TD_SYMBOLS.values()).size, TD_SYMBOLS.size);
+});
+
+// With MORPHEUS_FEED_PUSHER_ENCLAVE_SIGN=true the enclave fetches and plans inside
+// the measured boundary, so a host whose provider-symbol mapping has been fixed while
+// the running EIF still carries the old one reports a clean "pushed N pairs" cycle
+// forever while the affected pairs never move. This is the detector for that.
+test('enclaveDroppedStalePairs reports only pairs the enclave skipped that were already stale', () => {
+  const now = 1_800_000_000;
+  const staleSec = 1800;
+  const onchainState = {
+    'NEO-USD': { round: 1, price: 1.86, timestamp: now - 60 },
+    'CORN-USD': { round: 1, price: 417.4, timestamp: now - 75 * 86400 },
+    'BRENT-USD': { round: 1, price: 92.9, timestamp: now - 75 * 86400 },
+    'BTC-USD': { round: 1, price: 71590, timestamp: now - 120 },
+  };
+  const planned = [
+    'TWELVEDATA:NEO-USD',
+    'TWELVEDATA:CORN-USD',
+    'TWELVEDATA:BRENT-USD',
+    'TWELVEDATA:BTC-USD',
+  ];
+  const dropped = enclaveDroppedStalePairs(
+    planned,
+    ['TWELVEDATA:NEO-USD'],
+    onchainState,
+    now,
+    staleSec
+  );
+  // CORN + BRENT: planned, not written, and long past the forced-heartbeat window.
+  assert.deepEqual(dropped.map((entry) => entry.symbol).sort(), ['BRENT-USD', 'CORN-USD']);
+  // BTC was also skipped by the enclave but is fresh — a benign disagreement between
+  // two fetches a second apart, not a mapping fault. It must not raise an alert.
+  assert.equal(
+    dropped.some((entry) => entry.symbol === 'BTC-USD'),
+    false
+  );
+});
+
+test('enclaveDroppedStalePairs is silent when the enclave wrote everything the host planned', () => {
+  const now = 1_800_000_000;
+  const onchainState = { 'NEO-USD': { round: 1, price: 1.86, timestamp: now - 90000 } };
+  assert.deepEqual(
+    enclaveDroppedStalePairs(
+      ['TWELVEDATA:NEO-USD'],
+      ['TWELVEDATA:NEO-USD'],
+      onchainState,
+      now,
+      1800
+    ),
+    []
+  );
 });
 
 test('planFeedUpdate skips a recent round with an unchanged price', () => {

@@ -5,7 +5,19 @@ export const KNOWN_FEED_PROVIDER_PREFIXES = [
   'COINBASE-SPOT:',
 ] as const;
 
-const DEFAULT_FEED_BASE_SYMBOLS = [
+/**
+ * The advertised feed set. This list, the pusher's `TD_SYMBOLS` table in
+ * `deploy/feed-pusher/feed-pusher.mjs` and the worker registry in
+ * `workers/nitro-worker/src/oracle/feed-registry.js` must name the same pairs and
+ * the same provider symbols; `scripts/check-feed-pair-registries.mjs` fails the
+ * build when they drift apart.
+ *
+ * Advertising a pair nobody can source is what made `/api/feeds/status` read
+ * "degraded" permanently — the same defect class that let a 22-day outage look
+ * healthy. A pair that cannot be sourced correctly belongs in RETIRED_FEED_PAIRS,
+ * not here.
+ */
+export const DEFAULT_FEED_BASE_SYMBOLS = [
   'NEO-USD',
   'GAS-USD',
   'BTC-USD',
@@ -16,7 +28,6 @@ const DEFAULT_FEED_BASE_SYMBOLS = [
   'WTI-USD',
   'BRENT-USD',
   'NATGAS-USD',
-  'COPPER-USD',
   'WHEAT-USD',
   'CORN-USD',
   'SOY-USD',
@@ -116,61 +127,52 @@ const BARE_FEED_DESCRIPTORS: Record<string, FeedDescriptor> = {
     pair: 'WTI-USD',
     label: 'WTI Crude Oil',
     category: 'Commodity',
-    meaning: 'WTI crude oil reference price in USD',
+    meaning: 'WTI crude oil spot reference price, USD per barrel',
     sourceSymbol: 'WTI/USD',
-    unit: 'WTI reference unit',
+    unit: '1 barrel',
   },
   'BRENT-USD': {
     pair: 'BRENT-USD',
     label: 'Brent Crude Oil',
     category: 'Commodity',
-    meaning: 'Brent crude spot reference price in USD',
+    meaning: 'Brent crude spot reference price, USD per barrel',
     sourceSymbol: 'XBR/USD',
-    unit: 'Brent spot reference unit',
+    unit: '1 barrel',
   },
   'NATGAS-USD': {
     pair: 'NATGAS-USD',
     label: 'Natural Gas',
     category: 'Commodity',
-    meaning: 'Natural gas reference price in USD',
+    meaning: 'Natural gas reference price, USD per MMBtu',
     sourceSymbol: 'NG/USD',
-    unit: 'Natural gas reference unit',
-  },
-  'COPPER-USD': {
-    pair: 'COPPER-USD',
-    label: 'Copper Futures',
-    category: 'Commodity',
-    meaning: 'Copper front-month futures proxy in USD',
-    sourceSymbol: 'HG1',
-    unit: '1 copper futures reference unit',
-    note: 'Uses TwelveData copper futures symbol HG1.',
+    unit: '1 MMBtu',
   },
   'WHEAT-USD': {
     pair: 'WHEAT-USD',
     label: 'Wheat Futures',
     category: 'Commodity',
-    meaning: 'Wheat front-month futures proxy in USD',
+    meaning: 'CBOT wheat front-month futures, US cents per bushel',
     sourceSymbol: 'W_1',
-    unit: '1 wheat futures reference unit',
-    note: 'Uses TwelveData agricultural futures symbol W_1.',
+    unit: '1 bushel (US cents)',
+    note: 'TwelveData agricultural futures symbol W_1. Quoted in US cents per bushel, not dollars.',
   },
   'CORN-USD': {
     pair: 'CORN-USD',
     label: 'Corn Futures',
     category: 'Commodity',
-    meaning: 'Corn front-month futures proxy in USD',
+    meaning: 'CBOT corn front-month futures, US cents per bushel',
     sourceSymbol: 'C_1',
-    unit: '1 corn futures reference unit',
-    note: 'Uses TwelveData agricultural futures symbol C_1.',
+    unit: '1 bushel (US cents)',
+    note: 'TwelveData agricultural futures symbol C_1. NOT the bare ticker CORN, which is the Teucrium Corn Fund ETF.',
   },
   'SOY-USD': {
     pair: 'SOY-USD',
     label: 'Soybean Futures',
     category: 'Commodity',
-    meaning: 'Soybean front-month futures proxy in USD',
+    meaning: 'CBOT soybean front-month futures, US cents per bushel',
     sourceSymbol: 'S_1',
-    unit: '1 soybean futures reference unit',
-    note: 'Uses TwelveData agricultural futures symbol S_1.',
+    unit: '1 bushel (US cents)',
+    note: 'TwelveData agricultural futures symbol S_1. Quoted in US cents per bushel, not dollars.',
   },
   'USDT-USD': {
     pair: 'USDT-USD',
@@ -313,20 +315,85 @@ const BARE_FEED_DESCRIPTORS: Record<string, FeedDescriptor> = {
     label: 'Japanese Yen',
     category: 'FX',
     meaning: 'Price of 1 JPY in USD',
-    sourceSymbol: 'USD/JPY',
+    sourceSymbol: 'JPY/USD',
     unit: '1 JPY',
-    note: 'Fetched as USD/JPY, then inverted.',
+    note: 'Fetched directly as JPY/USD; nothing in the on-chain write path inverts it.',
   },
   'CNY-USD': {
     pair: 'CNY-USD',
     label: 'Chinese Yuan',
     category: 'FX',
     meaning: 'Price of 1 CNY in USD',
-    sourceSymbol: 'USD/CNY',
+    sourceSymbol: 'CNY/USD',
     unit: '1 CNY',
-    note: 'Fetched as USD/CNY, then inverted.',
+    note: 'Fetched directly as CNY/USD; nothing in the on-chain write path inverts it.',
   },
 };
+
+export type RetiredFeedPair = {
+  pair: string;
+  /** Why the configured provider cannot serve this pair correctly. */
+  reason: string;
+  /** ISO date the pair was retired. */
+  retired_on: string;
+  /** What would have to be true to reinstate it, or '' when it is gone for good. */
+  reinstate_requires: string;
+};
+
+/**
+ * Pairs deliberately NOT advertised and NOT pushed, with the evidence.
+ *
+ * A pair that cannot be sourced correctly used to be left in the advertised list,
+ * where it produced a permanent `status: "degraded"` that no operator could clear —
+ * so nobody looked at the signal, and a 22-day feed outage hid inside it. Retiring
+ * is the honest alternative: the pair leaves every active registry, the health
+ * count, and the on-chain writer, and the reason stays visible here.
+ *
+ * This list is mirrored by RETIRED_FEED_PAIRS in
+ * `deploy/feed-pusher/feed-pusher.mjs`; `scripts/check-feed-pair-registries.mjs`
+ * fails if a retired pair reappears in any active registry, or if the two lists
+ * disagree.
+ */
+export const RETIRED_FEED_PAIRS: Record<string, RetiredFeedPair> = {
+  'COPPER-USD': {
+    pair: 'COPPER-USD',
+    reason:
+      'TwelveData\'s /commodities reference lists HG1 as "Copper Spot", but /price and /quote resolve HG1 to Homag Group AG — a Frankfurt-listed woodworking-machinery stock quoting 24.40 EUR. The on-chain COPPER-USD record (24.40, last written 2026-06-06) is that equity price, not copper.',
+    retired_on: '2026-08-20',
+    reinstate_requires:
+      'a per-symbol fetch using exchange=Forex (which cannot ride the batched comma-separated /price call), plus an admin feed reset for the pair — re-anchoring 24.40 to the real 6.46 USD/lb is a -73.5% move the deviation guard correctly refuses.',
+  },
+  'FLM-USD': {
+    pair: 'FLM-USD',
+    reason:
+      'TwelveData\'s /cryptocurrencies reference gives FLM/USD currency_base "FolmCoin". It is not Flamingo Finance, which is what FLM means to a Neo consumer of this feed. Cross-checked 2026-08-20: TwelveData FLM/USD = 0.0025054 vs CoinGecko flamingo-finance = 0.00053932 (4.6x apart), with CoinGecko neo = 1.87 vs on-chain NEO-USD = 1.864 confirming the comparison. TwelveData has no Flamingo Finance listing.',
+    retired_on: '2026-08-20',
+    reinstate_requires:
+      'a provider that actually lists Flamingo Finance (e.g. a Neo DEX or CEX source added to the provider set).',
+  },
+  '1000FLM-USD': {
+    pair: '1000FLM-USD',
+    reason:
+      'Legacy scaled variant left on chain from an earlier feed generation; last written 2026-03-11 and in no configuration since. Unsourceable for the same reason as FLM-USD.',
+    retired_on: '2026-08-20',
+    reinstate_requires: '',
+  },
+  '1000JPY-USD': {
+    pair: '1000JPY-USD',
+    reason:
+      'Legacy scaled variant left on chain from an earlier feed generation; last written 2026-03-11 and in no configuration since. Superseded by JPY-USD.',
+    retired_on: '2026-08-20',
+    reinstate_requires: '',
+  },
+};
+
+export const RETIRED_FEED_SYMBOLS = Object.keys(RETIRED_FEED_PAIRS).map(
+  (pair) => `${CANONICAL_FEED_PROVIDER_PREFIX}${pair}`
+);
+
+export function getRetiredFeedPair(symbol: string) {
+  return RETIRED_FEED_PAIRS[stripFeedProviderPrefix(symbol)] || null;
+}
 
 export function stripFeedProviderPrefix(symbol: string) {
   const normalized = String(symbol || '')

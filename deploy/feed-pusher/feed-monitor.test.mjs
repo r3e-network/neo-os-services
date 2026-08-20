@@ -291,6 +291,63 @@ test('monitor iterates the full registry and writes the Prometheus textfile', as
   }
 });
 
+// A retired pair (COPPER-USD: TwelveData's HG1 is Homag Group AG, not copper;
+// 1000JPY-USD: a legacy scaled variant) has no writer, so it ages forever by
+// design. Counting it as staleness makes this monitor permanently red, and a
+// monitor that is always red is a monitor nobody reads — the condition that let a
+// 22-day outage pass unnoticed. It must be excluded from ALERT but still reported.
+test('monitor does not alert on retired pairs but still reports them', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const server = await startMockAllRecordsRpc({
+    records: [
+      { pair: 'TWELVEDATA:NEO-USD', timestamp: now - 60 },
+      { pair: 'TWELVEDATA:COPPER-USD', timestamp: now - 75 * 86400 },
+      { pair: 'TWELVEDATA:1000JPY-USD', timestamp: now - 162 * 86400 },
+    ],
+    gasBalance: 100e8,
+  });
+  const { port } = server.address();
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'feed-monitor-'));
+  const statusFile = path.join(tmp, 'feed-status.json');
+  try {
+    const result = await runMonitor(`http://127.0.0.1:${port}`, statusFile);
+    assert.equal(result.code, 0, 'retired pairs must not fail the monitor');
+    assert.doesNotMatch(result.stdout, /FEED STALE/);
+    const status = JSON.parse(readFileSync(statusFile, 'utf8'));
+    assert.equal(status.ok, true);
+    // Excluded from the alert, but NOT hidden: still enumerated and flagged.
+    const copper = status.pairs.find((p) => p.pair === 'COPPER-USD');
+    assert.ok(copper, 'retired pair must still be reported');
+    assert.equal(copper.retired, true);
+    assert.equal(status.pairs.find((p) => p.pair === 'NEO-USD').retired, false);
+  } finally {
+    server.close();
+  }
+});
+
+// A pair that is NOT retired must still fail the monitor at the same age, so the
+// exclusion above cannot be widened into a way of silencing a real outage.
+test('monitor still alerts on a stale pair that is not retired', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const server = await startMockAllRecordsRpc({
+    records: [
+      { pair: 'TWELVEDATA:NEO-USD', timestamp: now - 60 },
+      { pair: 'TWELVEDATA:CORN-USD', timestamp: now - 75 * 86400 },
+    ],
+    gasBalance: 100e8,
+  });
+  const { port } = server.address();
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'feed-monitor-'));
+  const statusFile = path.join(tmp, 'feed-status.json');
+  try {
+    const result = await runMonitor(`http://127.0.0.1:${port}`, statusFile);
+    assert.equal(result.code, 1);
+    assert.match(result.stdout, /FEED STALE CORN-USD/);
+  } finally {
+    server.close();
+  }
+});
+
 test('monitor flags an individual stale pair from the full registry', async () => {
   const now = Math.floor(Date.now() / 1000);
   // BTC-USD is 10 days stale (crypto, never widened) while the others are fresh.
