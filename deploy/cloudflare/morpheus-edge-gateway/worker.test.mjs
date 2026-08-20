@@ -504,3 +504,85 @@ test('edge gateway runtime status reports an unknown discriminator when the orig
   const payload = await response.json();
   assert.equal(payload.runtime.origin, null);
 });
+
+// Regression for the 2026-08 staleness fix: the origin marks a stale quote
+// `cache-control: no-store` + `x-morpheus-feed-stale: 1` and deliberately keeps
+// HTTP 200 so the diagnostic body stays readable. The edge previously keyed its
+// caching off `response.ok` alone, so it overwrote that with
+// `public, max-age=15` AND `cache.put`, pinning a stale price at the edge — the
+// exact thing the origin change exists to prevent.
+test('edge gateway does not cache a stale feed quote the origin marked no-store', async () => {
+  let cachePutCalls = 0;
+  global.caches = {
+    default: {
+      async match() {
+        return null;
+      },
+      async put() {
+        cachePutCalls += 1;
+      },
+    },
+  };
+  global.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        status: 'stale',
+        degraded: true,
+        symbol: 'TWELVEDATA:BTC-USD',
+        error_code: 'FEED_QUOTE_STALE',
+        age_seconds: 279681,
+      }),
+      {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+          'cache-control': 'no-store',
+          'x-morpheus-feed-stale': '1',
+        },
+      }
+    );
+
+  const response = await worker.fetch(
+    new Request('https://edge.test/testnet/feeds/price/TWELVEDATA:BTC-USD'),
+    createEnv(),
+    createCtx()
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-morpheus-feed-stale'), '1');
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal(cachePutCalls, 0);
+});
+
+test('edge gateway still caches a fresh feed quote for its configured ttl', async () => {
+  let cachePutCalls = 0;
+  global.caches = {
+    default: {
+      async match() {
+        return null;
+      },
+      async put() {
+        cachePutCalls += 1;
+      },
+    },
+  };
+  global.fetch = async () =>
+    new Response(JSON.stringify({ status: 'ok', symbol: 'TWELVEDATA:BTC-USD', price: 72001.79 }), {
+      status: 200,
+      headers: {
+        'content-type': 'application/json',
+        'cache-control': 'public, max-age=15',
+        'x-morpheus-feed-stale': '0',
+      },
+    });
+
+  const response = await worker.fetch(
+    new Request('https://edge.test/mainnet/feeds/price/TWELVEDATA:BTC-USD'),
+    createEnv(),
+    createCtx()
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'public, max-age=15');
+  assert.equal(cachePutCalls, 1);
+});

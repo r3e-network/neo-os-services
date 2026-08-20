@@ -560,6 +560,15 @@ function deriveCatalogCapabilities(catalog) {
   };
 }
 
+// True when the origin explicitly told us not to store this answer. Covers the
+// stale-feed envelope (`x-morpheus-feed-stale: 1`) and any origin route that
+// sets `no-store`/`private` itself.
+function originForbidsCaching(response) {
+  if (trimString(response.headers.get('x-morpheus-feed-stale')) === '1') return true;
+  const directive = trimString(response.headers.get('cache-control')).toLowerCase();
+  return directive.includes('no-store') || directive.includes('private');
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -794,7 +803,14 @@ export default {
     response.headers.set('x-morpheus-route', routeKey);
     response.headers.set('x-morpheus-network', routing.network);
 
-    if (cacheRule && networkCheckedResponse.ok) {
+    // `response.ok` is not sufficient to decide cacheability. The feed origin
+    // answers a STALE quote with HTTP 200 on purpose — the diagnostic body
+    // (age_seconds, stale_record) has to stay readable — and marks it
+    // `cache-control: no-store` + `x-morpheus-feed-stale: 1`. Keying off `ok`
+    // alone overwrote that with `public, max-age=15` and edge-cached it, which
+    // pinned a stale price for every caller and defeated the origin's staleness
+    // envelope. Honour an explicit origin no-store instead of overriding it.
+    if (cacheRule && networkCheckedResponse.ok && !originForbidsCaching(networkCheckedResponse)) {
       response.headers.set('cache-control', `public, max-age=${cacheRule.ttl}`);
       ctx.waitUntil(cache.put(request, response.clone()));
     } else {
