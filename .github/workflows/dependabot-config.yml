@@ -1,0 +1,56 @@
+# Guards .github/dependabot.yml against the defect that made it inert.
+#
+# Every entry in this repo's dependabot.yml once carried
+# `open-pull-requests-limit: 0` - the documented switch for "version updates
+# off". The config therefore read as "dependency maintenance is handled" while
+# no version-update PR could ever open, and no repo learned about a CVE except
+# by a human noticing. Nothing in CI caught it because nothing in CI looked.
+#
+# This is a standalone workflow rather than a step inside ci.yml on purpose:
+# the nine platform repos have nine differently shaped CI files, and the check
+# needs nothing from any of them - no Node, no .NET, no Go, just bash over a
+# checked-out tree. Keeping it separate also means a failure here names the
+# actual problem instead of appearing as a late step in an unrelated job.
+name: dependabot-config
+
+permissions:
+  contents: read
+
+on:
+  push:
+    paths:
+      - .github/dependabot.yml
+      - .github/workflows/dependabot-config.yml
+      - scripts/dependabot_enabled.test.sh
+  pull_request:
+    paths:
+      - .github/dependabot.yml
+      - .github/workflows/dependabot-config.yml
+      - scripts/dependabot_enabled.test.sh
+  workflow_dispatch:
+
+concurrency:
+  group: dependabot-config-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The script asserts that every entry is enabled, grouped, and aimed at a
+      # directory that actually holds a manifest for its own ecosystem. It
+      # prints this sentinel only on success, so a script that dies early
+      # cannot pass as green.
+      - name: dependabot.yml is enabled, grouped and correctly targeted
+        run: |
+          out="$(bash scripts/dependabot_enabled.test.sh)"
+          echo "$out"
+          case "$out" in
+            *"dependabot config tests passed"*) ;;
+            *) echo "::error::guard did not report success"; exit 1 ;;
+          esac

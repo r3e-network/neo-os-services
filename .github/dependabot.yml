@@ -1,32 +1,77 @@
+# Dependabot version updates.
+#
+# Every entry in this file previously carried `open-pull-requests-limit: 0`,
+# which is the documented way to switch version updates off while leaving the
+# config in place. The file therefore read as "dependency maintenance is
+# handled" while no version-update PR could ever open.
+#
+# Policy, chosen so the queue stays reviewable rather than merely non-zero:
+#   * minor + patch updates collapse into ONE grouped PR per ecosystem per
+#     interval, so a quiet week costs one review instead of fifteen.
+#   * majors stay ungrouped. A major is a behaviour change and earns its own
+#     PR, its own CI run and its own revert.
+#   * limit 5 on package ecosystems: the grouped PR plus up to four majors in
+#     flight. Past that Dependabot stops rather than burying the repo.
+#   * github-actions groups wholesale, majors included - they are tag bumps,
+#     CI proves them, and one PR beats ten.
+#   * the weekly slot is staggered per repo (here: Tuesday) so the nine repos
+#     do not land their queues on the same morning.
+#
+# No group declares `applies-to: security-updates`, so security PRs stay
+# individual and immediately actionable.
 version: 2
 updates:
-  - package-ecosystem: 'npm'
-    directory: '/'
+  - package-ecosystem: "npm"
+    directory: "/"
     schedule:
-      interval: 'weekly'
-    open-pull-requests-limit: 0
+      interval: "weekly"
+      day: "tuesday"
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     labels:
-      - 'dependencies'
+      - "dependencies"
     commit-message:
-      prefix: 'deps'
-      include: 'scope'
-  - package-ecosystem: 'nuget'
-    directory: '/'
+      prefix: "deps"
+      include: "scope"
+
+  # Anchored on neo-morpheus-oracle.sln at the repo root, which references all seven csproj files.
+  - package-ecosystem: "nuget"
+    directory: "/"
     schedule:
-      interval: 'weekly'
-    open-pull-requests-limit: 0
+      interval: "weekly"
+      day: "tuesday"
+    open-pull-requests-limit: 5
+    groups:
+      nuget-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     labels:
-      - 'dependencies'
+      - "dependencies"
     commit-message:
-      prefix: 'deps'
-      include: 'scope'
-  - package-ecosystem: 'github-actions'
-    directory: '/'
+      prefix: "deps"
+      include: "scope"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
     schedule:
-      interval: 'weekly'
-    open-pull-requests-limit: 0
+      interval: "weekly"
+      day: "tuesday"
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns:
+          - "*"
     labels:
-      - 'dependencies'
+      - "dependencies"
     commit-message:
-      prefix: 'ci'
-      include: 'scope'
+      prefix: "ci"
+      include: "scope"

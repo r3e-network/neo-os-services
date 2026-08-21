@@ -99,7 +99,7 @@
     "check:nitro-prereqs": "node scripts/check-nitro-prereqs.mjs",
     "generate:nitro-signer-identity": "node scripts/generate-nitro-signer-identity.mjs",
     "test:control-plane": "node --test deploy/cloudflare/morpheus-control-plane/worker.test.mjs",
-    "test:ops": "node deploy/evm/compile.mjs MiniAppCreditsV2 && node --test deploy/feed-pusher/*.test.mjs deploy/nitro/*.test.mjs deploy/evm/*.test.mjs",
+    "test:ops": "node deploy/evm/compile.mjs MiniAppCreditsV2 && node --test deploy/feed-pusher/*.test.mjs deploy/nitro/*.test.mjs deploy/evm/*.test.mjs deploy/systemd/*.test.mjs",
     "test:testnet:local-gates": "bash scripts/run_local_validation_gates.sh",
     "test:testnet:live": "bash scripts/run_live_testnet_validation.sh",
     "test:testnet:full": "bash scripts/run_full_testnet_validation.sh",

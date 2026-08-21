@@ -27,8 +27,31 @@ jobs:
             echo "Vercel deployment skipped because required secrets are missing."
           fi
 
+  # The release gate for the Vercel production deploy. `needs:` cannot reach a
+  # job in ci.yml, so the suites that guard the web surface run here, on this
+  # same commit, and `deploy` blocks on them. Mirrors ci.yml's lint-and-format
+  # plus the shared/web-test/web-build slices of its web-and-worker matrix.
+  # No timeout-minutes, matching ci.yml: a tighter budget here would be a way
+  # for the gate to fail that CI itself cannot reproduce.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: node --test scripts/release-gating.test.mjs
+      - run: node scripts/check-web-consistency.mjs
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm --prefix packages/shared test
+      - run: npm --prefix apps/web run test:run
+      - run: npm --prefix apps/web run build
+
   deploy:
-    needs: preflight
+    needs: [preflight, test]
     if: ${{ needs.preflight.outputs.ready == 'true' }}
     runs-on: ubuntu-latest
     steps:
