@@ -6,7 +6,10 @@ import path from 'node:path';
 const repoRoot = process.cwd();
 
 function readRepoFile(relativePath) {
-  return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
+  // Normalize: the service-block regexes below match on bare \n, while an
+  // autocrlf Windows checkout materializes these YAML/Caddy files with \r\n.
+  // What is under test is the file's structure, not the checkout's line endings.
+  return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8').replace(/\r\n/g, '\n');
 }
 
 function extractCloudflareDefaultNetwork(source) {

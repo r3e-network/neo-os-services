@@ -1,0 +1,61 @@
+# Line endings are a repo policy here, not an artifact of each developer's
+# git configuration.
+#
+# Every NeoOS repo stores LF in its index and runs CI on ubuntu, but a Windows
+# clone with core.autocrlf=true materializes text files as CRLF. Several gates in
+# this estate digest or string-match file bytes:
+#
+#   - the xunit source-shape assertions over contract sources,
+#   - the cross-repo "vendored file" checksums and the MiniApp.DevPack
+#     directory fingerprint,
+#   - the generated ABI / factory-artifact snapshots compared with --check,
+#   - the Nitro worker engine-wrapper hash whitelist,
+#   - prettier, whose endOfLine default this repo's own .prettierrc sets to "lf".
+#
+# All of them reported false failures on a Windows checkout while passing CI,
+# which trains developers to distrust exactly the gates meant to catch real
+# drift. Pinning eol=lf makes the checkout match the index so those checks
+# measure content on every platform.
+#
+# Adding this file does not rewrite an existing working tree. To convert one in
+# place, do it on a clean tree so the renormalization lands as its own commit:
+#
+#   git add --renormalize .
+#   git commit -m "chore: normalize line endings to LF"
+
+* text=auto eol=lf
+
+# Windows batch scripts must keep CRLF or they can stop parsing.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Byte-exact payloads: never line-ending-converted, because something digests
+# them as-is (integrity pins, image assets, compiled Neo executables).
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text eol=lf
+*.webp binary
+*.avif binary
+*.bmp binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
+*.mp3 binary
+*.mp4 binary
+*.webm binary
+*.zip binary
+*.tgz binary
+*.gz binary
+*.bz2 binary
+*.zst binary
+*.nef binary
+*.dll binary
+*.pdb binary
+*.exe binary
+*.so binary
+*.dylib binary

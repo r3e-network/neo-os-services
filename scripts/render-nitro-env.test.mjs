@@ -37,8 +37,13 @@ test('render-nitro-env defaults to pinned-only signer resolution', () => {
   assert.match(rendered, /^MORPHEUS_UPDATER_NEO_N3_KMS_CIPHERTEXT_BASE64=$/m);
   assert.doesNotMatch(rendered, /_WIF(?:_|=)/);
   assert.doesNotMatch(rendered, /_PRIVATE_KEY(?:_|=)/);
-  assert.equal(fs.statSync(signerPath).mode & 0o777, 0o600);
-  assert.equal(fs.statSync(path.join(directory, 'morpheus-relayer.env')).mode & 0o777, 0o600);
+  // NTFS carries no POSIX permission bits (writeFileSync's mode is ignored and
+  // stat reports 0o666), so only a POSIX filesystem can confirm the renderer's
+  // 0o600 request on signer material landed.
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(signerPath).mode & 0o777, 0o600);
+    assert.equal(fs.statSync(path.join(directory, 'morpheus-relayer.env')).mode & 0o777, 0o600);
+  }
 });
 
 test('render-nitro-env never copies plaintext signer material into provisioning output', () => {

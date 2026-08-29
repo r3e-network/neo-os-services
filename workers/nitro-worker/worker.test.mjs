@@ -2303,50 +2303,60 @@ test('compute execute rejects groth16 verification when the verifier runtime is 
   }
 });
 
-test('compute execute can use an external groth16 verifier command when explicitly enabled', async () => {
-  const previousRuntime = process.env.MORPHEUS_ZKP_VERIFY_RUNTIME;
-  const previousBin = process.env.MORPHEUS_SNARKJS_BIN;
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'morpheus-snarkjs-'));
-  const stub = path.join(tempDir, 'snarkjs');
-  await fs.writeFile(stub, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  process.env.MORPHEUS_ZKP_VERIFY_RUNTIME = 'cli';
-  process.env.MORPHEUS_SNARKJS_BIN = stub;
-  try {
-    const res = await handler(
-      new Request('http://local/compute/execute', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({
-          mode: 'builtin',
-          function: 'zkp.groth16.verify',
-          input: {
-            verifying_key: { vk_alpha_1: ['1', '2'] },
-            public_signals: ['1'],
-            proof: {
-              pi_a: ['1', '2'],
-              pi_b: [
-                ['1', '2'],
-                ['3', '4'],
-              ],
-              pi_c: ['5', '6'],
+test(
+  'compute execute can use an external groth16 verifier command when explicitly enabled',
+  {
+    // The stub below is a `#!/bin/sh` script; Windows cannot spawn it, so the CLI
+    // path is only exercisable on a POSIX host. Skipped, not failing, so a local
+    // run of this suite stays readable.
+    skip:
+      process.platform === 'win32' ? 'requires a POSIX /bin/sh to spawn the snarkjs stub' : false,
+  },
+  async () => {
+    const previousRuntime = process.env.MORPHEUS_ZKP_VERIFY_RUNTIME;
+    const previousBin = process.env.MORPHEUS_SNARKJS_BIN;
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'morpheus-snarkjs-'));
+    const stub = path.join(tempDir, 'snarkjs');
+    await fs.writeFile(stub, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    process.env.MORPHEUS_ZKP_VERIFY_RUNTIME = 'cli';
+    process.env.MORPHEUS_SNARKJS_BIN = stub;
+    try {
+      const res = await handler(
+        new Request('http://local/compute/execute', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({
+            mode: 'builtin',
+            function: 'zkp.groth16.verify',
+            input: {
+              verifying_key: { vk_alpha_1: ['1', '2'] },
+              public_signals: ['1'],
+              proof: {
+                pi_a: ['1', '2'],
+                pi_b: [
+                  ['1', '2'],
+                  ['3', '4'],
+                ],
+                pi_c: ['5', '6'],
+              },
             },
-          },
-          target_chain: 'neo_n3',
-        }),
-      })
-    );
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.function, 'zkp.groth16.verify');
-    assert.equal(body.result.is_valid, true);
-  } finally {
-    if (previousRuntime === undefined) delete process.env.MORPHEUS_ZKP_VERIFY_RUNTIME;
-    else process.env.MORPHEUS_ZKP_VERIFY_RUNTIME = previousRuntime;
-    if (previousBin === undefined) delete process.env.MORPHEUS_SNARKJS_BIN;
-    else process.env.MORPHEUS_SNARKJS_BIN = previousBin;
-    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+            target_chain: 'neo_n3',
+          }),
+        })
+      );
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.function, 'zkp.groth16.verify');
+      assert.equal(body.result.is_valid, true);
+    } finally {
+      if (previousRuntime === undefined) delete process.env.MORPHEUS_ZKP_VERIFY_RUNTIME;
+      else process.env.MORPHEUS_ZKP_VERIFY_RUNTIME = previousRuntime;
+      if (previousBin === undefined) delete process.env.MORPHEUS_SNARKJS_BIN;
+      else process.env.MORPHEUS_SNARKJS_BIN = previousBin;
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
-});
+);
 
 test('compute execute reports groth16 verifier runtime timeouts instead of invalid proofs', async () => {
   const previousRuntime = process.env.MORPHEUS_ZKP_VERIFY_RUNTIME;

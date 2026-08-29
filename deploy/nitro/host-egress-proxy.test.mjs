@@ -12,6 +12,7 @@ import http from 'node:http';
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { createProxyServer, loadAllowlist, parseTarget } from './host-egress-proxy.mjs';
 
@@ -135,7 +136,9 @@ test('parseTarget defaults the port to 443', () => {
 });
 
 test('the committed production allow-list parses and includes the core providers', () => {
-  const set = loadAllowlist(new URL('./vsock-proxy.allowlist.yaml', import.meta.url).pathname);
+  const set = loadAllowlist(
+    fileURLToPath(new URL('./vsock-proxy.allowlist.yaml', import.meta.url))
+  );
   assert.ok(set.size >= 10, 'production allow-list should have the full provider set');
   for (const host of ['api.twelvedata.com:443', 'api1.binance.com:443', 'api.coinbase.com:443']) {
     assert.equal(set.has(host), true, `${host} must be allow-listed`);

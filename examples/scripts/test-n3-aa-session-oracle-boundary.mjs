@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { experimental, rpc as neoRpc, sc, tx, u, wallet } from '@cityofzion/neon-js';
@@ -18,7 +19,7 @@ import {
 } from './common.mjs';
 
 const aaRepoRoot = path.resolve(
-  path.dirname(new URL(import.meta.url).pathname),
+  path.dirname(fileURLToPath(import.meta.url)),
   '../../../neo-abstract-account'
 );
 const AA_BUILD_DIR = path.resolve(aaRepoRoot, 'contracts/bin/v3');

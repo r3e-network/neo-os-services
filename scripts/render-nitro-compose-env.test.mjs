@@ -64,7 +64,13 @@ test('render-nitro-compose-env omits archived Neo X fields from generated output
   );
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.equal(fs.statSync(outputPath).mode & 0o777, 0o600, 'rendered env must be owner-only');
+  // NTFS does not carry POSIX permission bits: writeFileSync's mode option is
+  // ignored and stat reports 0o666. The renderer does request 0o600, and that
+  // request matters on the Linux hosts these env files ship to, but only a POSIX
+  // filesystem can confirm it landed.
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(outputPath).mode & 0o777, 0o600, 'rendered env must be owner-only');
+  }
 
   const rendered = fs.readFileSync(outputPath, 'utf8');
   const renderedKeys = new Set(
