@@ -7,6 +7,30 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+// Audit P2 fix: provider configs carry provider data-source API keys. The
+// response may only echo a masked preview, and operation logs must never
+// receive the full config blob (the generic key-name redactor in
+// operation-logs.ts cannot be trusted to catch every provider-specific
+// field name, e.g. `config.token` or `config.bearer`).
+const MASKED_CONFIG_KEYS = /(key|token|secret|password|credential|bearer|authorization)/i;
+
+function maskConfigForDisplay(config: Record<string, unknown>): Record<string, unknown> {
+  const masked: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(config)) {
+    masked[k] =
+      MASKED_CONFIG_KEYS.test(k) && typeof v === 'string' && v.length > 0 ? `***${v.slice(-4)}` : v;
+  }
+  return masked;
+}
+
+function summarizeConfigsForLog(configs: Array<Record<string, unknown>> = []) {
+  return configs.map((entry) => ({
+    provider_id: entry.provider_id,
+    enabled: entry.enabled,
+    config_keys: isPlainObject(entry.config) ? Object.keys(entry.config) : [],
+  }));
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const projectSlug = (url.searchParams.get('project_slug') || 'morpheus').trim();
@@ -49,13 +73,22 @@ export async function GET(request: Request) {
     });
     return badRequest(error.message, 500);
   }
-  const body = { project_slug: projectSlug, network, configs: data || [] };
+  const configs = (data || []).map((entry: Record<string, unknown>) => ({
+    ...entry,
+    config: isPlainObject(entry.config) ? maskConfigForDisplay(entry.config) : entry.config,
+  }));
+  const body = { project_slug: projectSlug, network, configs };
   await recordOperationLog({
     route: '/api/provider-configs',
     method: 'GET',
     category: 'provider_config',
     requestPayload: { project_slug: projectSlug, network },
-    responsePayload: body,
+    // Never log the config blobs — only which providers are configured.
+    responsePayload: {
+      project_slug: projectSlug,
+      network,
+      configs: summarizeConfigsForLog(configs),
+    },
     httpStatus: 200,
   });
   return Response.json(body);
@@ -68,7 +101,12 @@ export async function POST(request: Request) {
       route: '/api/provider-configs',
       method: 'POST',
       category: 'provider_config',
-      requestPayload: body,
+      requestPayload: {
+        ...body,
+        config: isPlainObject(config)
+          ? summarizeConfigsForLog([{ provider_id: providerId, enabled, config }])
+          : body.config,
+      },
       responsePayload: { error: 'invalid JSON body' },
       httpStatus: 400,
       error: 'invalid JSON body',
@@ -103,7 +141,12 @@ export async function POST(request: Request) {
       route: '/api/provider-configs',
       method: 'POST',
       category: 'provider_config',
-      requestPayload: body,
+      requestPayload: {
+        ...body,
+        config: isPlainObject(config)
+          ? summarizeConfigsForLog([{ provider_id: providerId, enabled, config }])
+          : body.config,
+      },
       responsePayload: { error: 'project_slug required' },
       httpStatus: 400,
       error: 'project_slug required',
@@ -115,7 +158,12 @@ export async function POST(request: Request) {
       route: '/api/provider-configs',
       method: 'POST',
       category: 'provider_config',
-      requestPayload: body,
+      requestPayload: {
+        ...body,
+        config: isPlainObject(config)
+          ? summarizeConfigsForLog([{ provider_id: providerId, enabled, config }])
+          : body.config,
+      },
       responsePayload: { error: 'provider_id required' },
       httpStatus: 400,
       error: 'provider_id required',
@@ -127,7 +175,12 @@ export async function POST(request: Request) {
       route: '/api/provider-configs',
       method: 'POST',
       category: 'provider_config',
-      requestPayload: body,
+      requestPayload: {
+        ...body,
+        config: isPlainObject(config)
+          ? summarizeConfigsForLog([{ provider_id: providerId, enabled, config }])
+          : body.config,
+      },
       responsePayload: { error: 'config must be a JSON object' },
       httpStatus: 400,
       error: 'config must be a JSON object',
@@ -155,19 +208,38 @@ export async function POST(request: Request) {
       route: '/api/provider-configs',
       method: 'POST',
       category: 'provider_config',
-      requestPayload: body,
+      requestPayload: {
+        ...body,
+        config: isPlainObject(config)
+          ? summarizeConfigsForLog([{ provider_id: providerId, enabled, config }])
+          : body.config,
+      },
       responsePayload: { error: error.message },
       httpStatus: 500,
       error: error.message,
     });
     return badRequest(error.message, 500);
   }
-  const responseBody = { ok: true, network, config: data };
+  const responseConfig =
+    data && isPlainObject((data as Record<string, unknown>).config)
+      ? {
+          ...(data as Record<string, unknown>),
+          config: maskConfigForDisplay(
+            (data as Record<string, unknown>).config as Record<string, unknown>
+          ),
+        }
+      : data;
+  const responseBody = { ok: true, network, config: responseConfig };
   await recordOperationLog({
     route: '/api/provider-configs',
     method: 'POST',
     category: 'provider_config',
-    requestPayload: body,
+    requestPayload: {
+      ...body,
+      config: isPlainObject(config)
+        ? summarizeConfigsForLog([{ provider_id: providerId, enabled, config }])
+        : body.config,
+    },
     responsePayload: responseBody,
     httpStatus: 200,
   });
