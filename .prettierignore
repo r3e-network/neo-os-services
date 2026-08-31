@@ -36,3 +36,9 @@ workers/nitro-worker/src/game/engines/sheep.js
 workers/nitro-worker/src/game/engines/snake.js
 workers/nitro-worker/src/game/engines/sudoku-data.js
 workers/nitro-worker/src/game/engines/sudoku.js
+
+# nccs contract-build output dropped at the repo root (paired with its .nef twin,
+# e.g. MorpheusOracle.nef). The compiler owns this JSON byte-for-byte, so
+# hand-formatting it only reverts on the next build. Root-scoped on purpose: a
+# hand-authored manifest.json under deploy/ or apps/ should still be formatted.
+/*.manifest.json

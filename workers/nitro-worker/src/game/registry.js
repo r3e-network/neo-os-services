@@ -45,10 +45,17 @@ const REQUIRED_ABI = ['deal', 'applyOp', 'applyUndo', 'replay', 'score'];
 
 // sha256 (hex) of an engine wrapper module's on-disk source — the engineHash the
 // registry pins and the manifest whitelists.
+//
+// Normalized on purpose: the pin identifies the wrapper's content, not the line
+// endings its checkout happens to carry. An LF-pinned source materialized as
+// CRLF by a Windows `core.autocrlf` checkout would otherwise hash differently and
+// the worker would reject every registered engine — a fail-closed gate that reads
+// as tamper. Any real edit, including one that only changes line endings inside a
+// large rewrite, still produces a different digest.
 export function engineHashOfFile(file) {
   const path = fileURLToPath(new URL(`./wrappers/${file}`, import.meta.url));
-  const source = readFileSync(path);
-  return createHash('sha256').update(source).digest('hex');
+  const source = readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
+  return createHash('sha256').update(source, 'utf8').digest('hex');
 }
 
 // Operator-approved whitelist: appId -> engineHash (sha256 of the wrapper

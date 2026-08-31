@@ -38,8 +38,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/aws/aws-sdk-go-v2/service/kms/types"
-	"github.com/hf/nsm"
-	"github.com/hf/nsm/request"
 )
 
 func emit(v map[string]any, code int) {
@@ -105,31 +103,9 @@ func runAttest(args []string) {
 	}, 0)
 }
 
-// attest opens /dev/nsm and returns a fresh attestation document bound to the
-// supplied fields. It calls fail() (which exits) on any error.
-func attest(nonce, userData, publicKey []byte) []byte {
-	sess, err := nsm.OpenDefaultSession()
-	if err != nil {
-		fail(fmt.Sprintf("open /dev/nsm: %v (not running inside a Nitro enclave?)", err))
-	}
-	defer sess.Close()
-
-	res, err := sess.Send(&request.Attestation{
-		Nonce:     nonce,
-		UserData:  userData,
-		PublicKey: publicKey,
-	})
-	if err != nil {
-		fail(fmt.Sprintf("nsm attestation request: %v", err))
-	}
-	if res.Error != "" {
-		fail(fmt.Sprintf("nsm error code: %s", string(res.Error)))
-	}
-	if res.Attestation == nil || len(res.Attestation.Document) == 0 {
-		fail("nsm returned an empty attestation document")
-	}
-	return res.Attestation.Document
-}
+// attest lives in attest_linux.go (with a fail-closed counterpart in
+// attest_unsupported.go): it is the only code that touches /dev/nsm, and keeping
+// that dependency out of this file is what lets the module build off-Linux.
 
 // runKMSDecrypt implements attestation-gated kms:Decrypt key release.
 func runKMSDecrypt(args []string) {

@@ -49,7 +49,11 @@ const WRAPPER_FILES = {
 test('manifest pins the sha256 of each wrapper source exactly', () => {
   for (const [appId, file] of Object.entries(WRAPPER_FILES)) {
     const path = fileURLToPath(new URL(`./wrappers/${file}`, import.meta.url));
-    const expected = createHash('sha256').update(readFileSync(path)).digest('hex');
+    // Same canonical form engineHashOfFile uses: the pin tracks wrapper content,
+    // not the line endings this checkout happens to carry.
+    const expected = createHash('sha256')
+      .update(readFileSync(path, 'utf8').replace(/\r\n/g, '\n'), 'utf8')
+      .digest('hex');
     assert.equal(engineHashOfFile(file), expected, `${appId} engineHashOfFile drift`);
     assert.equal(ENGINE_MANIFEST[appId], expected, `${appId} manifest hash out of date`);
   }

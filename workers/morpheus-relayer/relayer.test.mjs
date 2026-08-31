@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { wallet } from '@cityofzion/neon-js';
 import { signManualAction } from '@r3e-network/neo-os-services-shared/node-runtime';
 
@@ -597,7 +598,7 @@ test('processAutomationJobs fail-closes automation jobs on request fee exhaustio
 
 test('Neo N3 automation queue waits for app log and fail-closes VM faults', () => {
   const source = fs.readFileSync(
-    path.resolve(path.dirname(new URL(import.meta.url).pathname), 'src/neo-n3.js'),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'src/neo-n3.js'),
     'utf8'
   );
 
