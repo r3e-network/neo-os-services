@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-07-17T14:09:28Z",
+  "updated_at": "2026-08-30T20:58:00Z",
   "neo_n3": {
     "deployed_at": "2026-03-13T11:19:31.204Z",
     "rpc_url": "https://testnet1.neo.coz.io:443",
@@ -10,12 +10,12 @@
     "legacy_oracle_v1_hash": "0x4b882e94ed766807c4fd728768f972e13008ad52",
     "datafeed_hash": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
     "abstract_account_hash": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
-    "aa_web3auth_verifier_hash": "0x7147f9a508594a7656a25f45d0a7a7dede7c227f",
-    "example_consumer_hash": "0x8c506f224d82e67200f20d9d5361f767f0756e3b",
+    "aa_web3auth_verifier_hash": "0x1111f5b6b046a964c75d208998c13945ce172e85",
+    "example_consumer_hash": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
     "example_feed_reader_hash": "0xae9c17da3d8d1cc45b2a95f77ddce391b9bdcad4",
     "allowlisted": true,
-    "consumer_oracle": "0x4b882e94ed766807c4fd728768f972e13008ad52",
-    "consumer_oracle_note": "verified on-chain 2026-07-18: the example callback consumer is bound to the retired legacy v1 oracle (requestFromCallback lane), not the v2 kernel",
+    "consumer_oracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+    "consumer_oracle_note": "verified on-chain 2026-08-30: the current OracleCallbackConsumer is bound to the v2 kernel and demo.app routes callbacks to it",
     "aa_runtime": {
       "display_name": "UnifiedSmartWalletV3",
       "testnet_manifest_name": "UnifiedSmartWalletV3Testnet",
@@ -23,11 +23,14 @@
     },
     "transactions": {
       "abstract_account_deploy": "0xbcee817781bb57e66d7373c25c1b951bbe7bce9ebc355fb38f7d23b21cc515c0",
-      "aa_web3auth_verifier_deploy": "0x94989befcc936007d32c49048087196f6fcfdb6bcceafce3fcbfd9a0ea10d211",
-      "consumer_deploy": null,
+      "aa_web3auth_verifier_deploy": "0x84bea53fb8344fb3258ad5596bc8368201e4eb3c0340914e5c98952d3f0a8805",
+      "aa_web3auth_verifier_authorize_core": "0x1a59299e397ce7e8b482691338485cd0ee2d82aa6655f836a338d24d4c6ab472",
+      "aa_web3auth_paymaster_register": "0xe47883d0309b9a7d55c336e9400de85cc4d10145ede1c5724e79fcdc860478bf",
+      "aa_web3auth_paymaster_execute": "0x00ac2f8fc8585b9a3a7cc6551fdf9b81c458d74c5f2bd79d63b5bc84744494bb",
+      "consumer_deploy": "0x50b5a7a0e56b024fa360eecdd3066ca1c7c4b07e9e712c30bd7108207243e9e4",
       "feed_reader_deploy": null,
-      "allow_callback": null,
-      "set_oracle": null
+      "allow_callback": "0x9b6c289cf6aa86012b2496ab5a7678fc590d435da77ac0f3d3aca156130de602",
+      "set_oracle": "0x93c88ec580abe94f64b5ff99429a17431e3e2d36305ebde3f27cd43d98fb0e35"
     }
   }
 }

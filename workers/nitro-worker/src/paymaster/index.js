@@ -47,6 +47,9 @@ function resolvePaymasterPolicy(network) {
     allowTargets: parseCsv(env(`MORPHEUS_PAYMASTER_${upper}_ALLOW_TARGETS`)).map((entry) =>
       entry.toLowerCase()
     ),
+    allowUserOpTargets: parseCsv(
+      env(`MORPHEUS_PAYMASTER_${upper}_ALLOW_USEROP_TARGETS`)
+    ).map((entry) => entry.toLowerCase()),
     allowMethods: parseCsv(env(`MORPHEUS_PAYMASTER_${upper}_ALLOW_METHODS`)).map((entry) =>
       entry.toLowerCase()
     ),
@@ -106,6 +109,7 @@ function buildDeniedVerdict(policy, normalized, reason) {
       policy_id: policy.policyId,
       max_gas_units: policy.maxGasUnits,
       allow_targets: policy.allowTargets,
+      allow_userop_targets: policy.allowUserOpTargets,
       allow_methods: policy.allowMethods,
       allow_accounts: policy.allowAccounts,
       block_accounts: policy.blockAccounts,
@@ -273,13 +277,30 @@ async function evaluatePaymasterAuthorization(payload = {}) {
     return buildDeniedVerdict(policy, normalized, 'method is not allowlisted');
   }
 
-  const onChainPolicy = await evaluateOnChainAAPolicy(policy, normalized);
-  const requiresOnChainPolicy = Boolean(
-    policy.aaCoreHash ||
-    policy.whitelistHookHash ||
-    policy.multiHookHash ||
-    normalized.userop_target_contract
+  const isUserOperation = ['executeuserop', 'executeunifiedbyaddress'].includes(
+    normalized.method.toLowerCase()
   );
+  if (isUserOperation && !normalized.userop_target_contract) {
+    return buildDeniedVerdict(policy, normalized, 'userop_target_contract is required');
+  }
+  if (
+    policy.allowUserOpTargets.length > 0 &&
+    !policy.allowUserOpTargets.includes(normalized.userop_target_contract.toLowerCase())
+  ) {
+    return buildDeniedVerdict(policy, normalized, 'userop_target_contract is not allowlisted');
+  }
+
+  const requiresOnChainPolicy = Boolean(policy.whitelistHookHash || policy.multiHookHash);
+  const onChainPolicy = requiresOnChainPolicy
+    ? await evaluateOnChainAAPolicy(policy, normalized)
+    : { checked: false, approved: null, reason: 'on-chain AA hook policy not enabled' };
+  if (
+    normalized.userop_target_contract &&
+    policy.allowUserOpTargets.length === 0 &&
+    !requiresOnChainPolicy
+  ) {
+    return buildDeniedVerdict(policy, normalized, 'userop target policy is not configured');
+  }
   if (requiresOnChainPolicy && (!onChainPolicy.checked || !onChainPolicy.approved)) {
     return buildDeniedVerdict(
       policy,
@@ -312,6 +333,8 @@ async function evaluatePaymasterAuthorization(payload = {}) {
       dapp_id: normalized.dapp_id,
       target_contract: normalized.target_contract,
       method: normalized.method,
+      userop_target_contract: normalized.userop_target_contract,
+      userop_method: normalized.userop_method,
       estimated_gas_units: normalized.estimated_gas_units,
       operation_hash: normalized.operation_hash,
     }),

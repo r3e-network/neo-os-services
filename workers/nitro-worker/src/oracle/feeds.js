@@ -67,7 +67,11 @@ import {
 } from './feeds/feed-state.js';
 
 export { getFeedStalenessSummary, getFeedStateWriteFailureCount };
-import { fetchJsonRpc, loadOnchainFeedRecords } from './feeds/neo-stack-decode.js';
+import {
+  fetchJsonRpc,
+  loadNeoN3FeedSigningMode,
+  loadOnchainFeedRecords,
+} from './feeds/neo-stack-decode.js';
 import {
   buildSyncPolicy,
   resolvePairThresholdBps,
@@ -857,6 +861,18 @@ export async function handleOracleFeed(payload) {
   }
 
   let batchTx = null;
+  const feedSigningMode =
+    batchUpdates.length > 0 && hasNeoN3DataFeedTarget && neoContext
+      ? await loadNeoN3FeedSigningMode(neoContext.rpcUrl, dataFeedHash)
+      : null;
+  const submissionPayload =
+    feedSigningMode?.requiresSignedUpdates === null ||
+    feedSigningMode?.requiresSignedUpdates === undefined
+      ? scopedPayload
+      : {
+          ...scopedPayload,
+          neo_n3_feed_signing_required: feedSigningMode.requiresSignedUpdates,
+        };
   const submissionIssue =
     batchUpdates.length > 0
       ? resolveFeedSubmissionIssue(targetChain, {
@@ -874,7 +890,7 @@ export async function handleOracleFeed(payload) {
       batchTx = await submitQuotesToN3WithFallback(
         dataFeedHash,
         neoContext,
-        scopedPayload,
+        submissionPayload,
         batchUpdates
       );
     }
@@ -952,6 +968,7 @@ export async function handleOracleFeed(payload) {
     batch_tx: batchTx,
     sync_results: syncResults,
     errors,
+    ...(feedSigningMode ? { feed_signing_mode: feedSigningMode } : {}),
     ...(Object.keys(aggregations).length > 0 ? { aggregations } : {}),
   });
 }
