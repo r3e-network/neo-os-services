@@ -29,6 +29,17 @@ namespace MorpheusOracle.Contracts.Tests
         private const string Operation = "fetch";
         private const long DefaultFee = 1_000_000;       // DEFAULT_REQUEST_FEE
 
+        // PersistingBlock.Timestamp is read-only; the supported way to move
+        // Runtime.Time forward is the underlying block header.
+        private static void AdvanceTimeMs(TestEngine engine, ulong deltaMs)
+        {
+            object persistingBlock = engine.PersistingBlock;
+            Neo.Network.P2P.Payloads.Block block = (Neo.Network.P2P.Payloads.Block)persistingBlock.GetType()
+                .GetField("UnderlyingBlock", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                .GetValue(persistingBlock)!;
+            block.Header.Timestamp = (ulong)engine.PersistingBlock.Timestamp.TotalMilliseconds + deltaMs;
+        }
+
         [Fact]
         public void Fulfill_DispatchesRichOnMiniAppResult_WithRealAppIdAndRequester()
         {
@@ -70,7 +81,9 @@ namespace MorpheusOracle.Contracts.Tests
             verifierPriv[31] = 7;
             KeyPair verifier = new KeyPair(verifierPriv);
             engine.SetTransactionSigners(owner);
-            oracle.SetRuntimeVerificationPublicKey(verifier.PublicKey);
+            oracle.ProposeRuntimeVerificationPublicKey(verifier.PublicKey);
+            AdvanceTimeMs(engine, 86_400_000 + 1_000); // pass the 24h governance timelock
+            oracle.ExecuteRuntimeVerificationPublicKey();
             oracle.SetUpdater(owner);
 
             byte[] result = new byte[] { 0x01 };

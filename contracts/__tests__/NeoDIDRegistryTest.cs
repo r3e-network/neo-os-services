@@ -14,7 +14,13 @@ namespace MorpheusOracle.Contracts.Tests
 
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "UInt160", "Admin");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "ECPoint", "Verifier");
-            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "SetAdmin");
+            // P0-07: admin rotation and upgrade are propose/execute timelock
+            // pairs, not instant setters.
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "ProposeAdmin");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "ExecuteAdminChange");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "CancelAdminChange");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "ScheduleUpdate");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "CancelUpdate");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "SetVerifier");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "RegisterBinding");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "RevokeBinding");

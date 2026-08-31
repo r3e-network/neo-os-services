@@ -13,6 +13,7 @@ namespace MorpheusOracle.Contracts
     public delegate void AdminChangedHandler(UInt160 oldAdmin, UInt160 newAdmin);
     public delegate void UpdaterChangedHandler(UInt160 oldUpdater, UInt160 newUpdater);
     public delegate void VerificationKeyChangedHandler(ECPoint oldKey, ECPoint newKey);
+    public delegate void AdminTimelockProposedHandler(UInt160 proposed, BigInteger executeAfter);
 
     /// <summary>
     /// On-chain synchronized storage for Morpheus shared numeric resources.
@@ -47,12 +48,19 @@ namespace MorpheusOracle.Contracts
         private static readonly byte[] PREFIX_PAIR_INDEX = new byte[] { 0x04 };
         private static readonly byte[] PREFIX_PAIR_COUNT = new byte[] { 0x05 };
         private static readonly byte[] PREFIX_VERIFICATION_KEY = new byte[] { 0x06 };
+        // Governance timelock (P0-07 pattern): admin rotation.
+        private static readonly byte[] PREFIX_PENDING_ADMIN = new byte[] { 0x07 };
+        private static readonly byte[] PREFIX_PENDING_ADMIN_TIME = new byte[] { 0x08 };
+        private const long TIMELOCK_DELAY_MS = 86_400_000; // 24 hours
 
         [DisplayName("FeedUpdated")]
         public static event FeedUpdatedHandler OnFeedUpdated;
 
         [DisplayName("AdminChanged")]
         public static event AdminChangedHandler OnAdminChanged;
+
+        [DisplayName("AdminTimelockProposed")]
+        public static event AdminTimelockProposedHandler OnAdminTimelockProposed;
 
         [DisplayName("UpdaterChanged")]
         public static event UpdaterChangedHandler OnUpdaterChanged;
@@ -116,13 +124,39 @@ namespace MorpheusOracle.Contracts
             ExecutionEngine.Assert(Runtime.CheckWitness(updater), "unauthorized");
         }
 
-        public static void SetAdmin(UInt160 newAdmin)
+        /// <summary>Propose a new admin; executable after the 24h timelock (P0-07).</summary>
+        public static void ProposeAdmin(UInt160 newAdmin)
         {
             ValidateAdmin();
             ExecutionEngine.Assert(newAdmin != null && newAdmin.IsValid, "invalid admin");
+            ExecutionEngine.Assert(newAdmin != Admin(), "same admin");
+            BigInteger executeAfter = Runtime.Time + TIMELOCK_DELAY_MS;
+            Storage.Put(Storage.CurrentContext, PREFIX_PENDING_ADMIN, newAdmin);
+            Storage.Put(Storage.CurrentContext, PREFIX_PENDING_ADMIN_TIME, executeAfter);
+            OnAdminTimelockProposed(newAdmin, executeAfter);
+        }
+
+        /// <summary>Execute a matured admin rotation. Permissionless once proposed.</summary>
+        public static void ExecuteAdminChange()
+        {
+            ByteString pending = Storage.Get(Storage.CurrentContext, PREFIX_PENDING_ADMIN);
+            ExecutionEngine.Assert(pending != null, "no pending admin");
+            BigInteger changeTime = (BigInteger)Storage.Get(Storage.CurrentContext, PREFIX_PENDING_ADMIN_TIME);
+            ExecutionEngine.Assert(Runtime.Time >= changeTime, "timelock active");
             UInt160 oldAdmin = Admin();
+            UInt160 newAdmin = (UInt160)pending;
             Storage.Put(Storage.CurrentContext, PREFIX_ADMIN, newAdmin);
+            Storage.Delete(Storage.CurrentContext, PREFIX_PENDING_ADMIN);
+            Storage.Delete(Storage.CurrentContext, PREFIX_PENDING_ADMIN_TIME);
             OnAdminChanged(oldAdmin, newAdmin);
+        }
+
+        /// <summary>Cancel a pending admin change. Admin only.</summary>
+        public static void CancelAdminChange()
+        {
+            ValidateAdmin();
+            Storage.Delete(Storage.CurrentContext, PREFIX_PENDING_ADMIN);
+            Storage.Delete(Storage.CurrentContext, PREFIX_PENDING_ADMIN_TIME);
         }
 
         public static void SetUpdater(UInt160 updater)

@@ -54,11 +54,23 @@ async function main() {
     account,
   });
 
-  console.log('Publishing NeoOS Oracle verifier public key...');
+  // P0-07 governance timelock: the set* aliases now PROPOSE only. The key
+  // takes effect when executeRuntimeVerificationPublicKey is invoked after
+  // the 24h delay. Run this script again with MODE=execute to finalize.
+  const mode = (process.env.MODE || 'propose').toLowerCase();
+  if (mode === 'execute') {
+    console.log('Executing matured verifier-key change...');
+    const txHash = await contract.invoke('executeRuntimeVerificationPublicKey', []);
+    console.log(`executeRuntimeVerificationPublicKey tx: ${txHash}`);
+    return;
+  }
+
+  console.log('Proposing NeoOS Oracle verifier public key (24h timelock)...');
   const txHash = await contract.invoke('setOracleVerificationPublicKey', [
     sc.ContractParam.publicKey(publicKey),
   ]);
-  console.log(`setOracleVerificationPublicKey tx: ${txHash}`);
+  console.log(`setOracleVerificationPublicKey (PROPOSE) tx: ${txHash}`);
+  console.log('NOT LIVE YET: re-run with MODE=execute after the 24h timelock matures.');
 }
 
 main().catch((error) => {

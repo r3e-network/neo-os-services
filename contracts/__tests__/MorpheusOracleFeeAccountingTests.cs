@@ -193,7 +193,9 @@ namespace MorpheusOracle.Contracts.Tests
             KeyPair verifier = new KeyPair(priv);
 
             h.Engine.SetTransactionSigners(h.Owner);
-            h.Contract.SetRuntimeVerificationPublicKey(verifier.PublicKey);
+            h.Contract.ProposeRuntimeVerificationPublicKey(verifier.PublicKey);
+            SetBlockTimeMs(h.Engine, BlockTimeMs(h.Engine) + 86_400_000 + 1_000); // pass the 24h timelock
+            h.Contract.ExecuteRuntimeVerificationPublicKey();
             h.Contract.SetUpdater(h.Owner);
 
             byte[] result = new byte[] { 0x01 };
@@ -358,7 +360,9 @@ namespace MorpheusOracle.Contracts.Tests
             KeyPair verifier = new KeyPair(priv);
 
             h.Engine.SetTransactionSigners(h.Owner); // admin sets verifier + updater
-            h.Contract.SetRuntimeVerificationPublicKey(verifier.PublicKey);
+            h.Contract.ProposeRuntimeVerificationPublicKey(verifier.PublicKey);
+            SetBlockTimeMs(h.Engine, BlockTimeMs(h.Engine) + 86_400_000 + 1_000); // pass the 24h timelock
+            h.Contract.ExecuteRuntimeVerificationPublicKey();
             h.Contract.SetUpdater(h.Owner);          // owner submits the fulfill tx (updater witness)
 
             byte[] result = new byte[] { 0xAA, 0xBB, 0xCC };

@@ -14,6 +14,9 @@ namespace MorpheusOracle.Contracts
     public delegate void NeoDidActionTicketUsedHandler(UInt160 disposableAccount, string actionId, ByteString actionNullifier);
     public delegate void NeoDidAdminChangedHandler(UInt160 oldAdmin, UInt160 newAdmin);
     public delegate void NeoDidVerifierChangedHandler(ECPoint oldVerifier, ECPoint newVerifier);
+    public delegate void NeoDidAdminTimelockProposedHandler(UInt160 proposed, BigInteger executeAfter);
+    public delegate void NeoDidUpgradeScheduledHandler(BigInteger executeAfter);
+    public delegate void NeoDidContractUpgradedHandler(ByteString nefHash, ByteString manifestHash);
 
     /// <summary>
     /// Independent on-chain registry for NeoDID bindings and single-use action tickets.
@@ -35,6 +38,12 @@ namespace MorpheusOracle.Contracts
         private static readonly byte[] PREFIX_BINDING = new byte[] { 0x03 };
         private static readonly byte[] PREFIX_MASTER_NULLIFIER = new byte[] { 0x04 };
         private static readonly byte[] PREFIX_ACTION_NULLIFIER = new byte[] { 0x05 };
+        // Governance timelocks (P0-07 pattern): admin rotation + hash-pinned self-upgrade.
+        private static readonly byte[] PREFIX_PENDING_ADMIN = new byte[] { 0x06 };
+        private static readonly byte[] PREFIX_PENDING_ADMIN_TIME = new byte[] { 0x07 };
+        private static readonly byte[] PREFIX_UPGRADE_TIME = new byte[] { 0x08 };
+        private static readonly byte[] PREFIX_UPGRADE_HASH = new byte[] { 0x09 };
+        private const long TIMELOCK_DELAY_MS = 86_400_000; // 24 hours
         private static readonly byte[] BINDING_DOMAIN = new byte[] { 110, 101, 111, 100, 105, 100, 45, 98, 105, 110, 100, 105, 110, 103, 45, 118, 49 };
         private static readonly byte[] ACTION_DOMAIN = new byte[] { 110, 101, 111, 100, 105, 100, 45, 97, 99, 116, 105, 111, 110, 45, 118, 49 };
 
@@ -70,6 +79,15 @@ namespace MorpheusOracle.Contracts
         [DisplayName("AdminChanged")]
         public static event NeoDidAdminChangedHandler OnAdminChanged;
 
+        [DisplayName("AdminTimelockProposed")]
+        public static event NeoDidAdminTimelockProposedHandler OnAdminTimelockProposed;
+
+        [DisplayName("UpgradeScheduled")]
+        public static event NeoDidUpgradeScheduledHandler OnUpgradeScheduled;
+
+        [DisplayName("ContractUpgraded")]
+        public static event NeoDidContractUpgradedHandler OnContractUpgraded;
+
         [DisplayName("VerifierChanged")]
         public static event NeoDidVerifierChangedHandler OnVerifierChanged;
 
@@ -92,13 +110,39 @@ namespace MorpheusOracle.Contracts
             return raw == null ? null : (ECPoint)(byte[])raw;
         }
 
-        public static void SetAdmin(UInt160 newAdmin)
+        /// <summary>Propose a new admin; executable after the 24h timelock (P0-07).</summary>
+        public static void ProposeAdmin(UInt160 newAdmin)
         {
             ValidateAdmin();
             ExecutionEngine.Assert(newAdmin != null && newAdmin.IsValid, "invalid admin");
+            ExecutionEngine.Assert(newAdmin != Admin(), "same admin");
+            BigInteger executeAfter = Runtime.Time + TIMELOCK_DELAY_MS;
+            Storage.Put(Storage.CurrentContext, PREFIX_PENDING_ADMIN, newAdmin);
+            Storage.Put(Storage.CurrentContext, PREFIX_PENDING_ADMIN_TIME, executeAfter);
+            OnAdminTimelockProposed(newAdmin, executeAfter);
+        }
+
+        /// <summary>Execute a matured admin rotation. Permissionless once proposed.</summary>
+        public static void ExecuteAdminChange()
+        {
+            ByteString pending = Storage.Get(Storage.CurrentContext, PREFIX_PENDING_ADMIN);
+            ExecutionEngine.Assert(pending != null, "no pending admin");
+            BigInteger changeTime = (BigInteger)Storage.Get(Storage.CurrentContext, PREFIX_PENDING_ADMIN_TIME);
+            ExecutionEngine.Assert(Runtime.Time >= changeTime, "timelock active");
             UInt160 oldAdmin = Admin();
+            UInt160 newAdmin = (UInt160)pending;
             Storage.Put(Storage.CurrentContext, PREFIX_ADMIN, newAdmin);
+            Storage.Delete(Storage.CurrentContext, PREFIX_PENDING_ADMIN);
+            Storage.Delete(Storage.CurrentContext, PREFIX_PENDING_ADMIN_TIME);
             OnAdminChanged(oldAdmin, newAdmin);
+        }
+
+        /// <summary>Cancel a pending admin change. Admin only.</summary>
+        public static void CancelAdminChange()
+        {
+            ValidateAdmin();
+            Storage.Delete(Storage.CurrentContext, PREFIX_PENDING_ADMIN);
+            Storage.Delete(Storage.CurrentContext, PREFIX_PENDING_ADMIN_TIME);
         }
 
         /// <summary>
@@ -113,10 +157,41 @@ namespace MorpheusOracle.Contracts
             OnVerifierChanged(oldVerifier, publicKey);
         }
 
+        /// <summary>Schedule a hash-pinned self-upgrade; executable after the 24h timelock.</summary>
+        public static void ScheduleUpdate(ByteString nefFile, string manifest)
+        {
+            ValidateAdmin();
+            ExecutionEngine.Assert(
+                nefFile != null && nefFile.Length > 0 && manifest != null && manifest.Length > 0,
+                "invalid upgrade artifact");
+            Storage.Put(Storage.CurrentContext, PREFIX_UPGRADE_TIME, Runtime.Time + TIMELOCK_DELAY_MS);
+            Storage.Put(Storage.CurrentContext, PREFIX_UPGRADE_HASH,
+                CryptoLib.Sha256(Helper.Concat(nefFile, (ByteString)manifest)));
+            OnUpgradeScheduled(Runtime.Time + TIMELOCK_DELAY_MS);
+        }
+
+        /// <summary>Execute a scheduled upgrade; artifact must match the scheduled pin exactly.</summary>
         public static void Update(ByteString nefFile, string manifest)
         {
             ValidateAdmin();
+            ByteString rawTime = Storage.Get(Storage.CurrentContext, PREFIX_UPGRADE_TIME);
+            ExecutionEngine.Assert(rawTime != null, "no upgrade scheduled");
+            ExecutionEngine.Assert(Runtime.Time >= (BigInteger)rawTime, "timelock active");
+            ByteString expected = Storage.Get(Storage.CurrentContext, PREFIX_UPGRADE_HASH);
+            ByteString actual = CryptoLib.Sha256(Helper.Concat(nefFile, (ByteString)manifest));
+            ExecutionEngine.Assert(expected == actual, "upgrade data mismatch");
+            Storage.Delete(Storage.CurrentContext, PREFIX_UPGRADE_TIME);
+            Storage.Delete(Storage.CurrentContext, PREFIX_UPGRADE_HASH);
             ContractManagement.Update(nefFile, manifest, null);
+            OnContractUpgraded(CryptoLib.Sha256(nefFile), CryptoLib.Sha256((ByteString)manifest));
+        }
+
+        /// <summary>Cancel a scheduled upgrade. Admin only.</summary>
+        public static void CancelUpdate()
+        {
+            ValidateAdmin();
+            Storage.Delete(Storage.CurrentContext, PREFIX_UPGRADE_TIME);
+            Storage.Delete(Storage.CurrentContext, PREFIX_UPGRADE_HASH);
         }
 
         /// <summary>

@@ -54,6 +54,15 @@ namespace MorpheusOracle.Contracts.Tests
             ("PREFIX_SPONSOR_SPENT", (byte)0x2C),
             ("PREFIX_INDEX_REBUILD_REQUIRED", (byte)0x2D),
             ("PREFIX_INDEX_REBUILD_CURSOR", (byte)0x2E),
+            // Appended with the governance timelocks (P0-07): admin rotation,
+            // hash-pinned self-upgrade, and security-key re-pointing. Claimed
+            // from the documented free slots 0x2F+.
+            ("PREFIX_PENDING_ADMIN", (byte)0x2F),
+            ("PREFIX_PENDING_ADMIN_TIME", (byte)0x30),
+            ("PREFIX_UPGRADE_TIME", (byte)0x31),
+            ("PREFIX_UPGRADE_HASH", (byte)0x32),
+            ("PREFIX_PENDING_RUNTIME_KEY", (byte)0x33),
+            ("PREFIX_PENDING_RUNTIME_VERIFIER", (byte)0x34),
         };
 
         private static readonly Regex PrefixDecl = new(
@@ -100,7 +109,7 @@ namespace MorpheusOracle.Contracts.Tests
         [Fact]
         public void FrozenLayout_UsedBytesStayInDocumentedRanges()
         {
-            // USED ranges per the frozen map: 0x01-0x09, 0x10-0x19, 0x20-0x2E.
+            // USED ranges per the frozen map: 0x01-0x09, 0x10-0x19, 0x20-0x34.
             // New prefixes must not silently appear outside the frozen set —
             // any addition fails FrozenLayout_ExactNameByteMap anyway, but this
             // guard documents the append-only intent explicitly.
@@ -110,7 +119,7 @@ namespace MorpheusOracle.Contracts.Tests
                 bool inRange =
                     (kv.Value >= 0x01 && kv.Value <= 0x09) ||
                     (kv.Value >= 0x10 && kv.Value <= 0x19) ||
-                    (kv.Value >= 0x20 && kv.Value <= 0x2E);
+                    (kv.Value >= 0x20 && kv.Value <= 0x34);
                 Assert.True(inRange, $"{kv.Key} uses byte 0x{kv.Value:X2} outside the frozen used ranges");
             }
         }

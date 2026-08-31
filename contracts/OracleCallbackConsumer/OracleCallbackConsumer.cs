@@ -11,6 +11,8 @@ namespace MorpheusOracle.Contracts
     public delegate void MiniAppResultReceivedHandler(BigInteger requestId, string appId, string moduleId, string operation, bool success, string error);
     public delegate void AdminChangedHandler(UInt160 oldAdmin, UInt160 newAdmin);
     public delegate void KernelChangedHandler(UInt160 oldKernel, UInt160 newKernel);
+    public delegate void UpgradeScheduledHandler(BigInteger executeAfter);
+    public delegate void ContractUpgradedHandler(ByteString nefHash, ByteString manifestHash);
 
     /// <summary>
     /// Optional external adapter for advanced integrations that still want a dedicated callback contract.
@@ -28,6 +30,10 @@ namespace MorpheusOracle.Contracts
     {
         private static readonly byte[] PREFIX_ADMIN = new byte[] { 0x01 };
         private static readonly byte[] PREFIX_KERNEL = new byte[] { 0x02 };
+        // Governance timelock (P0-07 pattern): hash-pinned self-upgrade.
+        private static readonly byte[] PREFIX_UPGRADE_TIME = new byte[] { 0x03 };
+        private static readonly byte[] PREFIX_UPGRADE_HASH = new byte[] { 0x04 };
+        private const long TIMELOCK_DELAY_MS = 86_400_000; // 24 hours
         private static readonly byte[] PREFIX_CALLBACK = new byte[] { 0x10 };
 
         public struct CallbackRecord
@@ -50,6 +56,12 @@ namespace MorpheusOracle.Contracts
 
         [DisplayName("KernelChanged")]
         public static event KernelChangedHandler OnKernelChanged;
+
+        [DisplayName("UpgradeScheduled")]
+        public static event UpgradeScheduledHandler OnUpgradeScheduled;
+
+        [DisplayName("ContractUpgraded")]
+        public static event ContractUpgradedHandler OnContractUpgraded;
 
         public static void _deploy(object data, bool update)
         {
@@ -99,10 +111,41 @@ namespace MorpheusOracle.Contracts
             SetKernel(oracle);
         }
 
+        /// <summary>Schedule a hash-pinned self-upgrade; executable after the 24h timelock (P0-07).</summary>
+        public static void ScheduleUpdate(ByteString nefFile, string manifest)
+        {
+            ValidateAdmin();
+            ExecutionEngine.Assert(
+                nefFile != null && nefFile.Length > 0 && manifest != null && manifest.Length > 0,
+                "invalid upgrade artifact");
+            Storage.Put(Storage.CurrentContext, PREFIX_UPGRADE_TIME, Runtime.Time + TIMELOCK_DELAY_MS);
+            Storage.Put(Storage.CurrentContext, PREFIX_UPGRADE_HASH,
+                CryptoLib.Sha256(Helper.Concat(nefFile, (ByteString)manifest)));
+            OnUpgradeScheduled(Runtime.Time + TIMELOCK_DELAY_MS);
+        }
+
+        /// <summary>Execute a scheduled upgrade; artifact must match the scheduled pin exactly.</summary>
         public static void Update(ByteString nefFile, string manifest)
         {
             ValidateAdmin();
+            ByteString rawTime = Storage.Get(Storage.CurrentContext, PREFIX_UPGRADE_TIME);
+            ExecutionEngine.Assert(rawTime != null, "no upgrade scheduled");
+            ExecutionEngine.Assert(Runtime.Time >= (BigInteger)rawTime, "timelock active");
+            ByteString expected = Storage.Get(Storage.CurrentContext, PREFIX_UPGRADE_HASH);
+            ByteString actual = CryptoLib.Sha256(Helper.Concat(nefFile, (ByteString)manifest));
+            ExecutionEngine.Assert(expected == actual, "upgrade data mismatch");
+            Storage.Delete(Storage.CurrentContext, PREFIX_UPGRADE_TIME);
+            Storage.Delete(Storage.CurrentContext, PREFIX_UPGRADE_HASH);
             ContractManagement.Update(nefFile, manifest, null);
+            OnContractUpgraded(CryptoLib.Sha256(nefFile), CryptoLib.Sha256((ByteString)manifest));
+        }
+
+        /// <summary>Cancel a scheduled upgrade. Admin only.</summary>
+        public static void CancelUpdate()
+        {
+            ValidateAdmin();
+            Storage.Delete(Storage.CurrentContext, PREFIX_UPGRADE_TIME);
+            Storage.Delete(Storage.CurrentContext, PREFIX_UPGRADE_HASH);
         }
 
         public static void OnMiniAppResult(BigInteger requestId, string appId, string moduleId, string operation, UInt160 requester, bool success, ByteString result, string error)

@@ -32,8 +32,16 @@ namespace MorpheusOracle.Contracts.Tests
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "KernelRequest", "GetRequest");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "InboxItem", "GetInboxItem");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "ByteString", "GetMiniAppState");
-            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "SetRuntimeEncryptionKey");
-            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "SetRuntimeVerificationPublicKey");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "ProposeRuntimeEncryptionKey");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "ExecuteRuntimeEncryptionKey");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "CancelRuntimeEncryptionKey");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "ProposeRuntimeVerificationPublicKey");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "ExecuteRuntimeVerificationPublicKey");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "CancelRuntimeVerificationPublicKey");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "ProposeAdmin");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "ExecuteAdminChange");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "CancelAdminChange");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "ScheduleUpdate");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "SetRequestFee");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "WithdrawAccruedFees");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "RegisterSystemModule");
@@ -57,6 +65,10 @@ namespace MorpheusOracle.Contracts.Tests
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "ECPoint", "OracleVerificationPublicKey");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "SetOracleEncryptionKey");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "SetOracleVerificationPublicKey");
+            // The oracle-named aliases must now be propose-only (timelocked),
+            // delegating to the propose entrypoints, never the execute ones.
+            Assert.Contains("ProposeRuntimeEncryptionKey(algorithm, publicKey);", code);
+            Assert.Contains("ProposeRuntimeVerificationPublicKey(publicKey);", code);
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "BigInteger", "Request");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "BigInteger", "RequestFromCallback");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "BigInteger", "QueueAutomationRequest");

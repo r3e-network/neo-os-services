@@ -51,12 +51,24 @@ async function main() {
     account,
   });
 
-  console.log('Publishing NeoOS Oracle public key...');
+  // P0-07 governance timelock: the set* aliases now PROPOSE only. The key
+  // takes effect when executeRuntimeEncryptionKey is invoked after the 24h
+  // delay. Run this script again with MODE=execute to finalize.
+  const mode = (process.env.MODE || 'propose').toLowerCase();
+  if (mode === 'execute') {
+    console.log('Executing matured encryption-key change...');
+    const txHash = await contract.invoke('executeRuntimeEncryptionKey', []);
+    console.log(`executeRuntimeEncryptionKey tx: ${txHash}`);
+    return;
+  }
+
+  console.log('Proposing NeoOS Oracle public key (24h timelock)...');
   const txHash = await contract.invoke('setOracleEncryptionKey', [
     sc.ContractParam.string(key.algorithm),
     sc.ContractParam.string(key.public_key),
   ]);
-  console.log(`setOracleEncryptionKey tx: ${txHash}`);
+  console.log(`setOracleEncryptionKey (PROPOSE) tx: ${txHash}`);
+  console.log('NOT LIVE YET: re-run with MODE=execute after the 24h timelock matures.');
 }
 
 main().catch((error) => {

@@ -38,6 +38,16 @@ namespace MorpheusOracle.Contracts
     public delegate void RequestTTLUpdatedHandler(BigInteger oldTTL, BigInteger newTTL);
     public delegate void SponsoredRequesterAllowedHandler(string appId, UInt160 requester, bool allowed);
     public delegate void SponsoredRequesterCapUpdatedHandler(string appId, UInt160 requester, BigInteger cap);
+    public delegate void AdminTimelockProposedHandler(UInt160 proposed, BigInteger executeAfter);
+    public delegate void UpgradeScheduledHandler(BigInteger executeAfter);
+    public delegate void ContractUpgradedHandler(ByteString nefHash, ByteString manifestHash);
+    public delegate void SecurityKeyChangeProposedHandler(string kind, BigInteger executeAfter);
+
+    // Pending-change records for the governance timelocks (PlatformRegistry
+    // PendingAddress pattern): serialized with StdLib.Serialize into a single
+    // storage slot per pending change.
+    public class PendingRuntimeKeyChange { public string Algorithm; public string Key; public BigInteger Eta; }
+    public class PendingRuntimeVerifierChange { public ByteString Verifier; public BigInteger Eta; }
 
     /// <summary>
     /// Legacy deployment name retained for compatibility, now acting as the shared MiniApp OS kernel.
@@ -85,9 +95,11 @@ namespace MorpheusOracle.Contracts
         //                ACCOUNT_REGISTERED, SPONSOR_GATED
         //     0x2A-0x2E  SPONSOR_ALLOWED, SPONSOR_CAP, SPONSOR_SPENT,
         //                INDEX_REBUILD_REQUIRED, INDEX_REBUILD_CURSOR
+        //     0x2F-0x34  PENDING_ADMIN, PENDING_ADMIN_TIME, UPGRADE_TIME,
+        //                UPGRADE_HASH, PENDING_RUNTIME_KEY, PENDING_RUNTIME_VERIFIER
         //
         //   FREE (safe to claim next, in this order):
-        //     0x2F, then 0x30+ … (and the skipped 0x0A-0x0F, 0x1A-0x1F).
+        //     0x35, then 0x36+ … (and the skipped 0x0A-0x0F, 0x1A-0x1F).
         //
         //   NOTE: FULFILLMENT_SIGNATURE_DOMAIN below is a multi-byte ASCII signing-domain
         //   constant, NOT a storage prefix — it does not consume a prefix byte.
@@ -148,7 +160,21 @@ namespace MorpheusOracle.Contracts
         // miniapp mutations may resume. This closes the empty-index callback squatting window.
         private static readonly byte[] PREFIX_INDEX_REBUILD_REQUIRED = new byte[] { 0x2D };
         private static readonly byte[] PREFIX_INDEX_REBUILD_CURSOR = new byte[] { 0x2E };
+        // Governance timelocks (PlatformRegistry pattern): pending platform-admin
+        // rotation, hash-pinned self-upgrade, and verification/encryption key
+        // re-pointing. Claimed from the documented free slots 0x2F+.
+        private static readonly byte[] PREFIX_PENDING_ADMIN = new byte[] { 0x2F };
+        private static readonly byte[] PREFIX_PENDING_ADMIN_TIME = new byte[] { 0x30 };
+        private static readonly byte[] PREFIX_UPGRADE_TIME = new byte[] { 0x31 };
+        private static readonly byte[] PREFIX_UPGRADE_HASH = new byte[] { 0x32 };
+        private static readonly byte[] PREFIX_PENDING_RUNTIME_KEY = new byte[] { 0x33 };
+        private static readonly byte[] PREFIX_PENDING_RUNTIME_VERIFIER = new byte[] { 0x34 };
         private static readonly byte[] FULFILLMENT_SIGNATURE_DOMAIN = new byte[] { 109, 105, 110, 105, 97, 112, 112, 45, 111, 115, 45, 102, 117, 108, 102, 105, 108, 108, 109, 101, 110, 116, 45, 118, 49 };
+
+        // 24 hours in milliseconds — same delay as the PlatformRegistry spine.
+        // A compromised admin EOA can no longer repoint verification keys, swap
+        // the contract, or hand over admin in the same transaction it is stolen in.
+        private const long TIMELOCK_DELAY_MS = 86400000;
 
         private const int MAX_APP_ID_LENGTH = 64;
         private const int MAX_MODULE_ID_LENGTH = 64;
@@ -292,6 +318,18 @@ namespace MorpheusOracle.Contracts
 
         [DisplayName("SponsoredRequesterCapUpdated")]
         public static event SponsoredRequesterCapUpdatedHandler OnSponsoredRequesterCapUpdated;
+
+        [DisplayName("AdminTimelockProposed")]
+        public static event AdminTimelockProposedHandler OnAdminTimelockProposed;
+
+        [DisplayName("UpgradeScheduled")]
+        public static event UpgradeScheduledHandler OnUpgradeScheduled;
+
+        [DisplayName("ContractUpgraded")]
+        public static event ContractUpgradedHandler OnContractUpgraded;
+
+        [DisplayName("SecurityKeyChangeProposed")]
+        public static event SecurityKeyChangeProposedHandler OnSecurityKeyChangeProposed;
 
         public static void _deploy(object data, bool update)
         {
@@ -677,14 +715,52 @@ namespace MorpheusOracle.Contracts
             return raw == null ? 0 : (BigInteger)raw;
         }
 
-        public static void SetAdmin(UInt160 newAdmin)
+        // ---- platform admin rotation (24h timelock, PlatformRegistry pattern) ----
+
+        /// <summary>
+        /// Propose a new platform admin. The change becomes executable
+        /// after TIMELOCK_DELAY_MS. Only the current admin may propose.
+        /// </summary>
+        public static void ProposeAdmin(UInt160 newAdmin)
         {
             ValidateAdmin();
             ExecutionEngine.Assert(newAdmin != null && newAdmin.IsValid, "invalid admin");
+            ExecutionEngine.Assert(newAdmin != Admin(), "same admin");
+
+            BigInteger executeAfter = Runtime.Time + TIMELOCK_DELAY_MS;
+            Storage.Put(Storage.CurrentContext, PREFIX_PENDING_ADMIN, newAdmin);
+            Storage.Put(Storage.CurrentContext, PREFIX_PENDING_ADMIN_TIME, executeAfter);
+            OnAdminTimelockProposed(newAdmin, executeAfter);
+        }
+
+        /// <summary>
+        /// Execute a pending admin change after the timelock expires.
+        /// Permissionless by design: the proposal itself is admin-signed, so
+        /// anyone may finalize it once mature.
+        /// </summary>
+        public static void ExecuteAdminChange()
+        {
+            ByteString pending = Storage.Get(Storage.CurrentContext, PREFIX_PENDING_ADMIN);
+            ExecutionEngine.Assert(pending != null, "no pending admin");
+
+            BigInteger changeTime = (BigInteger)Storage.Get(Storage.CurrentContext, PREFIX_PENDING_ADMIN_TIME);
+            ExecutionEngine.Assert(Runtime.Time >= changeTime, "timelock active");
 
             UInt160 oldAdmin = Admin();
+            UInt160 newAdmin = (UInt160)pending;
             Storage.Put(Storage.CurrentContext, PREFIX_ADMIN, newAdmin);
+            Storage.Delete(Storage.CurrentContext, PREFIX_PENDING_ADMIN);
+            Storage.Delete(Storage.CurrentContext, PREFIX_PENDING_ADMIN_TIME);
+
             OnAdminChanged(oldAdmin, newAdmin);
+        }
+
+        /// <summary>Cancel a pending admin change. Only the current admin may cancel.</summary>
+        public static void CancelAdminChange()
+        {
+            ValidateAdmin();
+            Storage.Delete(Storage.CurrentContext, PREFIX_PENDING_ADMIN);
+            Storage.Delete(Storage.CurrentContext, PREFIX_PENDING_ADMIN_TIME);
         }
 
         public static void SetUpdater(UInt160 updater)
@@ -697,7 +773,14 @@ namespace MorpheusOracle.Contracts
             OnUpdaterChanged(oldUpdater, updater);
         }
 
-        public static void SetRuntimeEncryptionKey(string algorithm, string publicKey)
+        // ---- verification/encryption key re-pointing (24h timelock) ----
+        // A stolen or malicious admin key must not be able to redirect oracle
+        // request verification to its own key in one transaction: the change is
+        // proposed now and only becomes executable after TIMELOCK_DELAY_MS,
+        // giving watchers a window to pause off-chain consumers or rotate.
+
+        /// <summary>Propose re-pointing the runtime encryption key.</summary>
+        public static void ProposeRuntimeEncryptionKey(string algorithm, string publicKey)
         {
             ValidateAdmin();
             ExecutionEngine.Assert(algorithm != null && algorithm.Length > 0, "algorithm required");
@@ -705,31 +788,100 @@ namespace MorpheusOracle.Contracts
             ExecutionEngine.Assert(algorithm.Length <= MAX_RUNTIME_KEY_ALGO_LENGTH, "algorithm too long");
             ExecutionEngine.Assert(publicKey.Length <= MAX_RUNTIME_KEY_LENGTH, "public key too long");
 
-            BigInteger version = RuntimeEncryptionKeyVersion() + 1;
-            Storage.Put(Storage.CurrentContext, PREFIX_RUNTIME_KEY_ALGO, algorithm);
-            Storage.Put(Storage.CurrentContext, PREFIX_RUNTIME_KEY, publicKey);
-            Storage.Put(Storage.CurrentContext, PREFIX_RUNTIME_KEY_VERSION, version);
-            OnRuntimeEncryptionKeyUpdated(version, algorithm, publicKey);
+            PendingRuntimeKeyChange pending = new PendingRuntimeKeyChange
+            {
+                Algorithm = algorithm,
+                Key = publicKey,
+                Eta = Runtime.Time + TIMELOCK_DELAY_MS
+            };
+            Storage.Put(Storage.CurrentContext, PREFIX_PENDING_RUNTIME_KEY, StdLib.Serialize(pending));
+            OnSecurityKeyChangeProposed("runtime-encryption-key", pending.Eta);
         }
 
-        public static void SetOracleEncryptionKey(string algorithm, string publicKey)
+        /// <summary>Execute a matured runtime encryption key re-pointing.</summary>
+        public static void ExecuteRuntimeEncryptionKey()
         {
-            SetRuntimeEncryptionKey(algorithm, publicKey);
+            ByteString raw = Storage.Get(Storage.CurrentContext, PREFIX_PENDING_RUNTIME_KEY);
+            ExecutionEngine.Assert(raw != null, "no pending key change");
+            PendingRuntimeKeyChange pending = (PendingRuntimeKeyChange)StdLib.Deserialize(raw);
+            ExecutionEngine.Assert(Runtime.Time >= pending.Eta, "timelock active");
+
+            BigInteger version = RuntimeEncryptionKeyVersion() + 1;
+            Storage.Put(Storage.CurrentContext, PREFIX_RUNTIME_KEY_ALGO, pending.Algorithm);
+            Storage.Put(Storage.CurrentContext, PREFIX_RUNTIME_KEY, pending.Key);
+            Storage.Put(Storage.CurrentContext, PREFIX_RUNTIME_KEY_VERSION, version);
+            Storage.Delete(Storage.CurrentContext, PREFIX_PENDING_RUNTIME_KEY);
+            OnRuntimeEncryptionKeyUpdated(version, pending.Algorithm, pending.Key);
         }
 
-        public static void SetRuntimeVerificationPublicKey(ECPoint publicKey)
+        public static void CancelRuntimeEncryptionKey()
+        {
+            ValidateAdmin();
+            Storage.Delete(Storage.CurrentContext, PREFIX_PENDING_RUNTIME_KEY);
+        }
+
+        [Safe]
+        public static BigInteger PendingRuntimeEncryptionKeyEta()
+        {
+            ByteString raw = Storage.Get(Storage.CurrentContext, PREFIX_PENDING_RUNTIME_KEY);
+            if (raw == null) return 0;
+            return ((PendingRuntimeKeyChange)StdLib.Deserialize(raw)).Eta;
+        }
+
+        /// <summary>Propose re-pointing the runtime verification (verifier) key.</summary>
+        public static void ProposeRuntimeVerificationPublicKey(ECPoint publicKey)
         {
             ValidateAdmin();
             ExecutionEngine.Assert(publicKey != null && publicKey.IsValid, "invalid verifier");
 
-            ECPoint oldVerifier = RuntimeVerificationPublicKey();
-            Storage.Put(Storage.CurrentContext, PREFIX_RUNTIME_VERIFIER, (byte[])publicKey);
-            OnRuntimeVerifierUpdated(oldVerifier, publicKey);
+            PendingRuntimeVerifierChange pending = new PendingRuntimeVerifierChange
+            {
+                Verifier = publicKey,
+                Eta = Runtime.Time + TIMELOCK_DELAY_MS
+            };
+            Storage.Put(Storage.CurrentContext, PREFIX_PENDING_RUNTIME_VERIFIER, StdLib.Serialize(pending));
+            OnSecurityKeyChangeProposed("runtime-verification-key", pending.Eta);
         }
 
+        /// <summary>Execute a matured runtime verification key re-pointing.</summary>
+        public static void ExecuteRuntimeVerificationPublicKey()
+        {
+            ByteString raw = Storage.Get(Storage.CurrentContext, PREFIX_PENDING_RUNTIME_VERIFIER);
+            ExecutionEngine.Assert(raw != null, "no pending verifier change");
+            PendingRuntimeVerifierChange pending = (PendingRuntimeVerifierChange)StdLib.Deserialize(raw);
+            ExecutionEngine.Assert(Runtime.Time >= pending.Eta, "timelock active");
+
+            ECPoint oldVerifier = RuntimeVerificationPublicKey();
+            ECPoint newVerifier = (ECPoint)pending.Verifier;
+            Storage.Put(Storage.CurrentContext, PREFIX_RUNTIME_VERIFIER, pending.Verifier);
+            Storage.Delete(Storage.CurrentContext, PREFIX_PENDING_RUNTIME_VERIFIER);
+            OnRuntimeVerifierUpdated(oldVerifier, newVerifier);
+        }
+
+        public static void CancelRuntimeVerificationPublicKey()
+        {
+            ValidateAdmin();
+            Storage.Delete(Storage.CurrentContext, PREFIX_PENDING_RUNTIME_VERIFIER);
+        }
+
+        [Safe]
+        public static BigInteger PendingRuntimeVerificationKeyEta()
+        {
+            ByteString raw = Storage.Get(Storage.CurrentContext, PREFIX_PENDING_RUNTIME_VERIFIER);
+            if (raw == null) return 0;
+            return ((PendingRuntimeVerifierChange)StdLib.Deserialize(raw)).Eta;
+        }
+
+        /// <summary>Alias kept for deploy tooling: propose (not set) the oracle encryption key.</summary>
+        public static void SetOracleEncryptionKey(string algorithm, string publicKey)
+        {
+            ProposeRuntimeEncryptionKey(algorithm, publicKey);
+        }
+
+        /// <summary>Alias kept for deploy tooling: propose (not set) the oracle verification key.</summary>
         public static void SetOracleVerificationPublicKey(ECPoint publicKey)
         {
-            SetRuntimeVerificationPublicKey(publicKey);
+            ProposeRuntimeVerificationPublicKey(publicKey);
         }
 
         public static void SetRequestFee(BigInteger amount)
@@ -1250,10 +1402,51 @@ namespace MorpheusOracle.Contracts
             );
         }
 
+        // ---- timelocked, hash-pinned self-upgrade (PlatformRegistry pattern) ----
+
+        /// <summary>
+        /// Schedule a contract upgrade. The upgrade becomes executable
+        /// after TIMELOCK_DELAY_MS and is pinned to sha256(nef ++ manifest),
+        /// so the deployed kernel cannot be hot-swapped.
+        /// </summary>
+        public static void ScheduleUpdate(ByteString nefFile, string manifest)
+        {
+            ValidateAdmin();
+            ExecutionEngine.Assert(
+                nefFile != null && nefFile.Length > 0 && manifest != null && manifest.Length > 0,
+                "invalid upgrade artifact");
+            BigInteger executeAfter = Runtime.Time + TIMELOCK_DELAY_MS;
+            Storage.Put(Storage.CurrentContext, PREFIX_UPGRADE_TIME, executeAfter);
+            Storage.Put(Storage.CurrentContext, PREFIX_UPGRADE_HASH,
+                CryptoLib.Sha256(Helper.Concat(nefFile, (ByteString)manifest)));
+            OnUpgradeScheduled(executeAfter);
+        }
+
+        /// <summary>
+        /// Execute a scheduled upgrade after the timelock expires. The artifact
+        /// must match the scheduled sha256(nef ++ manifest) exactly.
+        /// </summary>
         public static void Update(ByteString nefFile, string manifest)
         {
             ValidateAdmin();
+            ByteString rawTime = Storage.Get(Storage.CurrentContext, PREFIX_UPGRADE_TIME);
+            ExecutionEngine.Assert(rawTime != null, "no upgrade scheduled");
+            ExecutionEngine.Assert(Runtime.Time >= (BigInteger)rawTime, "timelock active");
+            ByteString expected = Storage.Get(Storage.CurrentContext, PREFIX_UPGRADE_HASH);
+            ByteString actual = CryptoLib.Sha256(Helper.Concat(nefFile, (ByteString)manifest));
+            ExecutionEngine.Assert(expected == actual, "upgrade data mismatch");
+            Storage.Delete(Storage.CurrentContext, PREFIX_UPGRADE_TIME);
+            Storage.Delete(Storage.CurrentContext, PREFIX_UPGRADE_HASH);
             ContractManagement.Update(nefFile, manifest, null);
+            OnContractUpgraded(CryptoLib.Sha256(nefFile), CryptoLib.Sha256((ByteString)manifest));
+        }
+
+        /// <summary>Cancel a scheduled upgrade. Only the current admin may cancel.</summary>
+        public static void CancelUpdate()
+        {
+            ValidateAdmin();
+            Storage.Delete(Storage.CurrentContext, PREFIX_UPGRADE_TIME);
+            Storage.Delete(Storage.CurrentContext, PREFIX_UPGRADE_HASH);
         }
 
         private static byte[] BuildGrantKey(string appId, string moduleId)
