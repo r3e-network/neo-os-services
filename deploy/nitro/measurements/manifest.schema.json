@@ -24,7 +24,8 @@
     },
     "app_id": {
       "type": "string",
-      "const": "morpheus-oracle"
+      "enum": ["morpheus-oracle", "morpheus-custody"],
+      "description": "morpheus-oracle for the merged compute+sign enclave (Dockerfile.enclave), morpheus-custody for the key-custody enclave (Dockerfile.signer)."
     },
     "network": {
       "type": "string",

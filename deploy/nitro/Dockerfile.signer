@@ -1,40 +1,84 @@
-# Stage 1: build the static NSM attestation helper (no host Go toolchain needed).
-FROM golang:1.22-bookworm AS nsmbuild
+# The custody enclave image: the Rust signer_service binary and nothing else.
+#
+# This is the file build-custody-eif.sh measures, and nitro-cli measures the
+# FINAL stage — so Node, the Go nsm-attest helper, and every other runtime the
+# legacy signer image carried are gone. What the enclave's rootfs contains is
+# two binaries (custody + attestation helper), one shell script, socat and
+# iproute2. The retired Node image lives on as Dockerfile.signer-legacy, kept
+# only so build-nitro-signer-eif.sh still resolves.
+#
+# `SIGNER_SERVICE_ATTESTED_BOOT=require` is baked in rather than left to the
+# deployment: attested boot is this image's identity, not an option. The boot
+# guard answers a fresh-nonce NSM attestation at startup — which fails closed
+# anywhere but inside a Nitro enclave — and starts with the vault sealed; the
+# master key arrives over /provision through the attested KMS path (RC2).
+
+# Stage 1: compile the two Rust binaries from the repository-root workspace.
+# `rusqlite` is built with its `bundled` feature, so this needs a C toolchain —
+# the full `rust` image has one, the `-slim` variant does not. The build runs
+# from the workspace root, so the manifests that matter are the root
+# Cargo.toml + Cargo.lock plus every member's manifest (cargo resolves the
+# whole workspace graph even when building two bins).
+FROM rust:1.98.0-bookworm AS custodybuild
 WORKDIR /build
-COPY deploy/nitro/nsm-attest/main.go ./main.go
-RUN go mod init nsm-attest \
-  && go get github.com/hf/nsm@latest \
-  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /nsm-attest .
 
-# Stage 2: the Node signer runtime.
-FROM node:22-bookworm-slim
+# Manifests first, with stub sources, so the dependency graph and the compiled
+# SQLite land in a cached layer that a source edit does not invalidate.
+COPY Cargo.toml Cargo.lock ./
+COPY workers/neo-signer/Cargo.toml workers/neo-signer/Cargo.toml
+COPY crates/morpheus-core/Cargo.toml crates/morpheus-core/Cargo.toml
+COPY crates/nitro-attest/Cargo.toml crates/nitro-attest/Cargo.toml
+RUN mkdir -p workers/neo-signer/src/bin crates/morpheus-core/src crates/nitro-attest/src/bin \
+  && printf '' > workers/neo-signer/src/lib.rs \
+  && printf 'fn main() {}\n' > workers/neo-signer/src/bin/signer_service.rs \
+  && printf '' > crates/morpheus-core/src/lib.rs \
+  && printf '' > crates/nitro-attest/src/lib.rs \
+  && printf 'fn main() {}\n' > crates/nitro-attest/src/bin/nsm-attest-rs.rs \
+  && cargo fetch --locked
 
+COPY workers/neo-signer ./workers/neo-signer
+COPY crates/morpheus-core ./crates/morpheus-core
+COPY crates/nitro-attest ./crates/nitro-attest
+RUN cargo build --locked --release --bin signer_service --bin nsm-attest-rs
+
+# Stage 2: the custody runtime. No package manager above this line ever runs
+# in the enclave.
+FROM debian:bookworm-slim
+
+# A custody process has no business running as root, and the data directory is
+# where the vault database and (on the enclave-born fallback) the master key
+# file live — so the owner of that directory is the only privilege this
+# service needs.
+RUN useradd --system --uid 8021 --create-home --home-dir /var/lib/morpheus-signer signer
+
+# socat: the vsock <-> loopback bridges of entrypoint-custody.sh.
+# iproute2: a Nitro enclave boots with the loopback interface DOWN, and every
+#   localhost connection — the readiness probe, the vsock bridge's target —
+#   needs `ip link set dev lo up` first.
+# Deliberately NO ca-certificates: the only outbound TLS is nitro-attest's KMS
+# Decrypt through the egress proxy, and reqwest is built with rustls using
+# webpki roots bundled into the binary — the trust store ships inside the
+# measured image on purpose, so a host cannot weaken it from the filesystem.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates socat \
+  && apt-get install -y --no-install-recommends socat iproute2 \
   && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+COPY --from=custodybuild /build/target/release/signer_service /app/bin/signer_service
+COPY --from=custodybuild /build/target/release/nsm-attest-rs /app/bin/nsm-attest-rs
+COPY deploy/nitro/entrypoint-custody.sh /app/deploy/nitro/entrypoint-custody.sh
+RUN chmod +x /app/deploy/nitro/entrypoint-custody.sh /app/bin/signer_service /app/bin/nsm-attest-rs
 
-COPY package.json package-lock.json ./
-RUN npm install --omit=dev --no-audit --no-fund @cityofzion/neon-js@^5.8.1
-
-COPY config ./config
-# scripts/lib-neo-signers.mjs is a thin shim that imports the shared core via the
-# relative path ../packages/shared/src/neo-signers-core.js (no workspace symlink in
-# this minimal image), so the core file must be shipped at that exact location.
-COPY scripts/lib-neo-signers.mjs ./scripts/lib-neo-signers.mjs
-# package.json (type: module) + the core file: lets the .js core resolve as ESM in
-# this image (the root package.json has no "type"). No deps are installed from it.
-COPY packages/shared/package.json ./packages/shared/package.json
-COPY packages/shared/src/neo-signers-core.js ./packages/shared/src/neo-signers-core.js
-COPY deploy/nitro/nitro-signer-server.mjs ./deploy/nitro/nitro-signer-server.mjs
-COPY deploy/nitro/entrypoint-signer.sh ./deploy/nitro/entrypoint-signer.sh
-COPY --from=nsmbuild /nsm-attest /app/bin/nsm-attest
-RUN chmod +x /app/deploy/nitro/entrypoint-signer.sh /app/bin/nsm-attest
-
-ENV MORPHEUS_NETWORK=mainnet
-ENV PORT=8080
+ENV SIGNER_SERVICE_DATA_DIR=/var/lib/morpheus-signer
+# Loopback, always: the enclave's only ingress is the vsock bridge that
+# forwards to this address. There is no other interface to reach it on.
+ENV SIGNER_SERVICE_HOST=127.0.0.1
+ENV SIGNER_SERVICE_PORT=8081
+# The image's identity, not a deployment option: without an NSM device this
+# process refuses to start at all.
+ENV SIGNER_SERVICE_ATTESTED_BOOT=require
+# Public vsock port the host's socat TCP-LISTEN -> VSOCK-CONNECT bridges to.
 ENV NITRO_SIGNER_VSOCK_PORT=8787
-ENV NITRO_ATTEST_BIN=/app/bin/nsm-attest
 
-ENTRYPOINT ["/app/deploy/nitro/entrypoint-signer.sh"]
+EXPOSE 8081
+USER signer
+ENTRYPOINT ["/app/deploy/nitro/entrypoint-custody.sh"]

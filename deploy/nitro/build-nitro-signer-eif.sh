@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# LEGACY builder: measures the retired Node-based signer image
+# (Dockerfile.signer-legacy). The custody enclave — the Rust signer_service
+# binary, zero Node — is built and measured by build-custody-eif.sh from
+# Dockerfile.signer; that is the image start-nitro-custody.sh runs. This script
+# exists only so the historical EIF path keeps building while deployments move.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -11,5 +16,5 @@ mkdir -p "$(dirname "$output")"
 mkdir -p "$artifacts"
 export NITRO_CLI_ARTIFACTS="$artifacts"
 export NITRO_CLI_BLOBS="$blobs"
-docker build -f "$repo_root/deploy/nitro/Dockerfile.signer" -t "$image" "$repo_root"
+docker build -f "$repo_root/deploy/nitro/Dockerfile.signer-legacy" -t "$image" "$repo_root"
 nitro-cli build-enclave --docker-uri "$image" --output-file "$output"

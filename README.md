@@ -2,7 +2,7 @@
 
 # NeoOS Services
 
-`neo-os-services` is the NeoOS confidential services stack. It contains the Morpheus-compatible Neo N3 oracle/datafeed protocol, edge and control planes, relayers, Nitro execution workers, and the operator Web application. The current production design keeps ingress, orchestration, and durability outside the TEE, and reserves confidential VMs for execution only.
+`neo-os-services` is the NeoOS confidential services stack. It contains the Morpheus-compatible Neo N3 oracle/datafeed protocol, edge and control planes, relayers, Nitro execution workers, the signer custody service, and the operator Web application. The current production design keeps ingress, orchestration, and durability outside the TEE, and reserves confidential VMs for execution only. Key custody is the one deliberate exception (`workers/neo-signer`): a private key, the policy that bounds it, and the ledger that makes a rolling window survive a restart all live inside the enclave's encrypted volume, because a boundary an operator can rewrite from outside is not a boundary — see `docs/SIGNER_SERVICE.md` §4.2 and §6.
 
 `MorpheusOracle`, `MorpheusDataFeed`, `MORPHEUS_*` environment variables, and existing endpoints remain compatibility interfaces for deployed contracts and operators; new repository, package, image, and documentation identities use NeoOS.
 
@@ -81,11 +81,37 @@ after validating the canonical checkout and refuses to overwrite existing data.
 - `apps/web` — Next.js dashboard, docs, explorer, and backend routes used by the control plane
 - `workers/nitro-worker` — confidential execution runtime
 - `workers/morpheus-relayer` — on-chain async bridge and callback relayer
+- `workers/neo-signer` — key custody service; a Rust crate, in `workers/` because that is where this repository keeps confidential-plane processes, and deliberately not an npm workspace member
 - `deploy/cloudflare` — edge gateway and control-plane workers
 - `contracts` — Neo N3 MiniApp OS kernel and built-in modules
 - `supabase/migrations` — schema, policies, control-plane jobs, relayer durability
 - `docs` — canonical architecture, deployment, operations, validation, and specs
 - `scripts` — deployment, verification, SaaS sync, and operator helpers
+
+## Repository boundary
+
+This repository owns the NeoOS confidential services stack, and with it **key custody**:
+the signer service, its key policy, its caller registry, and its audit trail. The
+contract and ownership rules are in `docs/SIGNER_SERVICE.md`.
+
+Today signing is split across `deploy/nitro/nitro-signer-server.mjs` and the workers, and
+none of those paths can evaluate a policy; `docs/SIGNER_SERVICE.md` §7 is the order in
+which they move behind the service.
+
+| Repository               | Responsibility                                                                                                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `neo-os-services`        | Oracle, DataFeed, VRF, Compute, Paymaster, confidential runtimes, **the signer service**                                                                           |
+| `neo-os-web`             | Host shell, MiniApp catalog, edge gateway, wallet/session boundary, deployment tooling                                                                             |
+| `neo-os-contracts`       | Neo N3 platform contracts, manifests, build and deployment evidence                                                                                                |
+| `neo-os-devpack`         | App-facing framework, shared runtime, types, generated service catalogs                                                                                            |
+| `neo-os-explorer`        | Read APIs and relayer submission                                                                                                                                   |
+| `secure-sign-service-rs` | Enclave backends: NEP-6 sealing, Nitro KMS attestable start, SGX, consensus policy                                                                                 |
+| `neo-nexus`              | **Consumer.** Operator console, runtime config generation, launch packs, endpoint pinning, health probes. It must not hold, derive, export or accept a private key |
+
+The rule: a signing key the **platform** uses lives here and nowhere else. Wallets the
+user holds in `neo-os-app` are the user's own and never the service's keys. Before
+adding a signing call site anywhere in the workspace, read `docs/SIGNER_SERVICE.md` §7 —
+call sites that hold a WIF today are listed there as work to retire, not as a pattern.
 
 ## Built-In Compute
 
@@ -167,6 +193,7 @@ npm run examples:test:n3:attack-regression
 - `docs/RELAYER.md`
 - `docs/PROVIDERS.md`
 - `docs/PAYMASTER.md`
+- `docs/SIGNER_SERVICE.md`
 - `docs/BUILTIN_COMPUTE.md`
 - `docs/EXAMPLES.md`
 - `docs/SAAS_STACK_INTEGRATION.md`

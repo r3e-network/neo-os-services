@@ -1,0 +1,103 @@
+# LEGACY: the retired Node-based standalone signer image (nitro-signer-server.mjs
+# with the Go nsm-attest helper). Kept only so build-nitro-signer-eif.sh still
+# resolves; it has no attestation-gated KMS materialization path and no per-key
+# boundary enforcement, so start-nitro-signer.sh refuses to run it against
+# host-held plaintext keys. The custody image is Dockerfile.signer — the Rust
+# signer_service binary inside a Node-free enclave — and that is what
+# build-custody-eif.sh measures.
+#
+# Stage 1: build the static NSM attestation helper (no host Go toolchain needed).
+FROM golang:1.22-bookworm AS nsmbuild
+WORKDIR /build
+COPY deploy/nitro/nsm-attest/main.go ./main.go
+RUN go mod init nsm-attest \
+  && go get github.com/hf/nsm@latest \
+  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /nsm-attest .
+
+# Stage 2: the Rust signer service of docs/SIGNER_SERVICE.md. `rusqlite` is built
+# with its `bundled` feature, so this needs a C toolchain — the full `rust` image
+# has one, the `-slim` variant does not.
+#
+# The build happens from the repository-root cargo workspace, so the manifests
+# that matter are the root Cargo.toml + Cargo.lock plus every member's manifest
+# (cargo resolves the whole workspace graph even when building one bin).
+FROM rust:1.98.0-bookworm AS signerbuild
+WORKDIR /build
+
+# Manifests first, with stub sources, so the dependency graph and the compiled
+# SQLite land in a cached layer that a source edit does not invalidate.
+COPY Cargo.toml Cargo.lock ./
+COPY workers/neo-signer/Cargo.toml workers/neo-signer/Cargo.toml
+COPY crates/morpheus-core/Cargo.toml crates/morpheus-core/Cargo.toml
+RUN mkdir -p workers/neo-signer/src/bin crates/morpheus-core/src \
+  && printf '' > workers/neo-signer/src/lib.rs \
+  && printf 'fn main() {}\n' > workers/neo-signer/src/bin/signer_service.rs \
+  && printf '' > crates/morpheus-core/src/lib.rs \
+  && cargo fetch --locked
+
+COPY workers/neo-signer ./workers/neo-signer
+COPY crates/morpheus-core ./crates/morpheus-core
+RUN cargo build --locked --release --bin signer_service
+
+# Stage 3: the signer service runtime. Its own image, built with
+# `--target signer-service`.
+FROM debian:bookworm-slim AS signer-service
+
+# A custody process has no business running as root, and the data directory is
+# where both the database and, on the generated-key path, the master key file
+# live — so the owner of that directory is the only privilege this service needs.
+RUN useradd --system --uid 8021 --create-home --home-dir /var/lib/neonexus-signer signer
+
+COPY --from=signerbuild /build/target/release/signer_service /usr/local/bin/signer_service
+
+ENV SIGNER_SERVICE_DATA_DIR=/var/lib/neonexus-signer
+# Loopback, as §5 assumes. A deployment that reaches this container from another
+# one sets SIGNER_SERVICE_HOST in its own environment file rather than inheriting
+# a wider listener from the image: the opt-out is meant to be written down.
+ENV SIGNER_SERVICE_HOST=127.0.0.1
+ENV SIGNER_SERVICE_PORT=8081
+
+EXPOSE 8081
+USER signer
+ENTRYPOINT ["/usr/local/bin/signer_service"]
+# `serve` is also the default with no argument; naming it lets
+# `docker run --rm <image> provision-admin <label>` be the one-shot it looks like.
+CMD ["serve"]
+
+# Stage 4 (the default): the Node signer runtime.
+#
+# This stays the LAST stage on purpose. `build-nitro-signer-eif.sh` builds this
+# file with no `--target`, and nitro-cli measures whatever the final stage
+# produces — reordering so one of the stages above came last would silently
+# change which signer ends up inside the enclave image.
+FROM node:22-bookworm-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates socat \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm install --omit=dev --no-audit --no-fund @cityofzion/neon-js@^5.8.1
+
+COPY config ./config
+# scripts/lib-neo-signers.mjs is a thin shim that imports the shared core via the
+# relative path ../packages/shared/src/neo-signers-core.js (no workspace symlink in
+# this minimal image), so the core file must be shipped at that exact location.
+COPY scripts/lib-neo-signers.mjs ./scripts/lib-neo-signers.mjs
+# package.json (type: module) + the core file: lets the .js core resolve as ESM in
+# this image (the root package.json has no "type"). No deps are installed from it.
+COPY packages/shared/package.json ./packages/shared/package.json
+COPY packages/shared/src/neo-signers-core.js ./packages/shared/src/neo-signers-core.js
+COPY deploy/nitro/nitro-signer-server.mjs ./deploy/nitro/nitro-signer-server.mjs
+COPY deploy/nitro/entrypoint-signer.sh ./deploy/nitro/entrypoint-signer.sh
+COPY --from=nsmbuild /nsm-attest /app/bin/nsm-attest
+RUN chmod +x /app/deploy/nitro/entrypoint-signer.sh /app/bin/nsm-attest
+
+ENV MORPHEUS_NETWORK=mainnet
+ENV PORT=8080
+ENV NITRO_SIGNER_VSOCK_PORT=8787
+ENV NITRO_ATTEST_BIN=/app/bin/nsm-attest
+
+ENTRYPOINT ["/app/deploy/nitro/entrypoint-signer.sh"]
