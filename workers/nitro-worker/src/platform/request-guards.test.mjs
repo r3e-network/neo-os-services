@@ -128,6 +128,57 @@ test('applyRequestGuards is a no-op when Upstash guards are disabled', async () 
   assert.equal(result.ok, true);
 });
 
+test('applyRequestGuards 503s fund-critical routes when MORPHEUS_GUARDS_REQUIRED=true and Upstash is missing', async () => {
+  const { applyRequestGuards } = await import('./request-guards.js');
+  process.env.MORPHEUS_GUARDS_REQUIRED = 'true';
+  // No Upstash URL configured — guards cannot run.
+  const result = await applyRequestGuards({
+    request: new Request('http://local/paymaster/authorize', {
+      method: 'POST',
+      headers: { authorization: 'Bearer test' },
+      body: JSON.stringify({ operation_hash: '0xabc' }),
+    }),
+    path: '/paymaster/authorize',
+    payload: { operation_hash: '0xabc' },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.response.status, 503);
+  const body = await result.response.json();
+  assert.equal(body.error, 'guards_unavailable');
+});
+
+test('applyRequestGuards still allows non-critical routes when guards are required but missing', async () => {
+  const { applyRequestGuards } = await import('./request-guards.js');
+  process.env.MORPHEUS_GUARDS_REQUIRED = 'true';
+  const result = await applyRequestGuards({
+    request: new Request('http://local/oracle/query', {
+      method: 'POST',
+      headers: { authorization: 'Bearer test' },
+      body: JSON.stringify({}),
+    }),
+    path: '/oracle/query',
+    payload: {},
+  });
+  assert.equal(result.ok, true);
+});
+
+test('applyRequestGuards 503s when guards are claimed but Upstash is not configured', async () => {
+  const { applyRequestGuards } = await import('./request-guards.js');
+  process.env.MORPHEUS_UPSTASH_GUARDS_ENABLED = 'true';
+  // No Upstash URL configured despite the claim.
+  const result = await applyRequestGuards({
+    request: new Request('http://local/relay/transaction', {
+      method: 'POST',
+      headers: { authorization: 'Bearer test' },
+      body: JSON.stringify({ operation_hash: '0xabc' }),
+    }),
+    path: '/relay/transaction',
+    payload: { operation_hash: '0xabc' },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.response.status, 503);
+});
+
 test('applyRequestGuards rate limits repeated paymaster requests via Upstash', async () => {
   installUpstashMock();
   process.env.UPSTASH_REDIS_REST_URL = 'https://mock-upstash.example.com';

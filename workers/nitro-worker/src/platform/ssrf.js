@@ -8,8 +8,12 @@
 // everywhere. This module is self-contained (no core.js import) to avoid an
 // import cycle.
 
-import { lookup as dnsLookup } from 'node:dns/promises';
+// Dereferenced at call time through the default export (the mutable CJS
+// exports object) so tests can stub DNS without module-graph gymnastics.
+import dnsPromises from 'node:dns/promises';
 import { isIP } from 'node:net';
+
+const dnsLookup = (...args) => dnsPromises.lookup(...args);
 
 function trimString(value) {
   return typeof value === 'string' ? value.trim() : '';

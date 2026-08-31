@@ -43,8 +43,26 @@ test('resolvePinnedAddresses returns validated {address,family} records for a pu
 });
 
 test('resolvePinnedAddresses can fail closed when a caller must pin the connection', async () => {
-  await assert.rejects(
-    resolvePinnedAddresses('morpheus-oracle-unresolved.invalid', { allowUnresolved: false }),
-    /unable to resolve host/i
-  );
+  // Stub the DNS layer instead of relying on a name that "cannot" resolve:
+  // on a developer machine running a fake-ip proxy (Clash et al.) every name,
+  // including RFC 6761 .invalid, resolves to a synthetic address, so a live
+  // lookup would succeed and the fail-closed branch would never run. ssrf.js
+  // resolves `lookup` through node:dns/promises' default export (the mutable
+  // CJS exports object — the ESM namespace itself is frozen), so swapping the
+  // property there is observed by the already-imported module.
+  const dns = (await import('node:dns/promises')).default;
+  const originalLookup = dns.lookup;
+  dns.lookup = async () => {
+    throw Object.assign(new Error('getaddrinfo ENOTFOUND ssrf-unresolved.test'), {
+      code: 'ENOTFOUND',
+    });
+  };
+  try {
+    await assert.rejects(
+      resolvePinnedAddresses('ssrf-unresolved.test', { allowUnresolved: false }),
+      /unable to resolve host/i
+    );
+  } finally {
+    dns.lookup = originalLookup;
+  }
 });

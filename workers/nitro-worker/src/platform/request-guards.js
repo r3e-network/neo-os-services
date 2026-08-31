@@ -90,6 +90,22 @@ function isTrustedServiceRequest(request) {
   return trusted.includes(token);
 }
 
+// Routes that touch user funds or irrevocable side effects. When the operator
+// requires guards in production (MORPHEUS_GUARDS_REQUIRED=true) but Upstash is
+// not configured, these routes fail closed instead of silently running with no
+// rate limit and no idempotency protection.
+const GUARD_REQUIRED_ROUTES = new Set([
+  'paymaster_authorize',
+  'relay_transaction',
+  'txproxy_invoke',
+  'vrf_random',
+  'compute_execute',
+]);
+
+function guardsRequired() {
+  return normalizeBoolean(process.env.MORPHEUS_GUARDS_REQUIRED, false);
+}
+
 function routePolicy(name) {
   const enabled = normalizeBoolean(process.env.MORPHEUS_UPSTASH_GUARDS_ENABLED, false);
   if (!enabled || !name) return null;
@@ -295,6 +311,31 @@ export async function applyRequestGuards({ request, path, payload }) {
 
   const policy = routePolicy(routeName);
   if (!policy || !isUpstashEnabled()) {
+    // Fail-closed (P0 audit fix): silently serving fund-critical routes with
+    // no rate limiting and no idempotency lock is a config error, not a
+    // fallback. Two cases deny with 503:
+    //   1. MORPHEUS_GUARDS_REQUIRED=true and the route is fund-critical —
+    //      the operator demanded guards, so no guards means deny.
+    //   2. MORPHEUS_UPSTASH_GUARDS_ENABLED=true but Upstash is unreachable
+    //      or unconfigured — claimed protection that cannot be provided.
+    // Dev deployments (neither var set) keep the availability-first allow.
+    const routeIsCritical = GUARD_REQUIRED_ROUTES.has(routeName);
+    const guardsClaimed = normalizeBoolean(process.env.MORPHEUS_UPSTASH_GUARDS_ENABLED, false);
+    const mustDeny =
+      (guardsRequired() && routeIsCritical) || (guardsClaimed && !isUpstashEnabled());
+    if (mustDeny) {
+      return {
+        ok: false,
+        routeName,
+        response: json(503, {
+          error: 'guards_unavailable',
+          route: routeName,
+          reason: guardsClaimed
+            ? 'MORPHEUS_UPSTASH_GUARDS_ENABLED=true but Upstash is not configured'
+            : 'MORPHEUS_GUARDS_REQUIRED=true requires Upstash request guards for this route',
+        }),
+      };
+    }
     return { ok: true, routeName, policyDecision: requestPolicyDecision };
   }
 
