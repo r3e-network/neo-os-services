@@ -1,6 +1,28 @@
 [extend]
 useDefault = true
 
+# Dedicated Neo key rules. `useDefault` alone does not cover a bare WIF: every
+# generic gitleaks rule requires a keyword (`api_key`, `password`, `Bearer`,
+# `aws`, `eyJ`) within a few characters of the match, and 52 characters of base58
+# supplies none — even `VERIFIER_WIF = 'Kx…'` only looks keyword-ish to a human.
+# That reasoning is neo-os-web's (`deploy/scripts/audit_secret_material.mjs:15-27`
+# explains exactly this hole); this repo had the same shape of value with no rule
+# covering it. See also the allowlist entries at the bottom for how each
+# exemption here is justified.
+[[rules]]
+id = "neo-wif-private-key"
+description = "Neo private key in Wallet Import Format"
+regex = '''(?:^|[^0-9A-Za-z])[KL][1-9A-HJ-NP-Za-km-z]{51}(?:[^0-9A-Za-z]|$)'''
+tags = ["neo", "private-key", "wif"]
+severity = "CRITICAL"
+
+[[rules]]
+id = "neo-nep2-private-key"
+description = "NEP-2 encrypted Neo private key"
+regex = '''(?:^|[^0-9A-Za-z])6P[1-9A-HJ-NP-Za-km-z]{56}(?:[^0-9A-Za-z]|$)'''
+tags = ["neo", "private-key", "nep2"]
+severity = "CRITICAL"
+
 [[allowlists]]
 description = "Oracle public-key route uses a fixed public-key test vector."
 condition = "AND"
@@ -60,3 +82,23 @@ paths = [
   '''(^|/)workers/nitro-worker/src/platform/nitro-signer\.js$''',
 ]
 regexes = ['''env\(['"]NITRO_(?:SIGNER|X25519)_SECRET_ID['"]''']
+
+# The two entries below justify themselves differently, and the difference is the
+# point: "this cannot control anything" (web's standard,
+# deploy/scripts/lib/secret_material_scan.mjs:117-128) can be reached either
+# because the bytes are not a key, or because the key owns nothing. Do not
+# substitute one reason for the other when adding a third entry.
+
+[[allowlists]]
+description = "Relayer test fixture is a checksum-valid Neo N3 WIF, but its derived address NPkdkp8SZSWk7gJpCUnoX5QfMRVbM5AdSi holds no native NEO and no native GAS on mainnet or testnet (verified against two independent RPC providers, 2026-08-30). It is a real key pair, so this exemption rests entirely on that balance evidence."
+condition = "AND"
+regexTarget = "line"
+paths = ['''(^|/)workers/morpheus-relayer/src/fulfillment\.test\.mjs$''']
+regexes = ['''VERIFIER_WIF[[:space:]]*=''']
+
+[[allowlists]]
+description = "Redaction-test placeholder is not a private key at any strength: base58 decoding it fails the trailing 4-byte base58check sum, so it cannot import into a wallet or sign anything (verified offline, 2026-08-30). A regex cannot express this check, which is why the value is exempted instead of the rule weakened."
+condition = "AND"
+regexTarget = "line"
+paths = ['''(^|/)apps/web/__tests__/operation-logs-redaction\.test\.ts$''']
+regexes = ['''private_key[[:space:]]*[:=]''']
