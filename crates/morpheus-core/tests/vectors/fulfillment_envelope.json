@@ -1,0 +1,645 @@
+{
+  "family": "fulfillment_envelope",
+  "cases": [
+    {
+      "name": "plain ok",
+      "request_type": "oracle/query",
+      "worker_response": {
+        "ok": true,
+        "status": 200,
+        "body": {
+          "request_id": "req:1",
+          "result": {
+            "price": "12.34",
+            "pair": "NEO-USD",
+            "round_id": 7
+          },
+          "verification": {
+            "output_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "signature": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "public_key": "pk-1",
+            "tee_attestation": {
+              "app_id": "morpheus-oracle",
+              "instance_id": "i-1",
+              "compose_hash": "compose",
+              "report_data": "report",
+              "quote": "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+              "event_log": "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"
+            }
+          }
+        }
+      },
+      "encoded": {
+        "success": true,
+        "result": "{\"version\":\"morpheus-result/v1\",\"request_type\":\"oracle/query\",\"module_id\":\"oracle.fetch\",\"operation\":\"oracle/query\",\"success\":true,\"result\":{\"result\":{\"price\":\"12.34\",\"pair\":\"NEO-USD\",\"round_id\":7}},\"verification\":{\"output_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"attestation_hash\":null,\"signature\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"public_key\":\"pk-1\",\"signer_address\":null,\"signer_script_hash\":null,\"tee_attestation\":{\"app_id\":\"morpheus-oracle\",\"instance_id\":\"i-1\",\"compose_hash\":\"compose\",\"report_data\":\"report\",\"quote_hash\":\"26362d41903e7c99523100d35523879a9b9e79e719781da398f85806bb26eb29\",\"event_log_hash\":\"ecde60eb3592737216973d8820067fe98cc88f4b5715329214228d1c1b467c53\"}}}",
+        "error": ""
+      },
+      "envelope": {
+        "version": "morpheus-result/v1",
+        "request_type": "oracle/query",
+        "module_id": "oracle.fetch",
+        "operation": "oracle/query",
+        "success": true,
+        "result": {
+          "result": {
+            "price": "12.34",
+            "pair": "NEO-USD",
+            "round_id": 7
+          }
+        },
+        "verification": {
+          "output_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attestation_hash": null,
+          "signature": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "public_key": "pk-1",
+          "signer_address": null,
+          "signer_script_hash": null,
+          "tee_attestation": {
+            "app_id": "morpheus-oracle",
+            "instance_id": "i-1",
+            "compose_hash": "compose",
+            "report_data": "report",
+            "quote_hash": "26362d41903e7c99523100d35523879a9b9e79e719781da398f85806bb26eb29",
+            "event_log_hash": "ecde60eb3592737216973d8820067fe98cc88f4b5715329214228d1c1b467c53"
+          }
+        }
+      },
+      "envelope_with_trust_tier": {
+        "version": "morpheus-result/v1",
+        "request_type": "oracle/query",
+        "module_id": "oracle.fetch",
+        "operation": "oracle/query",
+        "success": true,
+        "result": {
+          "result": {
+            "price": "12.34",
+            "pair": "NEO-USD",
+            "round_id": 7
+          }
+        },
+        "verification": {
+          "output_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "attestation_hash": null,
+          "signature": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "public_key": "pk-1",
+          "signer_address": null,
+          "signer_script_hash": null,
+          "tee_attestation": {
+            "app_id": "morpheus-oracle",
+            "instance_id": "i-1",
+            "compose_hash": "compose",
+            "report_data": "report",
+            "quote_hash": "26362d41903e7c99523100d35523879a9b9e79e719781da398f85806bb26eb29",
+            "event_log_hash": "ecde60eb3592737216973d8820067fe98cc88f4b5715329214228d1c1b467c53"
+          }
+        },
+        "trust_tier": "enclave-attested"
+      }
+    },
+    {
+      "name": "error with body",
+      "request_type": "oracle/query",
+      "worker_response": {
+        "ok": false,
+        "status": 502,
+        "body": {
+          "error": "upstream exploded"
+        }
+      },
+      "encoded": {
+        "success": false,
+        "result": "",
+        "error": "upstream exploded"
+      },
+      "envelope": {
+        "version": "morpheus-result/v1",
+        "request_type": "oracle/query",
+        "module_id": "oracle.fetch",
+        "operation": "oracle/query",
+        "success": false,
+        "result": null,
+        "verification": null
+      },
+      "envelope_with_trust_tier": {
+        "version": "morpheus-result/v1",
+        "request_type": "oracle/query",
+        "module_id": "oracle.fetch",
+        "operation": "oracle/query",
+        "success": false,
+        "result": null,
+        "verification": null,
+        "trust_tier": "enclave-attested"
+      }
+    },
+    {
+      "name": "error without body",
+      "request_type": "oracle/query",
+      "worker_response": {
+        "ok": false,
+        "status": 500
+      },
+      "encoded": {
+        "success": false,
+        "result": "",
+        "error": "worker request failed with status 500"
+      },
+      "envelope": {
+        "version": "morpheus-result/v1",
+        "request_type": "oracle/query",
+        "module_id": "oracle.fetch",
+        "operation": "oracle/query",
+        "success": false,
+        "result": null,
+        "verification": null
+      },
+      "envelope_with_trust_tier": {
+        "version": "morpheus-result/v1",
+        "request_type": "oracle/query",
+        "module_id": "oracle.fetch",
+        "operation": "oracle/query",
+        "success": false,
+        "result": null,
+        "verification": null,
+        "trust_tier": "enclave-attested"
+      }
+    },
+    {
+      "name": "rng compact bytes",
+      "request_type": "rng",
+      "worker_response": {
+        "ok": true,
+        "status": 200,
+        "body": {
+          "randomness": "abababababababababababababababababababababababababababababababab"
+        }
+      },
+      "encoded": {
+        "success": true,
+        "result": "",
+        "result_bytes_base64": "q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=",
+        "error": ""
+      },
+      "envelope": {
+        "version": "morpheus-result/v1",
+        "request_type": "rng",
+        "module_id": "random.generate",
+        "operation": "rng",
+        "success": true,
+        "result": {
+          "randomness": "abababababababababababababababababababababababababababababababab"
+        },
+        "verification": null
+      },
+      "envelope_with_trust_tier": {
+        "version": "morpheus-result/v1",
+        "request_type": "rng",
+        "module_id": "random.generate",
+        "operation": "rng",
+        "success": true,
+        "result": {
+          "randomness": "abababababababababababababababababababababababababababababababab"
+        },
+        "verification": null,
+        "trust_tier": "enclave-attested"
+      }
+    },
+    {
+      "name": "rng non-hex falls back to envelope",
+      "request_type": "rng",
+      "worker_response": {
+        "ok": true,
+        "status": 200,
+        "body": {
+          "randomness": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+        }
+      },
+      "encoded": {
+        "success": true,
+        "result": "{\"version\":\"morpheus-result/v1\",\"request_type\":\"rng\",\"module_id\":\"random.generate\",\"operation\":\"rng\",\"success\":true,\"result\":{\"randomness\":\"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"},\"verification\":null}",
+        "error": ""
+      },
+      "envelope": {
+        "version": "morpheus-result/v1",
+        "request_type": "rng",
+        "module_id": "random.generate",
+        "operation": "rng",
+        "success": true,
+        "result": {
+          "randomness": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+        },
+        "verification": null
+      },
+      "envelope_with_trust_tier": {
+        "version": "morpheus-result/v1",
+        "request_type": "rng",
+        "module_id": "random.generate",
+        "operation": "rng",
+        "success": true,
+        "result": {
+          "randomness": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+        },
+        "verification": null,
+        "trust_tier": "enclave-attested"
+      }
+    },
+    {
+      "name": "recovery ticket v1",
+      "request_type": "neodid_recovery_ticket",
+      "worker_response": {
+        "ok": true,
+        "status": 200,
+        "body": {
+          "callback_encoding": "neo_n3_recovery_v1",
+          "new_owner": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "recovery_nonce": "n-1",
+          "expires_at": "2026-01-01T00:00:00Z",
+          "action_id": "action-1",
+          "master_nullifier": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "action_nullifier": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "encoded": {
+        "success": true,
+        "result": "",
+        "result_bytes_base64": "AaqqqqqqqqqqqqqqqqqqqqqqqqqqA24tMRQyMDI2LTAxLTAxVDAwOjAwOjAwWghhY3Rpb24tMczMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d27u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7",
+        "error": ""
+      },
+      "envelope": {
+        "version": "morpheus-result/v1",
+        "request_type": "neodid_recovery_ticket",
+        "module_id": "identity.verify",
+        "operation": "neodid_recovery_ticket",
+        "success": true,
+        "result": {
+          "master_nullifier": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "action_id": "action-1",
+          "action_nullifier": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "new_owner": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "recovery_nonce": "n-1",
+          "expires_at": "2026-01-01T00:00:00Z"
+        },
+        "verification": {
+          "output_hash": null,
+          "attestation_hash": null,
+          "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "public_key": null,
+          "signer_address": null,
+          "signer_script_hash": null,
+          "tee_attestation": null
+        }
+      },
+      "envelope_with_trust_tier": {
+        "version": "morpheus-result/v1",
+        "request_type": "neodid_recovery_ticket",
+        "module_id": "identity.verify",
+        "operation": "neodid_recovery_ticket",
+        "success": true,
+        "result": {
+          "master_nullifier": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "action_id": "action-1",
+          "action_nullifier": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "new_owner": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "recovery_nonce": "n-1",
+          "expires_at": "2026-01-01T00:00:00Z"
+        },
+        "verification": {
+          "output_hash": null,
+          "attestation_hash": null,
+          "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "public_key": null,
+          "signer_address": null,
+          "signer_script_hash": null,
+          "tee_attestation": null
+        },
+        "trust_tier": "enclave-attested"
+      }
+    },
+    {
+      "name": "recovery ticket v3",
+      "request_type": "neodid_recovery_ticket",
+      "worker_response": {
+        "ok": true,
+        "status": 200,
+        "body": {
+          "callback_encoding": "neo_n3_recovery_v3",
+          "new_owner": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "recovery_nonce": "n-1",
+          "expires_at": "2026-01-01T00:00:00Z",
+          "action_id": "action-1",
+          "master_nullifier": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "action_nullifier": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "encoded": {
+        "success": true,
+        "result": "",
+        "result_bytes_base64": "M3x6TXpNek16TXpNek16TXpNek16TXpNek16TXpNek16TXpNek16TXpNek13PXwzZDNkM2QzZDNkM2QzZDNkM2QzZDNkM2QzZDNkM2QzZDNkM2QzZDNkM2QwPXx1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1dz09",
+        "error": ""
+      },
+      "envelope": {
+        "version": "morpheus-result/v1",
+        "request_type": "neodid_recovery_ticket",
+        "module_id": "identity.verify",
+        "operation": "neodid_recovery_ticket",
+        "success": true,
+        "result": {
+          "master_nullifier": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "action_id": "action-1",
+          "action_nullifier": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "new_owner": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "recovery_nonce": "n-1",
+          "expires_at": "2026-01-01T00:00:00Z"
+        },
+        "verification": {
+          "output_hash": null,
+          "attestation_hash": null,
+          "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "public_key": null,
+          "signer_address": null,
+          "signer_script_hash": null,
+          "tee_attestation": null
+        }
+      },
+      "envelope_with_trust_tier": {
+        "version": "morpheus-result/v1",
+        "request_type": "neodid_recovery_ticket",
+        "module_id": "identity.verify",
+        "operation": "neodid_recovery_ticket",
+        "success": true,
+        "result": {
+          "master_nullifier": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "action_id": "action-1",
+          "action_nullifier": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "new_owner": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "recovery_nonce": "n-1",
+          "expires_at": "2026-01-01T00:00:00Z"
+        },
+        "verification": {
+          "output_hash": null,
+          "attestation_hash": null,
+          "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "public_key": null,
+          "signer_address": null,
+          "signer_script_hash": null,
+          "tee_attestation": null
+        },
+        "trust_tier": "enclave-attested"
+      }
+    },
+    {
+      "name": "action ticket v1",
+      "request_type": "neodid_action_ticket",
+      "worker_response": {
+        "ok": true,
+        "status": 200,
+        "body": {
+          "callback_encoding": "neo_n3_action_v1",
+          "disposable_account": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "action_id": "action-2",
+          "action_nullifier": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "encoded": {
+        "success": true,
+        "result": "",
+        "result_bytes_base64": "AaqqqqqqqqqqqqqqqqqqqqqqqqqqCGFjdGlvbi0y3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d27u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7",
+        "error": ""
+      },
+      "envelope": {
+        "version": "morpheus-result/v1",
+        "request_type": "neodid_action_ticket",
+        "module_id": "identity.verify",
+        "operation": "neodid_action_ticket",
+        "success": true,
+        "result": {
+          "action_id": "action-2",
+          "action_nullifier": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "verification": {
+          "output_hash": null,
+          "attestation_hash": null,
+          "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "public_key": null,
+          "signer_address": null,
+          "signer_script_hash": null,
+          "tee_attestation": null
+        }
+      },
+      "envelope_with_trust_tier": {
+        "version": "morpheus-result/v1",
+        "request_type": "neodid_action_ticket",
+        "module_id": "identity.verify",
+        "operation": "neodid_action_ticket",
+        "success": true,
+        "result": {
+          "action_id": "action-2",
+          "action_nullifier": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "verification": {
+          "output_hash": null,
+          "attestation_hash": null,
+          "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "public_key": null,
+          "signer_address": null,
+          "signer_script_hash": null,
+          "tee_attestation": null
+        },
+        "trust_tier": "enclave-attested"
+      }
+    },
+    {
+      "name": "action ticket v3",
+      "request_type": "neodid_action_ticket",
+      "worker_response": {
+        "ok": true,
+        "status": 200,
+        "body": {
+          "callback_encoding": "neo_n3_action_v3",
+          "disposable_account": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "action_id": "action-2",
+          "action_nullifier": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "encoded": {
+        "success": true,
+        "result": "",
+        "result_bytes_base64": "M3wzZDNkM2QzZDNkM2QzZDNkM2QzZDNkM2QzZDNkM2QzZDNkM2QzZDNkM2QwPXx1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1N3U3dTd1dz09",
+        "error": ""
+      },
+      "envelope": {
+        "version": "morpheus-result/v1",
+        "request_type": "neodid_action_ticket",
+        "module_id": "identity.verify",
+        "operation": "neodid_action_ticket",
+        "success": true,
+        "result": {
+          "action_id": "action-2",
+          "action_nullifier": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "verification": {
+          "output_hash": null,
+          "attestation_hash": null,
+          "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "public_key": null,
+          "signer_address": null,
+          "signer_script_hash": null,
+          "tee_attestation": null
+        }
+      },
+      "envelope_with_trust_tier": {
+        "version": "morpheus-result/v1",
+        "request_type": "neodid_action_ticket",
+        "module_id": "identity.verify",
+        "operation": "neodid_action_ticket",
+        "success": true,
+        "result": {
+          "action_id": "action-2",
+          "action_nullifier": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "verification": {
+          "output_hash": null,
+          "attestation_hash": null,
+          "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "public_key": null,
+          "signer_address": null,
+          "signer_script_hash": null,
+          "tee_attestation": null
+        },
+        "trust_tier": "enclave-attested"
+      }
+    },
+    {
+      "name": "game result codec",
+      "request_type": "game/finalize",
+      "worker_response": {
+        "ok": true,
+        "status": 200,
+        "body": {
+          "callback_encoding": "game_result_v1",
+          "result_bytes_base64": "AhEREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREQ=="
+        }
+      },
+      "encoded": {
+        "success": true,
+        "result": "",
+        "result_bytes_base64": "AhEREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREQ==",
+        "error": ""
+      },
+      "envelope": {
+        "version": "morpheus-result/v1",
+        "request_type": "game/finalize",
+        "module_id": "oracle.fetch",
+        "operation": "game/finalize",
+        "success": true,
+        "result": null,
+        "verification": null
+      },
+      "envelope_with_trust_tier": {
+        "version": "morpheus-result/v1",
+        "request_type": "game/finalize",
+        "module_id": "oracle.fetch",
+        "operation": "game/finalize",
+        "success": true,
+        "result": null,
+        "verification": null,
+        "trust_tier": "enclave-attested"
+      }
+    },
+    {
+      "name": "game result wrong first byte",
+      "request_type": "game/finalize",
+      "worker_response": {
+        "ok": true,
+        "status": 200,
+        "body": {
+          "callback_encoding": "game_result_v1",
+          "result_bytes_base64": "AREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREREQ=="
+        }
+      },
+      "encoded": {
+        "success": true,
+        "result": "{\"version\":\"morpheus-result/v1\",\"request_type\":\"game/finalize\",\"module_id\":\"oracle.fetch\",\"operation\":\"game/finalize\",\"success\":true,\"result\":null,\"verification\":null}",
+        "error": ""
+      },
+      "envelope": {
+        "version": "morpheus-result/v1",
+        "request_type": "game/finalize",
+        "module_id": "oracle.fetch",
+        "operation": "game/finalize",
+        "success": true,
+        "result": null,
+        "verification": null
+      },
+      "envelope_with_trust_tier": {
+        "version": "morpheus-result/v1",
+        "request_type": "game/finalize",
+        "module_id": "oracle.fetch",
+        "operation": "game/finalize",
+        "success": true,
+        "result": null,
+        "verification": null,
+        "trust_tier": "enclave-attested"
+      }
+    },
+    {
+      "name": "oversized result trims",
+      "request_type": "oracle/query",
+      "worker_response": {
+        "ok": true,
+        "status": 200,
+        "body": {
+          "request_id": "req:big",
+          "result": {
+            "price": "12.34",
+            "pair": "NEO-USD",
+            "round_id": 7,
+            "request_source": "provider",
+            "target_chain_id": 12227330,
+            "sources": [
+              "a",
+              "b",
+              "c"
+            ],
+            "extra": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        }
+      },
+      "encoded": {
+        "success": true,
+        "result": "{\"version\":\"morpheus-result/v1\",\"request_type\":\"oracle/query\",\"module_id\":\"oracle.fetch\",\"operation\":\"oracle/query\",\"success\":true,\"result\":{\"result_omitted\":true,\"result_hash\":null,\"result_type\":\"object\"},\"verification\":null}",
+        "error": ""
+      },
+      "envelope": {
+        "version": "morpheus-result/v1",
+        "request_type": "oracle/query",
+        "module_id": "oracle.fetch",
+        "operation": "oracle/query",
+        "success": true,
+        "result": {
+          "result_omitted": true,
+          "result_hash": null,
+          "result_type": "object"
+        },
+        "verification": null
+      },
+      "envelope_with_trust_tier": {
+        "version": "morpheus-result/v1",
+        "request_type": "oracle/query",
+        "module_id": "oracle.fetch",
+        "operation": "oracle/query",
+        "success": true,
+        "result": {
+          "result_omitted": true,
+          "result_hash": null,
+          "result_type": "object"
+        },
+        "verification": null,
+        "trust_tier": "enclave-attested"
+      }
+    }
+  ]
+}

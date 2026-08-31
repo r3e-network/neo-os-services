@@ -1,0 +1,311 @@
+{
+  "family": "stable_stringify",
+  "cases": [
+    {
+      "name": "null",
+      "input": {
+        "__t": "null"
+      },
+      "expected": "null"
+    },
+    {
+      "name": "top-level undefined",
+      "input": {
+        "__t": "undefined"
+      },
+      "expected": "null"
+    },
+    {
+      "name": "string with quotes",
+      "input": {
+        "__t": "string",
+        "v": "hello \"world\""
+      },
+      "expected": "\"hello \\\"world\\\"\""
+    },
+    {
+      "name": "integer",
+      "input": {
+        "__t": "number",
+        "v": "42"
+      },
+      "expected": "42"
+    },
+    {
+      "name": "float",
+      "input": {
+        "__t": "number",
+        "v": "0.1"
+      },
+      "expected": "0.1"
+    },
+    {
+      "name": "negative zero",
+      "input": {
+        "__t": "number",
+        "v": "0"
+      },
+      "expected": "0"
+    },
+    {
+      "name": "NaN",
+      "input": {
+        "__t": "number",
+        "v": "null"
+      },
+      "expected": "null"
+    },
+    {
+      "name": "Infinity",
+      "input": {
+        "__t": "number",
+        "v": "null"
+      },
+      "expected": "null"
+    },
+    {
+      "name": "boolean true",
+      "input": {
+        "__t": "bool",
+        "v": true
+      },
+      "expected": "true"
+    },
+    {
+      "name": "bigint",
+      "input": {
+        "__t": "bigint",
+        "v": "123456789012345678901234567890"
+      },
+      "expected": "\"123456789012345678901234567890\""
+    },
+    {
+      "name": "empty object",
+      "input": {
+        "__t": "object",
+        "v": {}
+      },
+      "expected": "{}"
+    },
+    {
+      "name": "empty array",
+      "input": {
+        "__t": "array",
+        "v": []
+      },
+      "expected": "[]"
+    },
+    {
+      "name": "array with undefined entry",
+      "input": {
+        "__t": "array",
+        "v": [
+          {
+            "__t": "number",
+            "v": "1"
+          },
+          {
+            "__t": "undefined"
+          },
+          {
+            "__t": "number",
+            "v": "2"
+          }
+        ]
+      },
+      "expected": "[1,null,2]"
+    },
+    {
+      "name": "nested array and object",
+      "input": {
+        "__t": "array",
+        "v": [
+          {
+            "__t": "number",
+            "v": "1"
+          },
+          {
+            "__t": "string",
+            "v": "two"
+          },
+          {
+            "__t": "array",
+            "v": [
+              {
+                "__t": "number",
+                "v": "3"
+              },
+              {
+                "__t": "object",
+                "v": {
+                  "b": {
+                    "__t": "number",
+                    "v": "2"
+                  },
+                  "a": {
+                    "__t": "number",
+                    "v": "1"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expected": "[1,\"two\",[3,{\"a\":1,\"b\":2}]]"
+    },
+    {
+      "name": "object key sort lowercase",
+      "input": {
+        "__t": "object",
+        "v": {
+          "beta": {
+            "__t": "number",
+            "v": "2"
+          },
+          "alpha": {
+            "__t": "number",
+            "v": "1"
+          },
+          "gamma": {
+            "__t": "number",
+            "v": "3"
+          }
+        }
+      },
+      "expected": "{\"alpha\":1,\"beta\":2,\"gamma\":3}"
+    },
+    {
+      "name": "object mixed-case key collation (localeCompare, not code-unit)",
+      "input": {
+        "__t": "object",
+        "v": {
+          "gamma": {
+            "__t": "number",
+            "v": "3"
+          },
+          "Beta": {
+            "__t": "number",
+            "v": "2"
+          },
+          "alpha": {
+            "__t": "number",
+            "v": "1"
+          }
+        }
+      },
+      "expected": "{\"alpha\":1,\"Beta\":2,\"gamma\":3}"
+    },
+    {
+      "name": "object drops undefined values",
+      "input": {
+        "__t": "object",
+        "v": {
+          "keep": {
+            "__t": "number",
+            "v": "1"
+          },
+          "drop": {
+            "__t": "undefined"
+          },
+          "alsoKeep": {
+            "__t": "null"
+          }
+        }
+      },
+      "expected": "{\"alsoKeep\":null,\"keep\":1}"
+    },
+    {
+      "name": "object with bigint value",
+      "input": {
+        "__t": "object",
+        "v": {
+          "fee": {
+            "__t": "bigint",
+            "v": "100000"
+          }
+        }
+      },
+      "expected": "{\"fee\":\"100000\"}"
+    },
+    {
+      "name": "envelope-like result object",
+      "input": {
+        "__t": "object",
+        "v": {
+          "status": {
+            "__t": "number",
+            "v": "200"
+          },
+          "result": {
+            "__t": "object",
+            "v": {
+              "price": {
+                "__t": "string",
+                "v": "12.34"
+              },
+              "pair": {
+                "__t": "string",
+                "v": "NEO-USD"
+              },
+              "round_id": {
+                "__t": "number",
+                "v": "7"
+              }
+            }
+          },
+          "request_id": {
+            "__t": "string",
+            "v": "req:1"
+          },
+          "signature": {
+            "__t": "null"
+          }
+        }
+      },
+      "expected": "{\"request_id\":\"req:1\",\"result\":{\"pair\":\"NEO-USD\",\"price\":\"12.34\",\"round_id\":7},\"signature\":null,\"status\":200}"
+    },
+    {
+      "name": "unicode keys and values",
+      "input": {
+        "__t": "object",
+        "v": {
+          "ключ": {
+            "__t": "string",
+            "v": "значение"
+          },
+          "键": {
+            "__t": "string",
+            "v": "值"
+          },
+          "emoji": {
+            "__t": "string",
+            "v": "🚀"
+          }
+        }
+      },
+      "expected": "{\"emoji\":\"🚀\",\"ключ\":\"значение\",\"键\":\"值\"}"
+    },
+    {
+      "name": "uint8array treated as plain object",
+      "input": {
+        "__t": "object",
+        "v": {
+          "0": {
+            "__t": "number",
+            "v": "1"
+          },
+          "1": {
+            "__t": "number",
+            "v": "2"
+          },
+          "2": {
+            "__t": "number",
+            "v": "3"
+          }
+        }
+      },
+      "expected": "{\"0\":1,\"1\":2,\"2\":3}"
+    }
+  ]
+}

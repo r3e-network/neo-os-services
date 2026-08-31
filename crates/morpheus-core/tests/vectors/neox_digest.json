@@ -1,0 +1,126 @@
+{
+  "family": "neox_digest",
+  "cases": [
+    {
+      "name": "minimal",
+      "kind": "digest",
+      "config": {
+        "neox": {
+          "chainId": "12227330",
+          "oracleContract": "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B"
+        }
+      },
+      "fulfillment": {
+        "requestId": "7",
+        "appId": "app:1",
+        "moduleId": "oracle.fetch",
+        "operation": "privacy_oracle",
+        "success": true,
+        "error": ""
+      },
+      "result_bytes_hex": "0x68656c6c6f",
+      "expected": "0x0241615a24f31aba60cf4323dac9d6ebd35eb3451b367c070e17184f08e4a5a3"
+    },
+    {
+      "name": "unicode identifiers",
+      "kind": "digest",
+      "config": {
+        "neox": {
+          "chainId": "12227330",
+          "oracleContract": "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B"
+        }
+      },
+      "fulfillment": {
+        "requestId": "8",
+        "appId": "应用",
+        "moduleId": "模块",
+        "operation": "操作",
+        "success": true,
+        "error": ""
+      },
+      "result_bytes_hex": "0xe4bbb7e6a0bc",
+      "expected": "0x42db107f62bde723d230669d4d4d2989ac9259ebbcf32625d3f12d4f4506cc0f"
+    },
+    {
+      "name": "failure with error",
+      "kind": "digest",
+      "config": {
+        "neox": {
+          "chainId": "12227330",
+          "oracleContract": "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B"
+        }
+      },
+      "fulfillment": {
+        "requestId": "9",
+        "appId": "app:1",
+        "moduleId": "oracle.fetch",
+        "operation": "privacy_oracle",
+        "success": false,
+        "error": "boom"
+      },
+      "result_bytes_hex": "0x",
+      "expected": "0xec372b09b379c4b6f0507d5288c51fef361e651005994a104fe7ed84588c4eae"
+    },
+    {
+      "name": "whitespace ids verbatim",
+      "kind": "digest",
+      "config": {
+        "neox": {
+          "chainId": "12227330",
+          "oracleContract": "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B"
+        }
+      },
+      "fulfillment": {
+        "requestId": " 10 ",
+        "appId": " app ",
+        "moduleId": " module ",
+        "operation": " op ",
+        "success": true,
+        "error": ""
+      },
+      "result_bytes_hex": "0x72",
+      "expected": "0x4ae810075aa4190c24b80002695dae180e1c08ee02d3a14852828f8ad7d58298"
+    },
+    {
+      "name": "32-byte result",
+      "kind": "digest",
+      "config": {
+        "neox": {
+          "chainId": "12227330",
+          "oracleContract": "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B"
+        }
+      },
+      "fulfillment": {
+        "requestId": "11",
+        "appId": "app:1",
+        "moduleId": "random.generate",
+        "operation": "rng",
+        "success": true,
+        "error": ""
+      },
+      "result_bytes_hex": "0xabababababababababababababababababababababababababababababababab",
+      "expected": "0xb4b4cfde0a5c233a4c73fac3f8968a0376c3f66982d8713913c529fdbcfc73fd"
+    },
+    {
+      "name": "compact bytes win",
+      "kind": "resolve_result_bytes",
+      "result": "ignored",
+      "result_bytes_base64": "3q2+7w==",
+      "expected": "0xdeadbeef"
+    },
+    {
+      "name": "utf8 fallback",
+      "kind": "resolve_result_bytes",
+      "result": "kept",
+      "result_bytes_base64": "",
+      "expected": "0x6b657074"
+    },
+    {
+      "name": "both empty",
+      "kind": "resolve_result_bytes",
+      "result": "",
+      "result_bytes_base64": "",
+      "expected": "0x"
+    }
+  ]
+}

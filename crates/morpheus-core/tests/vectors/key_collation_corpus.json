@@ -1,0 +1,1568 @@
+{
+  "family": "key_collation_corpus",
+  "cases": [
+    {
+      "name": "corpus-0",
+      "keys": [
+        "naïve",
+        "zeta",
+        "a_1",
+        "ZZZ",
+        "Ab",
+        "🚀"
+      ],
+      "expected": "{\"🚀\":5,\"a_1\":2,\"Ab\":4,\"naïve\":0,\"zeta\":1,\"ZZZ\":3}"
+    },
+    {
+      "name": "corpus-1",
+      "keys": [
+        "naïve",
+        "x",
+        "_x",
+        "aa",
+        "delta",
+        "ключ",
+        "éclair"
+      ],
+      "expected": "{\"_x\":2,\"aa\":3,\"delta\":4,\"éclair\":6,\"naïve\":0,\"x\":1,\"ключ\":5}"
+    },
+    {
+      "name": "corpus-2",
+      "keys": [
+        "ключ",
+        "_x",
+        "delta"
+      ],
+      "expected": "{\"_x\":1,\"delta\":2,\"ключ\":0}"
+    },
+    {
+      "name": "corpus-3",
+      "keys": [
+        "ZZZ",
+        "Ab",
+        "éclair",
+        "emoji"
+      ],
+      "expected": "{\"Ab\":1,\"éclair\":2,\"emoji\":3,\"ZZZ\":0}"
+    },
+    {
+      "name": "corpus-4",
+      "keys": [
+        "2",
+        "alpha"
+      ],
+      "expected": "{\"2\":0,\"alpha\":1}"
+    },
+    {
+      "name": "corpus-5",
+      "keys": [
+        "A1",
+        "a_1",
+        "delta"
+      ],
+      "expected": "{\"a_1\":1,\"A1\":0,\"delta\":2}"
+    },
+    {
+      "name": "corpus-6",
+      "keys": [
+        "Beta",
+        "10",
+        "Epsilon",
+        "éclair",
+        "🚀",
+        "a:b",
+        "A1"
+      ],
+      "expected": "{\"🚀\":4,\"10\":1,\"a:b\":5,\"A1\":6,\"Beta\":0,\"éclair\":3,\"Epsilon\":2}"
+    },
+    {
+      "name": "corpus-7",
+      "keys": [
+        "a.1",
+        "A1",
+        "éclair",
+        "ZZZ",
+        "éclair"
+      ],
+      "expected": "{\"a.1\":0,\"A1\":1,\"éclair\":2,\"éclair\":4,\"ZZZ\":3}"
+    },
+    {
+      "name": "corpus-8",
+      "keys": [
+        "Ab",
+        "éclair",
+        "Epsilon",
+        "10"
+      ],
+      "expected": "{\"10\":3,\"Ab\":0,\"éclair\":1,\"Epsilon\":2}"
+    },
+    {
+      "name": "corpus-9",
+      "keys": [
+        "A1",
+        "a.1",
+        "🙂",
+        "a_1"
+      ],
+      "expected": "{\"🙂\":2,\"a_1\":3,\"a.1\":1,\"A1\":0}"
+    },
+    {
+      "name": "corpus-10",
+      "keys": [
+        "a:b",
+        "AA"
+      ],
+      "expected": "{\"a:b\":0,\"AA\":1}"
+    },
+    {
+      "name": "corpus-11",
+      "keys": [
+        "zeta",
+        "emoji"
+      ],
+      "expected": "{\"emoji\":1,\"zeta\":0}"
+    },
+    {
+      "name": "corpus-12",
+      "keys": [
+        "emoji",
+        "Ab",
+        "X",
+        "aB",
+        "🚀",
+        "2",
+        "GAMMA"
+      ],
+      "expected": "{\"🚀\":4,\"2\":5,\"aB\":3,\"Ab\":1,\"emoji\":0,\"GAMMA\":6,\"X\":2}"
+    },
+    {
+      "name": "corpus-13",
+      "keys": [
+        "键",
+        "aB",
+        "Ab",
+        "ключ",
+        "ZZZ"
+      ],
+      "expected": "{\"aB\":1,\"Ab\":2,\"ZZZ\":4,\"ключ\":3,\"键\":0}"
+    },
+    {
+      "name": "corpus-14",
+      "keys": [
+        "🚀",
+        "a-1",
+        "aa",
+        "2",
+        "Beta",
+        "emoji",
+        "naïve"
+      ],
+      "expected": "{\"🚀\":0,\"2\":3,\"a-1\":1,\"aa\":2,\"Beta\":4,\"emoji\":5,\"naïve\":6}"
+    },
+    {
+      "name": "corpus-15",
+      "keys": [
+        "aB",
+        "键"
+      ],
+      "expected": "{\"aB\":0,\"键\":1}"
+    },
+    {
+      "name": "corpus-16",
+      "keys": [
+        "éclair",
+        "ZZZ",
+        "delta",
+        "a1",
+        "a_1"
+      ],
+      "expected": "{\"a_1\":4,\"a1\":3,\"delta\":2,\"éclair\":0,\"ZZZ\":1}"
+    },
+    {
+      "name": "corpus-17",
+      "keys": [
+        "naïve",
+        "emoji",
+        "X"
+      ],
+      "expected": "{\"emoji\":1,\"naïve\":0,\"X\":2}"
+    },
+    {
+      "name": "corpus-18",
+      "keys": [
+        "a-1",
+        "alpha",
+        "Beta",
+        "x",
+        "zeta"
+      ],
+      "expected": "{\"a-1\":0,\"alpha\":1,\"Beta\":2,\"x\":3,\"zeta\":4}"
+    },
+    {
+      "name": "corpus-19",
+      "keys": [
+        "🙂",
+        "_x",
+        "zzz",
+        "ZZZ",
+        "a-1",
+        "Beta",
+        "alpha"
+      ],
+      "expected": "{\"_x\":1,\"🙂\":0,\"a-1\":4,\"alpha\":6,\"Beta\":5,\"zzz\":2,\"ZZZ\":3}"
+    },
+    {
+      "name": "corpus-20",
+      "keys": [
+        "a-1",
+        "a1"
+      ],
+      "expected": "{\"a-1\":0,\"a1\":1}"
+    },
+    {
+      "name": "corpus-21",
+      "keys": [
+        "a:b",
+        "éclair",
+        "alpha",
+        "Ab",
+        "aB",
+        "zzz"
+      ],
+      "expected": "{\"a:b\":0,\"aB\":4,\"Ab\":3,\"alpha\":2,\"éclair\":1,\"zzz\":5}"
+    },
+    {
+      "name": "corpus-22",
+      "keys": [
+        "delta",
+        "X",
+        "alpha",
+        "ключ"
+      ],
+      "expected": "{\"alpha\":2,\"delta\":0,\"X\":1,\"ключ\":3}"
+    },
+    {
+      "name": "corpus-23",
+      "keys": [
+        "naïve",
+        "A1",
+        "X",
+        "2",
+        "zeta",
+        "_x"
+      ],
+      "expected": "{\"_x\":5,\"2\":3,\"A1\":1,\"naïve\":0,\"X\":2,\"zeta\":4}"
+    },
+    {
+      "name": "corpus-24",
+      "keys": [
+        "_x",
+        "X",
+        "键",
+        "ключ",
+        "A1",
+        "naïve",
+        "aa"
+      ],
+      "expected": "{\"_x\":0,\"A1\":4,\"aa\":6,\"naïve\":5,\"X\":1,\"ключ\":3,\"键\":2}"
+    },
+    {
+      "name": "corpus-25",
+      "keys": [
+        "a.1",
+        "🚀",
+        "🙂",
+        "键",
+        "aa"
+      ],
+      "expected": "{\"🙂\":2,\"🚀\":1,\"a.1\":0,\"aa\":4,\"键\":3}"
+    },
+    {
+      "name": "corpus-26",
+      "keys": [
+        "X",
+        "naïve",
+        "a:b",
+        "ключ"
+      ],
+      "expected": "{\"a:b\":2,\"naïve\":1,\"X\":0,\"ключ\":3}"
+    },
+    {
+      "name": "corpus-27",
+      "keys": [
+        "10",
+        "X",
+        "a.1"
+      ],
+      "expected": "{\"10\":0,\"a.1\":2,\"X\":1}"
+    },
+    {
+      "name": "corpus-28",
+      "keys": [
+        "x",
+        "AA"
+      ],
+      "expected": "{\"AA\":1,\"x\":0}"
+    },
+    {
+      "name": "corpus-29",
+      "keys": [
+        "delta",
+        "aa",
+        "café",
+        "X",
+        "2"
+      ],
+      "expected": "{\"2\":4,\"aa\":1,\"café\":2,\"delta\":0,\"X\":3}"
+    },
+    {
+      "name": "corpus-30",
+      "keys": [
+        "_x",
+        "AA"
+      ],
+      "expected": "{\"_x\":0,\"AA\":1}"
+    },
+    {
+      "name": "corpus-31",
+      "keys": [
+        "Ab",
+        "GAMMA",
+        "Epsilon",
+        "AA",
+        "aB",
+        "ZZZ"
+      ],
+      "expected": "{\"AA\":3,\"aB\":4,\"Ab\":0,\"Epsilon\":2,\"GAMMA\":1,\"ZZZ\":5}"
+    },
+    {
+      "name": "corpus-32",
+      "keys": [
+        "GAMMA",
+        "a:b",
+        "emoji",
+        "éclair",
+        "🙂",
+        "键",
+        "aB"
+      ],
+      "expected": "{\"🙂\":4,\"a:b\":1,\"aB\":6,\"éclair\":3,\"emoji\":2,\"GAMMA\":0,\"键\":5}"
+    },
+    {
+      "name": "corpus-33",
+      "keys": [
+        "alpha",
+        "zeta",
+        "aB",
+        "ZZZ",
+        "a:b"
+      ],
+      "expected": "{\"a:b\":4,\"aB\":2,\"alpha\":0,\"zeta\":1,\"ZZZ\":3}"
+    },
+    {
+      "name": "corpus-34",
+      "keys": [
+        "zzz",
+        "ключ",
+        "naïve",
+        "Epsilon",
+        "10"
+      ],
+      "expected": "{\"10\":4,\"Epsilon\":3,\"naïve\":2,\"zzz\":0,\"ключ\":1}"
+    },
+    {
+      "name": "corpus-35",
+      "keys": [
+        "Ab",
+        "Beta",
+        "zeta"
+      ],
+      "expected": "{\"Ab\":0,\"Beta\":1,\"zeta\":2}"
+    },
+    {
+      "name": "corpus-36",
+      "keys": [
+        "emoji",
+        "a:b",
+        "Epsilon",
+        "aa"
+      ],
+      "expected": "{\"a:b\":1,\"aa\":3,\"emoji\":0,\"Epsilon\":2}"
+    },
+    {
+      "name": "corpus-37",
+      "keys": [
+        "aa",
+        "A1"
+      ],
+      "expected": "{\"A1\":1,\"aa\":0}"
+    },
+    {
+      "name": "corpus-38",
+      "keys": [
+        "ZZZ",
+        "a_1",
+        "café"
+      ],
+      "expected": "{\"a_1\":1,\"café\":2,\"ZZZ\":0}"
+    },
+    {
+      "name": "corpus-39",
+      "keys": [
+        "a_1",
+        "zzz",
+        "éclair",
+        "a-1",
+        "10",
+        "ключ"
+      ],
+      "expected": "{\"10\":4,\"a_1\":0,\"a-1\":3,\"éclair\":2,\"zzz\":1,\"ключ\":5}"
+    },
+    {
+      "name": "corpus-40",
+      "keys": [
+        "delta",
+        "aa",
+        "a:b",
+        "a1",
+        "ключ"
+      ],
+      "expected": "{\"a:b\":2,\"a1\":3,\"aa\":1,\"delta\":0,\"ключ\":4}"
+    },
+    {
+      "name": "corpus-41",
+      "keys": [
+        "éclair",
+        "ZZZ",
+        "ключ"
+      ],
+      "expected": "{\"éclair\":0,\"ZZZ\":1,\"ключ\":2}"
+    },
+    {
+      "name": "corpus-42",
+      "keys": [
+        "x",
+        "X",
+        "a.1",
+        "2",
+        "a_1"
+      ],
+      "expected": "{\"2\":3,\"a_1\":4,\"a.1\":2,\"x\":0,\"X\":1}"
+    },
+    {
+      "name": "corpus-43",
+      "keys": [
+        "zeta",
+        "AA",
+        "🚀"
+      ],
+      "expected": "{\"🚀\":2,\"AA\":1,\"zeta\":0}"
+    },
+    {
+      "name": "corpus-44",
+      "keys": [
+        "aa",
+        "A1",
+        "10",
+        "a:b"
+      ],
+      "expected": "{\"10\":2,\"a:b\":3,\"A1\":1,\"aa\":0}"
+    },
+    {
+      "name": "corpus-45",
+      "keys": [
+        "éclair",
+        "a_1",
+        "a.1",
+        "aa",
+        "aB",
+        "ZZZ"
+      ],
+      "expected": "{\"a_1\":1,\"a.1\":2,\"aa\":3,\"aB\":4,\"éclair\":0,\"ZZZ\":5}"
+    },
+    {
+      "name": "corpus-46",
+      "keys": [
+        "Ab",
+        "zeta",
+        "a-1"
+      ],
+      "expected": "{\"a-1\":2,\"Ab\":0,\"zeta\":1}"
+    },
+    {
+      "name": "corpus-47",
+      "keys": [
+        "a:b",
+        "ZZZ",
+        "GAMMA",
+        "Ab",
+        "ключ",
+        "键"
+      ],
+      "expected": "{\"a:b\":0,\"Ab\":3,\"GAMMA\":2,\"ZZZ\":1,\"ключ\":4,\"键\":5}"
+    },
+    {
+      "name": "corpus-48",
+      "keys": [
+        "Epsilon",
+        "éclair",
+        "éclair",
+        "naïve"
+      ],
+      "expected": "{\"éclair\":1,\"éclair\":2,\"Epsilon\":0,\"naïve\":3}"
+    },
+    {
+      "name": "corpus-49",
+      "keys": [
+        "delta",
+        "a.1",
+        "zeta",
+        "键"
+      ],
+      "expected": "{\"a.1\":1,\"delta\":0,\"zeta\":2,\"键\":3}"
+    },
+    {
+      "name": "corpus-50",
+      "keys": [
+        "naïve",
+        "a-1",
+        "café",
+        "🙂",
+        "alpha",
+        "X"
+      ],
+      "expected": "{\"🙂\":3,\"a-1\":1,\"alpha\":4,\"café\":2,\"naïve\":0,\"X\":5}"
+    },
+    {
+      "name": "corpus-51",
+      "keys": [
+        "GAMMA",
+        "A1"
+      ],
+      "expected": "{\"A1\":1,\"GAMMA\":0}"
+    },
+    {
+      "name": "corpus-52",
+      "keys": [
+        "键",
+        "🙂"
+      ],
+      "expected": "{\"🙂\":1,\"键\":0}"
+    },
+    {
+      "name": "corpus-53",
+      "keys": [
+        "A1",
+        "X",
+        "10",
+        "éclair"
+      ],
+      "expected": "{\"10\":2,\"A1\":0,\"éclair\":3,\"X\":1}"
+    },
+    {
+      "name": "corpus-54",
+      "keys": [
+        "GAMMA",
+        "ZZZ",
+        "emoji",
+        "a_1"
+      ],
+      "expected": "{\"a_1\":3,\"emoji\":2,\"GAMMA\":0,\"ZZZ\":1}"
+    },
+    {
+      "name": "corpus-55",
+      "keys": [
+        "GAMMA",
+        "A1",
+        "a_1",
+        "zzz"
+      ],
+      "expected": "{\"a_1\":2,\"A1\":1,\"GAMMA\":0,\"zzz\":3}"
+    },
+    {
+      "name": "corpus-56",
+      "keys": [
+        "alpha",
+        "éclair",
+        "ключ",
+        "naïve",
+        "🙂",
+        "emoji"
+      ],
+      "expected": "{\"🙂\":4,\"alpha\":0,\"éclair\":1,\"emoji\":5,\"naïve\":3,\"ключ\":2}"
+    },
+    {
+      "name": "corpus-57",
+      "keys": [
+        "a1",
+        "Beta",
+        "AA",
+        "a-1"
+      ],
+      "expected": "{\"a-1\":3,\"a1\":0,\"AA\":2,\"Beta\":1}"
+    },
+    {
+      "name": "corpus-58",
+      "keys": [
+        "10",
+        "x",
+        "X",
+        "delta"
+      ],
+      "expected": "{\"10\":0,\"delta\":3,\"x\":1,\"X\":2}"
+    },
+    {
+      "name": "corpus-59",
+      "keys": [
+        "alpha",
+        "GAMMA"
+      ],
+      "expected": "{\"alpha\":0,\"GAMMA\":1}"
+    },
+    {
+      "name": "corpus-60",
+      "keys": [
+        "delta",
+        "2",
+        "X",
+        "🙂",
+        "éclair",
+        "a.1"
+      ],
+      "expected": "{\"🙂\":3,\"2\":1,\"a.1\":5,\"delta\":0,\"éclair\":4,\"X\":2}"
+    },
+    {
+      "name": "corpus-61",
+      "keys": [
+        "aa",
+        "Ab",
+        "naïve",
+        "delta",
+        "éclair"
+      ],
+      "expected": "{\"aa\":0,\"Ab\":1,\"delta\":3,\"éclair\":4,\"naïve\":2}"
+    },
+    {
+      "name": "corpus-62",
+      "keys": [
+        "AA",
+        "delta",
+        "GAMMA",
+        "ZZZ"
+      ],
+      "expected": "{\"AA\":0,\"delta\":1,\"GAMMA\":2,\"ZZZ\":3}"
+    },
+    {
+      "name": "corpus-63",
+      "keys": [
+        "AA",
+        "X",
+        "x",
+        "A1",
+        "10",
+        "delta",
+        "café"
+      ],
+      "expected": "{\"10\":4,\"A1\":3,\"AA\":0,\"café\":6,\"delta\":5,\"x\":2,\"X\":1}"
+    },
+    {
+      "name": "corpus-64",
+      "keys": [
+        "A1",
+        "zeta",
+        "ключ",
+        "X",
+        "ZZZ"
+      ],
+      "expected": "{\"A1\":0,\"X\":3,\"zeta\":1,\"ZZZ\":4,\"ключ\":2}"
+    },
+    {
+      "name": "corpus-65",
+      "keys": [
+        "GAMMA",
+        "ключ"
+      ],
+      "expected": "{\"GAMMA\":0,\"ключ\":1}"
+    },
+    {
+      "name": "corpus-66",
+      "keys": [
+        "键",
+        "Ab",
+        "AA"
+      ],
+      "expected": "{\"AA\":2,\"Ab\":1,\"键\":0}"
+    },
+    {
+      "name": "corpus-67",
+      "keys": [
+        "emoji",
+        "Epsilon",
+        "zeta",
+        "10",
+        "éclair"
+      ],
+      "expected": "{\"10\":3,\"éclair\":4,\"emoji\":0,\"Epsilon\":1,\"zeta\":2}"
+    },
+    {
+      "name": "corpus-68",
+      "keys": [
+        "x",
+        "a1",
+        "🙂",
+        "aa"
+      ],
+      "expected": "{\"🙂\":2,\"a1\":1,\"aa\":3,\"x\":0}"
+    },
+    {
+      "name": "corpus-69",
+      "keys": [
+        "emoji",
+        "🚀",
+        "GAMMA"
+      ],
+      "expected": "{\"🚀\":1,\"emoji\":0,\"GAMMA\":2}"
+    },
+    {
+      "name": "corpus-70",
+      "keys": [
+        "alpha",
+        "a1",
+        "ZZZ",
+        "Beta"
+      ],
+      "expected": "{\"a1\":1,\"alpha\":0,\"Beta\":3,\"ZZZ\":2}"
+    },
+    {
+      "name": "corpus-71",
+      "keys": [
+        "zeta",
+        "delta",
+        "café",
+        "Ab",
+        "2"
+      ],
+      "expected": "{\"2\":4,\"Ab\":3,\"café\":2,\"delta\":1,\"zeta\":0}"
+    },
+    {
+      "name": "corpus-72",
+      "keys": [
+        "2",
+        "aB",
+        "zzz",
+        "_x",
+        "café",
+        "a_1",
+        "10"
+      ],
+      "expected": "{\"_x\":3,\"10\":6,\"2\":0,\"a_1\":5,\"aB\":1,\"café\":4,\"zzz\":2}"
+    },
+    {
+      "name": "corpus-73",
+      "keys": [
+        "键",
+        "zeta",
+        "AA"
+      ],
+      "expected": "{\"AA\":2,\"zeta\":1,\"键\":0}"
+    },
+    {
+      "name": "corpus-74",
+      "keys": [
+        "🙂",
+        "Ab",
+        "_x",
+        "🚀",
+        "a_1",
+        "zzz",
+        "ключ"
+      ],
+      "expected": "{\"_x\":2,\"🙂\":0,\"🚀\":3,\"a_1\":4,\"Ab\":1,\"zzz\":5,\"ключ\":6}"
+    },
+    {
+      "name": "corpus-75",
+      "keys": [
+        "delta",
+        "zzz",
+        "AA"
+      ],
+      "expected": "{\"AA\":2,\"delta\":0,\"zzz\":1}"
+    },
+    {
+      "name": "corpus-76",
+      "keys": [
+        "Epsilon",
+        "éclair",
+        "Ab",
+        "a:b",
+        "A1",
+        "delta",
+        "_x"
+      ],
+      "expected": "{\"_x\":6,\"a:b\":3,\"A1\":4,\"Ab\":2,\"delta\":5,\"éclair\":1,\"Epsilon\":0}"
+    },
+    {
+      "name": "corpus-77",
+      "keys": [
+        "Beta",
+        "zzz",
+        "alpha"
+      ],
+      "expected": "{\"alpha\":2,\"Beta\":0,\"zzz\":1}"
+    },
+    {
+      "name": "corpus-78",
+      "keys": [
+        "emoji",
+        "zeta",
+        "a:b"
+      ],
+      "expected": "{\"a:b\":2,\"emoji\":0,\"zeta\":1}"
+    },
+    {
+      "name": "corpus-79",
+      "keys": [
+        "aB",
+        "zeta",
+        "Epsilon",
+        "delta",
+        "Beta",
+        "emoji",
+        "🙂"
+      ],
+      "expected": "{\"🙂\":6,\"aB\":0,\"Beta\":4,\"delta\":3,\"emoji\":5,\"Epsilon\":2,\"zeta\":1}"
+    },
+    {
+      "name": "corpus-80",
+      "keys": [
+        "a.1",
+        "Epsilon",
+        "键",
+        "Beta",
+        "10",
+        "A1",
+        "AA"
+      ],
+      "expected": "{\"10\":4,\"a.1\":0,\"A1\":5,\"AA\":6,\"Beta\":3,\"Epsilon\":1,\"键\":2}"
+    },
+    {
+      "name": "corpus-81",
+      "keys": [
+        "ZZZ",
+        "a:b"
+      ],
+      "expected": "{\"a:b\":1,\"ZZZ\":0}"
+    },
+    {
+      "name": "corpus-82",
+      "keys": [
+        "éclair",
+        "zeta",
+        "AA",
+        "x",
+        "café"
+      ],
+      "expected": "{\"AA\":2,\"café\":4,\"éclair\":0,\"x\":3,\"zeta\":1}"
+    },
+    {
+      "name": "corpus-83",
+      "keys": [
+        "ключ",
+        "10",
+        "X",
+        "café",
+        "ZZZ"
+      ],
+      "expected": "{\"10\":1,\"café\":3,\"X\":2,\"ZZZ\":4,\"ключ\":0}"
+    },
+    {
+      "name": "corpus-84",
+      "keys": [
+        "a_1",
+        "A1",
+        "aa",
+        "a1",
+        "x"
+      ],
+      "expected": "{\"a_1\":0,\"a1\":3,\"A1\":1,\"aa\":2,\"x\":4}"
+    },
+    {
+      "name": "corpus-85",
+      "keys": [
+        "🙂",
+        "A1",
+        "Ab",
+        "_x"
+      ],
+      "expected": "{\"_x\":3,\"🙂\":0,\"A1\":1,\"Ab\":2}"
+    },
+    {
+      "name": "corpus-86",
+      "keys": [
+        "a-1",
+        "a:b",
+        "Ab",
+        "éclair",
+        "éclair"
+      ],
+      "expected": "{\"a-1\":0,\"a:b\":1,\"Ab\":2,\"éclair\":3,\"éclair\":4}"
+    },
+    {
+      "name": "corpus-87",
+      "keys": [
+        "Epsilon",
+        "ZZZ",
+        "Ab",
+        "éclair",
+        "_x"
+      ],
+      "expected": "{\"_x\":4,\"Ab\":2,\"éclair\":3,\"Epsilon\":0,\"ZZZ\":1}"
+    },
+    {
+      "name": "corpus-88",
+      "keys": [
+        "X",
+        "a-1",
+        "a1",
+        "10",
+        "_x",
+        "éclair",
+        "ZZZ"
+      ],
+      "expected": "{\"_x\":4,\"10\":3,\"a-1\":1,\"a1\":2,\"éclair\":5,\"X\":0,\"ZZZ\":6}"
+    },
+    {
+      "name": "corpus-89",
+      "keys": [
+        "Ab",
+        "aa",
+        "A1",
+        "aB",
+        "AA",
+        "2"
+      ],
+      "expected": "{\"2\":5,\"A1\":2,\"aa\":1,\"AA\":4,\"aB\":3,\"Ab\":0}"
+    },
+    {
+      "name": "corpus-90",
+      "keys": [
+        "AA",
+        "zeta"
+      ],
+      "expected": "{\"AA\":0,\"zeta\":1}"
+    },
+    {
+      "name": "corpus-91",
+      "keys": [
+        "A1",
+        "a-1",
+        "x",
+        "a1"
+      ],
+      "expected": "{\"a-1\":1,\"a1\":3,\"A1\":0,\"x\":2}"
+    },
+    {
+      "name": "corpus-92",
+      "keys": [
+        "a.1",
+        "a_1"
+      ],
+      "expected": "{\"a_1\":1,\"a.1\":0}"
+    },
+    {
+      "name": "corpus-93",
+      "keys": [
+        "a-1",
+        "10",
+        "Beta",
+        "2"
+      ],
+      "expected": "{\"10\":1,\"2\":3,\"a-1\":0,\"Beta\":2}"
+    },
+    {
+      "name": "corpus-94",
+      "keys": [
+        "_x",
+        "zzz",
+        "ключ"
+      ],
+      "expected": "{\"_x\":0,\"zzz\":1,\"ключ\":2}"
+    },
+    {
+      "name": "corpus-95",
+      "keys": [
+        "键",
+        "Epsilon",
+        "Beta",
+        "emoji",
+        "aB",
+        "x",
+        "_x"
+      ],
+      "expected": "{\"_x\":6,\"aB\":4,\"Beta\":2,\"emoji\":3,\"Epsilon\":1,\"x\":5,\"键\":0}"
+    },
+    {
+      "name": "corpus-96",
+      "keys": [
+        "emoji",
+        "delta",
+        "aB",
+        "键",
+        "alpha",
+        "a_1",
+        "a1"
+      ],
+      "expected": "{\"a_1\":5,\"a1\":6,\"aB\":2,\"alpha\":4,\"delta\":1,\"emoji\":0,\"键\":3}"
+    },
+    {
+      "name": "corpus-97",
+      "keys": [
+        "a-1",
+        "a_1"
+      ],
+      "expected": "{\"a_1\":1,\"a-1\":0}"
+    },
+    {
+      "name": "corpus-98",
+      "keys": [
+        "10",
+        "delta",
+        "éclair",
+        "aa",
+        "ZZZ",
+        "aB",
+        "emoji"
+      ],
+      "expected": "{\"10\":0,\"aa\":3,\"aB\":5,\"delta\":1,\"éclair\":2,\"emoji\":6,\"ZZZ\":4}"
+    },
+    {
+      "name": "corpus-99",
+      "keys": [
+        "🙂",
+        "10",
+        "a1",
+        "a.1",
+        "A1",
+        "ZZZ",
+        "ключ"
+      ],
+      "expected": "{\"🙂\":0,\"10\":1,\"a.1\":3,\"a1\":2,\"A1\":4,\"ZZZ\":5,\"ключ\":6}"
+    },
+    {
+      "name": "corpus-100",
+      "keys": [
+        "zeta",
+        "emoji"
+      ],
+      "expected": "{\"emoji\":1,\"zeta\":0}"
+    },
+    {
+      "name": "corpus-101",
+      "keys": [
+        "10",
+        "GAMMA",
+        "2",
+        "键",
+        "zeta",
+        "delta"
+      ],
+      "expected": "{\"10\":0,\"2\":2,\"delta\":5,\"GAMMA\":1,\"zeta\":4,\"键\":3}"
+    },
+    {
+      "name": "corpus-102",
+      "keys": [
+        "ZZZ",
+        "_x",
+        "a:b",
+        "🙂",
+        "Ab",
+        "delta"
+      ],
+      "expected": "{\"_x\":1,\"🙂\":3,\"a:b\":2,\"Ab\":4,\"delta\":5,\"ZZZ\":0}"
+    },
+    {
+      "name": "corpus-103",
+      "keys": [
+        "café",
+        "Beta",
+        "alpha",
+        "🚀",
+        "emoji"
+      ],
+      "expected": "{\"🚀\":3,\"alpha\":2,\"Beta\":1,\"café\":0,\"emoji\":4}"
+    },
+    {
+      "name": "corpus-104",
+      "keys": [
+        "2",
+        "a_1",
+        "emoji",
+        "_x",
+        "aa",
+        "ZZZ",
+        "Epsilon"
+      ],
+      "expected": "{\"_x\":3,\"2\":0,\"a_1\":1,\"aa\":4,\"emoji\":2,\"Epsilon\":6,\"ZZZ\":5}"
+    },
+    {
+      "name": "corpus-105",
+      "keys": [
+        "10",
+        "aB",
+        "a.1",
+        "X",
+        "naïve",
+        "Ab"
+      ],
+      "expected": "{\"10\":0,\"a.1\":2,\"aB\":1,\"Ab\":5,\"naïve\":4,\"X\":3}"
+    },
+    {
+      "name": "corpus-106",
+      "keys": [
+        "a-1",
+        "zeta"
+      ],
+      "expected": "{\"a-1\":0,\"zeta\":1}"
+    },
+    {
+      "name": "corpus-107",
+      "keys": [
+        "Epsilon",
+        "zeta"
+      ],
+      "expected": "{\"Epsilon\":0,\"zeta\":1}"
+    },
+    {
+      "name": "corpus-108",
+      "keys": [
+        "AA",
+        "x",
+        "aa",
+        "alpha",
+        "éclair",
+        "a1"
+      ],
+      "expected": "{\"a1\":5,\"aa\":2,\"AA\":0,\"alpha\":3,\"éclair\":4,\"x\":1}"
+    },
+    {
+      "name": "corpus-109",
+      "keys": [
+        "ZZZ",
+        "a-1",
+        "a.1",
+        "Epsilon",
+        "naïve",
+        "a:b"
+      ],
+      "expected": "{\"a-1\":1,\"a:b\":5,\"a.1\":2,\"Epsilon\":3,\"naïve\":4,\"ZZZ\":0}"
+    },
+    {
+      "name": "corpus-110",
+      "keys": [
+        "a-1",
+        "2",
+        "🙂",
+        "aB"
+      ],
+      "expected": "{\"🙂\":2,\"2\":1,\"a-1\":0,\"aB\":3}"
+    },
+    {
+      "name": "corpus-111",
+      "keys": [
+        "_x",
+        "a_1",
+        "zzz",
+        "a-1"
+      ],
+      "expected": "{\"_x\":0,\"a_1\":1,\"a-1\":3,\"zzz\":2}"
+    },
+    {
+      "name": "corpus-112",
+      "keys": [
+        "éclair",
+        "a.1"
+      ],
+      "expected": "{\"a.1\":1,\"éclair\":0}"
+    },
+    {
+      "name": "corpus-113",
+      "keys": [
+        "10",
+        "a:b",
+        "X",
+        "éclair",
+        "GAMMA",
+        "ключ"
+      ],
+      "expected": "{\"10\":0,\"a:b\":1,\"éclair\":3,\"GAMMA\":4,\"X\":2,\"ключ\":5}"
+    },
+    {
+      "name": "corpus-114",
+      "keys": [
+        "ключ",
+        "x",
+        "Beta",
+        "alpha"
+      ],
+      "expected": "{\"alpha\":3,\"Beta\":2,\"x\":1,\"ключ\":0}"
+    },
+    {
+      "name": "corpus-115",
+      "keys": [
+        "zzz",
+        "a_1"
+      ],
+      "expected": "{\"a_1\":1,\"zzz\":0}"
+    },
+    {
+      "name": "corpus-116",
+      "keys": [
+        "éclair",
+        "a-1",
+        "éclair",
+        "ZZZ",
+        "10",
+        "a_1"
+      ],
+      "expected": "{\"10\":4,\"a_1\":5,\"a-1\":1,\"éclair\":0,\"éclair\":2,\"ZZZ\":3}"
+    },
+    {
+      "name": "corpus-117",
+      "keys": [
+        "delta",
+        "Epsilon",
+        "🚀",
+        "2",
+        "a_1"
+      ],
+      "expected": "{\"🚀\":2,\"2\":3,\"a_1\":4,\"delta\":0,\"Epsilon\":1}"
+    },
+    {
+      "name": "corpus-118",
+      "keys": [
+        "键",
+        "delta",
+        "GAMMA",
+        "_x",
+        "X",
+        "café",
+        "Epsilon"
+      ],
+      "expected": "{\"_x\":3,\"café\":5,\"delta\":1,\"Epsilon\":6,\"GAMMA\":2,\"X\":4,\"键\":0}"
+    },
+    {
+      "name": "corpus-119",
+      "keys": [
+        "GAMMA",
+        "aa",
+        "café"
+      ],
+      "expected": "{\"aa\":1,\"café\":2,\"GAMMA\":0}"
+    },
+    {
+      "name": "corpus-120",
+      "keys": [
+        "ключ",
+        "café"
+      ],
+      "expected": "{\"café\":1,\"ключ\":0}"
+    },
+    {
+      "name": "corpus-121",
+      "keys": [
+        "delta",
+        "aa",
+        "X",
+        "a1"
+      ],
+      "expected": "{\"a1\":3,\"aa\":1,\"delta\":0,\"X\":2}"
+    },
+    {
+      "name": "corpus-122",
+      "keys": [
+        "10",
+        "Ab"
+      ],
+      "expected": "{\"10\":0,\"Ab\":1}"
+    },
+    {
+      "name": "corpus-123",
+      "keys": [
+        "键",
+        "aa",
+        "Ab",
+        "Epsilon",
+        "a:b",
+        "2"
+      ],
+      "expected": "{\"2\":5,\"a:b\":4,\"aa\":1,\"Ab\":2,\"Epsilon\":3,\"键\":0}"
+    },
+    {
+      "name": "corpus-124",
+      "keys": [
+        "café",
+        "x",
+        "键",
+        "emoji"
+      ],
+      "expected": "{\"café\":0,\"emoji\":3,\"x\":1,\"键\":2}"
+    },
+    {
+      "name": "corpus-125",
+      "keys": [
+        "zeta",
+        "🚀",
+        "GAMMA",
+        "Epsilon",
+        "🙂",
+        "x",
+        "zzz"
+      ],
+      "expected": "{\"🙂\":4,\"🚀\":1,\"Epsilon\":3,\"GAMMA\":2,\"x\":5,\"zeta\":0,\"zzz\":6}"
+    },
+    {
+      "name": "corpus-126",
+      "keys": [
+        "🙂",
+        "A1",
+        "a1",
+        "a:b",
+        "éclair"
+      ],
+      "expected": "{\"🙂\":0,\"a:b\":3,\"a1\":2,\"A1\":1,\"éclair\":4}"
+    },
+    {
+      "name": "corpus-127",
+      "keys": [
+        "aa",
+        "delta",
+        "aB"
+      ],
+      "expected": "{\"aa\":0,\"aB\":2,\"delta\":1}"
+    },
+    {
+      "name": "corpus-128",
+      "keys": [
+        "Ab",
+        "ZZZ",
+        "🚀",
+        "a:b"
+      ],
+      "expected": "{\"🚀\":2,\"a:b\":3,\"Ab\":0,\"ZZZ\":1}"
+    },
+    {
+      "name": "corpus-129",
+      "keys": [
+        "GAMMA",
+        "ZZZ",
+        "delta"
+      ],
+      "expected": "{\"delta\":2,\"GAMMA\":0,\"ZZZ\":1}"
+    },
+    {
+      "name": "corpus-130",
+      "keys": [
+        "éclair",
+        "AA",
+        "GAMMA",
+        "10"
+      ],
+      "expected": "{\"10\":3,\"AA\":1,\"éclair\":0,\"GAMMA\":2}"
+    },
+    {
+      "name": "corpus-131",
+      "keys": [
+        "a-1",
+        "zzz"
+      ],
+      "expected": "{\"a-1\":0,\"zzz\":1}"
+    },
+    {
+      "name": "corpus-132",
+      "keys": [
+        "A1",
+        "éclair",
+        "Beta"
+      ],
+      "expected": "{\"A1\":0,\"Beta\":2,\"éclair\":1}"
+    },
+    {
+      "name": "corpus-133",
+      "keys": [
+        "键",
+        "éclair",
+        "ZZZ"
+      ],
+      "expected": "{\"éclair\":1,\"ZZZ\":2,\"键\":0}"
+    },
+    {
+      "name": "corpus-134",
+      "keys": [
+        "éclair",
+        "ZZZ",
+        "_x",
+        "a:b",
+        "🚀",
+        "a-1",
+        "A1"
+      ],
+      "expected": "{\"_x\":2,\"🚀\":4,\"a-1\":5,\"a:b\":3,\"A1\":6,\"éclair\":0,\"ZZZ\":1}"
+    },
+    {
+      "name": "corpus-135",
+      "keys": [
+        "aB",
+        "a_1",
+        "AA",
+        "x"
+      ],
+      "expected": "{\"a_1\":1,\"AA\":2,\"aB\":0,\"x\":3}"
+    },
+    {
+      "name": "corpus-136",
+      "keys": [
+        "a.1",
+        "a_1",
+        "2",
+        "AA",
+        "zzz",
+        "x",
+        "10"
+      ],
+      "expected": "{\"10\":6,\"2\":2,\"a_1\":1,\"a.1\":0,\"AA\":3,\"x\":5,\"zzz\":4}"
+    },
+    {
+      "name": "corpus-137",
+      "keys": [
+        "🙂",
+        "zzz",
+        "alpha",
+        "aB",
+        "éclair",
+        "éclair",
+        "GAMMA"
+      ],
+      "expected": "{\"🙂\":0,\"aB\":3,\"alpha\":2,\"éclair\":4,\"éclair\":5,\"GAMMA\":6,\"zzz\":1}"
+    },
+    {
+      "name": "corpus-138",
+      "keys": [
+        "éclair",
+        "naïve",
+        "aa",
+        "café"
+      ],
+      "expected": "{\"aa\":2,\"café\":3,\"éclair\":0,\"naïve\":1}"
+    },
+    {
+      "name": "corpus-139",
+      "keys": [
+        "a:b",
+        "Epsilon",
+        "2",
+        "aa",
+        "a_1",
+        "A1"
+      ],
+      "expected": "{\"2\":2,\"a_1\":4,\"a:b\":0,\"A1\":5,\"aa\":3,\"Epsilon\":1}"
+    },
+    {
+      "name": "corpus-140",
+      "keys": [
+        "GAMMA",
+        "zeta",
+        "éclair",
+        "Ab",
+        "a1",
+        "AA",
+        "键"
+      ],
+      "expected": "{\"a1\":4,\"AA\":5,\"Ab\":3,\"éclair\":2,\"GAMMA\":0,\"zeta\":1,\"键\":6}"
+    },
+    {
+      "name": "corpus-141",
+      "keys": [
+        "_x",
+        "AA"
+      ],
+      "expected": "{\"_x\":0,\"AA\":1}"
+    },
+    {
+      "name": "corpus-142",
+      "keys": [
+        "AA",
+        "10"
+      ],
+      "expected": "{\"10\":1,\"AA\":0}"
+    },
+    {
+      "name": "corpus-143",
+      "keys": [
+        "café",
+        "zeta",
+        "éclair",
+        "🚀",
+        "alpha"
+      ],
+      "expected": "{\"🚀\":3,\"alpha\":4,\"café\":0,\"éclair\":2,\"zeta\":1}"
+    },
+    {
+      "name": "corpus-144",
+      "keys": [
+        "_x",
+        "zzz",
+        "GAMMA"
+      ],
+      "expected": "{\"_x\":0,\"GAMMA\":2,\"zzz\":1}"
+    },
+    {
+      "name": "corpus-145",
+      "keys": [
+        "a:b",
+        "naïve",
+        "键"
+      ],
+      "expected": "{\"a:b\":0,\"naïve\":1,\"键\":2}"
+    },
+    {
+      "name": "corpus-146",
+      "keys": [
+        "GAMMA",
+        "éclair"
+      ],
+      "expected": "{\"éclair\":1,\"GAMMA\":0}"
+    },
+    {
+      "name": "corpus-147",
+      "keys": [
+        "zzz",
+        "a:b",
+        "aa",
+        "a_1",
+        "aB"
+      ],
+      "expected": "{\"a_1\":3,\"a:b\":1,\"aa\":2,\"aB\":4,\"zzz\":0}"
+    },
+    {
+      "name": "corpus-148",
+      "keys": [
+        "alpha",
+        "X",
+        "Ab",
+        "a:b",
+        "Beta",
+        "café",
+        "emoji"
+      ],
+      "expected": "{\"a:b\":3,\"Ab\":2,\"alpha\":0,\"Beta\":4,\"café\":5,\"emoji\":6,\"X\":1}"
+    },
+    {
+      "name": "corpus-149",
+      "keys": [
+        "emoji",
+        "a:b"
+      ],
+      "expected": "{\"a:b\":1,\"emoji\":0}"
+    }
+  ]
+}

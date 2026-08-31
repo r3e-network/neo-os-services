@@ -1,0 +1,369 @@
+{
+  "family": "fulfillment_digest",
+  "cases": [
+    {
+      "name": "n3 minimal",
+      "request_id": {
+        "__t": "string",
+        "v": "42"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "hello",
+      "error": "",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "neo_n3",
+        "appId": "app:1",
+        "moduleId": "oracle.fetch",
+        "operation": "privacy_oracle"
+      },
+      "digest_hex": "6426ff5952480a21bea07c2356ce92aa998aad5fd22272548c5b4480b1e683e0"
+    },
+    {
+      "name": "n3 unicode result",
+      "request_id": {
+        "__t": "string",
+        "v": "42"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "价格 π 🚀",
+      "error": "",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "neo_n3",
+        "appId": "app:1",
+        "moduleId": "oracle.fetch",
+        "operation": "privacy_oracle"
+      },
+      "digest_hex": "781f93ed08b5513c253db3ec2a97a5b8763f5b81238bfd8db85a57dd87da8630"
+    },
+    {
+      "name": "n3 whitespace identifiers verbatim",
+      "request_id": {
+        "__t": "string",
+        "v": "42"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "r",
+      "error": "",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "neo_n3",
+        "appId": " app:1 ",
+        "moduleId": " oracle.fetch ",
+        "operation": " privacy_oracle "
+      },
+      "digest_hex": "ce54758c5d90d5dfc775ce51b0285179ca6a3e00e07dbe6f6f701df945165a06"
+    },
+    {
+      "name": "n3 numeric zero requestId",
+      "request_id": {
+        "__t": "number",
+        "v": "0"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "r",
+      "error": "",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "neo_n3",
+        "appId": "app:1",
+        "moduleId": "oracle.fetch",
+        "operation": "privacy_oracle"
+      },
+      "digest_hex": "bef20053715a2009219a2ee9024a53e7cb7415bdaf55b0461cd444b0accf77cc"
+    },
+    {
+      "name": "n3 uint64-max requestId string",
+      "request_id": {
+        "__t": "string",
+        "v": "18446744073709551615"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "r",
+      "error": "",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "neo_n3",
+        "appId": "app:1",
+        "moduleId": "oracle.fetch",
+        "operation": "privacy_oracle"
+      },
+      "digest_hex": "f195cca7ff08d35fcef969b80ae70ba3001185ecb323935d4ced4527bd53e4a6"
+    },
+    {
+      "name": "n3 resultBytesBase64 wins over result",
+      "request_id": {
+        "__t": "string",
+        "v": "7"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "ignored",
+      "error": "",
+      "result_bytes_base64": "3q2+7w==",
+      "options": {
+        "chain": "neo_n3",
+        "appId": "app:1",
+        "moduleId": "oracle.fetch",
+        "operation": "privacy_oracle"
+      },
+      "digest_hex": "836aaad7b339f3986be6af616b1f040b59c287cfde8218332cb24b99d8161b80"
+    },
+    {
+      "name": "n3 empty resultBytesBase64 falls back",
+      "request_id": {
+        "__t": "string",
+        "v": "7"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "kept",
+      "error": "",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "neo_n3",
+        "appId": "app:1",
+        "moduleId": "oracle.fetch",
+        "operation": "privacy_oracle"
+      },
+      "digest_hex": "1aa0d6bb15165670db2855b2b79071e3939f9fec5f8d1c80f542e3f060b0cc0d"
+    },
+    {
+      "name": "n3 failure with error text",
+      "request_id": {
+        "__t": "string",
+        "v": "9"
+      },
+      "request_type": "oracle/query",
+      "success": false,
+      "result": "",
+      "error": "boom 💥",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "neo_n3",
+        "appId": "app:1",
+        "moduleId": "oracle.fetch",
+        "operation": "privacy_oracle"
+      },
+      "digest_hex": "6e3abf75bc4378f034f5392d75ee2464d40ca9e7500ad4bf63b6b8ea1cccbf0d"
+    },
+    {
+      "name": "n3 empty identifiers",
+      "request_id": {
+        "__t": "string",
+        "v": "1"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "r",
+      "error": "",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "neo_n3",
+        "appId": "",
+        "moduleId": "",
+        "operation": ""
+      },
+      "digest_hex": "1a629437fbb00d0fd488f1b47a25e5baf2b886632a3e091fe3e125ce6f7d7ccf"
+    },
+    {
+      "name": "n3 unicode identifiers",
+      "request_id": {
+        "__t": "string",
+        "v": "2"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "r",
+      "error": "",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "neo_n3",
+        "appId": "应用",
+        "moduleId": "模块",
+        "operation": "操作"
+      },
+      "digest_hex": "ace88a2db49e75e43867244749ae7e2fd8e55f8b68484791e83e2d8f26cd7797"
+    },
+    {
+      "name": "n3 deployment bound",
+      "request_id": {
+        "__t": "string",
+        "v": "3"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "r",
+      "error": "",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "neo_n3",
+        "appId": "app:1",
+        "moduleId": "oracle.fetch",
+        "operation": "privacy_oracle",
+        "contractScriptHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "networkMagic": 860833102
+      },
+      "digest_hex": "7331cf4dc26bc56866da3c6dfff93c04492d6495c6eee843d69b46e2ca2286d3"
+    },
+    {
+      "name": "n3 deployment bound upper hex",
+      "request_id": {
+        "__t": "string",
+        "v": "3"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "r",
+      "error": "",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "neo_n3",
+        "appId": "app:1",
+        "moduleId": "oracle.fetch",
+        "operation": "privacy_oracle",
+        "contractScriptHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "networkMagic": 860833102
+      },
+      "digest_hex": "7331cf4dc26bc56866da3c6dfff93c04492d6495c6eee843d69b46e2ca2286d3"
+    },
+    {
+      "name": "n3 deployment bound other magic",
+      "request_id": {
+        "__t": "string",
+        "v": "3"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "r",
+      "error": "",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "neo_n3",
+        "appId": "app:1",
+        "moduleId": "oracle.fetch",
+        "operation": "privacy_oracle",
+        "contractScriptHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "networkMagic": 1234567890
+      },
+      "digest_hex": "4b7ab67b51bec9fa17c1b5df16206b17a970cf3cb6b01aa48db71a2cde1b3431"
+    },
+    {
+      "name": "n3 scripthash wrong length stays unbound",
+      "request_id": {
+        "__t": "string",
+        "v": "3"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "r",
+      "error": "",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "neo_n3",
+        "appId": "app:1",
+        "moduleId": "oracle.fetch",
+        "operation": "privacy_oracle",
+        "contractScriptHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "networkMagic": 860833102
+      },
+      "digest_hex": "94139e94855b7147cd91b1bc0f21bb87c3a8f78a5a6d8d6fab0db4fe820458e7"
+    },
+    {
+      "name": "n3 missing magic stays unbound",
+      "request_id": {
+        "__t": "string",
+        "v": "3"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "r",
+      "error": "",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "neo_n3",
+        "appId": "app:1",
+        "moduleId": "oracle.fetch",
+        "operation": "privacy_oracle",
+        "contractScriptHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "digest_hex": "94139e94855b7147cd91b1bc0f21bb87c3a8f78a5a6d8d6fab0db4fe820458e7"
+    },
+    {
+      "name": "n3 long result",
+      "request_id": {
+        "__t": "string",
+        "v": "4"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+      "error": "",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "neo_n3",
+        "appId": "app:1",
+        "moduleId": "oracle.fetch",
+        "operation": "privacy_oracle"
+      },
+      "digest_hex": "67132ba83fddedb8075ae5b977ea78ae54308f9e5f542d27d587b853efdcbee7"
+    },
+    {
+      "name": "legacy domain",
+      "request_id": {
+        "__t": "string",
+        "v": "42"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "hello",
+      "error": "",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "legacy"
+      },
+      "digest_hex": "80f145e8224290e26e382e31fdb5c8de48fd030b598563a169248c4a86994f30"
+    },
+    {
+      "name": "legacy with resultBytesBase64",
+      "request_id": {
+        "__t": "string",
+        "v": "5"
+      },
+      "request_type": "oracle/query",
+      "success": false,
+      "result": "x",
+      "error": "e",
+      "result_bytes_base64": "yv4=",
+      "options": {
+        "chain": "legacy"
+      },
+      "digest_hex": "7fdb982e517faf0c3d201d8068248e72f8be3f3e61af4946e35e247f2dd9db9b"
+    },
+    {
+      "name": "n3 bigint-ish numeric requestId stays string",
+      "request_id": {
+        "__t": "bigint",
+        "v": "123456789012345678901234567890"
+      },
+      "request_type": "oracle/query",
+      "success": true,
+      "result": "r",
+      "error": "",
+      "result_bytes_base64": "",
+      "options": {
+        "chain": "neo_n3",
+        "appId": "app:1",
+        "moduleId": "oracle.fetch",
+        "operation": "privacy_oracle"
+      },
+      "digest_hex": "adfc56a54315a10e29e5074e44555c2bc7c1fef8281ba8ba1a35c89ef72dceb0"
+    }
+  ]
+}

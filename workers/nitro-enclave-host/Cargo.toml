@@ -1,0 +1,37 @@
+[package]
+name = "nitro-enclave-host"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Nitro enclave trusted frontier: auth, route matching, provisioning, attestation and the bridge to the keyless compute child"
+
+# This crate is the Rust rewrite of deploy/nitro/enclave-server.mjs's trusted
+# half (the plan's Phase 4). It owns everything that must never leave the
+# measured boundary: bearer-token auth, the route table, /provision's state
+# machine, /attestation's binding, and the translation of signing intents into
+# custody calls over loopback. The compute lanes stay with the keyless Node
+# child (deploy/nitro/bridge-worker.mjs on :8090) until Phase 5 ports them, so
+# this crate's dependencies stay as close to neo-signer's set as possible: two
+# path deps, both security-critical (consensus primitives + the NSM/KMS seam),
+# and no Node tooling ever sees this directory (no package.json — the npm
+# `workers/*` glob skips it for the same reason it skips neo-signer).
+
+[lib]
+name = "nitro_enclave_host"
+path = "src/lib.rs"
+
+[dependencies]
+axum = "0.8"
+base64 = "0.22"
+hex = "0.4"
+http = "1"
+morpheus-core = { path = "../../crates/morpheus-core" }
+nitro-attest = { path = "../../crates/nitro-attest" }
+serde = { version = "1", features = ["derive"] }
+# preserve_order: the Node oracle builds response objects in insertion order and
+# the HTTP-parity tests compare serialized bodies; the BTreeMap default would
+# silently sort keys and make the Rust host's responses diverge byte-for-byte.
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+url = "2"

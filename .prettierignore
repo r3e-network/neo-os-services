@@ -11,6 +11,10 @@ workers/phala-worker/node_modules/
 contracts/build
 contracts/**/bin
 contracts/**/obj
+# Prettier reads this file, not .gitignore, so a crate's own `target/` entry does
+# not keep cargo build output out of `npm run format:check`. Without this, adding
+# workers/neo-signer flagged ~213 fingerprints and generated JSON files.
+workers/neo-signer/target/
 contracts/neox/artifacts
 contracts/neox/cache
 contracts/neox/node_modules/

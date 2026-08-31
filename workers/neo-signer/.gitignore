@@ -1,0 +1,8 @@
+# Build output only.
+#
+# Cargo.lock is *not* ignored. This crate is on the path to becoming a deployed
+# service binary, and a custody service has to be reproducible: the lockfile is
+# what lets a rebuild of last month's release be certain it got the same
+# `rusqlite` and the same AES-GCM implementation. Commit it, and refresh it
+# deliberately.
+/target

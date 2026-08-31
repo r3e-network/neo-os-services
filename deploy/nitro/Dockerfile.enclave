@@ -1,9 +1,19 @@
-# Morpheus Oracle — merged compute+sign Nitro Enclave image.
+# Morpheus Oracle — Nitro Enclave image, SPLIT runtime (Rust frontier + keyless
+# Node compute child).
 #
-# Supersedes deploy/nitro/Dockerfile.signer for the MERGED enclave: it carries
-# the worker compute (workers/nitro-worker) AND the signer logic into a single
-# measured boundary, so the result is computed AND signed inside one PCR set with
-# no host hop between compute and signature.
+# Supersedes the Phase-3 merged image: the measured boundary now runs
+#   * the Rust trusted frontier (workers/nitro-enclave-host → /app/bin/
+#     enclave_host) — auth, /provision's KMS state machine, /attestation, the
+#     /oracle/fulfill fold (compute via loopback → signature folded in from
+#     custody), and the supervisor of ...
+#   * the keyless Node compute child (workers/nitro-worker/src/server.js on
+#     ENCLAVE_WORKER_PORT) — the worker handler's compute lanes with a
+#     stripped env and NO signing keys. The host spawns/respawns it
+#     (workers/nitro-enclave-host/src/child.rs), so one entrypoint watches one
+#     pid; a child crash is a respawn, not an enclave teardown.
+#
+# ENCLAVE_RUNTIME=node-merged (see entrypoint-enclave.sh) rolls back to the
+# pre-split merged Node server, which this image still carries.
 #
 # REPRODUCIBLE BY CONSTRUCTION so the PCRs (PCR0/1/2 from `nitro-cli
 # build-enclave`) are independently verifiable by a third party who rebuilds this
@@ -13,7 +23,8 @@
 #      (deterministic), never a floating `npm install ...@^x`.
 #   3. The Go nsm helper is pinned via a committed go.mod/go.sum (not `go get
 #      ...@latest`).
-#   4. SOURCE_DATE_EPOCH + normalized mtimes remove build-time timestamps.
+#   4. Rust deps come from the committed Cargo.lock via `--locked`.
+#   5. SOURCE_DATE_EPOCH + normalized mtimes remove build-time timestamps.
 #
 # Build context = repo root (see build-enclave-eif.sh, which runs
 #   docker build -f deploy/nitro/Dockerfile.enclave <repo-root>).
@@ -49,7 +60,52 @@ COPY deploy/nitro/nsm-attest/main.go deploy/nitro/nsm-attest/cms.go ./
 RUN go build -trimpath -buildvcs=false -ldflags="-s -w" -o /nsm-attest .
 
 # ---------------------------------------------------------------------------
-# Stage 2 — the merged Node compute+sign runtime.
+# Stage 1b — build the Rust trusted frontier (enclave_host).
+# ---------------------------------------------------------------------------
+# DIGEST-PIN REQUIRED before merging: the line below is TAG-pinned because the
+# digest could not be resolved on the authoring box (no docker). Resolve it
+# exactly like the other bases:
+#   docker pull rust:1.98-bookworm &&
+#     docker inspect --format '{{index .RepoDigests 0}}' rust:1.98-bookworm
+# The toolchain matches the local gate (rustc 1.98.0); bookworm glibc matches
+# the runtime stage (node:22-bookworm-slim).
+# TODO(pcr-pin): replace with the resolved @sha256 before the next PCR-relevant
+# release; a floating rust base flips PCR0 on upstream rebuilds.
+FROM rust:1.98-bookworm AS rustbuild
+WORKDIR /build
+ENV CARGO_TERM_COLOR=never
+
+# The workspace graph (root manifest + lockfile + every member manifest) is
+# what `--locked` resolves; copying sources separately keeps this layer cached
+# across source edits.
+COPY Cargo.toml Cargo.lock ./
+COPY crates/morpheus-core/Cargo.toml crates/morpheus-core/Cargo.toml
+COPY crates/nitro-attest/Cargo.toml crates/nitro-attest/Cargo.toml
+COPY workers/neo-signer/Cargo.toml workers/neo-signer/Cargo.toml
+COPY workers/nitro-enclave-host/Cargo.toml workers/nitro-enclave-host/Cargo.toml
+# Stub sources so `cargo build --locked` can resolve the graph before the real
+# sources land (the classic dummy-main pre-compile trick; manifests are the
+# resolution input, the stubs just let the fetch layer cache).
+RUN mkdir -p crates/morpheus-core/src crates/nitro-attest/src \
+      workers/neo-signer/src workers/nitro-enclave-host/src \
+  && echo "pub fn placeholder() {}" > crates/morpheus-core/src/lib.rs \
+  && echo "pub fn placeholder() {}" > crates/nitro-attest/src/lib.rs \
+  && echo "pub fn placeholder() {}" > workers/neo-signer/src/lib.rs \
+  && echo "fn main() {}" > workers/nitro-enclave-host/src/main.rs
+RUN cargo fetch --locked
+
+COPY crates/morpheus-core/src crates/morpheus-core/src
+COPY crates/nitro-attest/src crates/nitro-attest/src
+COPY workers/neo-signer/src workers/neo-signer/src
+COPY workers/nitro-enclave-host/src workers/nitro-enclave-host/src
+# Release build of the frontier binary only. --locked fails if Cargo.lock is
+# out of sync (no implicit lockfile mutation of the pinned graph). The binary
+# is deterministic for identical inputs + toolchain (edition/workspace settings
+# are committed; no volatile -C metadata inputs).
+RUN cargo build --release --locked -p nitro-enclave-host --bin enclave_host
+
+# ---------------------------------------------------------------------------
+# Stage 2 — the Node runtime (keyless compute child + node-merged rollback).
 # ---------------------------------------------------------------------------
 # DIGEST-PIN. node:22-bookworm-slim multi-arch index digest.
 # REFRESH (when bumping Node): docker pull node:22-bookworm-slim &&
@@ -149,8 +205,12 @@ COPY deploy/nitro/enclave-server.mjs ./deploy/nitro/enclave-server.mjs
 COPY deploy/nitro/nitro-signer-server.mjs ./deploy/nitro/nitro-signer-server.mjs
 COPY deploy/nitro/entrypoint-enclave.sh ./deploy/nitro/entrypoint-enclave.sh
 COPY --from=nsmbuild /nsm-attest /app/bin/nsm-attest
+# The Rust trusted frontier (split runtime's front door + compute-child
+# supervisor). Its only runtime dependency is bookworm's glibc, which the
+# node:22-bookworm-slim base provides.
+COPY --from=rustbuild /build/target/release/enclave_host /app/bin/enclave_host
 
-RUN chmod +x /app/deploy/nitro/entrypoint-enclave.sh /app/bin/nsm-attest
+RUN chmod +x /app/deploy/nitro/entrypoint-enclave.sh /app/bin/nsm-attest /app/bin/enclave_host
 
 # --- Reproducibility: strip build-time timestamps across the WHOLE rootfs. ---
 # SOURCE_DATE_EPOCH = 2026-06-14T00:00:00Z (1749859200). nitro-cli derives
@@ -181,6 +241,16 @@ ENV MORPHEUS_NETWORK=testnet
 ENV NITRO_SIGNER_VSOCK_PORT=8787
 ENV ENCLAVE_INTERNAL_PORT=8081
 ENV NITRO_ATTEST_BIN=/app/bin/nsm-attest
+# Split runtime (default): the Rust frontier listens on the internal port and
+# spawns + supervises the keyless compute child; ENCLAVE_RUNTIME=node-merged
+# rolls back to the Phase-3 merged Node server (same internal port).
+ENV ENCLAVE_RUNTIME=rust
+# The compute child's loopback port (the host bridge's forward target and the
+# child's own listener) and its launch command — BridgeChild::from_env reads
+# all three.
+ENV ENCLAVE_WORKER_PORT=8090
+ENV ENCLAVE_BRIDGE_CHILD_CMD=node
+ENV ENCLAVE_BRIDGE_CHILD_ARGS=/app/workers/nitro-worker/src/server.js
 # Outbound egress (in-enclave HTTPS_PROXY -> parent vsock -> host allow-list
 # proxy). The entrypoint sets HTTPS_PROXY/NODE_USE_ENV_PROXY from these. CID 3 is
 # the Nitro parent instance. These are defaults; the entrypoint honors overrides.

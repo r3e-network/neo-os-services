@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["workers/neo-signer", "workers/nitro-enclave-host", "crates/morpheus-core", "crates/nitro-attest"]
+
+# Every member keeps `workers/` or `crates/` positioning without a package.json,
+# so npm's `workers/*` glob and the JS lint/format gates keep skipping them (the
+# full rationale lives in workers/neo-signer/Cargo.toml). Membership shares the
+# lockfile, the CI gates and the target dir — it must not introduce path
+# dependencies between members: the custody service and the consensus core stay
+# independently auditable.
+
+[workspace.package]
+edition = "2021"
+license = "MIT"

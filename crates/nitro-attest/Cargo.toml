@@ -1,0 +1,33 @@
+[package]
+name = "nitro-attest"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Nitro enclave attestation helpers: NSM attestation, CMS EnvelopedData decrypt for KMS CiphertextForRecipient, SigV4-signed KMS Decrypt requests"
+
+[dependencies]
+serde_json = "1"
+sha2 = "0.10"
+hmac = "0.12"
+# getrandom: OsRng for the ephemeral RSA-2048 keypair in the kms-decrypt path.
+rsa = { version = "0.9", features = ["getrandom"] }
+aes = "0.8"
+aes-gcm = "0.10"
+base64 = "0.22"
+# blocking + rustls-tls (bundled webpki roots): the enclave image has no
+# system CA store, so the TLS roots must ship inside the binary.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "charset", "http2", "rustls-tls"] }
+
+# The NSM driver module is behind the "nix" feature and only compiles on Linux
+# (raw /dev/nsm ioctls); the api module (Request/Response types) is
+# platform-independent. Non-Linux builds get a fail-closed nsm::attest().
+[target.'cfg(target_os = "linux")'.dependencies]
+aws-nitro-enclaves-nsm-api = { version = "=0.4.0", features = ["nix"] }
+serde_bytes = "0.11"
+
+[dev-dependencies]
+hex = "0.4"
+
+[[bin]]
+name = "nsm-attest-rs"
+path = "src/bin/nsm-attest-rs.rs"

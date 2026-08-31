@@ -1,0 +1,61 @@
+[package]
+name = "neo-signer"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Neo N3 signer service: key custody, per-key policy, caller auth and audit"
+
+# This crate is a member of the repository-root cargo workspace (see the root
+# Cargo.toml) and is otherwise deliberate about its dependencies: no npm
+# workspace membership, and exactly two path dependencies, both on the
+# security-critical path — `morpheus-core` for the chain primitives the
+# attested identity binds, and `nitro-attest` for the NSM/KMS/CMS seam the
+# enclave boot and provision paths walk. See docs/SIGNER_SERVICE.md for the
+# ownership boundary it implements.
+#
+# It lives under `workers/` because that is where this repository keeps the
+# processes in the confidential plane, and npm's `workers/*` glob skips it for
+# having no package.json. That absence is load-bearing: adding a manifest here
+# would make `npm ci` and the format/lint gates try to build a custody service
+# through node tooling.
+#
+# The HTTP surface is `src/api.rs` — the router, its extractors and its wire
+# types — with `src/bin/signer_service.rs` as the process that serves it. The
+# router is in the library rather than in the binary on purpose: the tests in
+# `tests/unit/api.rs` drive it with `oneshot`, and a router that only existed
+# inside `main` could be exercised no finer than by binding a port.
+
+[lib]
+name = "neo_signer"
+path = "src/lib.rs"
+
+[dependencies]
+aes = "0.8"
+aes-gcm = "0.10"
+anyhow = "1"
+axum = "0.8"
+base64 = "0.22"
+cbc = "0.1"
+hex = "0.4"
+hkdf = "0.12"
+morpheus-core = { path = "../../crates/morpheus-core" }
+nitro-attest = { path = "../../crates/nitro-attest" }
+p256 = { version = "0.13", features = ["ecdsa"] }
+ripemd = "0.1"
+rusqlite = { version = "0.37", features = ["bundled"] }
+scrypt = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+zeroize = "1"
+
+[dev-dependencies]
+# `util` for `ServiceExt::oneshot`, which is how the API tests reach the router
+# without binding a port: a custody service whose tests need a socket is a
+# service whose tests can be blocked by a firewall.
+http-body-util = "0.1"
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

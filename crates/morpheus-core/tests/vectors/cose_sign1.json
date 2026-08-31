@@ -1,0 +1,50 @@
+{
+  "family": "cose_sign1",
+  "cases": [
+    {
+      "name": "empty protected and payload",
+      "kind": "sig_structure",
+      "protected_hex": "",
+      "payload_hex": "",
+      "expected_hex": "846a5369676e617475726531404040"
+    },
+    {
+      "name": "attestation-shaped",
+      "kind": "sig_structure",
+      "protected_hex": "a161613824",
+      "payload_hex": "a1616101",
+      "expected_hex": "846a5369676e61747572653145a1616138244044a1616101"
+    },
+    {
+      "name": "256+ byte payload (second length class)",
+      "kind": "sig_structure",
+      "protected_hex": "a2013824024553333834",
+      "payload_hex": "a1757365725f6461746144deadbeef",
+      "expected_hex": "846a5369676e6174757265314aa2013824024553333834404fa1757365725f6461746144deadbeef"
+    },
+    {
+      "name": "high-bit set both halves",
+      "kind": "es384_to_der",
+      "raw_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "expected_hex": "3066023100ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff023100ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "name": "leading zero trimmed",
+      "kind": "es384_to_der",
+      "raw_hex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000ffffffffffffffff00000000000000000000000000000000000000000000000000000000000000000000000000000000eeeeeeeeeeeeeeee",
+      "expected_hex": "3016020900ffffffffffffffff020900eeeeeeeeeeeeeeee"
+    },
+    {
+      "name": "exactly 48/48 bytes",
+      "kind": "es384_to_der",
+      "raw_hex": "808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080",
+      "expected_hex": "3066023100808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080023100808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080808080"
+    },
+    {
+      "name": "not a 96-byte signature",
+      "kind": "es384_to_der",
+      "raw_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "expected_hex": null
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+[package]
+name = "morpheus-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Single-sourced consensus layer: CBOR/COSE codec, stable stringify, fulfillment digest and result envelope builders"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# preserve_order: JSON.parse in V8 preserves key order and several envelope
+# builders copy that order into digest-bound bytes; the BTreeMap default would
+# silently sort keys and change every hash.
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+icu_collator = { version = "2", features = ["compiled_data"] }
+icu_locale_core = "2"
+
+[dev-dependencies]
+hex = "0.4"

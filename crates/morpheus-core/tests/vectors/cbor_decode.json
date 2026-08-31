@@ -1,0 +1,217 @@
+{
+  "family": "cbor_decode",
+  "cases": [
+    {
+      "name": "definite map",
+      "hex": "a1616101",
+      "decoded": {
+        "a": 1
+      },
+      "note": null
+    },
+    {
+      "name": "indefinite map",
+      "hex": "bf616101ff",
+      "decoded": {
+        "a": 1
+      },
+      "note": null
+    },
+    {
+      "name": "definite array",
+      "hex": "83010203",
+      "decoded": [
+        1,
+        2,
+        3
+      ],
+      "note": null
+    },
+    {
+      "name": "indefinite array",
+      "hex": "9f010203ff",
+      "decoded": [
+        1,
+        2,
+        3
+      ],
+      "note": null
+    },
+    {
+      "name": "definite byte string",
+      "hex": "450102030405",
+      "decoded": {
+        "__t": "bytes",
+        "hex": "0102030405"
+      },
+      "note": null
+    },
+    {
+      "name": "indefinite byte string chunks",
+      "hex": "5f42010243030405ff",
+      "decoded": {
+        "__t": "bytes",
+        "hex": "0102030405"
+      },
+      "note": null
+    },
+    {
+      "name": "indefinite text string chunks",
+      "hex": "7f6261626163ff",
+      "decoded": "abc",
+      "note": null
+    },
+    {
+      "name": "uint8 length",
+      "hex": "1864",
+      "decoded": 100,
+      "note": null
+    },
+    {
+      "name": "uint16 length",
+      "hex": "190100",
+      "decoded": 256,
+      "note": null
+    },
+    {
+      "name": "uint32 length",
+      "hex": "1a00010000",
+      "decoded": 65536,
+      "note": null
+    },
+    {
+      "name": "negative integer",
+      "hex": "29",
+      "decoded": -10,
+      "note": null
+    },
+    {
+      "name": "true",
+      "hex": "f5",
+      "decoded": true,
+      "note": null
+    },
+    {
+      "name": "false",
+      "hex": "f4",
+      "decoded": false,
+      "note": null
+    },
+    {
+      "name": "null",
+      "hex": "f6",
+      "decoded": null,
+      "note": null
+    },
+    {
+      "name": "undefined",
+      "hex": "f7",
+      "decoded": {
+        "__t": "undefined"
+      },
+      "note": null
+    },
+    {
+      "name": "half float decodes as null",
+      "hex": "f93c00",
+      "decoded": null,
+      "note": null
+    },
+    {
+      "name": "single float decodes as null",
+      "hex": "fa3f800000",
+      "decoded": null,
+      "note": null
+    },
+    {
+      "name": "tag passthrough",
+      "hex": "c101",
+      "decoded": 1,
+      "note": null
+    },
+    {
+      "name": "nested containers",
+      "hex": "82a16161810102",
+      "decoded": [
+        {
+          "a": [
+            1
+          ]
+        },
+        2
+      ],
+      "note": null
+    },
+    {
+      "name": "cose sign1 definite payload",
+      "hex": "8440a044a161610140",
+      "protected_header_hex": "",
+      "payload_bytes_hex": "a1616101",
+      "payload": {
+        "a": 1
+      },
+      "signature_hex": ""
+    },
+    {
+      "name": "cose sign1 indefinite payload map (the producer/verifier case)",
+      "hex": "8440a045bf616101ff40",
+      "protected_header_hex": "",
+      "payload_bytes_hex": "bf616101ff",
+      "payload": {
+        "a": 1
+      },
+      "signature_hex": ""
+    },
+    {
+      "name": "cose sign1 attestation-shaped payload",
+      "hex": "8440a04fa26470637273bf0041bbff617841aa40",
+      "payload": {
+        "pcrs": {
+          "0": {
+            "__t": "bytes",
+            "hex": "bb"
+          }
+        },
+        "x": {
+          "__t": "bytes",
+          "hex": "aa"
+        }
+      }
+    },
+    {
+      "name": "reserved minor 28",
+      "hex": "1c",
+      "error": "cbor: unsupported minor 28"
+    },
+    {
+      "name": "oversized declared string",
+      "hex": "5a7fffffff",
+      "error": "cbor: string length exceeds limit"
+    },
+    {
+      "name": "excessive nesting",
+      "hex": "8181818181818181818181818181818181818181818181818181818181818181818100",
+      "error": "cbor: nesting depth exceeds limit"
+    },
+    {
+      "name": "array length over limit",
+      "hex": "9a00002000",
+      "error": "cbor: array length exceeds limit"
+    },
+    {
+      "name": "not a 4-element cose",
+      "hex": "8340a040",
+      "error": "cose: not a 4-element COSE_Sign1"
+    },
+    {
+      "name": "payload not a byte string",
+      "hex": "8440a00140",
+      "error": "cose: payload is not a byte string"
+    },
+    {
+      "name": "truncated input",
+      "hex": "8201",
+      "error": "cbor: truncated"
+    }
+  ]
+}

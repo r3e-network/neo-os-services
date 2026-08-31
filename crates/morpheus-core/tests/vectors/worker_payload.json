@@ -1,0 +1,81 @@
+{
+  "family": "worker_payload",
+  "cases": [
+    {
+      "name": "oracle query",
+      "args": [
+        "neo_n3",
+        "oracle/query",
+        {
+          "url": "https://example.com"
+        },
+        "42",
+        {}
+      ],
+      "payload": {
+        "url": "https://example.com",
+        "request_id": "42",
+        "request_source": "morpheus-relayer:neo_n3",
+        "target_chain": "neo_n3",
+        "legacy_request_type": "oracle/query",
+        "kernel_module_id": "oracle.fetch",
+        "kernel_operation": "oracle/query",
+        "requester": "",
+        "callback_contract": "",
+        "callback_method": ""
+      }
+    },
+    {
+      "name": "target chain override and context",
+      "args": [
+        "neo_n3",
+        "neodid/action",
+        {
+          "target_chain": "neo_x",
+          "requester": "req-on-chain"
+        },
+        "43",
+        {
+          "requester": "ctx-wins?",
+          "callbackContract": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "callbackMethod": "onCallback"
+        }
+      ],
+      "payload": {
+        "target_chain": "neo_x",
+        "requester": "ctx-wins?",
+        "request_id": "43",
+        "request_source": "morpheus-relayer:neo_n3",
+        "legacy_request_type": "neodid/action",
+        "kernel_module_id": "identity.verify",
+        "kernel_operation": "neodid/action",
+        "callback_contract": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "callback_method": "onCallback"
+      }
+    },
+    {
+      "name": "game finalize",
+      "args": [
+        "neo_n3",
+        "session.finalize",
+        {
+          "session_id": "s-1"
+        },
+        "44",
+        {}
+      ],
+      "payload": {
+        "session_id": "s-1",
+        "request_id": "44",
+        "request_source": "morpheus-relayer:neo_n3",
+        "target_chain": "neo_n3",
+        "legacy_request_type": "session.finalize",
+        "kernel_module_id": "game.session",
+        "kernel_operation": "session.finalize",
+        "requester": "",
+        "callback_contract": "",
+        "callback_method": ""
+      }
+    }
+  ]
+}

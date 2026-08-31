@@ -41,6 +41,18 @@ examples/deployments/control-plane-smoke.*.latest.json
 examples/deployments/*.latest.json
 dist
 
+# Cargo build output (workspace target dir lives at the repo root; the
+# standalone-target leftover under workers/neo-signer predates workspace
+# membership).
+/target
+workers/neo-signer/target
+
+# Neo-contract compiler artifacts land at the repo root when the contracts
+# test harness builds in place; the checked-in evidence is the generated
+# artifacts source under contracts/__tests__/Generated, not these binaries.
+/MorpheusOracle.nef
+/MorpheusOracle.manifest.json
+
 .worktrees/
 .secrets/
 examples/contracts/n3/bin/
