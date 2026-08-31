@@ -211,11 +211,37 @@ const PLAINTEXT_KEY_ENV_KEYS = [
 
 // The set of accepted bearer tokens, derived live from process.env (so a
 // /provision that adds a token takes effect immediately).
+// Deployment hygiene (audit P2 fix): an operator copying an env example
+// verbatim must not ship a public guess as the runtime auth token. These
+// values are refused at token resolution — an empty trusted set stays
+// fail-closed (401) rather than accepting a known placeholder.
+const PLACEHOLDER_TOKEN_VALUES = new Set([
+  'replace-me',
+  'changeme',
+  'change-me',
+  'your-token-here',
+  'your-morpheus-runtime-token',
+  'nitro-shared-secret',
+  'secret',
+  'token',
+]);
+
+function isPlaceholderToken(value) {
+  return PLACEHOLDER_TOKEN_VALUES.has(String(value).trim().toLowerCase());
+}
+
 function currentTrustedTokens() {
   const set = new Set();
   for (const key of TOKEN_ENV_KEYS) {
     const value = trimString(process.env[key]);
-    if (value) set.add(value);
+    if (!value) continue;
+    if (isPlaceholderToken(value)) {
+      console.error(
+        `[enclave] refusing placeholder value for ${key}; set a real secret (the trusted-token set stays closed)`
+      );
+      continue;
+    }
+    set.add(value);
   }
   return set;
 }
