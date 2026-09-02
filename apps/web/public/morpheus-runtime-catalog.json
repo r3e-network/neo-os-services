@@ -89,13 +89,13 @@
       },
       "contracts": {
         "aaCore": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
-        "aaWeb3AuthVerifier": "0x7147f9a508594a7656a25f45d0a7a7dede7c227f",
+        "aaWeb3AuthVerifier": "0x1111f5b6b046a964c75d208998c13945ce172e85",
         "aaSessionKeyVerifier": "0xed44c88535650b4dd6b8d59776e6ed045462cab6",
         "aaSocialRecoveryVerifier": "",
-        "aaAddressMarket": "",
+        "aaAddressMarket": "0x6b979cdd246cc6491a20000a2a822e497c92c23b",
         "aaPaymaster": "",
         "morpheusOracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
-        "oracleCallbackConsumer": "0x8c506f224d82e67200f20d9d5361f767f0756e3b",
+        "oracleCallbackConsumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
         "morpheusDatafeed": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
         "morpheusNeoDid": ""
       },

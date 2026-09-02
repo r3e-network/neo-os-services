@@ -48,6 +48,16 @@ paths = ['''(^|/)apps/web/public/morpheus-runtime-catalog\.json$''']
 regexes = ['''"aa(?:Web3Auth|SessionKey)Verifier"[[:space:]]*:''']
 
 [[allowlists]]
+description = "Network runtime lifecycle fields are public on-chain transaction hashes."
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''(^|/)config/networks/mainnet\.json$''',
+  '''(^|/)config/networks/testnet\.json$''',
+]
+regexes = ['''"web3auth_verifier_(?:deploy|authorize_core)_tx"[[:space:]]*:''']
+
+[[allowlists]]
 description = "Deployment reports contain public contract and transaction hashes."
 condition = "AND"
 regexTarget = "line"
@@ -57,7 +67,7 @@ paths = [
   '''(^|/)examples/deployments/testnet-cross-stack-validation\.latest\.json$''',
   '''(^|/)examples/deployments/testnet\.json$''',
 ]
-regexes = ['''"(?:web3AuthHash|aa_web3auth_verifier_hash|aa_web3auth_verifier_deploy|latest_web3auth_verifier_hash|latest_sessionkey_verifier_hash|aa_sessionkey_verifier_deploy|aa_web3auth_domain_set_record|aa_sessionkey_domain_set_record|aa_sessionkey_verifier_hash|aa_web3auth_verifier|aa_session_key_verifier)"[[:space:]]*:''']
+regexes = ['''"(?:web3AuthHash|aa_web3auth_verifier_hash|aa_web3auth_verifier_deploy|aa_web3auth_paymaster_register|aa_web3auth_paymaster_execute|latest_web3auth_verifier_hash|latest_sessionkey_verifier_hash|aa_sessionkey_verifier_deploy|aa_web3auth_domain_set_record|aa_sessionkey_domain_set_record|aa_sessionkey_verifier_hash|aa_web3auth_verifier|aa_session_key_verifier)"[[:space:]]*:''']
 
 [[allowlists]]
 description = "Pinned PKCS8 value is an interoperability-only golden vector in a test file."

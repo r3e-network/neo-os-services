@@ -139,6 +139,7 @@ async function signFeedUpdate(
     sourceSetId,
   }
 ) {
+  if (payload.neo_n3_feed_signing_required === false) return null;
   const message = buildCanonicalFeedMessage({
     contractHash,
     networkMagic,
@@ -155,6 +156,9 @@ async function signFeedUpdate(
   });
   const signature = trimString(signed?.signature || '');
   const publicKey = trimString(signed?.public_key || '');
+  if (!signature && payload.neo_n3_feed_signing_required === true) {
+    throw new Error('Neo N3 data feed requires signed updates, but the oracle verifier signer is unavailable');
+  }
   if (!signature) return null;
   return { signature, public_key: publicKey };
 }

@@ -333,6 +333,7 @@ export function buildWorkspaceValidationData({
     },
     aa: {
       core_hash_testnet: trimString(networkRegistry?.neo_n3?.contracts?.abstract_account || ''),
+      verifier_hash_testnet: trimString(networkRegistry?.neo_n3?.aa_verifiers?.web3auth || ''),
       paymaster_app_id: paymasterAppId,
       paymaster_account_id:
         trimString(process.env.PAYMASTER_ACCOUNT_ID) ||

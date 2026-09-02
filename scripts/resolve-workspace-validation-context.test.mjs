@@ -51,6 +51,7 @@ test('workspace validation context omits secrets from stdout by default', () => 
   assert.equal(context.actors?.neo_testnet_wif, undefined);
   assert.equal(context.actors?.oracle_runtime_relayer_private_key, undefined);
   assert.equal(context.morpheus?.runtime_token, undefined);
+  assert.equal(context.aa.verifier_hash_testnet, '0x1111f5b6b046a964c75d208998c13945ce172e85');
 });
 
 test('workspace validation context can materialize secrets into a private env file', () => {

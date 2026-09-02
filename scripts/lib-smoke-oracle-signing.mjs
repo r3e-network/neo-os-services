@@ -2,10 +2,19 @@ import { wallet } from '@cityofzion/neon-js';
 import { buildFulfillmentDigestBytes } from '../workers/morpheus-relayer/src/router.js';
 import { trimString } from './lib-strings.mjs';
 
-export function resolveFulfillmentSigningContext({ requestRecord, defaultChain = 'neo_n3' } = {}) {
+export function resolveFulfillmentSigningContext({
+  requestRecord,
+  defaultChain = 'neo_n3',
+  contractScriptHash = '',
+  networkMagic,
+} = {}) {
+  const deploymentContext = {
+    contractScriptHash: trimString(contractScriptHash),
+    networkMagic,
+  };
   const record = requestRecord && typeof requestRecord === 'object' ? requestRecord : null;
   if (!record) {
-    return { chain: defaultChain };
+    return { chain: defaultChain, ...deploymentContext };
   }
 
   const appId = trimString(record?.app_id || record?.appId || '');
@@ -20,10 +29,11 @@ export function resolveFulfillmentSigningContext({ requestRecord, defaultChain =
       appId,
       moduleId,
       operation,
+      ...deploymentContext,
     };
   }
 
-  return { chain: 'legacy' };
+  return { chain: 'legacy', ...deploymentContext };
 }
 
 export function buildFulfillmentDigestHex({
@@ -37,6 +47,8 @@ export function buildFulfillmentDigestHex({
   appId = '',
   moduleId = '',
   operation = '',
+  contractScriptHash = '',
+  networkMagic,
 } = {}) {
   return buildFulfillmentDigestBytes(
     requestId,
@@ -50,6 +62,8 @@ export function buildFulfillmentDigestHex({
       appId,
       moduleId,
       operation,
+      contractScriptHash,
+      networkMagic,
     }
   ).toString('hex');
 }
@@ -66,6 +80,8 @@ export function buildFulfillmentVerificationSignature({
   appId = '',
   moduleId = '',
   operation = '',
+  contractScriptHash = '',
+  networkMagic,
 } = {}) {
   if (!signerPrivateKey) {
     throw new Error('signerPrivateKey is required');
@@ -81,6 +97,8 @@ export function buildFulfillmentVerificationSignature({
     appId,
     moduleId,
     operation,
+    contractScriptHash,
+    networkMagic,
   });
   return wallet.sign(digestHex, signerPrivateKey);
 }

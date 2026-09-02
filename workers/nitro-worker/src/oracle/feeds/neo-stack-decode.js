@@ -75,6 +75,65 @@ export async function fetchJsonRpc(url, body) {
   return payload?.result;
 }
 
+function hasContractMethod(contractState, name, parameterCount) {
+  const methods = contractState?.manifest?.abi?.methods;
+  return Array.isArray(methods) && methods.some(
+    (method) =>
+      trimString(method?.name) === name &&
+      Array.isArray(method?.parameters) &&
+      method.parameters.length === parameterCount
+  );
+}
+
+function stackItemHasValue(item) {
+  if (!item || typeof item !== 'object') return false;
+  if (trimString(item.type).toLowerCase() === 'any') return false;
+  const value = item.value;
+  if (value === null || value === undefined) return false;
+  return typeof value !== 'string' || trimString(value).length > 0;
+}
+
+export async function loadNeoN3FeedSigningMode(rpcUrl, contractHash) {
+  if (!trimString(rpcUrl) || !trimString(contractHash)) {
+    return { supportsSignedUpdates: null, requiresSignedUpdates: null, error: 'missing RPC or contract hash' };
+  }
+  try {
+    const contractState = await fetchJsonRpc(rpcUrl, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'getcontractstate',
+      params: [contractHash],
+    });
+    const supportsSignedUpdates =
+      hasContractMethod(contractState, 'oracleVerificationKey', 0) &&
+      hasContractMethod(contractState, 'updateFeedSigned', 7);
+    if (!supportsSignedUpdates) {
+      return { supportsSignedUpdates: false, requiresSignedUpdates: false, error: null };
+    }
+
+    const keyResult = await fetchJsonRpc(rpcUrl, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'invokefunction',
+      params: [contractHash, 'oracleVerificationKey', []],
+    });
+    if (String(keyResult?.state || '').toUpperCase() === 'FAULT') {
+      throw new Error(trimString(keyResult?.exception) || 'oracleVerificationKey faulted');
+    }
+    return {
+      supportsSignedUpdates: true,
+      requiresSignedUpdates: stackItemHasValue(keyResult?.stack?.[0]),
+      error: null,
+    };
+  } catch (error) {
+    return {
+      supportsSignedUpdates: null,
+      requiresSignedUpdates: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function fetchNeoN3FeedRecords(rpcUrl, contractHash) {
   if (!trimString(rpcUrl) || !trimString(contractHash)) return {};
   const result = await fetchJsonRpc(rpcUrl, {

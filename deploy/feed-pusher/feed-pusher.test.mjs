@@ -23,6 +23,7 @@ const {
   assertEnclaveNeoXTxMatches,
   toTwelveDataSymbol,
   partitionMappedSymbols,
+  assertTwelveDataResponse,
   enclaveDroppedStalePairs,
   TD_SYMBOLS,
   RETIRED_FEED_PAIRS,
@@ -34,6 +35,46 @@ const {
 
 const PUSHER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'feed-pusher.mjs');
 const OPTS = { thresholdBps: 10, maxStaleSec: 1800 };
+
+test('TwelveData HTTP errors fail the whole batch instead of becoming missing symbols', () => {
+  assert.throws(
+    () =>
+      assertTwelveDataResponse(
+        { ok: false, status: 401 },
+        { status: 'error', code: 401, message: 'Your subscription has expired' }
+      ),
+    /HTTP 401, code 401.*subscription has expired/i
+  );
+});
+
+test('TwelveData provider errors fail even when the transport returned HTTP 200', () => {
+  assert.throws(
+    () =>
+      assertTwelveDataResponse(
+        { ok: true, status: 200 },
+        { status: 'error', code: 429, message: 'API credits exhausted' }
+      ),
+    /HTTP 200, code 429.*credits exhausted/i
+  );
+});
+
+test('TwelveData validation accepts a normal price payload and redacts API keys in errors', () => {
+  assert.doesNotThrow(() =>
+    assertTwelveDataResponse({ ok: true, status: 200 }, { price: '1.23' })
+  );
+  assert.throws(
+    () =>
+      assertTwelveDataResponse(
+        { ok: false, status: 401 },
+        { message: 'See https://example.test/help?apikey=do-not-log-this&topic=billing' }
+      ),
+    (error) => {
+      assert.doesNotMatch(error.message, /do-not-log-this/);
+      assert.match(error.message, /apikey=<redacted>/);
+      return true;
+    }
+  );
+});
 
 test('toTwelveDataSymbol maps equities/ETFs to bare tickers, crypto/forex to X/USD', () => {
   // Equities + ETFs must be the bare ticker (TwelveData 404s 'AAPL/USD').

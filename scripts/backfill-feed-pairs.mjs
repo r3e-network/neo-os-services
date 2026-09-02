@@ -2,6 +2,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseConfiguredFeedPairs } from './lib-feed-freshness.mjs';
 import { parseDotEnv } from './lib-env.mjs';
 import { trimString } from './lib-strings.mjs';
@@ -24,9 +25,10 @@ function installDefaultFetchTimeout(timeoutMs = 20_000) {
   globalThis.fetch = wrapped;
 }
 
-function parseArgs(argv = process.argv.slice(2)) {
+export function parseArgs(argv = process.argv.slice(2)) {
   const parsed = {
     network: 'mainnet',
+    envFile: '',
     symbols: [],
     batchSize: 5,
     retries: 3,
@@ -35,6 +37,9 @@ function parseArgs(argv = process.argv.slice(2)) {
     const current = argv[index];
     if (current === '--network') {
       parsed.network = trimString(argv[index + 1] || parsed.network).toLowerCase();
+      index += 1;
+    } else if (current === '--env-file') {
+      parsed.envFile = trimString(argv[index + 1] || '');
       index += 1;
     } else if (current === '--symbols') {
       parsed.symbols = String(argv[index + 1] || '')
@@ -53,6 +58,34 @@ function parseArgs(argv = process.argv.slice(2)) {
   return parsed;
 }
 
+export function resolveBackfillNetwork(value) {
+  const network = trimString(value).toLowerCase();
+  if (network !== 'mainnet' && network !== 'testnet') {
+    throw new Error(`--network must be mainnet or testnet, got ${value || '(empty)'}`);
+  }
+  return network;
+}
+
+export function resolveBackfillEnvPath(args, cwd = process.cwd()) {
+  if (trimString(args?.envFile)) return path.resolve(cwd, args.envFile);
+  const network = resolveBackfillNetwork(args?.network);
+  return path.resolve(cwd, 'deploy', 'nitro', `morpheus.${network}.env`);
+}
+
+export function assertBackfillNetworkEnv(network, env) {
+  const declared = trimString(env?.MORPHEUS_NETWORK).toLowerCase();
+  if (declared && declared !== network) {
+    throw new Error(`env MORPHEUS_NETWORK=${declared} does not match --network ${network}`);
+  }
+  const expectedMagic = network === 'testnet' ? '894710606' : '860833102';
+  const configuredMagic = trimString(env?.NEO_NETWORK_MAGIC);
+  if (configuredMagic && configuredMagic !== expectedMagic) {
+    throw new Error(
+      `env NEO_NETWORK_MAGIC=${configuredMagic} does not match ${network} (${expectedMagic})`
+    );
+  }
+}
+
 function chunk(values, size) {
   const out = [];
   for (let index = 0; index < values.length; index += size) {
@@ -63,9 +96,10 @@ function chunk(values, size) {
 
 async function main() {
   const args = parseArgs();
-  const network = args.network === 'testnet' ? 'testnet' : 'mainnet';
-  const envPath = path.resolve('deploy', 'nitro', `morpheus.${network}.env`);
+  const network = resolveBackfillNetwork(args.network);
+  const envPath = resolveBackfillEnvPath(args);
   const env = parseDotEnv(await fs.readFile(envPath, 'utf8'));
+  assertBackfillNetworkEnv(network, env);
   for (const [key, value] of Object.entries(env)) {
     process.env[key] = value;
   }
@@ -142,7 +176,9 @@ async function main() {
   console.log(JSON.stringify({ network, total_symbols: targetPairs.length, results }, null, 2));
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] || '')) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}

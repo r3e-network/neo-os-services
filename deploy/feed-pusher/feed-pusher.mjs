@@ -265,6 +265,31 @@ export function partitionMappedSymbols(symbols) {
   return { mapped, unmapped };
 }
 
+function sanitizeProviderErrorMessage(value) {
+  return String(value || 'upstream request failed')
+    .replace(/([?&]apikey=)[^&\s]+/gi, '$1<redacted>')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 240);
+}
+
+// TwelveData returns provider failures as JSON, including for non-2xx responses.
+// Treating that top-level object as a successful one-symbol payload made every
+// configured pair look "missing" and hid billing/rate-limit outages behind exit 0.
+export function assertTwelveDataResponse(response, body) {
+  const providerCode = Number(body && body.code);
+  const providerFailed =
+    body &&
+    typeof body === 'object' &&
+    (String(body.status || '').toLowerCase() === 'error' ||
+      (Number.isFinite(providerCode) && providerCode >= 400));
+  if (response.ok && !providerFailed) return;
+
+  const code = Number.isFinite(providerCode) ? `, code ${providerCode}` : '';
+  const message = sanitizeProviderErrorMessage(body && body.message);
+  throw new Error(`TwelveData upstream error (HTTP ${response.status}${code}): ${message}`);
+}
+
 /**
  * Pairs the HOST planned to write that the ENCLAVE did not include in its signed
  * batch, restricted to pairs whose existing on-chain record is already past the
@@ -318,6 +343,7 @@ async function td(syms) {
   } catch {
     throw new Error('TwelveData non-JSON (HTTP ' + r.status + ')');
   }
+  assertTwelveDataResponse(r, j);
   const o = {};
   for (const s of mapped) {
     const k = toTwelveDataSymbol(s);

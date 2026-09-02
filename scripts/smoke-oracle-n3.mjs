@@ -1,7 +1,11 @@
 import { experimental, sc, rpc as neoRpc, wallet } from '@cityofzion/neon-js';
 import { loadDotEnv, parseDotEnv } from './lib-env.mjs';
 import { parseGasToRaw } from './lib-gas-units.mjs';
-import { resolveCallbackWithLocalFallback } from './lib-smoke-oracle-fallback.mjs';
+import {
+  allowSyntheticOracleFallback,
+  hasReceivedCallback,
+  resolveCallbackWithLocalFallback,
+} from './lib-smoke-oracle-fallback.mjs';
 import {
   buildFulfillmentVerificationSignature,
   resolveFulfillmentSigningContext,
@@ -99,8 +103,7 @@ const defaultRpcUrl =
 const defaultNetworkMagic = network === 'mainnet' ? 860833102 : 894710606;
 
 function decodeCallbackArray(item) {
-  if (!item || item.type !== 'Array' || !Array.isArray(item.value)) return null;
-  if (item.value.length < 4) return null;
+  if (!hasReceivedCallback(item)) return null;
   if (item.value.length >= 8) {
     const [
       appIdItem,
@@ -534,6 +537,9 @@ const callbackTimeoutMs = Math.max(
   Number(process.env.MORPHEUS_SMOKE_CALLBACK_TIMEOUT_MS || 180000),
   120000
 );
+const allowSyntheticFallback = allowSyntheticOracleFallback(
+  process.env.MORPHEUS_SMOKE_ALLOW_SYNTHETIC_FALLBACK
+);
 const explicitRequestWif = trimString(process.env.MORPHEUS_SMOKE_REQUEST_WIF || '');
 const preferredRequestSecrets =
   network === 'mainnet'
@@ -601,6 +607,7 @@ const fallbackUpdaterMinGasRaw = parseGasToRaw(
   3000000n
 );
 let updaterGasTopup = null;
+let localFallbackUsed = false;
 if (updaterAccount.scriptHash !== account.scriptHash) {
   updaterGasTopup = await ensureAccountGasBalance({
     rpcClient,
@@ -632,7 +639,11 @@ console.error(`Neo N3 smoke request txid: ${txid}`);
 
 const requestId = await waitForRequestId(rpcClient, txid, requestTimeoutMs);
 const requestRecord = await fetchRequestRecord(rpcClient, oracleHash, requestId);
-const fallbackSigningContext = resolveFulfillmentSigningContext({ requestRecord });
+const fallbackSigningContext = resolveFulfillmentSigningContext({
+  requestRecord,
+  contractScriptHash: oracleHash,
+  networkMagic,
+});
 const callback = await resolveCallbackWithLocalFallback({
   requestId,
   callbackTimeoutMs,
@@ -643,6 +654,11 @@ const callback = await resolveCallbackWithLocalFallback({
     );
   },
   beforeLocalFallback: async () => {
+    if (!allowSyntheticFallback) {
+      throw new Error(
+        'Neo N3 smoke callback timed out; synthetic zero-price fallback is disabled for business validation'
+      );
+    }
     if (updaterAccount.scriptHash !== account.scriptHash) {
       const fallbackTopup = await ensureAccountGasBalance({
         rpcClient,
@@ -676,6 +692,7 @@ const callback = await resolveCallbackWithLocalFallback({
     }
   },
   fulfillRequestLocally: async () => {
+    localFallbackUsed = true;
     const fallbackResultText = JSON.stringify(
       buildOnchainResultEnvelope(requestType, {
         ok: true,
@@ -714,6 +731,9 @@ const summary = {
   fallback_verifier_ready: Boolean(verifierAccount),
   fallback_verifier_issues: verifierSigner.issues,
   fallback_updater_gas_topup: updaterGasTopup,
+  local_fallback_used: localFallbackUsed,
+  business_data_valid: !localFallbackUsed,
+  validation_scope: localFallbackUsed ? 'transport-only' : 'provider-and-chain',
   gas_budget: gasBudget,
   request_fee: feeStatus.request_fee,
   request_credit: feeStatus.current_credit,

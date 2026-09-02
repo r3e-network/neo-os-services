@@ -50,6 +50,40 @@ describe('buildFulfillmentVerificationSignature', () => {
       ).toString('hex')
     );
   });
+
+  it('binds Neo N3 fulfillment signatures to the contract and network', () => {
+    const input = {
+      requestId: 4450,
+      requestType: 'privacy_oracle',
+      success: true,
+      resultText: '{"price":"0"}',
+      appId: 'demo.app',
+      moduleId: 'oracle.fetch',
+      operation: 'privacy_oracle',
+      contractScriptHash: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+      networkMagic: 894710606,
+    };
+
+    assert.equal(
+      buildFulfillmentDigestHex(input),
+      buildFulfillmentDigestBytes(
+        input.requestId,
+        input.requestType,
+        input.success,
+        input.resultText,
+        '',
+        '',
+        {
+          chain: 'neo_n3',
+          appId: input.appId,
+          moduleId: input.moduleId,
+          operation: input.operation,
+          contractScriptHash: input.contractScriptHash,
+          networkMagic: input.networkMagic,
+        }
+      ).toString('hex')
+    );
+  });
 });
 
 describe('resolveFulfillmentSigningContext', () => {
@@ -62,8 +96,14 @@ describe('resolveFulfillmentSigningContext', () => {
           request_type: 'privacy_oracle',
           callback_contract: '0x226f508c',
         },
+        contractScriptHash: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+        networkMagic: 894710606,
       }),
-      { chain: 'legacy' }
+      {
+        chain: 'legacy',
+        contractScriptHash: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+        networkMagic: 894710606,
+      }
     );
   });
 });

@@ -49,10 +49,10 @@ Current Neo N3 anchors:
 | Oracle Attestation          | in-app `POST /api/attestation/verify` (or `/verifier`) | in-app `POST /api/attestation/verify` (or `/verifier`) |
 | DataFeed Attestation        | in-app `POST /api/attestation/verify` (or `/verifier`) | in-app `POST /api/attestation/verify` (or `/verifier`) |
 | MorpheusOracle Kernel       | `0xf54d8584ef82315c1800373272ab08ae0db2d5ef`           | `0xf54d8584ef82315c1800373272ab08ae0db2d5ef`           |
-| OracleCallbackConsumer Opt. | `0xe1226268f2fe08bea67fb29e1c8fda0d7c8e9844`           | `0x8c506f224d82e67200f20d9d5361f767f0756e3b`           |
+| OracleCallbackConsumer Opt. | `0xe1226268f2fe08bea67fb29e1c8fda0d7c8e9844`           | `0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b`           |
 | MorpheusDataFeed Module     | `0x03013f49c42a14546c8bbe58f9d434c3517fccab`           | `0x9bea75cf702f6afc09125aa6d22f082bfd2ee064`           |
 | AbstractAccount             | `0x0268a387913b250166ddec032b03332690a1ef78`           | `0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2`           |
-| AA Web3AuthVerifier         | `0xf5c452cd4ba29dcdc47026383568c0d8b38d9272`           | `0x7147f9a508594a7656a25f45d0a7a7dede7c227f`           |
+| AA Web3AuthVerifier         | `0xf5c452cd4ba29dcdc47026383568c0d8b38d9272`           | `0x1111f5b6b046a964c75d208998c13945ce172e85`           |
 | AA RecoveryVerifier         | `0x198b3a9cec9bccc2110d19bd929b10374a9d034d`           | `recovery.smartwallet.neo`                             |
 | NeoDIDRegistry              | `0xb81f31ea81e279793b30411b82c2e82078b63105`           | unpublished                                            |
 | Oracle NNS                  | `oracle.morpheus.neo`                                  | unassigned                                             |
@@ -64,7 +64,7 @@ Current Neo N3 anchors:
 Operational notes:
 
 - the MorpheusOracle kernel hash is identical on testnet and mainnet (`0xf54d8584ef82315c1800373272ab08ae0db2d5ef`); the retired legacy v1 testnet oracle `0x4b882e94ed766807c4fd728768f972e13008ad52` still serves legacy `requestFromCallback` lanes only — do not point new integrations at it
-- the canonical testnet optional callback adapter for shared infra is `0x8c506f224d82e67200f20d9d5361f767f0756e3b`
+- the canonical testnet optional callback adapter for shared infra is `0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b`
 - the current testnet example consumer used by live validation probes resolves to the same shared optional adapter deployment
 - testnet NeoDID registry remains unpublished in the shared registry until a stable shared deployment is intentionally promoted
 - `UnifiedSmartWalletV3` is the stable AA runtime name; raw deployment manifest suffixes are internal deployment metadata rather than user-facing contract names

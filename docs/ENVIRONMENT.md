@@ -624,6 +624,10 @@ rename them. Format: default + one-line semantics.
   English: Comma-separated allow/deny lists evaluated before sponsoring a user operation.
   中文：代付前检查的逗号分隔允许/拒绝清单。
 
+- `MORPHEUS_PAYMASTER_TESTNET_ALLOW_USEROP_TARGETS` / `MORPHEUS_PAYMASTER_MAINNET_ALLOW_USEROP_TARGETS`
+  English: Explicit inner-contract allowlists for AA user operations when an on-chain whitelist hook is not configured. User operations fail closed unless this list or the on-chain hook policy is configured.
+  中文：AA user operation 未配置链上白名单 hook 时使用的内层合约白名单；两种策略都未配置时拒绝代付。
+
 ### NeoX Message Lane / NeoX 消息通道
 
 - `NEOX_MESSAGE_RPC` (aliases `NEOX_RPC`, `EVM_RPC_URL`) / `NEOX_MESSAGE_CONTRACT` / `NEOX_MESSAGE_CHAIN_ID` (alias `NEOX_CHAIN_ID`)

@@ -30,6 +30,7 @@ Current controls:
 - policy ids
 - per-network max gas limit
 - per-network allowlisted target contracts
+- per-network allowlisted inner user-operation target contracts
 - per-network allowlisted method names
 - optional per-network allowlisted account ids
 - optional per-network blocklisted account ids
@@ -63,6 +64,7 @@ This makes the response portable across:
 - `MORPHEUS_PAYMASTER_TESTNET_POLICY_ID`
 - `MORPHEUS_PAYMASTER_TESTNET_MAX_GAS_UNITS`
 - `MORPHEUS_PAYMASTER_TESTNET_ALLOW_TARGETS`
+- `MORPHEUS_PAYMASTER_TESTNET_ALLOW_USEROP_TARGETS`
 - `MORPHEUS_PAYMASTER_TESTNET_ALLOW_METHODS`
 - `MORPHEUS_PAYMASTER_TESTNET_ALLOW_ACCOUNTS`
 - `MORPHEUS_PAYMASTER_TESTNET_BLOCK_ACCOUNTS`
@@ -75,6 +77,7 @@ This makes the response portable across:
 - `MORPHEUS_PAYMASTER_MAINNET_POLICY_ID`
 - `MORPHEUS_PAYMASTER_MAINNET_MAX_GAS_UNITS`
 - `MORPHEUS_PAYMASTER_MAINNET_ALLOW_TARGETS`
+- `MORPHEUS_PAYMASTER_MAINNET_ALLOW_USEROP_TARGETS`
 - `MORPHEUS_PAYMASTER_MAINNET_ALLOW_METHODS`
 - `MORPHEUS_PAYMASTER_MAINNET_ALLOW_ACCOUNTS`
 - `MORPHEUS_PAYMASTER_MAINNET_BLOCK_ACCOUNTS`
@@ -91,6 +94,8 @@ This makes the response portable across:
   "dapp_id": "<allowlisted-production-dapp-id>",
   "target_contract": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
   "method": "executeUserOp",
+  "userop_target_contract": "0xd2a4cff31913016155e38e474a2c06d08be276cf",
+  "userop_method": "symbol",
   "estimated_gas_units": 120000,
   "operation_hash": "<32-byte-operation-hash>"
 }

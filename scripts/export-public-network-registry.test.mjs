@@ -48,6 +48,6 @@ test('public network registry export exposes canonical Morpheus runtime metadata
   );
   assert.equal(
     registry.testnet.contracts.oracleCallbackConsumer,
-    '0x8c506f224d82e67200f20d9d5361f767f0756e3b'
+    '0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b'
   );
 });

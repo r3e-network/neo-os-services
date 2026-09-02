@@ -1,7 +1,19 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveCallbackWithLocalFallback } from './lib-smoke-oracle-fallback.mjs';
+import {
+  allowSyntheticOracleFallback,
+  resolveCallbackWithLocalFallback,
+} from './lib-smoke-oracle-fallback.mjs';
+
+describe('allowSyntheticOracleFallback', () => {
+  it('requires an explicit truthy opt-in', () => {
+    assert.equal(allowSyntheticOracleFallback(undefined), false);
+    assert.equal(allowSyntheticOracleFallback('false'), false);
+    assert.equal(allowSyntheticOracleFallback('true'), true);
+    assert.equal(allowSyntheticOracleFallback('1'), true);
+  });
+});
 
 describe('resolveCallbackWithLocalFallback', () => {
   it('keeps polling when local fallback loses the race to an already-fulfilled request', async () => {
