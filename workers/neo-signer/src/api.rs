@@ -286,6 +286,7 @@ impl ApiState {
 pub fn router(state: ApiState) -> Router {
     Router::new()
         .route("/health", get(health_route))
+        .route("/metrics", get(metrics_route))
         .route("/provision", post(provision_route))
         .route("/attestation", get(attestation_route))
         .nest(API_PREFIX, api_routes())
@@ -1242,6 +1243,34 @@ async fn health_route(State(state): State<ApiState>) -> Response {
         "unprovisioned"
     };
     (StatusCode::OK, Json(json!({ "status": status }))).into_response()
+}
+
+/// `GET /metrics` — Prometheus metrics scrape endpoint.
+async fn metrics_route() -> Response {
+    use prometheus::{Encoder, TextEncoder};
+    let encoder = TextEncoder::new();
+    let metric_families = prometheus::gather();
+    let mut buffer = Vec::new();
+    if let Err(err) = encoder.encode(&metric_families, &mut buffer) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to encode prometheus metrics: {err}"),
+        )
+            .into_response();
+    }
+    match String::from_utf8(buffer) {
+        Ok(body) => (
+            StatusCode::OK,
+            [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
+            body,
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("metrics buffer is not valid utf-8: {err}"),
+        )
+            .into_response(),
+    }
 }
 
 /// `POST /provision` — the one door the master key comes through, walked once.

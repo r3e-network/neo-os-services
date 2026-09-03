@@ -127,6 +127,7 @@ fn provision_admin(label: &str) -> Result<()> {
 /// into the image would change the measurement it pins — so the boot guard
 /// reports the measured value for the operator to check against the manifest.
 async fn serve() -> Result<()> {
+    neo_signer::metrics::init_metrics();
     let config = Config::from_env()?;
     let _lease = VaultProcessLease::acquire(&config.data_dir)?;
     let guard = BootGuard::from_env().context("invalid attested-boot configuration")?;

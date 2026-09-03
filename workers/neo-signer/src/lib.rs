@@ -13,6 +13,7 @@ pub mod audit;
 pub mod auth;
 pub mod crypto;
 pub mod evm_tx;
+pub mod metrics;
 pub mod model;
 pub mod network;
 pub mod policy;

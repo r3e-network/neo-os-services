@@ -2022,3 +2022,18 @@ async fn a_bad_attestation_nonce_answers_in_the_refusal_shape() {
     .await;
     assert_eq!(empty.status, StatusCode::BAD_REQUEST, "{empty:?}");
 }
+
+#[tokio::test]
+async fn metrics_endpoint_returns_prometheus_metrics() {
+    let api = Api::open().await.expect("harness");
+    let reply = send_raw(
+        router(ApiState::new(api.service.clone())),
+        root_request(Method::GET, "/metrics", None, None),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::OK, "{reply:?}");
+    assert!(
+        reply.text.contains("neo_signer_") || reply.text.contains("# HELP"),
+        "metrics endpoint should return prometheus text output"
+    );
+}

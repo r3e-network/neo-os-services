@@ -54,9 +54,14 @@ serde_json = "1"
 sha2 = "0.10"
 sha3 = "0.10"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 zeroize = "1"
+
+# Metrics and observability
+prometheus = "0.13"
 
 [dev-dependencies]
 # `util` for `ServiceExt::oneshot`, which is how the API tests reach the router

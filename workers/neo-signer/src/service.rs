@@ -50,6 +50,7 @@ use crate::{
     audit::{self, GuardRejection, Refusal},
     auth::{self, AccessRejection, CallerCredentials},
     crypto,
+    metrics,
     model::{
         CallerCapability, KeyGrant, ScriptHash, SignerAuditAction, SignerAuditOutcome,
         SignerAuditRecord, SignerCaller, SignerConsensusReservation, SignerKey, SignerPolicy,
@@ -341,10 +342,15 @@ impl SignerService {
         let _decision = self.lock_decision()?;
         let caller = match self.admin_caller(credentials, SignerAuditAction::KeyGenerated, None)? {
             Ok(caller) => caller,
-            Err(refusal) => return Ok(Outcome::Refused(refusal)),
+            Err(refusal) => {
+                metrics::KEY_GEN_REQUESTS_TOTAL
+                    .with_label_values(&["refused"])
+                    .inc();
+                return Ok(Outcome::Refused(refusal));
+            }
         };
         let private_key = crypto::generate_private_key();
-        self.store_key(
+        let result = self.store_key(
             credentials,
             &caller,
             KeyRequest {
@@ -354,7 +360,23 @@ impl SignerService {
                 action: SignerAuditAction::KeyGenerated,
             },
             &private_key,
-        )
+        );
+
+        if result.is_ok() {
+            metrics::KEY_GEN_REQUESTS_TOTAL
+                .with_label_values(&["success"])
+                .inc();
+            // Update active keys count
+            if let Ok(keys) = self.repository.list_signer_keys() {
+                metrics::ACTIVE_KEYS_COUNT.set(keys.len() as i64);
+            }
+        } else {
+            metrics::KEY_GEN_REQUESTS_TOTAL
+                .with_label_values(&["error"])
+                .inc();
+        }
+
+        result
     }
 
     /// Take custody of a raw hexadecimal private key.
@@ -1132,12 +1154,18 @@ impl SignerService {
         kind: RequestKind,
         request_id: Option<&str>,
     ) -> Result<SignResponse> {
+        let start = std::time::Instant::now();
         let _decision = self.lock_decision()?;
         let action = RequestKind::action(kind);
         let access = self.guard_signing(credentials, key_id, kind);
         let caller = match self.resolved(access, credentials, action, Some(key_id))? {
             Ok(caller) => caller,
-            Err(refusal) => return Ok(Outcome::Refused(refusal)),
+            Err(refusal) => {
+                metrics::SIGN_REQUESTS_TOTAL
+                    .with_label_values(&["unknown", "refused"])
+                    .inc();
+                return Ok(Outcome::Refused(refusal));
+            }
         };
         let idempotency = if let Some(request_id) = request_id {
             if !valid_request_id(request_id) {
@@ -1204,13 +1232,21 @@ impl SignerService {
             None
         };
         match self.attempt(key_id, unsigned, kind) {
-            Err(refusal) => Ok(Outcome::Refused(self.refuse(
-                action,
-                credentials,
-                Some(&caller),
-                Some(key_id),
-                &refusal,
-            )?)),
+            Err(refusal) => {
+                metrics::SIGN_REQUESTS_TOTAL
+                    .with_label_values(&["unknown", "refused"])
+                    .inc();
+                metrics::POLICY_VIOLATIONS_TOTAL
+                    .with_label_values(&[refusal.code])
+                    .inc();
+                Ok(Outcome::Refused(self.refuse(
+                    action,
+                    credentials,
+                    Some(&caller),
+                    Some(key_id),
+                    &refusal,
+                )?))
+            }
             Ok(approved) => {
                 // The decision is written down before the witness leaves the
                 // service, and the spend ledger names the row that authorised it.
@@ -1255,6 +1291,28 @@ impl SignerService {
                     approved.consensus.as_ref(),
                     request.as_ref(),
                 )?;
+
+                // Record metrics
+                let chain_family_label = approved.witness.chain_family
+                    .map(|cf| match cf {
+                        ChainFamily::NeoN3 => "neo_n3",
+                        ChainFamily::NeoX => "neox",
+                    })
+                    .unwrap_or("neo_n3");
+
+                metrics::SIGN_REQUESTS_TOTAL
+                    .with_label_values(&[chain_family_label, "success"])
+                    .inc();
+
+                let duration = start.elapsed().as_secs_f64();
+                metrics::SIGN_DURATION_SECONDS
+                    .with_label_values(&[chain_family_label])
+                    .observe(duration);
+
+                metrics::SIGN_BYTES_TOTAL
+                    .with_label_values(&[chain_family_label])
+                    .inc_by(unsigned.len() as f64);
+
                 Ok(Outcome::Allowed(approved.witness))
             }
         }
