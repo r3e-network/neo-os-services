@@ -4,7 +4,10 @@
 //! evaluation. Like the Neo N3 parser, we refuse to sign opaque transactions
 //! we cannot fully interpret.
 
-use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
+use k256::ecdsa::{
+    signature::hazmat::PrehashSigner, RecoveryId, Signature, SigningKey, VerifyingKey,
+};
+use rlp::{Rlp, RlpStream};
 use sha3::{Digest, Keccak256};
 
 /// EIP-1559 transaction type identifier.
@@ -146,11 +149,24 @@ impl UnsignedEvmTransaction {
             return Err(EvmTxError::UnsupportedTxType { tx_type: bytes[0] });
         }
 
-        // Rest is RLP-encoded: rlp([chain_id, nonce, max_priority_fee_per_gas,
-        // max_fee_per_gas, gas_limit, to, value, data, access_list])
-        let mut decoder = RlpDecoder::new(&bytes[1..])?;
+        let rlp = Rlp::new(&bytes[1..]);
+        if !rlp.is_list() {
+            return Err(EvmTxError::InvalidRlp {
+                detail: "expected RLP list for transaction payload",
+            });
+        }
+        let count = rlp.item_count().map_err(|_| EvmTxError::InvalidRlp {
+            detail: "failed to read item count",
+        })?;
+        if count != 9 {
+            return Err(EvmTxError::InvalidRlp {
+                detail: "expected exactly 9 items in unsigned EIP-1559 payload",
+            });
+        }
 
-        let chain_id = decoder.decode_u64()?;
+        let chain_id: u64 = rlp.val_at(0).map_err(|_| EvmTxError::InvalidRlp {
+            detail: "invalid chain_id",
+        })?;
         if chain_id != expected_chain_id {
             return Err(EvmTxError::InvalidChainId {
                 expected: expected_chain_id,
@@ -158,9 +174,15 @@ impl UnsignedEvmTransaction {
             });
         }
 
-        let nonce = decoder.decode_u64()?;
-        let max_priority_fee_per_gas = decoder.decode_u128()?;
-        let max_fee_per_gas = decoder.decode_u128()?;
+        let nonce: u64 = rlp.val_at(1).map_err(|_| EvmTxError::InvalidRlp {
+            detail: "invalid nonce",
+        })?;
+        let max_priority_fee_per_gas: u128 = rlp.val_at(2).map_err(|_| EvmTxError::InvalidRlp {
+            detail: "invalid max_priority_fee_per_gas",
+        })?;
+        let max_fee_per_gas: u128 = rlp.val_at(3).map_err(|_| EvmTxError::InvalidRlp {
+            detail: "invalid max_fee_per_gas",
+        })?;
 
         if max_priority_fee_per_gas > max_fee_per_gas {
             return Err(EvmTxError::InvalidGasParams {
@@ -168,13 +190,104 @@ impl UnsignedEvmTransaction {
             });
         }
 
-        let gas_limit = decoder.decode_u64()?;
-        let to = decoder.decode_optional_address()?;
-        let value = decoder.decode_u256()?;
-        let data = decoder.decode_bytes()?;
-        let access_list = decoder.decode_access_list()?;
+        let gas_limit: u64 = rlp.val_at(4).map_err(|_| EvmTxError::InvalidRlp {
+            detail: "invalid gas_limit",
+        })?;
 
-        decoder.finish()?;
+        let to_bytes: Vec<u8> = rlp.val_at(5).map_err(|_| EvmTxError::InvalidRlp {
+            detail: "invalid to address",
+        })?;
+        let to = if to_bytes.is_empty() {
+            None
+        } else if to_bytes.len() == 20 {
+            let mut addr = [0u8; 20];
+            addr.copy_from_slice(&to_bytes);
+            Some(addr)
+        } else {
+            return Err(EvmTxError::InvalidRlp {
+                detail: "to address must be empty or 20 bytes",
+            });
+        };
+
+        let val_bytes: Vec<u8> = rlp.val_at(6).map_err(|_| EvmTxError::InvalidRlp {
+            detail: "invalid value",
+        })?;
+        if val_bytes.len() > 32 {
+            return Err(EvmTxError::InvalidRlp {
+                detail: "value exceeds 32 bytes",
+            });
+        }
+        let mut value = [0u8; 32];
+        if !val_raw_is_empty(&val_bytes) {
+            value[32 - val_bytes.len()..].copy_from_slice(&val_bytes);
+        }
+
+        let data: Vec<u8> = rlp.val_at(7).map_err(|_| EvmTxError::InvalidRlp {
+            detail: "invalid data",
+        })?;
+
+        let access_list_rlp = rlp.at(8).map_err(|_| EvmTxError::InvalidRlp {
+            detail: "invalid access_list",
+        })?;
+        if !access_list_rlp.is_list() {
+            return Err(EvmTxError::InvalidRlp {
+                detail: "access_list must be a list",
+            });
+        }
+
+        let mut access_list = Vec::new();
+        for entry_rlp in access_list_rlp.iter() {
+            if !entry_rlp.is_list() {
+                return Err(EvmTxError::InvalidRlp {
+                    detail: "access list entry must be a list",
+                });
+            }
+            let entry_count = entry_rlp.item_count().map_err(|_| EvmTxError::InvalidRlp {
+                detail: "invalid access list entry item count",
+            })?;
+            if entry_count != 2 {
+                return Err(EvmTxError::InvalidRlp {
+                    detail: "access list entry must be [address, [keys]]",
+                });
+            }
+            let addr_raw: Vec<u8> = entry_rlp.val_at(0).map_err(|_| EvmTxError::InvalidRlp {
+                detail: "invalid access list address",
+            })?;
+            if addr_raw.len() != 20 {
+                return Err(EvmTxError::InvalidRlp {
+                    detail: "access list address must be 20 bytes",
+                });
+            }
+            let mut address = [0u8; 20];
+            address.copy_from_slice(&addr_raw);
+
+            let keys_rlp = entry_rlp.at(1).map_err(|_| EvmTxError::InvalidRlp {
+                detail: "invalid storage keys list",
+            })?;
+            if !keys_rlp.is_list() {
+                return Err(EvmTxError::InvalidRlp {
+                    detail: "storage keys must be a list",
+                });
+            }
+            let mut storage_keys = Vec::new();
+            for key_rlp in keys_rlp.iter() {
+                let key_raw: Vec<u8> = key_rlp.as_val().map_err(|_| EvmTxError::InvalidRlp {
+                    detail: "invalid storage key",
+                })?;
+                if key_raw.len() != 32 {
+                    return Err(EvmTxError::InvalidRlp {
+                        detail: "storage key must be 32 bytes",
+                    });
+                }
+                let mut key = [0u8; 32];
+                key.copy_from_slice(&key_raw);
+                storage_keys.push(key);
+            }
+            access_list.push(AccessListEntry {
+                address,
+                storage_keys,
+            });
+        }
 
         Ok(UnsignedEvmTransaction {
             chain_id,
@@ -248,41 +361,11 @@ impl UnsignedEvmTransaction {
     /// Compute the signing hash for this transaction.
     pub fn signing_hash(&self) -> [u8; 32] {
         let mut encoded = vec![EIP1559_TX_TYPE];
-        self.encode_rlp(&mut encoded);
+        encode_eip1559_fields(self, None, &mut encoded);
         let hash = Keccak256::digest(&encoded);
         let mut result = [0u8; 32];
         result.copy_from_slice(&hash);
         result
-    }
-
-    /// RLP-encode this transaction.
-    fn encode_rlp(&self, out: &mut Vec<u8>) {
-        let mut items = Vec::new();
-
-        // Chain ID
-        encode_u64(self.chain_id, &mut items);
-        // Nonce
-        encode_u64(self.nonce, &mut items);
-        // Max priority fee
-        encode_u128(self.max_priority_fee_per_gas, &mut items);
-        // Max fee
-        encode_u128(self.max_fee_per_gas, &mut items);
-        // Gas limit
-        encode_u64(self.gas_limit, &mut items);
-        // To
-        if let Some(addr) = self.to {
-            items.push(addr.to_vec());
-        } else {
-            items.push(Vec::new());
-        }
-        // Value
-        items.push(self.value.to_vec());
-        // Data
-        items.push(self.data.clone());
-        // Access list (empty for now)
-        items.push(Vec::new());
-
-        encode_rlp_list(&items, out);
     }
 }
 
@@ -297,257 +380,103 @@ pub fn sign_evm_tx(
     let signature: Signature = signing_key.sign_prehash(&message_hash)?;
     let signature_bytes = signature.to_bytes();
 
-    // Compute recovery ID (v)
+    let mut r = [0u8; 32];
+    let mut s = [0u8; 32];
+    r.copy_from_slice(&signature_bytes[..32]);
+    s.copy_from_slice(&signature_bytes[32..]);
+
     let v = compute_recovery_id(&signing_key, &message_hash, &signature)?;
 
-    // Build final signed transaction: 0x02 || rlp([...unsigned fields, y_parity, r, s])
     let mut result = vec![EIP1559_TX_TYPE];
-    let mut rlp_items = Vec::new();
-
-    // All unsigned fields
-    encode_u64(tx.chain_id, &mut rlp_items);
-    encode_u64(tx.nonce, &mut rlp_items);
-    encode_u128(tx.max_priority_fee_per_gas, &mut rlp_items);
-    encode_u128(tx.max_fee_per_gas, &mut rlp_items);
-    encode_u64(tx.gas_limit, &mut rlp_items);
-    if let Some(addr) = tx.to {
-        rlp_items.push(addr.to_vec());
-    } else {
-        rlp_items.push(Vec::new());
-    }
-    rlp_items.push(tx.value.to_vec());
-    rlp_items.push(tx.data.clone());
-    rlp_items.push(Vec::new()); // access_list
-
-    // Signature components
-    rlp_items.push(vec![v]);
-    rlp_items.push(signature_bytes[..32].to_vec()); // r
-    rlp_items.push(signature_bytes[32..].to_vec()); // s
-
-    encode_rlp_list(&rlp_items, &mut result);
+    encode_eip1559_fields(tx, Some((v, &r, &s)), &mut result);
     Ok(result)
 }
 
 fn compute_recovery_id(
-    _signing_key: &SigningKey,
-    _message_hash: &[u8; 32],
-    _signature: &Signature,
+    signing_key: &SigningKey,
+    message_hash: &[u8; 32],
+    signature: &Signature,
 ) -> Result<u8, Box<dyn std::error::Error>> {
-    // For EIP-1559, y_parity is 0 or 1
-    // This is a simplified implementation - full recovery ID computation
-    // requires testing both values
-    Ok(0)
+    let expected_key = signing_key.verifying_key();
+    for id in 0..4u8 {
+        if let Ok(recovery_id) = RecoveryId::try_from(id) {
+            if let Ok(recovered) =
+                VerifyingKey::recover_from_prehash(message_hash.as_slice(), signature, recovery_id)
+            {
+                if &recovered == expected_key {
+                    return Ok(recovery_id.to_byte());
+                }
+            }
+        }
+    }
+    Err("failed to compute valid recovery ID for signature".into())
 }
 
 fn is_zero(bytes: &[u8]) -> bool {
     bytes.iter().all(|&b| b == 0)
 }
 
-/// Minimal RLP decoder for EIP-1559 transactions.
-struct RlpDecoder<'a> {
-    data: &'a [u8],
-    pos: usize,
+fn val_raw_is_empty(bytes: &[u8]) -> bool {
+    bytes.is_empty() || bytes.iter().all(|&b| b == 0)
 }
 
-impl<'a> RlpDecoder<'a> {
-    fn new(data: &'a [u8]) -> Result<Self, EvmTxError> {
-        // First byte should be a list prefix
-        if data.is_empty() {
-            return Err(EvmTxError::Truncated);
-        }
-        Ok(RlpDecoder { data, pos: 0 })
+fn encode_eip1559_fields(
+    tx: &UnsignedEvmTransaction,
+    signature: Option<(u8, &[u8; 32], &[u8; 32])>,
+    out: &mut Vec<u8>,
+) {
+    let count = if signature.is_some() { 12 } else { 9 };
+    let mut stream = RlpStream::new_list(count);
+
+    stream.append(&tx.chain_id);
+    stream.append(&tx.nonce);
+    stream.append(&tx.max_priority_fee_per_gas);
+    stream.append(&tx.max_fee_per_gas);
+    stream.append(&tx.gas_limit);
+
+    if let Some(addr) = &tx.to {
+        stream.append(&addr.as_slice());
+    } else {
+        stream.append_empty_data();
     }
 
-    fn decode_u64(&mut self) -> Result<u64, EvmTxError> {
-        let bytes = self.decode_bytes()?;
-        if bytes.is_empty() {
-            return Ok(0);
-        }
-        if bytes.len() > 8 {
-            return Err(EvmTxError::InvalidRlp {
-                detail: "u64 value too large",
-            });
-        }
-        let mut result = 0u64;
-        for &byte in &bytes {
-            result = (result << 8) | u64::from(byte);
-        }
-        Ok(result)
+    let val_start = tx.value.iter().position(|&b| b != 0).unwrap_or(32);
+    if val_start == 32 {
+        stream.append_empty_data();
+    } else {
+        stream.append(&&tx.value[val_start..]);
     }
 
-    fn decode_u128(&mut self) -> Result<u128, EvmTxError> {
-        let bytes = self.decode_bytes()?;
-        if bytes.is_empty() {
-            return Ok(0);
+    stream.append(&tx.data);
+
+    // Access list (EIP-2930)
+    stream.begin_list(tx.access_list.len());
+    for entry in &tx.access_list {
+        stream.begin_list(2);
+        stream.append(&entry.address.as_slice());
+        stream.begin_list(entry.storage_keys.len());
+        for key in &entry.storage_keys {
+            stream.append(&key.as_slice());
         }
-        if bytes.len() > 16 {
-            return Err(EvmTxError::InvalidRlp {
-                detail: "u128 value too large",
-            });
-        }
-        let mut result = 0u128;
-        for &byte in &bytes {
-            result = (result << 8) | u128::from(byte);
-        }
-        Ok(result)
     }
 
-    fn decode_u256(&mut self) -> Result<[u8; 32], EvmTxError> {
-        let bytes = self.decode_bytes()?;
-        if bytes.len() > 32 {
-            return Err(EvmTxError::InvalidRlp {
-                detail: "u256 value too large",
-            });
-        }
-        let mut result = [0u8; 32];
-        if !bytes.is_empty() {
-            result[32 - bytes.len()..].copy_from_slice(&bytes);
-        }
-        Ok(result)
-    }
-
-    fn decode_optional_address(&mut self) -> Result<Option<[u8; 20]>, EvmTxError> {
-        let bytes = self.decode_bytes()?;
-        if bytes.is_empty() {
-            return Ok(None);
-        }
-        if bytes.len() != 20 {
-            return Err(EvmTxError::InvalidRlp {
-                detail: "address must be 20 bytes",
-            });
-        }
-        let mut addr = [0u8; 20];
-        addr.copy_from_slice(&bytes);
-        Ok(Some(addr))
-    }
-
-    fn decode_bytes(&mut self) -> Result<Vec<u8>, EvmTxError> {
-        if self.pos >= self.data.len() {
-            return Err(EvmTxError::Truncated);
-        }
-
-        let prefix = self.data[self.pos];
-        self.pos += 1;
-
-        // Single byte < 0x80
-        if prefix < 0x80 {
-            return Ok(vec![prefix]);
-        }
-
-        // Short string (0-55 bytes)
-        if prefix <= 0xb7 {
-            let length = (prefix - 0x80) as usize;
-            return self.read_bytes(length);
-        }
-
-        // Long string (>55 bytes)
-        if prefix <= 0xbf {
-            let length_of_length = (prefix - 0xb7) as usize;
-            let length = self.read_length(length_of_length)?;
-            return self.read_bytes(length);
-        }
-
-        // List - skip for now in this simplified decoder
-        Err(EvmTxError::InvalidRlp {
-            detail: "unexpected list in field position",
-        })
-    }
-
-    fn decode_access_list(&mut self) -> Result<Vec<AccessListEntry>, EvmTxError> {
-        // Simplified: return empty access list
-        // Full implementation would decode RLP list of [address, [storage_keys]]
-        let _ = self.decode_bytes()?;
-        Ok(Vec::new())
-    }
-
-    fn read_bytes(&mut self, length: usize) -> Result<Vec<u8>, EvmTxError> {
-        if self.pos + length > self.data.len() {
-            return Err(EvmTxError::Truncated);
-        }
-        let result = self.data[self.pos..self.pos + length].to_vec();
-        self.pos += length;
-        Ok(result)
-    }
-
-    fn read_length(&mut self, length_of_length: usize) -> Result<usize, EvmTxError> {
-        if self.pos + length_of_length > self.data.len() {
-            return Err(EvmTxError::Truncated);
-        }
-        let mut length = 0usize;
-        for i in 0..length_of_length {
-            length = (length << 8) | self.data[self.pos + i] as usize;
-        }
-        self.pos += length_of_length;
-        Ok(length)
-    }
-
-    fn finish(&self) -> Result<(), EvmTxError> {
-        if self.pos < self.data.len() {
-            Err(EvmTxError::InvalidRlp {
-                detail: "trailing bytes after transaction",
-            })
+    if let Some((v, r, s)) = signature {
+        stream.append(&v);
+        let r_start = r.iter().position(|&b| b != 0).unwrap_or(32);
+        if r_start == 32 {
+            stream.append_empty_data();
         } else {
-            Ok(())
+            stream.append(&&r[r_start..]);
+        }
+        let s_start = s.iter().position(|&b| b != 0).unwrap_or(32);
+        if s_start == 32 {
+            stream.append_empty_data();
+        } else {
+            stream.append(&&s[s_start..]);
         }
     }
-}
 
-// RLP encoding helpers
-fn encode_u64(value: u64, out: &mut Vec<Vec<u8>>) {
-    if value == 0 {
-        out.push(Vec::new());
-    } else {
-        let bytes = value.to_be_bytes();
-        let start = bytes.iter().position(|&b| b != 0).unwrap_or(8);
-        out.push(bytes[start..].to_vec());
-    }
-}
-
-fn encode_u128(value: u128, out: &mut Vec<Vec<u8>>) {
-    if value == 0 {
-        out.push(Vec::new());
-    } else {
-        let bytes = value.to_be_bytes();
-        let start = bytes.iter().position(|&b| b != 0).unwrap_or(16);
-        out.push(bytes[start..].to_vec());
-    }
-}
-
-fn encode_rlp_list(items: &[Vec<u8>], out: &mut Vec<u8>) {
-    let mut payload = Vec::new();
-    for item in items {
-        encode_rlp_bytes(item, &mut payload);
-    }
-
-    let len = payload.len();
-    if len < 56 {
-        out.push(0xc0 + len as u8);
-    } else {
-        let len_bytes = length_to_bytes(len);
-        out.push(0xf7 + len_bytes.len() as u8);
-        out.extend_from_slice(&len_bytes);
-    }
-    out.extend_from_slice(&payload);
-}
-
-fn encode_rlp_bytes(bytes: &[u8], out: &mut Vec<u8>) {
-    if bytes.len() == 1 && bytes[0] < 0x80 {
-        out.push(bytes[0]);
-    } else if bytes.len() < 56 {
-        out.push(0x80 + bytes.len() as u8);
-        out.extend_from_slice(bytes);
-    } else {
-        let len_bytes = length_to_bytes(bytes.len());
-        out.push(0xb7 + len_bytes.len() as u8);
-        out.extend_from_slice(&len_bytes);
-        out.extend_from_slice(bytes);
-    }
-}
-
-fn length_to_bytes(length: usize) -> Vec<u8> {
-    let bytes = length.to_be_bytes();
-    let start = bytes.iter().position(|&b| b != 0).unwrap_or(8);
-    bytes[start..].to_vec()
+    out.extend_from_slice(&stream.out());
 }
 
 #[cfg(test)]
@@ -565,5 +494,162 @@ mod tests {
 
         assert_eq!(data.len(), 68);
         assert!(data.starts_with(&ERC20_TRANSFER_SELECTOR));
+    }
+
+    #[test]
+    fn test_compute_recovery_id_and_sign_evm_tx() {
+        let private_key = [0x42u8; 32];
+        let signing_key = SigningKey::from_bytes((&private_key).into()).unwrap();
+        let expected_vk = signing_key.verifying_key();
+
+        let tx = UnsignedEvmTransaction {
+            chain_id: 47763, // NeoX T4 testnet
+            nonce: 0,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 20_000_000_000,
+            gas_limit: 21_000,
+            to: Some([0x11u8; 20]),
+            value: [0u8; 32],
+            data: Vec::new(),
+            access_list: Vec::new(),
+        };
+
+        let message_hash = tx.signing_hash();
+        let signature: Signature = signing_key.sign_prehash(&message_hash).unwrap();
+
+        let recovery_id = compute_recovery_id(&signing_key, &message_hash, &signature).unwrap();
+        assert!(recovery_id == 0 || recovery_id == 1);
+
+        let rec_id = RecoveryId::try_from(recovery_id).unwrap();
+        let recovered =
+            VerifyingKey::recover_from_prehash(message_hash.as_slice(), &signature, rec_id)
+                .unwrap();
+        assert_eq!(&recovered, expected_vk);
+
+        let signed_raw = sign_evm_tx(&tx, &private_key).unwrap();
+        assert_eq!(signed_raw[0], EIP1559_TX_TYPE);
+        assert!(signed_raw.len() > 10);
+    }
+
+    #[test]
+    fn test_compute_recovery_id_multiple_hashes() {
+        let private_key = [0x77u8; 32];
+        let signing_key = SigningKey::from_bytes((&private_key).into()).unwrap();
+        let expected_vk = signing_key.verifying_key();
+
+        // Test with different messages to ensure both parity values are validly recoverable
+        for i in 0..20u8 {
+            let mut hash = [i; 32];
+            hash[0] = i;
+            let signature: Signature = signing_key.sign_prehash(&hash).unwrap();
+            let v = compute_recovery_id(&signing_key, &hash, &signature).unwrap();
+            assert!(v == 0 || v == 1);
+
+            let rec_id = RecoveryId::try_from(v).unwrap();
+            let recovered =
+                VerifyingKey::recover_from_prehash(hash.as_slice(), &signature, rec_id).unwrap();
+            assert_eq!(&recovered, expected_vk, "recovered key must match for hash {i}");
+        }
+    }
+
+    #[test]
+    fn test_unsigned_evm_tx_encode_parse_roundtrip() {
+        let mut value = [0u8; 32];
+        value[31] = 0x50;
+        value[30] = 0x01;
+
+        let tx = UnsignedEvmTransaction {
+            chain_id: 47763,
+            nonce: 7,
+            max_priority_fee_per_gas: 1_500_000_000,
+            max_fee_per_gas: 30_000_000_000,
+            gas_limit: 100_000,
+            to: Some([0x88u8; 20]),
+            value,
+            data: vec![0xa9, 0x05, 0x9c, 0xbb, 0x01, 0x02, 0x03],
+            access_list: vec![AccessListEntry {
+                address: [0x33u8; 20],
+                storage_keys: vec![[0x11u8; 32], [0x22u8; 32]],
+            }],
+        };
+
+        let mut encoded = vec![EIP1559_TX_TYPE];
+        encode_eip1559_fields(&tx, None, &mut encoded);
+
+        let parsed = UnsignedEvmTransaction::parse(&encoded, 47763).unwrap();
+        assert_eq!(parsed.chain_id, tx.chain_id);
+        assert_eq!(parsed.nonce, tx.nonce);
+        assert_eq!(parsed.max_priority_fee_per_gas, tx.max_priority_fee_per_gas);
+        assert_eq!(parsed.max_fee_per_gas, tx.max_fee_per_gas);
+        assert_eq!(parsed.gas_limit, tx.gas_limit);
+        assert_eq!(parsed.to, tx.to);
+        assert_eq!(parsed.value, tx.value);
+        assert_eq!(parsed.data, tx.data);
+        assert_eq!(parsed.access_list, tx.access_list);
+    }
+
+    #[test]
+    fn test_unsigned_evm_tx_contract_creation_roundtrip() {
+        let tx = UnsignedEvmTransaction {
+            chain_id: 1,
+            nonce: 0,
+            max_priority_fee_per_gas: 2_000_000_000,
+            max_fee_per_gas: 50_000_000_000,
+            gas_limit: 500_000,
+            to: None, // Contract creation
+            value: [0u8; 32],
+            data: vec![0x60, 0x80, 0x60, 0x40], // Bytecode
+            access_list: Vec::new(),
+        };
+
+        let mut encoded = vec![EIP1559_TX_TYPE];
+        encode_eip1559_fields(&tx, None, &mut encoded);
+
+        let parsed = UnsignedEvmTransaction::parse(&encoded, 1).unwrap();
+        assert_eq!(parsed.to, None);
+        assert_eq!(parsed.data, tx.data);
+        assert_eq!(parsed.chain_id, 1);
+    }
+
+    #[test]
+    fn test_unsigned_evm_tx_parse_rejections() {
+        let tx = UnsignedEvmTransaction {
+            chain_id: 47763,
+            nonce: 1,
+            max_priority_fee_per_gas: 50_000_000_000,
+            max_fee_per_gas: 20_000_000_000, // Invalid: priority > max fee
+            gas_limit: 21_000,
+            to: Some([0x22u8; 20]),
+            value: [0u8; 32],
+            data: Vec::new(),
+            access_list: Vec::new(),
+        };
+
+        let mut encoded = vec![EIP1559_TX_TYPE];
+        encode_eip1559_fields(&tx, None, &mut encoded);
+
+        // Priority fee > max fee rejection
+        let err = UnsignedEvmTransaction::parse(&encoded, 47763).unwrap_err();
+        assert!(matches!(err, EvmTxError::InvalidGasParams { .. }));
+
+        // Chain ID mismatch rejection
+        let valid_tx = UnsignedEvmTransaction {
+            max_fee_per_gas: 50_000_000_000,
+            ..tx
+        };
+        let mut valid_encoded = vec![EIP1559_TX_TYPE];
+        encode_eip1559_fields(&valid_tx, None, &mut valid_encoded);
+        let err = UnsignedEvmTransaction::parse(&valid_encoded, 99999).unwrap_err();
+        assert!(matches!(err, EvmTxError::InvalidChainId { .. }));
+
+        // Invalid type byte
+        valid_encoded[0] = 0x01;
+        let err = UnsignedEvmTransaction::parse(&valid_encoded, 47763).unwrap_err();
+        assert!(matches!(err, EvmTxError::UnsupportedTxType { .. }));
+
+        // Truncated payload
+        valid_encoded[0] = EIP1559_TX_TYPE;
+        let err = UnsignedEvmTransaction::parse(&valid_encoded[..5], 47763).unwrap_err();
+        assert!(matches!(err, EvmTxError::InvalidRlp { .. } | EvmTxError::Truncated));
     }
 }

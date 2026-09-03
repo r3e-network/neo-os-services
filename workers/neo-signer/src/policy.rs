@@ -759,8 +759,12 @@ fn evaluate_evm_transaction(
                 return verdict;
             }
             // Check amount limits
-            let amount = u256_to_i128(value);
-            if let Some(verdict) = check_transfer_amount(policy, amount, spent, to_hash) {
+            let amount = match u256_to_i128(value) {
+                Ok(amt) => amt,
+                Err(verdict) => return verdict,
+            };
+            let native_asset = ScriptHash([0u8; 20]);
+            if let Some(verdict) = check_transfer_amount(policy, amount, spent, native_asset) {
                 return verdict;
             }
             Verdict::Allow
@@ -797,8 +801,11 @@ fn evaluate_evm_transaction(
                 return verdict;
             }
             // Check amount limits
-            let transfer_amount = u256_to_i128(amount);
-            if let Some(verdict) = check_transfer_amount(policy, transfer_amount, spent, to_hash) {
+            let transfer_amount = match u256_to_i128(amount) {
+                Ok(amt) => amt,
+                Err(verdict) => return verdict,
+            };
+            if let Some(verdict) = check_transfer_amount(policy, transfer_amount, spent, token_hash) {
                 return verdict;
             }
             Verdict::Allow
@@ -872,7 +879,7 @@ fn check_transfer_amount(
     policy: &SignerPolicy,
     amount: i128,
     spent: &WindowSpend,
-    _recipient: ScriptHash,
+    asset: ScriptHash,
 ) -> Option<Verdict> {
     if amount < 0 {
         return Some(deny(
@@ -880,7 +887,7 @@ fn check_transfer_amount(
             format!("transfer amount {} is negative", amount),
         ));
     }
-    // Check single transfer limit
+    // Check global single transfer limit
     if let Some(max_single) = policy.max_single_amount {
         if amount > max_single {
             return Some(deny(
@@ -889,11 +896,9 @@ fn check_transfer_amount(
             ));
         }
     }
-    // Check window limit (simplified - would need asset-specific tracking)
+    // Check global rolling window limit
     if let Some(window_limit) = &policy.window_limit {
-        // For EVM native transfers, we use a fixed "native" asset identifier
-        let native_asset = ScriptHash([0u8; 20]);
-        let already_spent = spent.amount(native_asset);
+        let already_spent = spent.amount(asset);
         let new_total = already_spent.saturating_add(amount);
         if new_total > window_limit.max_amount {
             return Some(deny(
@@ -905,14 +910,48 @@ fn check_transfer_amount(
             ));
         }
     }
+    // Check asset-specific limits
+    for limit in &policy.asset_limits {
+        if limit.asset == asset {
+            if let Some(single) = limit.max_single_amount {
+                if amount > single {
+                    return Some(deny(
+                        DenyReason::SingleAmountExceeded,
+                        format!(
+                            "transfer amount {} exceeds asset-specific single limit {}",
+                            amount, single
+                        ),
+                    ));
+                }
+            }
+            if let Some(window) = &limit.window_limit {
+                let already_spent = spent.amount(asset);
+                let new_total = already_spent.saturating_add(amount);
+                if new_total > window.max_amount {
+                    return Some(deny(
+                        DenyReason::WindowAmountExceeded,
+                        format!(
+                            "transfer {} + prior {} = {} exceeds asset-specific window limit {}",
+                            amount, already_spent, new_total, window.max_amount
+                        ),
+                    ));
+                }
+            }
+        }
+    }
     None
 }
 
-fn u256_to_i128(bytes: &[u8; 32]) -> i128 {
-    // Convert u256 to i128, taking the lower 16 bytes
+fn u256_to_i128(bytes: &[u8; 32]) -> Result<i128, Verdict> {
+    if bytes[..16].iter().any(|&b| b != 0) || (bytes[16] & 0x80) != 0 {
+        return Err(deny(
+            DenyReason::SingleAmountExceeded,
+            "transfer amount exceeds maximum representable limit (i128::MAX)",
+        ));
+    }
     let mut buf = [0u8; 16];
     buf.copy_from_slice(&bytes[16..32]);
-    i128::from_be_bytes(buf)
+    Ok(i128::from_be_bytes(buf))
 }
 
 fn deny(reason: DenyReason, detail: impl Into<String>) -> Verdict {

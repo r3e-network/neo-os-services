@@ -715,3 +715,109 @@ fn signature_rate_counts_prior_successes_and_closes_at_the_ceiling() {
         DenyReason::SignatureRateExceeded
     );
 }
+
+#[test]
+fn u256_to_i128_checked_safety_limits() {
+    // Zero
+    let zero = [0u8; 32];
+    assert_eq!(u256_to_i128(&zero).unwrap(), 0);
+
+    // Normal amount (100)
+    let mut hundred = [0u8; 32];
+    hundred[31] = 100;
+    assert_eq!(u256_to_i128(&hundred).unwrap(), 100);
+
+    // Exact i128::MAX (0x7fff_ffff_ffff_ffff_ffff_ffff_ffff_ffff)
+    let mut max_i128 = [0u8; 32];
+    max_i128[16] = 0x7f;
+    for b in &mut max_i128[17..32] {
+        *b = 0xff;
+    }
+    assert_eq!(u256_to_i128(&max_i128).unwrap(), i128::MAX);
+
+    // Over i128::MAX via high bit in byte 16 (0x80)
+    let mut over_bit = [0u8; 32];
+    over_bit[16] = 0x80;
+    assert!(u256_to_i128(&over_bit).is_err());
+
+    // Over i128::MAX via non-zero upper 16 bytes
+    let mut over_upper = [0u8; 32];
+    over_upper[15] = 1;
+    assert!(u256_to_i128(&over_upper).is_err());
+
+    let full_max = [0xffu8; 32];
+    assert!(u256_to_i128(&full_max).is_err());
+}
+
+#[test]
+fn evm_transfer_obeys_asset_limits_and_windows() {
+    let mut spent = WindowSpend::default();
+    let token = [0x55u8; 20];
+    let recipient = [0x66u8; 20];
+
+    let policy = SignerPolicy {
+        allow_transfer: true,
+        asset_limits: vec![AssetLimit {
+            asset: ScriptHash(token),
+            max_single_amount: Some(500),
+            window_limit: Some(WindowLimit {
+                seconds: 3600,
+                max_amount: 1000,
+            }),
+        }],
+        ..Default::default()
+    };
+
+    let dummy_tx = UnsignedEvmTransaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 100,
+        max_fee_per_gas: 200,
+        gas_limit: 21000,
+        to: Some(token),
+        value: [0u8; 32],
+        data: Vec::new(),
+        access_list: Vec::new(),
+    };
+
+    // Amount exceeds asset-specific single limit
+    let mut amt_600 = [0u8; 32];
+    amt_600[30] = (600 >> 8) as u8;
+    amt_600[31] = (600 & 0xff) as u8;
+
+    let intent = EvmIntent::Erc20Transfer {
+        token,
+        to: recipient,
+        amount: amt_600,
+    };
+    let verdict = evaluate_evm_transaction(&policy, ScriptHash([0u8; 20]), &dummy_tx, &intent, &spent);
+    assert_eq!(
+        denied(verdict).0,
+        DenyReason::SingleAmountExceeded,
+        "amount 600 must exceed single limit 500"
+    );
+
+    // Amount within single limit (400) passes
+    let mut amt_400 = [0u8; 32];
+    amt_400[30] = (400 >> 8) as u8;
+    amt_400[31] = (400 & 0xff) as u8;
+
+    let intent_400 = EvmIntent::Erc20Transfer {
+        token,
+        to: recipient,
+        amount: amt_400,
+    };
+    assert_eq!(
+        evaluate_evm_transaction(&policy, ScriptHash([0u8; 20]), &dummy_tx, &intent_400, &spent),
+        Verdict::Allow
+    );
+
+    // Spend 700 previously, now 400 exceeds window limit of 1000
+    spent.record(ScriptHash(token), 700);
+    let verdict = evaluate_evm_transaction(&policy, ScriptHash([0u8; 20]), &dummy_tx, &intent_400, &spent);
+    assert_eq!(
+        denied(verdict).0,
+        DenyReason::WindowAmountExceeded,
+        "700 + 400 must exceed window limit 1000"
+    );
+}
