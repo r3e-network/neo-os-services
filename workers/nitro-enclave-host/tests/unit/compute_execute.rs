@@ -1,5 +1,5 @@
 //! `/compute/execute` fold tests — the Phase 6 flip. Compute runs in-process
-//! (`morpheus-compute`), the signature comes from the custody `SignerPlane`
+//! (`neo-os-compute`), the signature comes from the custody `SignerPlane`
 //! (FakeSigner here) and the attestation from the host's own binding, so the
 //! fixtures drive `handle_compute_execute` exactly as the Node suite drove
 //! `handleComputeExecute`. The bridge double stays canned and EMPTY: an
@@ -15,7 +15,7 @@ mod support;
 use support::*;
 
 /// The fixed recipient keypair from
-/// `morpheus_compute::oracle::crypto`'s golden vectors; VECTOR_3 was encrypted
+/// `neo_os_compute::oracle::crypto`'s golden vectors; VECTOR_3 was encrypted
 /// to it and reference-verified through the worker's own
 /// `decryptEncryptedToken`.
 const KEY_MATERIAL_JSON: &str = r#"{"public_key_raw":"XTtv0zrHad11LpRshb0tlN4yE17XpEtS1Q7vi72vG2w=","private_key_pkcs8":"MC4CAQAwBQYDK2VuBCIEIHBbVsOxyrXBteJj7nRKLaIPZ5McQpQs03dP2f2i5Z5x"}"#;
@@ -34,7 +34,7 @@ fn compute_harness(overlay: &[(&str, &str)]) -> TestState {
 
 fn expected_envelope(result: &serde_json::Value) -> (String, serde_json::Value) {
     let payload_bytes = stable_stringify(&JsValue::from_json(result));
-    let output_hash = morpheus_core::sha256_hex(payload_bytes.as_bytes());
+    let output_hash = neo_os_core::sha256_hex(payload_bytes.as_bytes());
     let verification = json!({
         "output_hash": output_hash,
         "attestation_hash": output_hash,
@@ -67,7 +67,7 @@ fn builtin_computes_in_process_signs_and_binds_the_result_envelope() {
     let result = json!({
         "function": "hash.sha256",
         "result": {
-            "digest": morpheus_core::sha256_hex(stable_stringify(&JsValue::from_json(&json!({"z": 1}))).as_bytes()),
+            "digest": neo_os_core::sha256_hex(stable_stringify(&JsValue::from_json(&json!({"z": 1}))).as_bytes()),
         },
     });
     let (output_hash, lane) = expected_envelope(&result);
@@ -159,7 +159,7 @@ fn confidential_payload_decrypts_merges_and_prunes_before_compute() {
     let result = json!({
         "function": "hash.sha256",
         "result": {
-            "digest": morpheus_core::sha256_hex(stable_stringify(&JsValue::from_json(&decrypted_input)).as_bytes()),
+            "digest": neo_os_core::sha256_hex(stable_stringify(&JsValue::from_json(&decrypted_input)).as_bytes()),
         },
     });
     let (output_hash, _) = expected_envelope(&result);

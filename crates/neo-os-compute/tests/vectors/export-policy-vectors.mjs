@@ -1,9 +1,9 @@
 // Exports `evaluatePolicyDecision` oracle vectors from the JS implementation
 // into policy-decisions.json, the merge gate for the Rust port in
-// crates/morpheus-compute/src/policy.rs (JS is the oracle; a failing vector is
+// crates/neo-os-compute/src/policy.rs (JS is the oracle; a failing vector is
 // a port bug, not a spec change).
 //
-// Run: node crates/morpheus-compute/tests/vectors/export-policy-vectors.mjs
+// Run: node crates/neo-os-compute/tests/vectors/export-policy-vectors.mjs
 // (from the repository root)
 
 import { writeFileSync } from 'node:fs';

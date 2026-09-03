@@ -2,7 +2,7 @@
 //! overlay→env plumbing, the [`support::FakeOracleIo`] plane wiring, the lazy
 //! key resolution, and the response shapes. The pure-port behavior (SSRF
 //! classification, provider fallbacks, the E5 gate's on-chain checks) is
-//! pinned by the morpheus-compute suites; here the fold composition is the
+//! pinned by the neo-os-compute suites; here the fold composition is the
 //! subject. The golden vectors are the same bytes the crypto suite pins.
 
 use super::*;
@@ -13,7 +13,7 @@ use serde_json::json;
 mod support;
 use support::*;
 
-// Harvested golden vectors (morpheus-compute crypto.rs): the recipient
+// Harvested golden vectors (neo-os-compute crypto.rs): the recipient
 // keypair and one envelope sealed to it. Production ciphertexts ride
 // base64(JSON) — the crypto suite's `envelope_ciphertext` — so the sealed
 // form wraps the raw envelope before any decrypt lane sees it.
@@ -56,8 +56,8 @@ fn golden_key_env() -> String {
     )
 }
 
-fn json_reply(status: u16, body: &str) -> morpheus_compute::transport::HttpResponse {
-    morpheus_compute::transport::HttpResponse {
+fn json_reply(status: u16, body: &str) -> neo_os_compute::transport::HttpResponse {
+    neo_os_compute::transport::HttpResponse {
         status,
         headers: vec![("content-type".to_string(), "application/json".to_string())],
         body: body.as_bytes().to_vec(),
@@ -341,7 +341,7 @@ fn the_query_lane_refuses_wasm_after_the_gates() {
     assert_eq!(status, 400);
     assert_eq!(
         body["error"],
-        morpheus_compute::standalone::WASM_DEFERRED_MESSAGE
+        neo_os_compute::standalone::WASM_DEFERRED_MESSAGE
     );
 }
 

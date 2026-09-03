@@ -2,7 +2,7 @@
 //! plus the coercion corners (`Number(null)` = 0, the `??` chain on
 //! `stale_seconds`, the failures/successes fallback path).
 
-use morpheus_compute::risk::classify_risk_signal;
+use neo_os_compute::risk::classify_risk_signal;
 use serde_json::json;
 
 #[test]

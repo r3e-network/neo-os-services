@@ -1,8 +1,8 @@
 mod common;
 
 use common::load_family;
-use morpheus_core::digest::{build_fulfillment_digest_bytes, FulfillmentOptions};
-use morpheus_core::js_value::JsValue;
+use neo_os_core::digest::{build_fulfillment_digest_bytes, FulfillmentOptions};
+use neo_os_core::js_value::JsValue;
 
 fn options_from(value: &serde_json::Value) -> FulfillmentOptions {
     FulfillmentOptions {
@@ -68,7 +68,7 @@ fn fulfillment_digest_matches_js_oracle() {
         .unwrap_or_else(|e| panic!("{name}: {e}"));
 
         assert_eq!(
-            morpheus_core::hex_encode(&digest),
+            neo_os_core::hex_encode(&digest),
             case["digest_hex"].as_str().unwrap(),
             "{name}"
         );

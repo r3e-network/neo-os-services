@@ -12,7 +12,7 @@
 //!   key material at all — that is the property that makes the frontier
 //!   auditable. `/sign/payload` is a policy-enforcing custody client, never a
 //!   local signing fallback.
-//! * **`morpheus-compute`** serves migrated compute, oracle, NeoDID, and
+//! * **`neo-os-compute`** serves migrated compute, oracle, NeoDID, and
 //!   policy code in-process. Its game engines are parity-complete, but their
 //!   session host has not migrated yet. No Node child or loopback execution
 //!   bridge exists in the measured host. Unmigrated fulfillment request types

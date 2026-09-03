@@ -1,7 +1,7 @@
 //! The JavaScript value-model edges the ported guards are defined against:
 //! `trimString`, truthiness, `String(value)` coercion and `Number(value)`.
 //!
-//! Mirrors `morpheus-core`'s `js_value`/`js_number` (same ECMA-262 facts) but
+//! Mirrors `neo-os-core`'s `js_value`/`js_number` (same ECMA-262 facts) but
 //! stays a local copy — the workspace rule forbids path dependencies between
 //! members, and this crate needs only the small slice below.
 

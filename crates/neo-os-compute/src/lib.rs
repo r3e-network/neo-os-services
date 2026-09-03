@@ -28,7 +28,7 @@
 //!
 //! The workspace rule forbids path dependencies between members (see the root
 //! `Cargo.toml`), so the JS-semantics helpers (`js.rs`) are local: they mirror
-//! `morpheus-core`'s `js_value`/`js_number` but stay independent.
+//! `neo-os-core`'s `js_value`/`js_number` but stay independent.
 
 pub mod capabilities;
 pub mod circuit_breaker;

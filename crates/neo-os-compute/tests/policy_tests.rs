@@ -20,7 +20,7 @@ fn rust_matches_the_js_oracle_on_every_vector() {
 
     for vector in &vectors {
         let name = vector["name"].as_str().unwrap_or("unnamed");
-        let decision = morpheus_compute::policy::evaluate_policy_decision(&vector["input"]);
+        let decision = neo_os_compute::policy::evaluate_policy_decision(&vector["input"]);
         assert_eq!(
             decision, vector["expected"],
             "vector {name} diverged (input: {})",
@@ -31,7 +31,7 @@ fn rust_matches_the_js_oracle_on_every_vector() {
 
 #[test]
 fn the_two_js_suite_cases_hold_semantically() {
-    let disabled = morpheus_compute::policy::evaluate_policy_decision(&serde_json::json!({
+    let disabled = neo_os_compute::policy::evaluate_policy_decision(&serde_json::json!({
         "workflow_id": "paymaster.authorize",
         "provider_enabled": false,
         "require_attestation": true,
@@ -39,7 +39,7 @@ fn the_two_js_suite_cases_hold_semantically() {
     assert_eq!(disabled["allow"], Value::Bool(false));
     assert_eq!(disabled["reason"], "provider_disabled");
 
-    let review = morpheus_compute::policy::evaluate_policy_decision(&serde_json::json!({
+    let review = neo_os_compute::policy::evaluate_policy_decision(&serde_json::json!({
         "workflow_id": "oracle.query",
         "provider_enabled": true,
         "require_attestation": true,
@@ -54,7 +54,7 @@ fn the_two_js_suite_cases_hold_semantically() {
 fn the_decision_object_keeps_the_js_literal_key_order() {
     // The merged worker renders this object as-is; key order is part of the
     // caller-facing bytes once a lane serializes it.
-    let decision = morpheus_compute::policy::evaluate_policy_decision(&serde_json::json!({}));
+    let decision = neo_os_compute::policy::evaluate_policy_decision(&serde_json::json!({}));
     let keys: Vec<&str> = decision
         .as_object()
         .expect("decision object")

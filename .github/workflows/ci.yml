@@ -63,7 +63,7 @@ jobs:
       # job. Runs here as well as inside those workflows so a workflow edit is
       # caught on the pull request, not at the moment it deploys.
       - run: node --test scripts/release-gating.test.mjs
-      # The golden vectors under crates/morpheus-core/tests/vectors/ are exported
+      # The golden vectors under crates/neo-os-core/tests/vectors/ are exported
       # from the JS implementations; this catches a JS edit that drifted the
       # oracle without regenerating them (the Rust ports verify against these).
       - run: node scripts/export-rust-vectors.mjs --check

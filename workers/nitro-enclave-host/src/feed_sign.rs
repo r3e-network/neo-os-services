@@ -2,7 +2,7 @@
 //! the feed-pusher planning core it imports. Price fetch, `planFeedUpdate`,
 //! scaling, the `updateFeeds` tx build, and the updater's raw signature —
 //! the whole feed value+decision+sign chain, inside the measured boundary.
-//! The wire encoding rides [`morpheus_core::n3_tx`], pinned byte-exact
+//! The wire encoding rides [`neo_os_core::n3_tx`], pinned byte-exact
 //! against the repo's own neon-js; the signing message goes to the custody
 //! plane's `updater` role unhashed (`sign_raw` hashes internally, the same
 //! contract neon-js `wallet.sign` keeps).
@@ -23,8 +23,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use morpheus_compute::js::{js_number, js_number_to_string, js_number_value, js_to_number};
-use morpheus_core::n3_tx::{create_invoke_script, ContractParam, FeedSigner, FeedTx};
+use neo_os_compute::js::{js_number, js_number_to_string, js_number_value, js_to_number};
+use neo_os_core::n3_tx::{create_invoke_script, ContractParam, FeedSigner, FeedTx};
 use sha2::{Digest, Sha256};
 
 use crate::fulfill::js_truthy;

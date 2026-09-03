@@ -8,7 +8,7 @@ boundaries:
 
 - `workers/neo-signer` is the only Neo private-key custody and signing
   authority. Its measured image is Rust-only.
-- `workers/nitro-enclave-host` plus `crates/morpheus-compute` own the measured
+- `workers/nitro-enclave-host` plus `crates/neo-os-compute` own the measured
   confidential execution frontier. `deploy/nitro/Dockerfile.enclave` contains
   only the Rust frontier and Rust PID 1 supervisor.
 - `workers/nitro-worker` remains a compatibility runtime for container/CVM
@@ -26,7 +26,7 @@ compute response; they cannot silently activate a second engine.
 
 ### Runtime ownership
 
-- `morpheus-compute` exposes keyless deterministic compute, game engines,
+- `neo-os-compute` exposes keyless deterministic compute, game engines,
   oracle helpers, NeoDID logic, policy, and sandbox primitives.
 - `nitro-enclave-host` owns HTTP authentication, route classification,
   one-shot allowlisted provisioning, Nitro Recipient KMS materialization,
@@ -236,8 +236,8 @@ The initial measured set is:
 
 - `workers/neo-signer/src/lib.rs` → `docs/SIGNER_SERVICE_V2.md`;
 - `workers/nitro-enclave-host/src/lib.rs` → this document;
-- `crates/morpheus-compute/src/lib.rs` → this document;
-- `crates/morpheus-compute/src/oracle/crypto.rs` →
+- `crates/neo-os-compute/src/lib.rs` → this document;
+- `crates/neo-os-compute/src/oracle/crypto.rs` →
   `docs/CRYPTO_OWNERSHIP.md`.
 
 Adding a security-critical Rust owner without adding its pair to the gate is a

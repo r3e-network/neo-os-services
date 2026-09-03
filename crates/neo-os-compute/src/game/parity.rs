@@ -380,7 +380,7 @@ fn frozen_js_parity_baseline_is_intact() {
     // parity driver would be testing a different corpus than the JS recorder.
     const MIRRORS: [(&str, &str); 1] = [(
         "workers/nitro-worker/src/game/engine-parity.goldens.json",
-        "crates/morpheus-compute/src/game/engine-parity.goldens.json",
+        "crates/neo-os-compute/src/game/engine-parity.goldens.json",
     )];
     // The baseline assets this crate depends on, and where each was frozen from.
     const ASSETS: [(&str, &str); 13] = [

@@ -12,8 +12,8 @@ const REQUIRED_DOCS = [
 const DOCUMENTATION_PAIRS = [
   ['workers/neo-signer/src/lib.rs', 'docs/SIGNER_SERVICE_V2.md'],
   ['workers/nitro-enclave-host/src/lib.rs', 'docs/RUST_SERVICE_MIGRATION.md'],
-  ['crates/morpheus-compute/src/lib.rs', 'docs/RUST_SERVICE_MIGRATION.md'],
-  ['crates/morpheus-compute/src/oracle/crypto.rs', 'docs/CRYPTO_OWNERSHIP.md'],
+  ['crates/neo-os-compute/src/lib.rs', 'docs/RUST_SERVICE_MIGRATION.md'],
+  ['crates/neo-os-compute/src/oracle/crypto.rs', 'docs/CRYPTO_OWNERSHIP.md'],
 ];
 const REQUIRED_DOCUMENTATION_SECTIONS = [
   'Overview',
@@ -126,8 +126,8 @@ export function auditRustMigration(root = process.cwd()) {
   const hostBin = 'workers/nitro-enclave-host/src/bin/enclave_host.rs';
   const routes = 'workers/nitro-enclave-host/src/routes.rs';
   const hostManifest = 'workers/nitro-enclave-host/Cargo.toml';
-  const coreLib = 'crates/morpheus-core/src/lib.rs';
-  const coreManifest = 'crates/morpheus-core/Cargo.toml';
+  const coreLib = 'crates/neo-os-core/src/lib.rs';
+  const coreManifest = 'crates/neo-os-core/Cargo.toml';
   const computeHost = 'workers/nitro-enclave-host/src/compute_execute.rs';
 
   for (const path of [hostLib, hostBin, routes, hostManifest, coreLib, coreManifest, computeHost]) {
@@ -168,25 +168,25 @@ export function auditRustMigration(root = process.cwd()) {
 
   const coreSource = `${read(root, coreLib)}\n${read(root, coreManifest)}`;
   reject(
-    'crates/morpheus-core',
+    'crates/neo-os-core',
     coreSource,
     /\b(?:aes-gcm|curve25519-dalek|hkdf)\b|mod confidential/,
     'consensus core contains oracle confidential-crypto ownership'
   );
-  if (existsSync(resolve(root, 'crates/morpheus-core/src/confidential.rs'))) {
+  if (existsSync(resolve(root, 'crates/neo-os-core/src/confidential.rs'))) {
     failures.push(
-      'crates/morpheus-core/src/confidential.rs: duplicate oracle envelope implementation exists'
+      'crates/neo-os-core/src/confidential.rs: duplicate oracle envelope implementation exists'
     );
   }
   requireMatch(
     computeHost,
     read(root, computeHost),
-    /morpheus_compute::oracle::crypto/,
+    /neo_os_compute::oracle::crypto/,
     'enclave compute must import the canonical oracle crypto owner'
   );
   for (const directory of [
-    'crates/morpheus-compute/src',
-    'crates/morpheus-core/src',
+    'crates/neo-os-compute/src',
+    'crates/neo-os-core/src',
     'workers/neo-signer/src',
     'workers/nitro-enclave-host/src',
   ]) {

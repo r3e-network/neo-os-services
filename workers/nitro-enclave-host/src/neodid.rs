@@ -1,6 +1,6 @@
 //! The `/neodid/*` fold — the Rust shape of the capability handlers
 //! (`workers/nitro-worker/src/neodid/index.js` + `capabilities.js`): the
-//! golden-vector-pinned `morpheus-compute::neodid` ticket flows run
+//! golden-vector-pinned `neo-os-compute::neodid` ticket flows run
 //! in-process, the digest is signed custody-side under the worker role, and
 //! the D5 signed envelope is composed here instead of forwarded to the
 //! keyless Node child.
@@ -34,12 +34,12 @@ use rsa::signature::Verifier;
 use rsa::RsaPublicKey;
 use sha2::Sha256;
 
-use morpheus_compute::core::{sanitize_error_message, EnvReader};
-use morpheus_compute::js::{js_first_truthy, js_trim_string};
-use morpheus_compute::neodid::{
+use neo_os_compute::core::{sanitize_error_message, EnvReader};
+use neo_os_compute::js::{js_first_truthy, js_trim_string};
+use neo_os_compute::neodid::{
     neodid_action_ticket, neodid_bind, neodid_recovery_ticket, NeoDidIo, Web3AuthVerifyRequest,
 };
-use morpheus_compute::stable_stringify::stable_stringify;
+use neo_os_compute::stable_stringify::stable_stringify;
 
 use crate::compute_execute::{
     build_tee_attestation, reject_caller_supplied_signing_key, resolve_confidential_payload,
@@ -134,7 +134,7 @@ fn handle_ticket(
     // the stable-stringified result bytes (a SECOND custody call) and binds
     // sha256 of them as output_hash / attestation_hash.
     let payload_bytes = stable_stringify(&result).into_bytes();
-    let output_hash = morpheus_core::sha256_hex(&payload_bytes);
+    let output_hash = neo_os_core::sha256_hex(&payload_bytes);
     let result_signed = sign_worker_hex(state, &network, &hex::encode(&payload_bytes))?;
     let tee_attestation = build_tee_attestation(state, &resolved, "custody", &output_hash);
 

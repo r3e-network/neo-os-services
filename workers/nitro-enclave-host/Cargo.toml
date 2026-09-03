@@ -11,7 +11,7 @@ description = "Rust-only Nitro enclave frontier: auth, compute, provisioning, at
 # machine, /attestation's binding, and the translation of signing intents into
 # custody calls over loopback. The
 # compute lanes are ported here phase by phase (5b-6) and run through the
-# golden-vector-pinned `morpheus-compute` crate in-process. The production
+# golden-vector-pinned `neo-os-compute` crate in-process. The production
 # binary contains no child-process or loopback execution fallback. The crate's
 # path dependencies are all security-critical (consensus primitives, the NSM/
 # KMS seam, and the compute engine), and no Node tooling ever sees this
@@ -27,8 +27,8 @@ axum = "0.8"
 base64 = "0.22"
 hex = "0.4"
 http = "1"
-morpheus-compute = { path = "../../crates/morpheus-compute" }
-morpheus-core = { path = "../../crates/morpheus-core" }
+neo-os-compute = { path = "../../crates/neo-os-compute" }
+neo-os-core = { path = "../../crates/neo-os-core" }
 nitro-attest = { path = "../../crates/nitro-attest" }
 # The custody signing plane's backing transport. Same version/features as
 # nitro-attest's, so the lockfile carries one tree: the host already trusted

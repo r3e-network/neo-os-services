@@ -97,14 +97,14 @@ fn resolve_attestation_public_key(
     (role.to_string(), public_key)
 }
 
-/// CBOR map lookup — `morpheus_core::cbor` keeps insertion-ordered entries
+/// CBOR map lookup — `neo_os_core::cbor` keeps insertion-ordered entries
 /// rather than a map type, so `payload.get(...)` has no direct equivalent.
 fn cbor_map_get<'a>(
-    value: &'a morpheus_core::cbor::CborValue,
+    value: &'a neo_os_core::cbor::CborValue,
     key: &str,
-) -> Option<&'a morpheus_core::cbor::CborValue> {
+) -> Option<&'a neo_os_core::cbor::CborValue> {
     match value {
-        morpheus_core::cbor::CborValue::Map(entries) => {
+        neo_os_core::cbor::CborValue::Map(entries) => {
             entries.iter().find(|(k, _)| k == key).map(|(_, v)| v)
         }
         _ => None,
@@ -115,16 +115,16 @@ fn cbor_map_get<'a>(
 /// simply omits the field — the document itself stays authoritative.
 pub fn extract_attestation_pcrs(document: &[u8]) -> serde_json::Map<String, serde_json::Value> {
     let mut out = serde_json::Map::new();
-    let Ok(payload) = morpheus_core::cbor::decode_cose_sign1_payload(document) else {
+    let Ok(payload) = neo_os_core::cbor::decode_cose_sign1_payload(document) else {
         return out;
     };
-    let Some(morpheus_core::cbor::CborValue::Map(entries)) = cbor_map_get(&payload, "pcrs") else {
+    let Some(neo_os_core::cbor::CborValue::Map(entries)) = cbor_map_get(&payload, "pcrs") else {
         return out;
     };
     for (index, value) in entries {
         let hex = match value {
-            morpheus_core::cbor::CborValue::Bytes(bytes) => hex::encode(bytes),
-            morpheus_core::cbor::CborValue::Text(text) => {
+            neo_os_core::cbor::CborValue::Bytes(bytes) => hex::encode(bytes),
+            neo_os_core::cbor::CborValue::Text(text) => {
                 let hex = normalize_hex(text);
                 if hex.is_empty() {
                     continue;

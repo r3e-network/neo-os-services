@@ -43,26 +43,26 @@ COPY Cargo.toml Cargo.lock ./
 COPY vendor ./vendor
 COPY workers/neo-signer/Cargo.toml workers/neo-signer/Cargo.toml
 COPY workers/nitro-enclave-host/Cargo.toml workers/nitro-enclave-host/Cargo.toml
-COPY crates/morpheus-core/Cargo.toml crates/morpheus-core/Cargo.toml
+COPY crates/neo-os-core/Cargo.toml crates/neo-os-core/Cargo.toml
 COPY crates/nitro-attest/Cargo.toml crates/nitro-attest/Cargo.toml
 COPY crates/nitro-init/Cargo.toml crates/nitro-init/Cargo.toml
-COPY crates/morpheus-compute/Cargo.toml crates/morpheus-compute/Cargo.toml
+COPY crates/neo-os-compute/Cargo.toml crates/neo-os-compute/Cargo.toml
 RUN mkdir -p workers/neo-signer/src/bin workers/nitro-enclave-host/src \
-      crates/morpheus-core/src crates/nitro-attest/src/bin crates/nitro-init/src \
-      crates/morpheus-compute/src \
+      crates/neo-os-core/src crates/nitro-attest/src/bin crates/nitro-init/src \
+      crates/neo-os-compute/src \
   && printf '' > workers/neo-signer/src/lib.rs \
   && printf 'fn main() {}\n' > workers/neo-signer/src/bin/signer_service.rs \
   && printf 'fn main() {}\n' > workers/nitro-enclave-host/src/main.rs \
-  && printf '' > crates/morpheus-core/src/lib.rs \
+  && printf '' > crates/neo-os-core/src/lib.rs \
   && printf '' > crates/nitro-attest/src/lib.rs \
   && printf 'fn main() {}\n' > crates/nitro-attest/src/bin/nsm-attest-rs.rs \
   && printf '' > crates/nitro-init/src/lib.rs \
   && printf 'fn main() {}\n' > crates/nitro-init/src/main.rs \
-  && printf '' > crates/morpheus-compute/src/lib.rs \
+  && printf '' > crates/neo-os-compute/src/lib.rs \
   && cargo fetch --locked
 
 COPY workers/neo-signer ./workers/neo-signer
-COPY crates/morpheus-core ./crates/morpheus-core
+COPY crates/neo-os-core ./crates/neo-os-core
 RUN cargo build --locked --release --bin signer_service
 
 # Stage 3: the signer service runtime. Its own image, built with

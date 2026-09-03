@@ -26,7 +26,7 @@ implemented in that measured runtime.
 The measured Rust frontier does **not** expose a complete Neo X signer:
 `workers/nitro-enclave-host` returns `503` for Neo X `/oracle/fulfill` and
 `/feed/sign`, and the Rust custody service currently stores Neo N3 P-256 keys
-only. `crates/morpheus-compute` contains secp256k1 verification/recovery for the
+only. `crates/neo-os-compute` contains secp256k1 verification/recovery for the
 message-reveal lane; that is not a signing or custody implementation.
 
 The older Node `enclave-server.mjs` contains an EVM signing prototype and KMS

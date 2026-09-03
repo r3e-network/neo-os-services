@@ -1,5 +1,5 @@
 [package]
-name = "morpheus-compute"
+name = "neo-os-compute"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -49,7 +49,7 @@ k256 = { version = "0.13", features = ["ecdsa"] }
 rsa = "0.9"
 # Ephemeral oracle key generation (dev fallback path).
 rand = "0.8"
-# stableStringify's ICU 'en' collation key sort (same deps as morpheus-core;
+# stableStringify's ICU 'en' collation key sort (same deps as neo-os-core;
 # compiled_data keeps the tables baked in for the offline enclave build).
 icu_collator = { version = "2", features = ["compiled_data"] }
 icu_locale_core = "2"

@@ -7,7 +7,7 @@
  * Two JS trees are the behavioural oracle for the Rust ports:
  *
  *   workers/nitro-worker    — the 11 game wrappers, whose sha256 IS `engineHash`
- *                             (pinned in `crates/morpheus-compute/src/game/
+ *                             (pinned in `crates/neo-os-compute/src/game/
  *                             registry.rs` ENGINE_MANIFEST) and whose recorded
  *                             op logs produced `engine-parity.goldens.json`.
  *   workers/morpheus-relayer — `router.js` / `neox.js`, the oracle behind the 8
@@ -39,7 +39,7 @@
  *   3. While a live source still exists, the frozen copy is byte-identical to
  *      it. This is the drift alarm: edit a wrapper without re-freezing and it
  *      fires here, in `cargo test` (see
- *      `crates/morpheus-compute/src/game/parity.rs`) and in CI.
+ *      `crates/neo-os-compute/src/game/parity.rs`) and in CI.
  *   4. Mirror pairs that must stay byte-identical (the engine goldens live in
  *      two places today) really are identical.
  *
@@ -119,7 +119,7 @@ const ASSETS = [
 const MIRRORS = [
   {
     left: 'workers/nitro-worker/src/game/engine-parity.goldens.json',
-    right: 'crates/morpheus-compute/src/game/engine-parity.goldens.json',
+    right: 'crates/neo-os-compute/src/game/engine-parity.goldens.json',
   },
 ];
 

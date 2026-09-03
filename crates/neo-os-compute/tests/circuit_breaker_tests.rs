@@ -3,7 +3,7 @@
 //! `now_ms` parameter, so every scenario drives the same transitions with an
 //! explicit timeline.
 
-use morpheus_compute::circuit_breaker::CircuitBreaker;
+use neo_os_compute::circuit_breaker::CircuitBreaker;
 use serde_json::Value;
 
 #[test]

@@ -1,7 +1,7 @@
 mod common;
 
 use common::load_family;
-use morpheus_core::cbor::{cbor_read, decode_cose_sign1, decode_cose_sign1_payload, CborValue};
+use neo_os_core::cbor::{cbor_read, decode_cose_sign1, decode_cose_sign1_payload, CborValue};
 
 /// Tag a decoded CborValue the same way the exporter's tagCbor does: byte
 /// strings become {__t:'bytes',hex}, undefined {__t:'undefined'}, everything
@@ -9,7 +9,7 @@ use morpheus_core::cbor::{cbor_read, decode_cose_sign1, decode_cose_sign1_payloa
 fn tag_cbor(value: &CborValue) -> serde_json::Value {
     match value {
         CborValue::Bytes(b) => {
-            serde_json::json!({ "__t": "bytes", "hex": morpheus_core::hex_encode(b) })
+            serde_json::json!({ "__t": "bytes", "hex": neo_os_core::hex_encode(b) })
         }
         CborValue::Undefined => serde_json::json!({ "__t": "undefined" }),
         CborValue::Null => serde_json::Value::Null,
@@ -65,12 +65,12 @@ fn cbor_family_matches_js_oracle() {
             if case.get("protected_header_hex").is_some() {
                 let decoded = decode_cose_sign1(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
                 assert_eq!(
-                    morpheus_core::hex_encode(&decoded.protected_header_bytes),
+                    neo_os_core::hex_encode(&decoded.protected_header_bytes),
                     case["protected_header_hex"].as_str().unwrap(),
                     "{name} protected bytes"
                 );
                 assert_eq!(
-                    morpheus_core::hex_encode(&decoded.payload_bytes),
+                    neo_os_core::hex_encode(&decoded.payload_bytes),
                     case["payload_bytes_hex"].as_str().unwrap(),
                     "{name} payload bytes"
                 );
@@ -80,7 +80,7 @@ fn cbor_family_matches_js_oracle() {
                     "{name} payload map"
                 );
                 assert_eq!(
-                    morpheus_core::hex_encode(&decoded.signature),
+                    neo_os_core::hex_encode(&decoded.signature),
                     case["signature_hex"].as_str().unwrap(),
                     "{name} signature"
                 );

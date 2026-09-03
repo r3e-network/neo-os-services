@@ -1568,7 +1568,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "morpheus-compute"
+name = "neo-os-chain-evm"
+version = "0.1.0"
+
+[[package]]
+name = "neo-os-chain-n3"
+version = "0.1.0"
+
+[[package]]
+name = "neo-os-compute"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
@@ -1594,7 +1602,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "morpheus-core"
+name = "neo-os-core"
 version = "0.1.0"
 dependencies = [
  "hex",
@@ -1604,14 +1612,6 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
 ]
-
-[[package]]
-name = "neo-os-chain-evm"
-version = "0.1.0"
-
-[[package]]
-name = "neo-os-chain-n3"
-version = "0.1.0"
 
 [[package]]
 name = "neo-os-games"
@@ -1638,7 +1638,7 @@ dependencies = [
  "hkdf",
  "http-body-util",
  "k256",
- "morpheus-core",
+ "neo-os-core",
  "nitro-attest",
  "p256",
  "prometheus",
@@ -1685,8 +1685,8 @@ dependencies = [
  "base64",
  "hex",
  "http",
- "morpheus-compute",
- "morpheus-core",
+ "neo-os-compute",
+ "neo-os-core",
  "nitro-attest",
  "rand 0.8.7",
  "reqwest",

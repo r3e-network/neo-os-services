@@ -6,10 +6,10 @@
 //! Composition is the JS one, verbatim:
 //!   - query/smart-fetch: `buildOracleResponse` (oracle/fetch.js:321) —
 //!     `resolveConfidentialPayload` → `normalizeTargetChain` →
-//!     `performOracleFetch` (the morpheus-compute port, D4 typed upstream
+//!     `performOracleFetch` (the neo-os-compute port, D4 typed upstream
 //!     failures) → `executeProgrammableOracle` (script lane in-process via
 //!     boa `ScriptMode::Oracle`; the wasm lane fails closed with
-//!     [`morpheus_compute::standalone::WASM_DEFERRED_MESSAGE`], the same
+//!     [`neo_os_compute::standalone::WASM_DEFERRED_MESSAGE`], the same
 //!     policy the Phase 6 compute fold set) → the D5 signed envelope over
 //!     the custody worker key.
 //!   - decrypt: `handleOracleDecrypt` (capabilities.js:166) — envelope
@@ -33,33 +33,33 @@
 //!     derivation is not compiled; sealed-keystore fallback therefore fails
 //!     closed.
 
-use morpheus_compute::core::{
+use neo_os_compute::core::{
     capped_duration_ms, enforce_serialized_size_limit, normalize_target_chain, read_env,
     resolve_max_bytes, sanitize_error_message, EnvReader,
 };
-use morpheus_compute::oracle::crypto::{
+use neo_os_compute::oracle::crypto::{
     format_key_material, resolve_confidential_payload as resolve_confidential_payload_js,
     resolve_encrypted_confidential_payload, resolve_encrypted_confidential_ref,
     resolve_encrypted_payload, resolve_encrypted_token_ref, resolve_oracle_key_material,
     KeystoreReadError, OracleKeyMaterial,
 };
-use morpheus_compute::oracle::fetch::{perform_oracle_fetch, TransportFailure, UpstreamFetchError};
-use morpheus_compute::oracle::message_reveal::{
+use neo_os_compute::oracle::fetch::{perform_oracle_fetch, TransportFailure, UpstreamFetchError};
+use neo_os_compute::oracle::message_reveal::{
     handle_message_reveal, handle_oracle_decrypt as handle_oracle_decrypt_port,
     read_message_from_chain, ReadMessageRequest,
 };
-use morpheus_compute::oracle::providers::ProviderIo;
-use morpheus_compute::script::{
+use neo_os_compute::oracle::providers::ProviderIo;
+use neo_os_compute::script::{
     assert_untrusted_scripts_enabled, resolve_script_source, run_script_with_timeout,
     validate_user_script_source, ScriptMode, ScriptRun,
 };
-use morpheus_compute::standalone::{
+use neo_os_compute::standalone::{
     assert_wasm_module_size_allowed, resolve_wasm_module_base64, WASM_DEFERRED_MESSAGE,
 };
-use morpheus_compute::transport::{HttpRequest, HttpResponse};
-use morpheus_core::js_value::JsValue;
-use morpheus_core::sha256_hex;
-use morpheus_core::stable_stringify::stable_stringify;
+use neo_os_compute::transport::{HttpRequest, HttpResponse};
+use neo_os_core::js_value::JsValue;
+use neo_os_core::sha256_hex;
+use neo_os_core::stable_stringify::stable_stringify;
 use serde_json::{json, Value as Json};
 
 use crate::compute_execute::{
@@ -563,7 +563,7 @@ fn perform_fetch(
     transport: &dyn Fn(&HttpRequest) -> Result<HttpResponse, String>,
     resolved: &Json,
     key: &OracleKeyMaterial,
-) -> Result<morpheus_compute::oracle::fetch::FetchOutcome, FetchError> {
+) -> Result<neo_os_compute::oracle::fetch::FetchOutcome, FetchError> {
     let io_plane = state.oracle_io.as_ref();
     // The port's DnsLookup error is `()` (ssrf.rs `DnsLookupError`): the
     // resolution diagnostics never reach the user — the port renders its own

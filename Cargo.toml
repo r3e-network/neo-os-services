@@ -3,8 +3,8 @@ resolver = "2"
 members = [
     "workers/neo-signer",
     "workers/nitro-enclave-host",
-    "crates/morpheus-core",
-    "crates/morpheus-compute",
+    "crates/neo-os-core",
+    "crates/neo-os-compute",
     "crates/nitro-attest",
     "crates/nitro-init",
     "crates/neo-os-games",

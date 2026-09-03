@@ -61,30 +61,30 @@ COPY Cargo.toml Cargo.lock ./
 # note in Cargo.toml); a patch whose path is missing fails the build, so the
 # vendored manifests must land before fetch, next to the other manifests.
 COPY vendor ./vendor
-COPY crates/morpheus-core/Cargo.toml crates/morpheus-core/Cargo.toml
+COPY crates/neo-os-core/Cargo.toml crates/neo-os-core/Cargo.toml
 COPY crates/nitro-attest/Cargo.toml crates/nitro-attest/Cargo.toml
 COPY crates/nitro-init/Cargo.toml crates/nitro-init/Cargo.toml
-COPY crates/morpheus-compute/Cargo.toml crates/morpheus-compute/Cargo.toml
+COPY crates/neo-os-compute/Cargo.toml crates/neo-os-compute/Cargo.toml
 COPY workers/neo-signer/Cargo.toml workers/neo-signer/Cargo.toml
 COPY workers/nitro-enclave-host/Cargo.toml workers/nitro-enclave-host/Cargo.toml
 # Stub sources so `cargo build --locked` can resolve the graph before the real
 # sources land (the classic dummy-main pre-compile trick; manifests are the
 # resolution input, the stubs just let the fetch layer cache).
-RUN mkdir -p crates/morpheus-core/src crates/nitro-attest/src crates/nitro-init/src \
-      crates/morpheus-compute/src \
+RUN mkdir -p crates/neo-os-core/src crates/nitro-attest/src crates/nitro-init/src \
+      crates/neo-os-compute/src \
       workers/neo-signer/src workers/nitro-enclave-host/src \
-  && echo "pub fn placeholder() {}" > crates/morpheus-core/src/lib.rs \
+  && echo "pub fn placeholder() {}" > crates/neo-os-core/src/lib.rs \
   && echo "pub fn placeholder() {}" > crates/nitro-attest/src/lib.rs \
   && echo "pub fn placeholder() {}" > crates/nitro-init/src/lib.rs \
-  && echo "pub fn placeholder() {}" > crates/morpheus-compute/src/lib.rs \
+  && echo "pub fn placeholder() {}" > crates/neo-os-compute/src/lib.rs \
   && echo "pub fn placeholder() {}" > workers/neo-signer/src/lib.rs \
   && echo "fn main() {}" > workers/nitro-enclave-host/src/main.rs
 RUN cargo fetch --locked
 
-COPY crates/morpheus-core/src crates/morpheus-core/src
+COPY crates/neo-os-core/src crates/neo-os-core/src
 COPY crates/nitro-attest/src crates/nitro-attest/src
 COPY crates/nitro-init/src crates/nitro-init/src
-COPY crates/morpheus-compute/src crates/morpheus-compute/src
+COPY crates/neo-os-compute/src crates/neo-os-compute/src
 COPY workers/neo-signer/src workers/neo-signer/src
 COPY workers/nitro-enclave-host/src workers/nitro-enclave-host/src
 # Release build of the two binaries this image runs: the frontier and its PID 1

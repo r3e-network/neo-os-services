@@ -10,10 +10,10 @@ included in a measured Rust Nitro image.
 
 The ownership split is:
 
-- `morpheus-core` owns deterministic consensus encoding, hashing, and envelope
+- `neo-os-core` owns deterministic consensus encoding, hashing, and envelope
   construction. It performs no key generation, key custody, encryption, or
   signing.
-- `morpheus-compute::oracle::crypto` owns the oracle
+- `neo-os-compute::oracle::crypto` owns the oracle
   X25519-HKDF-SHA256-AES-256-GCM format, encrypted-reference claims, sealed
   oracle keystores, and oracle key-material resolution.
 - `neo-signer::crypto` owns Neo N3 P-256 signatures, verification scripts,
@@ -28,7 +28,7 @@ The ownership split is:
 
 ## API Reference
 
-### `morpheus_core`
+### `neo_os_core`
 
 - `sha256(bytes)` and `sha256_hex(bytes)` are the shared non-secret digest
   helpers.
@@ -37,7 +37,7 @@ The ownership split is:
 - The crate must not depend on AES, elliptic-curve key agreement, password
   hashing, or signing crates.
 
-### `morpheus_compute::oracle::crypto`
+### `neo_os_compute::oracle::crypto`
 
 - `parse_configured_oracle_key_material` reads the supported configured X25519
   key representations.
@@ -75,7 +75,7 @@ declared seams.
 The enclave host consumes the canonical oracle implementation directly:
 
 ```rust
-use morpheus_compute::oracle::crypto::{
+use neo_os_compute::oracle::crypto::{
     parse_configured_oracle_key_material, resolve_confidential_payload,
 };
 
@@ -98,9 +98,9 @@ Authorization: Bearer <sign-only credential>
 
 ### One format, one implementation
 
-The old `morpheus-core::confidential` module and
-`morpheus-compute::oracle::crypto` both implemented the oracle v2 envelope.
-`morpheus-compute` is the authority because it owns the complete lifecycle:
+The old `neo-os-core::confidential` module and
+`neo-os-compute::oracle::crypto` both implemented the oracle v2 envelope.
+`neo-os-compute` is the authority because it owns the complete lifecycle:
 configured material, sealed keystores, encrypted references, decryption, and
 payload merge semantics. The enclave host imports that implementation.
 
@@ -135,7 +135,7 @@ Changes to a cryptographic owner require:
 5. a dependency audit confirming that the removed implementation also removed
    its now-unused primitive dependencies.
 
-`crates/morpheus-compute/tests/vectors/confidential-envelope-v2-client.json`
+`crates/neo-os-compute/tests/vectors/confidential-envelope-v2-client.json`
 is the shared client-to-Rust decryption vector. Both the client encoder suite
 and the Rust oracle owner must consume that same file; copying its values into
 a second fixture is not sufficient parity evidence.

@@ -2,7 +2,7 @@
 
 ## Overview
 
-`morpheus-compute` is the keyless Rust execution library used by the Nitro
+`neo-os-compute` is the keyless Rust execution library used by the Nitro
 enclave host. It ports deterministic compute, oracle-read, NeoDID, policy,
 game, routing, and sandbox behavior from the legacy JavaScript worker while
 keeping custody and HTTP serving outside the crate.
@@ -26,7 +26,7 @@ custody calls, and process lifecycle.
 ## Usage Examples
 
 ```rust
-use morpheus_compute::compute::execute_builtin_compute;
+use neo_os_compute::compute::execute_builtin_compute;
 use serde_json::json;
 
 let env = |_name: &str| None;

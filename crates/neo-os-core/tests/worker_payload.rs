@@ -1,7 +1,7 @@
 mod common;
 
 use common::{canonical, canonical_file, load_family, to_js};
-use morpheus_core::kernel::build_worker_payload;
+use neo_os_core::kernel::build_worker_payload;
 
 #[test]
 fn worker_payloads_match_js_oracle() {
@@ -18,7 +18,7 @@ fn worker_payloads_match_js_oracle() {
 
         let built = build_worker_payload(chain, request_type, &payload, &request_id, &context);
         assert_eq!(
-            canonical(&morpheus_core::js_value::JsValue::Object(built)),
+            canonical(&neo_os_core::js_value::JsValue::Object(built)),
             canonical_file(case.get("payload").expect("payload")),
             "{name}"
         );

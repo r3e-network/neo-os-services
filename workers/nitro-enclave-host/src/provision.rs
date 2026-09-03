@@ -274,7 +274,7 @@ fn materialize_oracle_key(
         "MORPHEUS_ORACLE_KEY_SOURCE" => Some("nitro-recipient-kms".to_string()),
         _ => None,
     };
-    let parsed = morpheus_compute::oracle::crypto::parse_configured_oracle_key_material(&lookup)
+    let parsed = neo_os_compute::oracle::crypto::parse_configured_oracle_key_material(&lookup)
         .map_err(|_| {
             http_error(
                 400,
@@ -287,7 +287,7 @@ fn materialize_oracle_key(
                 format!("{ORACLE_KMS_CIPHERTEXT_ENV} KMS envelope key_material is invalid"),
             )
         })?;
-    morpheus_compute::oracle::crypto::validate_oracle_key_material(&parsed).map_err(|_| {
+    neo_os_compute::oracle::crypto::validate_oracle_key_material(&parsed).map_err(|_| {
         http_error(
             400,
             format!("{ORACLE_KMS_CIPHERTEXT_ENV} KMS envelope key_material is invalid"),

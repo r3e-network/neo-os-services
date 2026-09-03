@@ -1,5 +1,5 @@
 //! `/neodid/*` fold tests — the Phase 8 flip. The ticket flows run in-process
-//! (`morpheus-compute::neodid`), the digest signature and the envelope
+//! (`neo-os-compute::neodid`), the digest signature and the envelope
 //! signature both come from the custody `SignerPlane` (FakeSigner here), and
 //! the passthrough bridge stays EMPTY: an assertion that it never recorded a
 //! forward pins the in-process property. The RS256 verifier is exercised
@@ -83,8 +83,8 @@ fn recomputed_output_hash(response: &serde_json::Value) -> String {
             result.insert(key.clone(), value.clone());
         }
     }
-    morpheus_core::sha256_hex(
-        morpheus_compute::stable_stringify::stable_stringify(&serde_json::Value::Object(result))
+    neo_os_core::sha256_hex(
+        neo_os_compute::stable_stringify::stable_stringify(&serde_json::Value::Object(result))
             .as_bytes(),
     )
 }
@@ -106,7 +106,7 @@ fn bind_ticket_flows_in_process_with_both_custody_signatures() {
 
     // The flow fields — the master nullifier recomputed from the salt spec.
     let master_nullifier =
-        morpheus_compute::neodid::compute_master_nullifier("twitter", "uid-1", &expected_salt());
+        neo_os_compute::neodid::compute_master_nullifier("twitter", "uid-1", &expected_salt());
     assert_eq!(response["provider"], "twitter");
     assert_eq!(response["claim_type"], "Generic_Claim");
     assert_eq!(
@@ -117,7 +117,7 @@ fn bind_ticket_flows_in_process_with_both_custody_signatures() {
         response["metadata_hash"],
         format!(
             "0x{}",
-            morpheus_compute::neodid::compute_metadata_hash(None)
+            neo_os_compute::neodid::compute_metadata_hash(None)
         )
     );
     let digest = response["digest"].as_str().expect("digest").to_string();
@@ -252,7 +252,7 @@ fn action_ticket_returns_the_action_nullifier() {
     )
     .expect("action lane executes");
     assert_eq!(response["mode"], "neodid_action_ticket");
-    let action_nullifier = morpheus_compute::neodid::compute_action_nullifier(
+    let action_nullifier = neo_os_compute::neodid::compute_action_nullifier(
         "twitter",
         "uid-1",
         "claim-daily",

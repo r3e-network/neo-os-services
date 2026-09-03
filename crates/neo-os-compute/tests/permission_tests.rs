@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use morpheus_compute::permission::{
+use neo_os_compute::permission::{
     is_child_process_permission_model_enabled, parse_allow_net, validate_child_process_permissions,
 };
 

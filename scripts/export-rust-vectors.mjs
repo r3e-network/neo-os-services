@@ -1,6 +1,6 @@
 /**
  * Export golden vectors from the Node implementations into
- * crates/morpheus-core/tests/vectors/ so the Rust ports are verified against
+ * crates/neo-os-core/tests/vectors/ so the Rust ports are verified against
  * the JS oracle byte-for-byte (see docs/SIGNER_SERVICE.md sibling plan: a hash
  * mismatch is a merge blocker).
  *
@@ -47,7 +47,7 @@ import {
 import { buildNeoXDigest, resolveResultBytesHex } from '../workers/morpheus-relayer/src/neox.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const vectorsDir = path.join(repoRoot, 'crates', 'morpheus-core', 'tests', 'vectors');
+const vectorsDir = path.join(repoRoot, 'crates', 'neo-os-core', 'tests', 'vectors');
 
 // ── value tagging ────────────────────────────────────────────────────────────
 

@@ -2,7 +2,7 @@
 //! resolution, regex precedence, action fallback, network prefixes and
 //! workflow metadata, against the same registry order.
 
-use morpheus_compute::capabilities::{
+use neo_os_compute::capabilities::{
     capability_by_id, is_routable_path, list_capability_features, resolve_capability,
     resolve_route_name, MatchedBy,
     RoutePattern::{self, Exact, Suffix},

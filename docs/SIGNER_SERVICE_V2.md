@@ -64,7 +64,7 @@ Implemented in the first v2 increment:
    fulfillment lanes in-process; its Node child, loopback bridge, and passthrough
    manifest are removed, and unmigrated lanes refuse without I/O;
 8. oracle X25519/HKDF/AES-GCM ownership is consolidated in
-   `morpheus-compute::oracle::crypto`, with one client/Rust golden vector, while
+   `neo-os-compute::oracle::crypto`, with one client/Rust golden vector, while
    `neo-signer` delegates Base58Check to the maintained `bs58` crate.
 9. raw signing has its own `raw_sign` caller capability. A policy with `allow_raw`
    cannot also grant transaction or consensus authority; raw compatibility consumers

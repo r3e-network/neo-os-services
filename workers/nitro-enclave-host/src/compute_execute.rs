@@ -2,7 +2,7 @@
 //! (compute/index.js:814-846): confidential-payload resolution, builtin or
 //! standalone compute, and the D5 signed-result envelope, all inside the
 //! measured boundary. Compute runs IN-PROCESS through the golden-vector-pinned
-//! `morpheus-compute` ports instead of the keyless Node child; signing goes
+//! `neo-os-compute` ports instead of the keyless Node child; signing goes
 //! through the custody `SignerPlane` (worker role) and attestation through the
 //! host's own `/attestation` binding — the exact objects the child fetched
 //! over loopback from the 8787 server.
@@ -10,7 +10,7 @@
 //! Divergences from the Node child, all deliberate:
 //!   - Encrypted-confidential REFS (remote claim over Supabase REST) fail
 //!     closed with a 503: the fold has no egress. A direct ciphertext
-//!     decrypts through the canonical `morpheus_compute::oracle::crypto`
+//!     decrypts through the canonical `neo_os_compute::oracle::crypto`
 //!     implementation.
 //!   - Sealed-keystore (Secrets Manager) and ephemeral oracle key material
 //!     fail closed with 503s; only configured-env material decrypts. The
@@ -33,17 +33,17 @@
 
 use std::collections::BTreeMap;
 
-use morpheus_compute::compute::execute_builtin_compute;
-use morpheus_compute::core::EnvReader;
-use morpheus_compute::oracle::crypto::{
+use neo_os_compute::compute::execute_builtin_compute;
+use neo_os_compute::core::EnvReader;
+use neo_os_compute::oracle::crypto::{
     parse_configured_oracle_key_material,
     resolve_confidential_payload as resolve_confidential_payload_canonical,
     resolve_encrypted_confidential_payload, resolve_encrypted_confidential_ref, OracleKeyMaterial,
     ORACLE_ENVELOPE_ALGORITHM, PLAINTEXT_ORACLE_KEY_PRODUCTION_ERROR,
 };
-use morpheus_compute::standalone::execute_standalone_compute;
-use morpheus_core::js_value::JsValue;
-use morpheus_core::stable_stringify::stable_stringify;
+use neo_os_compute::standalone::execute_standalone_compute;
+use neo_os_core::js_value::JsValue;
+use neo_os_core::stable_stringify::stable_stringify;
 
 use crate::attestation::handle_attestation;
 use crate::fulfill::{js_coerce, js_truthy, trim_string, truthy_trimmed};
@@ -132,7 +132,7 @@ pub fn handle_compute_execute(
     // enclave-resident worker key (the custody plane), never caller material.
     reject_caller_supplied_signing_key(&payload)?;
     let payload_bytes = stable_stringify(&JsValue::from_json(&result)).into_bytes();
-    let output_hash = morpheus_core::sha256_hex(&payload_bytes);
+    let output_hash = neo_os_core::sha256_hex(&payload_bytes);
     let network = resolve_payload_network(state, &payload);
     let signed = sign_worker_bytes(state, &network, &payload_bytes)?;
     let tee_attestation = build_tee_attestation(state, &payload, "worker", &output_hash);
@@ -180,7 +180,7 @@ pub(crate) fn resolve_confidential_payload(
     }
     let key = oracle_key_material(overlay, env_trim)?;
     let env_lookup = |name: &str| overlay.get(name).cloned();
-    let unavailable_transport = |_: &morpheus_compute::transport::HttpRequest| {
+    let unavailable_transport = |_: &neo_os_compute::transport::HttpRequest| {
         Err("encrypted-confidential ref transport is unavailable".to_string())
     };
     resolve_confidential_payload_canonical(payload, &env_lookup, &unavailable_transport, &key)

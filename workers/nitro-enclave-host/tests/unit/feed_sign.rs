@@ -1,6 +1,6 @@
 //! `/feed/sign` fold tests. The tx message and plan-decision vectors were
 //! harvested from the repo's own neon-js + feed-pusher (the same pins the
-//! `morpheus-core` n3_tx suite carries), so a divergence from the merged
+//! `neo-os-core` n3_tx suite carries), so a divergence from the merged
 //! Node server's byte stream fails here first. Everything drives the pure
 //! dispatch with the support doubles — no socket, no network.
 

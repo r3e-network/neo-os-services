@@ -13,10 +13,10 @@
 use super::*;
 use crate::state::BridgeReply;
 use base64::Engine as _;
-use morpheus_core::digest::{build_fulfillment_digest_bytes, FulfillmentOptions};
-use morpheus_core::envelope::{build_onchain_result_envelope, encode_fulfillment_result};
-use morpheus_core::js_value::JsValue;
-use morpheus_core::kernel::resolve_kernel_intent;
+use neo_os_core::digest::{build_fulfillment_digest_bytes, FulfillmentOptions};
+use neo_os_core::envelope::{build_onchain_result_envelope, encode_fulfillment_result};
+use neo_os_core::js_value::JsValue;
+use neo_os_core::kernel::resolve_kernel_intent;
 use serde_json::json;
 
 #[path = "support.rs"]

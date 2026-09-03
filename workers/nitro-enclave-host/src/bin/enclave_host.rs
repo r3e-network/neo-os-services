@@ -52,22 +52,22 @@ struct ProductionOracleIo;
 impl nitro_enclave_host::state::OracleIo for ProductionOracleIo {
     fn fetch(
         &self,
-        request: &morpheus_compute::transport::HttpRequest,
-    ) -> Result<morpheus_compute::transport::HttpResponse, String> {
-        morpheus_compute::transport::reqwest_transport()(request)
+        request: &neo_os_compute::transport::HttpRequest,
+    ) -> Result<neo_os_compute::transport::HttpResponse, String> {
+        neo_os_compute::transport::reqwest_transport()(request)
     }
 
     fn dns_lookup(
         &self,
         host: &str,
-    ) -> Result<Vec<morpheus_compute::ssrf::ResolvedAddress>, String> {
+    ) -> Result<Vec<neo_os_compute::ssrf::ResolvedAddress>, String> {
         use std::net::ToSocketAddrs;
         Ok((host, 0u16)
             .to_socket_addrs()
             .map_err(|error| error.to_string())?
             .map(|socket| {
                 let ip = socket.ip();
-                morpheus_compute::ssrf::ResolvedAddress {
+                neo_os_compute::ssrf::ResolvedAddress {
                     address: ip.to_string(),
                     family: if ip.is_ipv4() { 4 } else { 6 },
                 }
@@ -111,7 +111,7 @@ fn main() {
         kms: Box::new(ProductionKms::new()),
         price: Box::new(TwelveDataPrices::new(overlay.clone())),
         oracle_io: Box::new(ProductionOracleIo),
-        oracle_runtime: Mutex::new(morpheus_compute::oracle::providers::ProviderRuntime::default()),
+        oracle_runtime: Mutex::new(neo_os_compute::oracle::providers::ProviderRuntime::default()),
         kms_diag: Mutex::new(KmsDiag::default()),
     });
 

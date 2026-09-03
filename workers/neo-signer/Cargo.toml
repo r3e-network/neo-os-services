@@ -8,7 +8,7 @@ description = "Neo N3 signer service: key custody, per-key policy, caller auth a
 # This crate is a member of the repository-root cargo workspace (see the root
 # Cargo.toml) and is otherwise deliberate about its dependencies: no npm
 # workspace membership, and exactly two path dependencies, both on the
-# security-critical path — `morpheus-core` for the chain primitives the
+# security-critical path — `neo-os-core` for the chain primitives the
 # attested identity binds, and `nitro-attest` for the NSM/KMS/CMS seam the
 # enclave boot and provision paths walk. See docs/SIGNER_SERVICE.md for the
 # ownership boundary it implements.
@@ -42,7 +42,7 @@ fs2 = "0.4.3"
 hex = "0.4"
 hkdf = "0.12"
 k256 = { version = "0.13", features = ["ecdsa", "sha256"] }
-morpheus-core = { path = "../../crates/morpheus-core" }
+neo-os-core = { path = "../../crates/neo-os-core" }
 nitro-attest = { path = "../../crates/nitro-attest" }
 p256 = { version = "0.13", features = ["ecdsa"] }
 rlp = "0.5"

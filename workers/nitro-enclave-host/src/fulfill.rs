@@ -2,7 +2,7 @@
 //! (enclave-server.mjs:742-912): compute, then encode, digest, sign, and attest
 //! ATOMICALLY inside the measured boundary. The digest and
 //! result envelope are NEVER re-derived here — they come from
-//! `morpheus_core`'s golden-vector-tested canonical builders, fed the same
+//! `neo_os_core`'s golden-vector-tested canonical builders, fed the same
 //! inputs the relayer feeds them, so the produced signature is identical to
 //! the relayer-path signature. The signer never sees a caller-supplied
 //! `data_hex` for this route: only the fold's own digest is signed.
@@ -18,11 +18,11 @@
 //!   - `BigInt` values in a JsValue (the builders never put one in these
 //!     envelopes) serialize to their decimal string, not `null`.
 
-use morpheus_core::digest::{build_fulfillment_digest_bytes, FulfillmentOptions};
-use morpheus_core::envelope::{build_onchain_result_envelope, encode_fulfillment_result};
-use morpheus_core::js_number::json_number_to_string;
-use morpheus_core::js_value::{js_trim, JsValue};
-use morpheus_core::kernel::{build_worker_payload, resolve_kernel_intent};
+use neo_os_core::digest::{build_fulfillment_digest_bytes, FulfillmentOptions};
+use neo_os_core::envelope::{build_onchain_result_envelope, encode_fulfillment_result};
+use neo_os_core::js_number::json_number_to_string;
+use neo_os_core::js_value::{js_trim, JsValue};
+use neo_os_core::kernel::{build_worker_payload, resolve_kernel_intent};
 
 use crate::attestation::{handle_attestation, normalize_hex};
 use crate::http_error;

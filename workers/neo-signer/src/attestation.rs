@@ -131,10 +131,10 @@ impl BootGuard {
 /// the guard's whole value is that a document it cannot understand fails
 /// closed.
 pub fn extract_pcr0(document: &[u8]) -> Result<[u8; PCR0_LEN], String> {
-    let decoded = morpheus_core::cbor::decode_cose_sign1(document)
+    let decoded = neo_os_core::cbor::decode_cose_sign1(document)
         .map_err(|error| format!("attestation document: {}", error.0))?;
     let entries = match &decoded.payload {
-        morpheus_core::cbor::CborValue::Map(entries) => entries,
+        neo_os_core::cbor::CborValue::Map(entries) => entries,
         _ => return Err("attestation payload is not a map".to_string()),
     };
     let pcrs = entries
@@ -142,7 +142,7 @@ pub fn extract_pcr0(document: &[u8]) -> Result<[u8; PCR0_LEN], String> {
         .find(|(name, _)| name == "pcrs")
         .ok_or_else(|| "attestation payload has no pcrs map".to_string())?;
     let registers = match &pcrs.1 {
-        morpheus_core::cbor::CborValue::Map(registers) => registers,
+        neo_os_core::cbor::CborValue::Map(registers) => registers,
         _ => return Err("attestation pcrs is not a map".to_string()),
     };
     // The CBOR reader names integer keys by their `String()` form, so register

@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
-use morpheus_compute::overload::{AcquireOutcome, OverloadGuard};
+use neo_os_compute::overload::{AcquireOutcome, OverloadGuard};
 use serde_json::json;
 
 fn env_from(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {

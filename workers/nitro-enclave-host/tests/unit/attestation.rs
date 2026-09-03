@@ -16,7 +16,7 @@ use support::*;
 /// sig: b''] with payload map {pcrs: {0: <bytes>}}.
 fn cose_sign1_with_pcr0(pcr0: &[u8]) -> Vec<u8> {
     // payload map: { "pcrs": { 0: bytes } } — hand-encoded, matching the
-    // NSM document shape morpheus-core's cbor reader decodes.
+    // NSM document shape neo-os-core's cbor reader decodes.
     let mut payload = vec![0xA1]; // map(1)
     payload.push(0x64); // text(4)
     payload.extend_from_slice(b"pcrs");

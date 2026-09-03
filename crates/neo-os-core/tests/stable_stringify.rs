@@ -1,8 +1,8 @@
 mod common;
 
 use common::{keys_object, load_family};
-use morpheus_core::js_value::JsValue;
-use morpheus_core::stable_stringify::stable_stringify;
+use neo_os_core::js_value::JsValue;
+use neo_os_core::stable_stringify::stable_stringify;
 
 /// The pinned golden vectors (stable-stringify-vectors.mjs) — the oracle
 /// self-checks against them at export time; here we prove the Rust port

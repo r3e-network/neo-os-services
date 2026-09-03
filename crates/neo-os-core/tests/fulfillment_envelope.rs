@@ -1,8 +1,8 @@
 mod common;
 
 use common::{canonical, canonical_file, load_family, to_js};
-use morpheus_core::envelope::{build_onchain_result_envelope, encode_fulfillment_result};
-use morpheus_core::js_value::JsValue;
+use neo_os_core::envelope::{build_onchain_result_envelope, encode_fulfillment_result};
+use neo_os_core::js_value::JsValue;
 use serde_json::{json, Value};
 
 #[test]
@@ -73,7 +73,7 @@ fn trimmed_envelopes_respect_byte_budget() {
         let request_type = case["request_type"].as_str().unwrap_or_default();
         let response = to_js(case.get("worker_response").expect("worker_response"));
         let envelope = build_onchain_result_envelope(request_type, &response, None);
-        let measured = morpheus_core::js_json::measure_bytes(&JsValue::Object(envelope));
+        let measured = neo_os_core::js_json::measure_bytes(&JsValue::Object(envelope));
         assert!(
             measured <= 900,
             "{}: envelope exceeds the on-chain budget ({measured} bytes)",

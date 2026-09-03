@@ -10,7 +10,7 @@ description = "NeoX EVM chain adapter: RPC client, confidential-envelope decode,
 # confidential envelope decoding, fulfillment digest binding, signing, receipt
 # waiting, revert normalization.
 #
-# Digest parity is already vector-locked via crates/morpheus-core vectors
+# Digest parity is already vector-locked via crates/neo-os-core vectors
 # (neox_digest.json); this crate composes on top of it.
 #
 # Dependency note: alloy (not ethers-rs) when the real client lands in T03 —

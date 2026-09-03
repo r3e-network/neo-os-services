@@ -6,7 +6,7 @@
 //! emission; the `Base64Bytes` cases pin the `ContractParam.byteArray`
 //! base64-decode quirk.
 
-use morpheus_core::n3_tx::{create_invoke_script, ContractParam, FeedSigner, FeedTx};
+use neo_os_core::n3_tx::{create_invoke_script, ContractParam, FeedSigner, FeedTx};
 
 const FEED_N3_CONTRACT: [u8; 20] = [
     0x03, 0x01, 0x3f, 0x49, 0xc4, 0x2a, 0x14, 0x54, 0x6c, 0x8b, 0xbe, 0x58, 0xf9, 0xd4, 0x34, 0xc3,

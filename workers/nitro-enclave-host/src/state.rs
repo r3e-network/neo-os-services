@@ -102,13 +102,13 @@ pub trait PriceSource: Send + Sync {
 pub trait OracleIo: Send + Sync {
     fn fetch(
         &self,
-        request: &morpheus_compute::transport::HttpRequest,
-    ) -> Result<morpheus_compute::transport::HttpResponse, String>;
+        request: &neo_os_compute::transport::HttpRequest,
+    ) -> Result<neo_os_compute::transport::HttpResponse, String>;
 
     fn dns_lookup(
         &self,
         host: &str,
-    ) -> Result<Vec<morpheus_compute::ssrf::ResolvedAddress>, String>;
+    ) -> Result<Vec<neo_os_compute::ssrf::ResolvedAddress>, String>;
 
     fn now_ms(&self) -> u64;
 
@@ -182,7 +182,7 @@ pub struct AppState {
     /// The oracle provider caches (config TTL, response TTL, circuit
     /// breakers) — module-level Maps in the JS worker, shared across
     /// requests here.
-    pub oracle_runtime: Mutex<morpheus_compute::oracle::providers::ProviderRuntime>,
+    pub oracle_runtime: Mutex<neo_os_compute::oracle::providers::ProviderRuntime>,
     pub kms_diag: Mutex<KmsDiag>,
 }
 

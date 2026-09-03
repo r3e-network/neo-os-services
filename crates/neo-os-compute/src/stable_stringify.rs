@@ -1,5 +1,5 @@
 //! Deterministic JSON stringification over `serde_json::Value` — the same
-//! semantics as morpheus-core's JsValue port and the JS `stableStringify`
+//! semantics as neo-os-core's JsValue port and the JS `stableStringify`
 //! oracle (packages/shared/src/utils.js):
 //! - object keys sort under an ICU 'en' tertiary collation (caseFirst false),
 //!   NOT code-unit order — matching every digest the worker has ever signed;
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn golden_vectors_match_the_js_oracle() {
-        let raw = include_str!("../../morpheus-core/tests/vectors/stable_stringify.json");
+        let raw = include_str!("../../neo-os-core/tests/vectors/stable_stringify.json");
         let document: Json = serde_json::from_str(raw).expect("vector file parses");
         let cases = document
             .get("cases")

@@ -430,7 +430,7 @@ impl PriceSource for FakePrice {
 /// clock, and a no-op sleep. The production impl lives in
 /// `bin/enclave_host.rs` (real reqwest + `ToSocketAddrs`); the default canned
 /// address `93.184.216.34` is the same public-IP convention the
-/// morpheus-compute fetch fixtures use.
+/// neo-os-compute fetch fixtures use.
 #[derive(Clone, Default)]
 pub struct FakeOracleIo {
     inner: Arc<FakeOracleIoInner>,
@@ -438,14 +438,14 @@ pub struct FakeOracleIo {
 
 #[derive(Default)]
 struct FakeOracleIoInner {
-    reply: Mutex<Option<Result<morpheus_compute::transport::HttpResponse, String>>>,
+    reply: Mutex<Option<Result<neo_os_compute::transport::HttpResponse, String>>>,
     fetches: Mutex<Vec<(String, String)>>,
-    addresses: Mutex<Vec<morpheus_compute::ssrf::ResolvedAddress>>,
+    addresses: Mutex<Vec<neo_os_compute::ssrf::ResolvedAddress>>,
     now_ms: AtomicU64,
 }
 
 impl FakeOracleIo {
-    pub fn with_reply(reply: morpheus_compute::transport::HttpResponse) -> Self {
+    pub fn with_reply(reply: neo_os_compute::transport::HttpResponse) -> Self {
         let io = FakeOracleIo::default();
         io.set_reply(Ok(reply));
         io
@@ -457,7 +457,7 @@ impl FakeOracleIo {
         io
     }
 
-    pub fn set_reply(&self, reply: Result<morpheus_compute::transport::HttpResponse, String>) {
+    pub fn set_reply(&self, reply: Result<neo_os_compute::transport::HttpResponse, String>) {
         *self.inner.reply.lock().expect("reply lock") = Some(reply);
     }
 
@@ -465,7 +465,7 @@ impl FakeOracleIo {
         *self.inner.addresses.lock().expect("addresses lock") = addresses
             .iter()
             .map(
-                |(address, family)| morpheus_compute::ssrf::ResolvedAddress {
+                |(address, family)| neo_os_compute::ssrf::ResolvedAddress {
                     address: (*address).to_string(),
                     family: *family,
                 },
@@ -488,8 +488,8 @@ impl FakeOracleIo {
 impl OracleIo for FakeOracleIo {
     fn fetch(
         &self,
-        request: &morpheus_compute::transport::HttpRequest,
-    ) -> Result<morpheus_compute::transport::HttpResponse, String> {
+        request: &neo_os_compute::transport::HttpRequest,
+    ) -> Result<neo_os_compute::transport::HttpResponse, String> {
         self.inner
             .fetches
             .lock()
@@ -497,7 +497,7 @@ impl OracleIo for FakeOracleIo {
             .push((request.method.clone(), request.url.clone()));
         match self.inner.reply.lock().expect("reply lock").clone() {
             Some(reply) => reply,
-            None => Ok(morpheus_compute::transport::HttpResponse {
+            None => Ok(neo_os_compute::transport::HttpResponse {
                 status: 200,
                 headers: vec![("content-type".to_string(), "application/json".to_string())],
                 body: b"{}".to_vec(),
@@ -508,10 +508,10 @@ impl OracleIo for FakeOracleIo {
     fn dns_lookup(
         &self,
         _host: &str,
-    ) -> Result<Vec<morpheus_compute::ssrf::ResolvedAddress>, String> {
+    ) -> Result<Vec<neo_os_compute::ssrf::ResolvedAddress>, String> {
         let addresses = self.inner.addresses.lock().expect("addresses lock").clone();
         if addresses.is_empty() {
-            return Ok(vec![morpheus_compute::ssrf::ResolvedAddress {
+            return Ok(vec![neo_os_compute::ssrf::ResolvedAddress {
                 address: "93.184.216.34".to_string(),
                 family: 4,
             }]);
@@ -560,7 +560,7 @@ pub fn test_state(
         kms: Box::new(kms.clone()),
         price: Box::new(price.clone()),
         oracle_io: Box::new(oracle_io.clone()),
-        oracle_runtime: Mutex::new(morpheus_compute::oracle::providers::ProviderRuntime::default()),
+        oracle_runtime: Mutex::new(neo_os_compute::oracle::providers::ProviderRuntime::default()),
         kms_diag: Mutex::new(KmsDiag::default()),
     };
     TestState {

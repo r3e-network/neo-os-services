@@ -132,7 +132,7 @@ number fingerprint; path-, variable-, or rule-wide historical suppression is
 not acceptable.
 
 The public client/Rust confidential-envelope fixture at
-`crates/morpheus-compute/tests/vectors/confidential-envelope-v2-client.json`
+`crates/neo-os-compute/tests/vectors/confidential-envelope-v2-client.json`
 necessarily contains one deterministic PKCS#8 private key. Its allowlist is
 restricted to that exact path and the `private_key_pkcs8` JSON field; any other
 secret-looking value in the same file or field elsewhere still fails scanning.
