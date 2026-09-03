@@ -1,0 +1,281 @@
+{
+  "family": "retry_backoff",
+  "cases": [
+    {
+      "name": "attempt 1 rng 0",
+      "base_delay_ms": {
+        "__t": "number",
+        "v": "1000"
+      },
+      "max_delay_ms": {
+        "__t": "number",
+        "v": "8000"
+      },
+      "attempts": {
+        "__t": "number",
+        "v": "1"
+      },
+      "rng": {
+        "__t": "number",
+        "v": "0"
+      },
+      "expected": {
+        "__t": "number",
+        "v": "500"
+      }
+    },
+    {
+      "name": "attempt 1 rng near 1",
+      "base_delay_ms": {
+        "__t": "number",
+        "v": "1000"
+      },
+      "max_delay_ms": {
+        "__t": "number",
+        "v": "8000"
+      },
+      "attempts": {
+        "__t": "number",
+        "v": "1"
+      },
+      "rng": {
+        "__t": "number",
+        "v": "0.999999"
+      },
+      "expected": {
+        "__t": "number",
+        "v": "1000"
+      }
+    },
+    {
+      "name": "doubling attempt 4",
+      "base_delay_ms": {
+        "__t": "number",
+        "v": "1000"
+      },
+      "max_delay_ms": {
+        "__t": "number",
+        "v": "8000"
+      },
+      "attempts": {
+        "__t": "number",
+        "v": "4"
+      },
+      "rng": {
+        "__t": "number",
+        "v": "0.25"
+      },
+      "expected": {
+        "__t": "number",
+        "v": "5000"
+      }
+    },
+    {
+      "name": "ceiling clamp attempt 12",
+      "base_delay_ms": {
+        "__t": "number",
+        "v": "1000"
+      },
+      "max_delay_ms": {
+        "__t": "number",
+        "v": "8000"
+      },
+      "attempts": {
+        "__t": "number",
+        "v": "12"
+      },
+      "rng": {
+        "__t": "number",
+        "v": "0.5"
+      },
+      "expected": {
+        "__t": "number",
+        "v": "6000"
+      }
+    },
+    {
+      "name": "base above max",
+      "base_delay_ms": {
+        "__t": "number",
+        "v": "9000"
+      },
+      "max_delay_ms": {
+        "__t": "number",
+        "v": "8000"
+      },
+      "attempts": {
+        "__t": "number",
+        "v": "1"
+      },
+      "rng": {
+        "__t": "number",
+        "v": "0.5"
+      },
+      "expected": {
+        "__t": "number",
+        "v": "6000"
+      }
+    },
+    {
+      "name": "attempt 0 floors the exponent",
+      "base_delay_ms": {
+        "__t": "number",
+        "v": "1000"
+      },
+      "max_delay_ms": {
+        "__t": "number",
+        "v": "8000"
+      },
+      "attempts": {
+        "__t": "number",
+        "v": "0"
+      },
+      "rng": {
+        "__t": "number",
+        "v": "0.5"
+      },
+      "expected": {
+        "__t": "number",
+        "v": "750"
+      }
+    },
+    {
+      "name": "fractional attempts",
+      "base_delay_ms": {
+        "__t": "number",
+        "v": "1000"
+      },
+      "max_delay_ms": {
+        "__t": "number",
+        "v": "8000"
+      },
+      "attempts": {
+        "__t": "number",
+        "v": "2.5"
+      },
+      "rng": {
+        "__t": "number",
+        "v": "0.5"
+      },
+      "expected": {
+        "__t": "number",
+        "v": "2121"
+      }
+    },
+    {
+      "name": "defaults 5000/10000 attempt 3",
+      "base_delay_ms": {
+        "__t": "number",
+        "v": "5000"
+      },
+      "max_delay_ms": {
+        "__t": "number",
+        "v": "10000"
+      },
+      "attempts": {
+        "__t": "number",
+        "v": "3"
+      },
+      "rng": {
+        "__t": "number",
+        "v": "0.75"
+      },
+      "expected": {
+        "__t": "number",
+        "v": "8750"
+      }
+    },
+    {
+      "name": "half-jitter rounding boundary",
+      "base_delay_ms": {
+        "__t": "number",
+        "v": "1001"
+      },
+      "max_delay_ms": {
+        "__t": "number",
+        "v": "600000"
+      },
+      "attempts": {
+        "__t": "number",
+        "v": "1"
+      },
+      "rng": {
+        "__t": "number",
+        "v": "0"
+      },
+      "expected": {
+        "__t": "number",
+        "v": "501"
+      }
+    },
+    {
+      "name": "max ceiling exact",
+      "base_delay_ms": {
+        "__t": "number",
+        "v": "1000"
+      },
+      "max_delay_ms": {
+        "__t": "number",
+        "v": "32"
+      },
+      "attempts": {
+        "__t": "number",
+        "v": "5"
+      },
+      "rng": {
+        "__t": "number",
+        "v": "0"
+      },
+      "expected": {
+        "__t": "number",
+        "v": "16"
+      }
+    },
+    {
+      "name": "large base equals max",
+      "base_delay_ms": {
+        "__t": "number",
+        "v": "600000"
+      },
+      "max_delay_ms": {
+        "__t": "number",
+        "v": "600000"
+      },
+      "attempts": {
+        "__t": "number",
+        "v": "1"
+      },
+      "rng": {
+        "__t": "number",
+        "v": "0.999"
+      },
+      "expected": {
+        "__t": "number",
+        "v": "599700"
+      }
+    },
+    {
+      "name": "sub-second base",
+      "base_delay_ms": {
+        "__t": "number",
+        "v": "250"
+      },
+      "max_delay_ms": {
+        "__t": "number",
+        "v": "600000"
+      },
+      "attempts": {
+        "__t": "number",
+        "v": "7"
+      },
+      "rng": {
+        "__t": "number",
+        "v": "0.125"
+      },
+      "expected": {
+        "__t": "number",
+        "v": "9000"
+      }
+    }
+  ]
+}

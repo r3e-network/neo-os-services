@@ -1,0 +1,4105 @@
+{
+  "family": "state_prune",
+  "cases": [
+    {
+      "name": "empty state snapshot pins the metrics contract",
+      "ops": [
+        {
+          "op": "snapshot",
+          "now_ms": 1768478400000
+        }
+      ],
+      "expected_returns": [
+        {
+          "__t": "object",
+          "v": {
+            "ticks_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "events_scanned_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "events_processed_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "events_failed_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "duplicates_skipped_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "retries_scheduled_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "retries_exhausted_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "worker_calls_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "worker_failures_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "fulfill_success_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "fulfill_failure_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "claim_conflicts_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "stale_reclaims_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "discovery_failures_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "reconciliation_failures_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "durable_claim_skipped_during_backoff_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "manual_actions_loaded_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "feed_sync_runs_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "feed_sync_success_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "feed_sync_error_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "feed_sync_skipped_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "backpressure_deferred_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "backpressure_retry_skipped_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "retry_queue_overflow_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "last_feed_sync_started_at": {
+              "__t": "null"
+            },
+            "last_feed_sync_completed_at": {
+              "__t": "null"
+            },
+            "last_feed_sync_success_at": {
+              "__t": "null"
+            },
+            "last_feed_sync_duration_ms": {
+              "__t": "null"
+            },
+            "last_tick_started_at": {
+              "__t": "null"
+            },
+            "last_tick_completed_at": {
+              "__t": "null"
+            },
+            "last_tick_duration_ms": {
+              "__t": "null"
+            },
+            "last_run_snapshot_persisted_at": {
+              "__t": "null"
+            },
+            "last_run_snapshot_error_at": {
+              "__t": "null"
+            },
+            "last_fulfill_latency_ms": {
+              "__t": "null"
+            },
+            "labeled_failures": {
+              "__t": "array",
+              "v": []
+            },
+            "retry_queue_sizes": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "number",
+                  "v": "0"
+                },
+                "neox": {
+                  "__t": "number",
+                  "v": "0"
+                }
+              }
+            },
+            "dead_letter_sizes": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "number",
+                  "v": "0"
+                },
+                "neox": {
+                  "__t": "number",
+                  "v": "0"
+                }
+              }
+            },
+            "checkpoints": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "null"
+                },
+                "neox": {
+                  "__t": "null"
+                }
+              }
+            },
+            "request_checkpoints": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "null"
+                },
+                "neox": {
+                  "__t": "null"
+                }
+              }
+            },
+            "oldest_retry_age_seconds": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "null"
+                },
+                "neox": {
+                  "__t": "null"
+                }
+              }
+            },
+            "oldest_dead_letter_age_seconds": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "null"
+                },
+                "neox": {
+                  "__t": "null"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "expected_state": {
+        "__t": "object",
+        "v": {
+          "version": {
+            "__t": "number",
+            "v": "2"
+          },
+          "updated_at": {
+            "__t": "null"
+          },
+          "neo_n3": {
+            "__t": "object",
+            "v": {
+              "last_block": {
+                "__t": "null"
+              },
+              "last_request_id": {
+                "__t": "null"
+              },
+              "last_discovery_at": {
+                "__t": "number",
+                "v": "0"
+              },
+              "processed_records": {
+                "__t": "object",
+                "v": {}
+              },
+              "processed_order": {
+                "__t": "array",
+                "v": []
+              },
+              "retry_queue": {
+                "__t": "array",
+                "v": []
+              },
+              "dead_letters": {
+                "__t": "array",
+                "v": []
+              }
+            }
+          },
+          "neox": {
+            "__t": "object",
+            "v": {
+              "last_block": {
+                "__t": "null"
+              },
+              "last_request_id": {
+                "__t": "null"
+              },
+              "last_discovery_at": {
+                "__t": "number",
+                "v": "0"
+              },
+              "processed_records": {
+                "__t": "object",
+                "v": {}
+              },
+              "processed_order": {
+                "__t": "array",
+                "v": []
+              },
+              "retry_queue": {
+                "__t": "array",
+                "v": []
+              },
+              "dead_letters": {
+                "__t": "array",
+                "v": []
+              }
+            }
+          },
+          "metrics": {
+            "__t": "object",
+            "v": {
+              "ticks_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_scanned_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_processed_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_failed_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "duplicates_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retries_scheduled_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retries_exhausted_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "worker_calls_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "worker_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "fulfill_success_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "fulfill_failure_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "claim_conflicts_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "stale_reclaims_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "discovery_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "reconciliation_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "durable_claim_skipped_during_backoff_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "manual_actions_loaded_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_runs_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_success_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_error_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "backpressure_deferred_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "backpressure_retry_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retry_queue_overflow_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "last_feed_sync_started_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_completed_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_success_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_duration_ms": {
+                "__t": "null"
+              },
+              "last_tick_started_at": {
+                "__t": "null"
+              },
+              "last_tick_completed_at": {
+                "__t": "null"
+              },
+              "last_tick_duration_ms": {
+                "__t": "null"
+              },
+              "last_run_snapshot_persisted_at": {
+                "__t": "null"
+              },
+              "last_run_snapshot_error_at": {
+                "__t": "null"
+              },
+              "last_fulfill_latency_ms": {
+                "__t": "null"
+              },
+              "labeled_failures": {
+                "__t": "object",
+                "v": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "build event key mixed operators",
+      "ops": [
+        {
+          "op": "build_key",
+          "event": {
+            "chain": "neo_n3",
+            "requestType": "oracle/query",
+            "requestId": 0,
+            "txHash": "",
+            "logIndex": 0,
+            "blockNumber": 42
+          }
+        },
+        {
+          "op": "build_key",
+          "event": {
+            "chain": "neo_n3",
+            "requestType": "oracle/query",
+            "requestId": "7",
+            "txHash": "0xabc",
+            "logIndex": null,
+            "blockNumber": null
+          }
+        },
+        {
+          "op": "build_key"
+        }
+      ],
+      "expected_returns": [
+        {
+          "__t": "string",
+          "v": "neo_n3:0::0:42"
+        },
+        {
+          "__t": "string",
+          "v": "neo_n3:7:0xabc::"
+        },
+        {
+          "__t": "string",
+          "v": "unknown:0:::"
+        }
+      ],
+      "expected_state": {
+        "__t": "object",
+        "v": {
+          "version": {
+            "__t": "number",
+            "v": "2"
+          },
+          "updated_at": {
+            "__t": "null"
+          },
+          "neo_n3": {
+            "__t": "object",
+            "v": {
+              "last_block": {
+                "__t": "null"
+              },
+              "last_request_id": {
+                "__t": "null"
+              },
+              "last_discovery_at": {
+                "__t": "number",
+                "v": "0"
+              },
+              "processed_records": {
+                "__t": "object",
+                "v": {}
+              },
+              "processed_order": {
+                "__t": "array",
+                "v": []
+              },
+              "retry_queue": {
+                "__t": "array",
+                "v": []
+              },
+              "dead_letters": {
+                "__t": "array",
+                "v": []
+              }
+            }
+          },
+          "neox": {
+            "__t": "object",
+            "v": {
+              "last_block": {
+                "__t": "null"
+              },
+              "last_request_id": {
+                "__t": "null"
+              },
+              "last_discovery_at": {
+                "__t": "number",
+                "v": "0"
+              },
+              "processed_records": {
+                "__t": "object",
+                "v": {}
+              },
+              "processed_order": {
+                "__t": "array",
+                "v": []
+              },
+              "retry_queue": {
+                "__t": "array",
+                "v": []
+              },
+              "dead_letters": {
+                "__t": "array",
+                "v": []
+              }
+            }
+          },
+          "metrics": {
+            "__t": "object",
+            "v": {
+              "ticks_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_scanned_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_processed_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_failed_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "duplicates_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retries_scheduled_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retries_exhausted_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "worker_calls_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "worker_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "fulfill_success_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "fulfill_failure_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "claim_conflicts_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "stale_reclaims_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "discovery_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "reconciliation_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "durable_claim_skipped_during_backoff_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "manual_actions_loaded_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_runs_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_success_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_error_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "backpressure_deferred_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "backpressure_retry_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retry_queue_overflow_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "last_feed_sync_started_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_completed_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_success_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_duration_ms": {
+                "__t": "null"
+              },
+              "last_tick_started_at": {
+                "__t": "null"
+              },
+              "last_tick_completed_at": {
+                "__t": "null"
+              },
+              "last_tick_duration_ms": {
+                "__t": "null"
+              },
+              "last_run_snapshot_persisted_at": {
+                "__t": "null"
+              },
+              "last_run_snapshot_error_at": {
+                "__t": "null"
+              },
+              "last_fulfill_latency_ms": {
+                "__t": "null"
+              },
+              "labeled_failures": {
+                "__t": "object",
+                "v": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "schedule retry backoff then exhaust",
+      "ops": [
+        {
+          "op": "schedule_retry",
+          "chain": "neo_n3",
+          "event": {
+            "chain": "neo_n3",
+            "requestType": "oracle/query",
+            "requestId": "41",
+            "txHash": "0xabc",
+            "logIndex": 3,
+            "blockNumber": 100
+          },
+          "config": {
+            "maxRetries": 2,
+            "retryBaseDelayMs": 1000,
+            "retryMaxDelayMs": 8000,
+            "retryQueueLimit": 0,
+            "deadLetterLimit": 500
+          },
+          "rng": 0.25,
+          "now_ms": 1768478400000
+        },
+        {
+          "op": "schedule_retry",
+          "chain": "neo_n3",
+          "event": {
+            "chain": "neo_n3",
+            "requestType": "oracle/query",
+            "requestId": "41",
+            "txHash": "0xabc",
+            "logIndex": 3,
+            "blockNumber": 100
+          },
+          "config": {
+            "maxRetries": 2,
+            "retryBaseDelayMs": 1000,
+            "retryMaxDelayMs": 8000,
+            "retryQueueLimit": 0,
+            "deadLetterLimit": 500
+          },
+          "rng": 0.25,
+          "now_ms": 1768478401000
+        },
+        {
+          "op": "schedule_retry",
+          "chain": "neo_n3",
+          "event": {
+            "chain": "neo_n3",
+            "requestType": "oracle/query",
+            "requestId": "41",
+            "txHash": "0xabc",
+            "logIndex": 3,
+            "blockNumber": 100
+          },
+          "config": {
+            "maxRetries": 2,
+            "retryBaseDelayMs": 1000,
+            "retryMaxDelayMs": 8000,
+            "retryQueueLimit": 0,
+            "deadLetterLimit": 500
+          },
+          "rng": 0.25,
+          "now_ms": 1768478402000
+        },
+        {
+          "op": "collect_active",
+          "chain": "neo_n3"
+        }
+      ],
+      "expected_returns": [
+        {
+          "__t": "object",
+          "v": {
+            "status": {
+              "__t": "string",
+              "v": "scheduled"
+            },
+            "key": {
+              "__t": "string",
+              "v": "neo_n3:41:0xabc:3:100"
+            },
+            "item": {
+              "__t": "object",
+              "v": {
+                "key": {
+                  "__t": "string",
+                  "v": "neo_n3:41:0xabc:3:100"
+                },
+                "event": {
+                  "__t": "object",
+                  "v": {
+                    "chain": {
+                      "__t": "string",
+                      "v": "neo_n3"
+                    },
+                    "requestType": {
+                      "__t": "string",
+                      "v": "oracle/query"
+                    },
+                    "requestId": {
+                      "__t": "string",
+                      "v": "41"
+                    },
+                    "txHash": {
+                      "__t": "string",
+                      "v": "0xabc"
+                    },
+                    "logIndex": {
+                      "__t": "number",
+                      "v": "3"
+                    },
+                    "blockNumber": {
+                      "__t": "number",
+                      "v": "100"
+                    }
+                  }
+                },
+                "attempts": {
+                  "__t": "number",
+                  "v": "1"
+                },
+                "next_retry_at": {
+                  "__t": "number",
+                  "v": "1768478400625"
+                },
+                "first_failed_at": {
+                  "__t": "string",
+                  "v": "2026-01-15T12:00:00.000Z"
+                },
+                "updated_at": {
+                  "__t": "string",
+                  "v": "2026-01-15T12:00:00.000Z"
+                },
+                "last_error": {
+                  "__t": "string",
+                  "v": "boom"
+                }
+              }
+            }
+          }
+        },
+        {
+          "__t": "object",
+          "v": {
+            "status": {
+              "__t": "string",
+              "v": "scheduled"
+            },
+            "key": {
+              "__t": "string",
+              "v": "neo_n3:41:0xabc:3:100"
+            },
+            "item": {
+              "__t": "object",
+              "v": {
+                "key": {
+                  "__t": "string",
+                  "v": "neo_n3:41:0xabc:3:100"
+                },
+                "event": {
+                  "__t": "object",
+                  "v": {
+                    "chain": {
+                      "__t": "string",
+                      "v": "neo_n3"
+                    },
+                    "requestType": {
+                      "__t": "string",
+                      "v": "oracle/query"
+                    },
+                    "requestId": {
+                      "__t": "string",
+                      "v": "41"
+                    },
+                    "txHash": {
+                      "__t": "string",
+                      "v": "0xabc"
+                    },
+                    "logIndex": {
+                      "__t": "number",
+                      "v": "3"
+                    },
+                    "blockNumber": {
+                      "__t": "number",
+                      "v": "100"
+                    }
+                  }
+                },
+                "attempts": {
+                  "__t": "number",
+                  "v": "2"
+                },
+                "next_retry_at": {
+                  "__t": "number",
+                  "v": "1768478402250"
+                },
+                "first_failed_at": {
+                  "__t": "string",
+                  "v": "2026-01-15T12:00:00.000Z"
+                },
+                "updated_at": {
+                  "__t": "string",
+                  "v": "2026-01-15T12:00:01.000Z"
+                },
+                "last_error": {
+                  "__t": "string",
+                  "v": "boom"
+                }
+              }
+            }
+          }
+        },
+        {
+          "__t": "object",
+          "v": {
+            "status": {
+              "__t": "string",
+              "v": "exhausted"
+            },
+            "key": {
+              "__t": "string",
+              "v": "neo_n3:41:0xabc:3:100"
+            },
+            "attempts": {
+              "__t": "number",
+              "v": "3"
+            },
+            "error": {
+              "__t": "string",
+              "v": "boom"
+            }
+          }
+        },
+        {
+          "__t": "array",
+          "v": []
+        }
+      ],
+      "expected_state": {
+        "__t": "object",
+        "v": {
+          "version": {
+            "__t": "number",
+            "v": "2"
+          },
+          "updated_at": {
+            "__t": "null"
+          },
+          "neo_n3": {
+            "__t": "object",
+            "v": {
+              "last_block": {
+                "__t": "null"
+              },
+              "last_request_id": {
+                "__t": "null"
+              },
+              "last_discovery_at": {
+                "__t": "number",
+                "v": "0"
+              },
+              "processed_records": {
+                "__t": "object",
+                "v": {}
+              },
+              "processed_order": {
+                "__t": "array",
+                "v": []
+              },
+              "retry_queue": {
+                "__t": "array",
+                "v": []
+              },
+              "dead_letters": {
+                "__t": "array",
+                "v": []
+              }
+            }
+          },
+          "neox": {
+            "__t": "object",
+            "v": {
+              "last_block": {
+                "__t": "null"
+              },
+              "last_request_id": {
+                "__t": "null"
+              },
+              "last_discovery_at": {
+                "__t": "number",
+                "v": "0"
+              },
+              "processed_records": {
+                "__t": "object",
+                "v": {}
+              },
+              "processed_order": {
+                "__t": "array",
+                "v": []
+              },
+              "retry_queue": {
+                "__t": "array",
+                "v": []
+              },
+              "dead_letters": {
+                "__t": "array",
+                "v": []
+              }
+            }
+          },
+          "metrics": {
+            "__t": "object",
+            "v": {
+              "ticks_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_scanned_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_processed_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_failed_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "duplicates_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retries_scheduled_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retries_exhausted_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "worker_calls_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "worker_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "fulfill_success_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "fulfill_failure_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "claim_conflicts_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "stale_reclaims_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "discovery_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "reconciliation_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "durable_claim_skipped_during_backoff_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "manual_actions_loaded_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_runs_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_success_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_error_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "backpressure_deferred_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "backpressure_retry_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retry_queue_overflow_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "last_feed_sync_started_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_completed_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_success_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_duration_ms": {
+                "__t": "null"
+              },
+              "last_tick_started_at": {
+                "__t": "null"
+              },
+              "last_tick_completed_at": {
+                "__t": "null"
+              },
+              "last_tick_duration_ms": {
+                "__t": "null"
+              },
+              "last_run_snapshot_persisted_at": {
+                "__t": "null"
+              },
+              "last_run_snapshot_error_at": {
+                "__t": "null"
+              },
+              "last_fulfill_latency_ms": {
+                "__t": "null"
+              },
+              "labeled_failures": {
+                "__t": "object",
+                "v": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "retry queue limit sheds oldest into dead letters",
+      "ops": [
+        {
+          "op": "enqueue_retry",
+          "chain": "neo_n3",
+          "event": {
+            "chain": "neo_n3",
+            "requestType": "oracle/query",
+            "requestId": "1",
+            "txHash": "0xabc",
+            "logIndex": 3,
+            "blockNumber": 100
+          },
+          "options": {
+            "attempts": 1
+          },
+          "now_ms": 1768478400000
+        },
+        {
+          "op": "enqueue_retry",
+          "chain": "neo_n3",
+          "event": {
+            "chain": "neo_n3",
+            "requestType": "rng",
+            "requestId": "2",
+            "txHash": "0xabc",
+            "logIndex": 3,
+            "blockNumber": 100
+          },
+          "options": {
+            "attempts": 2,
+            "last_error": "second"
+          },
+          "now_ms": 1768478400010
+        },
+        {
+          "op": "enqueue_retry",
+          "chain": "neox",
+          "event": {
+            "chain": "neox",
+            "requestType": "oracle/query",
+            "requestId": "3",
+            "txHash": "0xabc",
+            "logIndex": 3,
+            "blockNumber": 100
+          },
+          "options": {},
+          "now_ms": 1768478400020
+        },
+        {
+          "op": "enforce_limit",
+          "chain": "neo_n3",
+          "limits": {
+            "retryQueueLimit": 2,
+            "deadLetterLimit": 500
+          },
+          "now_ms": 1768478400030
+        },
+        {
+          "op": "snapshot",
+          "now_ms": 1768478400030
+        }
+      ],
+      "expected_returns": [
+        {
+          "__t": "object",
+          "v": {
+            "key": {
+              "__t": "string",
+              "v": "neo_n3:1:0xabc:3:100"
+            },
+            "event": {
+              "__t": "object",
+              "v": {
+                "chain": {
+                  "__t": "string",
+                  "v": "neo_n3"
+                },
+                "requestType": {
+                  "__t": "string",
+                  "v": "oracle/query"
+                },
+                "requestId": {
+                  "__t": "string",
+                  "v": "1"
+                },
+                "txHash": {
+                  "__t": "string",
+                  "v": "0xabc"
+                },
+                "logIndex": {
+                  "__t": "number",
+                  "v": "3"
+                },
+                "blockNumber": {
+                  "__t": "number",
+                  "v": "100"
+                }
+              }
+            },
+            "attempts": {
+              "__t": "number",
+              "v": "1"
+            },
+            "next_retry_at": {
+              "__t": "number",
+              "v": "1768478400000"
+            },
+            "first_failed_at": {
+              "__t": "string",
+              "v": "2026-01-15T12:00:00.000Z"
+            },
+            "updated_at": {
+              "__t": "string",
+              "v": "2026-01-15T12:00:00.000Z"
+            },
+            "last_error": {
+              "__t": "null"
+            },
+            "manual_action": {
+              "__t": "null"
+            },
+            "finalize_only": {
+              "__t": "bool",
+              "v": false
+            },
+            "terminal_error": {
+              "__t": "null"
+            },
+            "prepared_fulfillment": {
+              "__t": "null"
+            },
+            "durable_claimed": {
+              "__t": "bool",
+              "v": false
+            }
+          }
+        },
+        {
+          "__t": "object",
+          "v": {
+            "key": {
+              "__t": "string",
+              "v": "neo_n3:2:0xabc:3:100"
+            },
+            "event": {
+              "__t": "object",
+              "v": {
+                "chain": {
+                  "__t": "string",
+                  "v": "neo_n3"
+                },
+                "requestType": {
+                  "__t": "string",
+                  "v": "rng"
+                },
+                "requestId": {
+                  "__t": "string",
+                  "v": "2"
+                },
+                "txHash": {
+                  "__t": "string",
+                  "v": "0xabc"
+                },
+                "logIndex": {
+                  "__t": "number",
+                  "v": "3"
+                },
+                "blockNumber": {
+                  "__t": "number",
+                  "v": "100"
+                }
+              }
+            },
+            "attempts": {
+              "__t": "number",
+              "v": "2"
+            },
+            "next_retry_at": {
+              "__t": "number",
+              "v": "1768478400010"
+            },
+            "first_failed_at": {
+              "__t": "string",
+              "v": "2026-01-15T12:00:00.010Z"
+            },
+            "updated_at": {
+              "__t": "string",
+              "v": "2026-01-15T12:00:00.010Z"
+            },
+            "last_error": {
+              "__t": "string",
+              "v": "second"
+            },
+            "manual_action": {
+              "__t": "null"
+            },
+            "finalize_only": {
+              "__t": "bool",
+              "v": false
+            },
+            "terminal_error": {
+              "__t": "null"
+            },
+            "prepared_fulfillment": {
+              "__t": "null"
+            },
+            "durable_claimed": {
+              "__t": "bool",
+              "v": false
+            }
+          }
+        },
+        {
+          "__t": "object",
+          "v": {
+            "key": {
+              "__t": "string",
+              "v": "neox:3:0xabc:3:100"
+            },
+            "event": {
+              "__t": "object",
+              "v": {
+                "chain": {
+                  "__t": "string",
+                  "v": "neox"
+                },
+                "requestType": {
+                  "__t": "string",
+                  "v": "oracle/query"
+                },
+                "requestId": {
+                  "__t": "string",
+                  "v": "3"
+                },
+                "txHash": {
+                  "__t": "string",
+                  "v": "0xabc"
+                },
+                "logIndex": {
+                  "__t": "number",
+                  "v": "3"
+                },
+                "blockNumber": {
+                  "__t": "number",
+                  "v": "100"
+                }
+              }
+            },
+            "attempts": {
+              "__t": "number",
+              "v": "0"
+            },
+            "next_retry_at": {
+              "__t": "number",
+              "v": "1768478400020"
+            },
+            "first_failed_at": {
+              "__t": "string",
+              "v": "2026-01-15T12:00:00.020Z"
+            },
+            "updated_at": {
+              "__t": "string",
+              "v": "2026-01-15T12:00:00.020Z"
+            },
+            "last_error": {
+              "__t": "null"
+            },
+            "manual_action": {
+              "__t": "null"
+            },
+            "finalize_only": {
+              "__t": "bool",
+              "v": false
+            },
+            "terminal_error": {
+              "__t": "null"
+            },
+            "prepared_fulfillment": {
+              "__t": "null"
+            },
+            "durable_claimed": {
+              "__t": "bool",
+              "v": false
+            }
+          }
+        },
+        {
+          "__t": "number",
+          "v": "0"
+        },
+        {
+          "__t": "object",
+          "v": {
+            "ticks_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "events_scanned_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "events_processed_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "events_failed_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "duplicates_skipped_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "retries_scheduled_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "retries_exhausted_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "worker_calls_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "worker_failures_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "fulfill_success_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "fulfill_failure_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "claim_conflicts_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "stale_reclaims_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "discovery_failures_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "reconciliation_failures_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "durable_claim_skipped_during_backoff_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "manual_actions_loaded_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "feed_sync_runs_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "feed_sync_success_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "feed_sync_error_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "feed_sync_skipped_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "backpressure_deferred_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "backpressure_retry_skipped_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "retry_queue_overflow_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "last_feed_sync_started_at": {
+              "__t": "null"
+            },
+            "last_feed_sync_completed_at": {
+              "__t": "null"
+            },
+            "last_feed_sync_success_at": {
+              "__t": "null"
+            },
+            "last_feed_sync_duration_ms": {
+              "__t": "null"
+            },
+            "last_tick_started_at": {
+              "__t": "null"
+            },
+            "last_tick_completed_at": {
+              "__t": "null"
+            },
+            "last_tick_duration_ms": {
+              "__t": "null"
+            },
+            "last_run_snapshot_persisted_at": {
+              "__t": "null"
+            },
+            "last_run_snapshot_error_at": {
+              "__t": "null"
+            },
+            "last_fulfill_latency_ms": {
+              "__t": "null"
+            },
+            "labeled_failures": {
+              "__t": "array",
+              "v": []
+            },
+            "retry_queue_sizes": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "number",
+                  "v": "2"
+                },
+                "neox": {
+                  "__t": "number",
+                  "v": "1"
+                }
+              }
+            },
+            "dead_letter_sizes": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "number",
+                  "v": "0"
+                },
+                "neox": {
+                  "__t": "number",
+                  "v": "0"
+                }
+              }
+            },
+            "checkpoints": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "null"
+                },
+                "neox": {
+                  "__t": "null"
+                }
+              }
+            },
+            "request_checkpoints": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "null"
+                },
+                "neox": {
+                  "__t": "null"
+                }
+              }
+            },
+            "oldest_retry_age_seconds": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "number",
+                  "v": "0"
+                },
+                "neox": {
+                  "__t": "number",
+                  "v": "0"
+                }
+              }
+            },
+            "oldest_dead_letter_age_seconds": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "null"
+                },
+                "neox": {
+                  "__t": "null"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "expected_state": {
+        "__t": "object",
+        "v": {
+          "version": {
+            "__t": "number",
+            "v": "2"
+          },
+          "updated_at": {
+            "__t": "null"
+          },
+          "neo_n3": {
+            "__t": "object",
+            "v": {
+              "last_block": {
+                "__t": "null"
+              },
+              "last_request_id": {
+                "__t": "null"
+              },
+              "last_discovery_at": {
+                "__t": "number",
+                "v": "0"
+              },
+              "processed_records": {
+                "__t": "object",
+                "v": {}
+              },
+              "processed_order": {
+                "__t": "array",
+                "v": []
+              },
+              "retry_queue": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "object",
+                    "v": {
+                      "key": {
+                        "__t": "string",
+                        "v": "neo_n3:1:0xabc:3:100"
+                      },
+                      "event": {
+                        "__t": "object",
+                        "v": {
+                          "chain": {
+                            "__t": "string",
+                            "v": "neo_n3"
+                          },
+                          "requestType": {
+                            "__t": "string",
+                            "v": "oracle/query"
+                          },
+                          "requestId": {
+                            "__t": "string",
+                            "v": "1"
+                          },
+                          "txHash": {
+                            "__t": "string",
+                            "v": "0xabc"
+                          },
+                          "logIndex": {
+                            "__t": "number",
+                            "v": "3"
+                          },
+                          "blockNumber": {
+                            "__t": "number",
+                            "v": "100"
+                          }
+                        }
+                      },
+                      "attempts": {
+                        "__t": "number",
+                        "v": "1"
+                      },
+                      "next_retry_at": {
+                        "__t": "number",
+                        "v": "1768478400000"
+                      },
+                      "first_failed_at": {
+                        "__t": "string",
+                        "v": "2026-01-15T12:00:00.000Z"
+                      },
+                      "updated_at": {
+                        "__t": "string",
+                        "v": "2026-01-15T12:00:00.000Z"
+                      },
+                      "last_error": {
+                        "__t": "null"
+                      },
+                      "manual_action": {
+                        "__t": "null"
+                      },
+                      "finalize_only": {
+                        "__t": "bool",
+                        "v": false
+                      },
+                      "terminal_error": {
+                        "__t": "null"
+                      },
+                      "prepared_fulfillment": {
+                        "__t": "null"
+                      },
+                      "durable_claimed": {
+                        "__t": "bool",
+                        "v": false
+                      }
+                    }
+                  },
+                  {
+                    "__t": "object",
+                    "v": {
+                      "key": {
+                        "__t": "string",
+                        "v": "neo_n3:2:0xabc:3:100"
+                      },
+                      "event": {
+                        "__t": "object",
+                        "v": {
+                          "chain": {
+                            "__t": "string",
+                            "v": "neo_n3"
+                          },
+                          "requestType": {
+                            "__t": "string",
+                            "v": "rng"
+                          },
+                          "requestId": {
+                            "__t": "string",
+                            "v": "2"
+                          },
+                          "txHash": {
+                            "__t": "string",
+                            "v": "0xabc"
+                          },
+                          "logIndex": {
+                            "__t": "number",
+                            "v": "3"
+                          },
+                          "blockNumber": {
+                            "__t": "number",
+                            "v": "100"
+                          }
+                        }
+                      },
+                      "attempts": {
+                        "__t": "number",
+                        "v": "2"
+                      },
+                      "next_retry_at": {
+                        "__t": "number",
+                        "v": "1768478400010"
+                      },
+                      "first_failed_at": {
+                        "__t": "string",
+                        "v": "2026-01-15T12:00:00.010Z"
+                      },
+                      "updated_at": {
+                        "__t": "string",
+                        "v": "2026-01-15T12:00:00.010Z"
+                      },
+                      "last_error": {
+                        "__t": "string",
+                        "v": "second"
+                      },
+                      "manual_action": {
+                        "__t": "null"
+                      },
+                      "finalize_only": {
+                        "__t": "bool",
+                        "v": false
+                      },
+                      "terminal_error": {
+                        "__t": "null"
+                      },
+                      "prepared_fulfillment": {
+                        "__t": "null"
+                      },
+                      "durable_claimed": {
+                        "__t": "bool",
+                        "v": false
+                      }
+                    }
+                  }
+                ]
+              },
+              "dead_letters": {
+                "__t": "array",
+                "v": []
+              }
+            }
+          },
+          "neox": {
+            "__t": "object",
+            "v": {
+              "last_block": {
+                "__t": "null"
+              },
+              "last_request_id": {
+                "__t": "null"
+              },
+              "last_discovery_at": {
+                "__t": "number",
+                "v": "0"
+              },
+              "processed_records": {
+                "__t": "object",
+                "v": {}
+              },
+              "processed_order": {
+                "__t": "array",
+                "v": []
+              },
+              "retry_queue": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "object",
+                    "v": {
+                      "key": {
+                        "__t": "string",
+                        "v": "neox:3:0xabc:3:100"
+                      },
+                      "event": {
+                        "__t": "object",
+                        "v": {
+                          "chain": {
+                            "__t": "string",
+                            "v": "neox"
+                          },
+                          "requestType": {
+                            "__t": "string",
+                            "v": "oracle/query"
+                          },
+                          "requestId": {
+                            "__t": "string",
+                            "v": "3"
+                          },
+                          "txHash": {
+                            "__t": "string",
+                            "v": "0xabc"
+                          },
+                          "logIndex": {
+                            "__t": "number",
+                            "v": "3"
+                          },
+                          "blockNumber": {
+                            "__t": "number",
+                            "v": "100"
+                          }
+                        }
+                      },
+                      "attempts": {
+                        "__t": "number",
+                        "v": "0"
+                      },
+                      "next_retry_at": {
+                        "__t": "number",
+                        "v": "1768478400020"
+                      },
+                      "first_failed_at": {
+                        "__t": "string",
+                        "v": "2026-01-15T12:00:00.020Z"
+                      },
+                      "updated_at": {
+                        "__t": "string",
+                        "v": "2026-01-15T12:00:00.020Z"
+                      },
+                      "last_error": {
+                        "__t": "null"
+                      },
+                      "manual_action": {
+                        "__t": "null"
+                      },
+                      "finalize_only": {
+                        "__t": "bool",
+                        "v": false
+                      },
+                      "terminal_error": {
+                        "__t": "null"
+                      },
+                      "prepared_fulfillment": {
+                        "__t": "null"
+                      },
+                      "durable_claimed": {
+                        "__t": "bool",
+                        "v": false
+                      }
+                    }
+                  }
+                ]
+              },
+              "dead_letters": {
+                "__t": "array",
+                "v": []
+              }
+            }
+          },
+          "metrics": {
+            "__t": "object",
+            "v": {
+              "ticks_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_scanned_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_processed_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_failed_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "duplicates_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retries_scheduled_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retries_exhausted_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "worker_calls_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "worker_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "fulfill_success_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "fulfill_failure_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "claim_conflicts_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "stale_reclaims_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "discovery_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "reconciliation_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "durable_claim_skipped_during_backoff_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "manual_actions_loaded_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_runs_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_success_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_error_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "backpressure_deferred_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "backpressure_retry_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retry_queue_overflow_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "last_feed_sync_started_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_completed_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_success_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_duration_ms": {
+                "__t": "null"
+              },
+              "last_tick_started_at": {
+                "__t": "null"
+              },
+              "last_tick_completed_at": {
+                "__t": "null"
+              },
+              "last_tick_duration_ms": {
+                "__t": "null"
+              },
+              "last_run_snapshot_persisted_at": {
+                "__t": "null"
+              },
+              "last_run_snapshot_error_at": {
+                "__t": "null"
+              },
+              "last_fulfill_latency_ms": {
+                "__t": "null"
+              },
+              "labeled_failures": {
+                "__t": "object",
+                "v": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "record processed clears retry and evicts lru",
+      "ops": [
+        {
+          "op": "record_processed",
+          "chain": "neo_n3",
+          "event": {
+            "chain": "neo_n3",
+            "requestType": "oracle/query",
+            "requestId": "1",
+            "txHash": "0xabc",
+            "logIndex": 3,
+            "blockNumber": 100
+          },
+          "status": "ok",
+          "meta": {},
+          "limits": {
+            "processedCacheSize": 2,
+            "deadLetterLimit": 500
+          },
+          "now_ms": 1768478400000
+        },
+        {
+          "op": "record_processed",
+          "chain": "neo_n3",
+          "event": {
+            "chain": "neo_n3",
+            "requestType": "rng",
+            "requestId": "2",
+            "txHash": "0xabc",
+            "logIndex": 3,
+            "blockNumber": 100
+          },
+          "status": "ok",
+          "meta": {
+            "price": "12.34"
+          },
+          "limits": {
+            "processedCacheSize": 2,
+            "deadLetterLimit": 500
+          },
+          "now_ms": 1768478400010
+        },
+        {
+          "op": "record_processed",
+          "chain": "neo_n3",
+          "event": {
+            "chain": "neo_n3",
+            "requestType": "oracle/query",
+            "requestId": "3",
+            "txHash": "0xabc",
+            "logIndex": 3,
+            "blockNumber": 100
+          },
+          "status": "exhausted",
+          "meta": {
+            "note": "gave up"
+          },
+          "limits": {
+            "processedCacheSize": 2,
+            "deadLetterLimit": 500
+          },
+          "now_ms": 1768478400020
+        },
+        {
+          "op": "snapshot",
+          "now_ms": 1768478400025
+        }
+      ],
+      "expected_returns": [
+        {
+          "__t": "object",
+          "v": {
+            "key": {
+              "__t": "string",
+              "v": "neo_n3:1:0xabc:3:100"
+            },
+            "status": {
+              "__t": "string",
+              "v": "ok"
+            },
+            "request_id": {
+              "__t": "string",
+              "v": "1"
+            },
+            "request_type": {
+              "__t": "string",
+              "v": "oracle/query"
+            },
+            "module_id": {
+              "__t": "string",
+              "v": "oracle.fetch"
+            },
+            "operation": {
+              "__t": "string",
+              "v": "oracle/query"
+            },
+            "tx_hash": {
+              "__t": "string",
+              "v": "0xabc"
+            },
+            "block_number": {
+              "__t": "number",
+              "v": "100"
+            },
+            "completed_at": {
+              "__t": "string",
+              "v": "2026-01-15T12:00:00.000Z"
+            }
+          }
+        },
+        {
+          "__t": "object",
+          "v": {
+            "key": {
+              "__t": "string",
+              "v": "neo_n3:2:0xabc:3:100"
+            },
+            "status": {
+              "__t": "string",
+              "v": "ok"
+            },
+            "request_id": {
+              "__t": "string",
+              "v": "2"
+            },
+            "request_type": {
+              "__t": "string",
+              "v": "rng"
+            },
+            "module_id": {
+              "__t": "string",
+              "v": "random.generate"
+            },
+            "operation": {
+              "__t": "string",
+              "v": "rng"
+            },
+            "tx_hash": {
+              "__t": "string",
+              "v": "0xabc"
+            },
+            "block_number": {
+              "__t": "number",
+              "v": "100"
+            },
+            "completed_at": {
+              "__t": "string",
+              "v": "2026-01-15T12:00:00.010Z"
+            },
+            "price": {
+              "__t": "string",
+              "v": "12.34"
+            }
+          }
+        },
+        {
+          "__t": "object",
+          "v": {
+            "key": {
+              "__t": "string",
+              "v": "neo_n3:3:0xabc:3:100"
+            },
+            "status": {
+              "__t": "string",
+              "v": "exhausted"
+            },
+            "request_id": {
+              "__t": "string",
+              "v": "3"
+            },
+            "request_type": {
+              "__t": "string",
+              "v": "oracle/query"
+            },
+            "module_id": {
+              "__t": "string",
+              "v": "oracle.fetch"
+            },
+            "operation": {
+              "__t": "string",
+              "v": "oracle/query"
+            },
+            "tx_hash": {
+              "__t": "string",
+              "v": "0xabc"
+            },
+            "block_number": {
+              "__t": "number",
+              "v": "100"
+            },
+            "completed_at": {
+              "__t": "string",
+              "v": "2026-01-15T12:00:00.020Z"
+            },
+            "note": {
+              "__t": "string",
+              "v": "gave up"
+            }
+          }
+        },
+        {
+          "__t": "object",
+          "v": {
+            "ticks_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "events_scanned_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "events_processed_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "events_failed_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "duplicates_skipped_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "retries_scheduled_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "retries_exhausted_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "worker_calls_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "worker_failures_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "fulfill_success_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "fulfill_failure_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "claim_conflicts_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "stale_reclaims_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "discovery_failures_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "reconciliation_failures_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "durable_claim_skipped_during_backoff_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "manual_actions_loaded_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "feed_sync_runs_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "feed_sync_success_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "feed_sync_error_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "feed_sync_skipped_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "backpressure_deferred_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "backpressure_retry_skipped_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "retry_queue_overflow_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "last_feed_sync_started_at": {
+              "__t": "null"
+            },
+            "last_feed_sync_completed_at": {
+              "__t": "null"
+            },
+            "last_feed_sync_success_at": {
+              "__t": "null"
+            },
+            "last_feed_sync_duration_ms": {
+              "__t": "null"
+            },
+            "last_tick_started_at": {
+              "__t": "null"
+            },
+            "last_tick_completed_at": {
+              "__t": "null"
+            },
+            "last_tick_duration_ms": {
+              "__t": "null"
+            },
+            "last_run_snapshot_persisted_at": {
+              "__t": "null"
+            },
+            "last_run_snapshot_error_at": {
+              "__t": "null"
+            },
+            "last_fulfill_latency_ms": {
+              "__t": "null"
+            },
+            "labeled_failures": {
+              "__t": "array",
+              "v": []
+            },
+            "retry_queue_sizes": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "number",
+                  "v": "0"
+                },
+                "neox": {
+                  "__t": "number",
+                  "v": "0"
+                }
+              }
+            },
+            "dead_letter_sizes": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "number",
+                  "v": "1"
+                },
+                "neox": {
+                  "__t": "number",
+                  "v": "0"
+                }
+              }
+            },
+            "checkpoints": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "null"
+                },
+                "neox": {
+                  "__t": "null"
+                }
+              }
+            },
+            "request_checkpoints": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "null"
+                },
+                "neox": {
+                  "__t": "null"
+                }
+              }
+            },
+            "oldest_retry_age_seconds": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "null"
+                },
+                "neox": {
+                  "__t": "null"
+                }
+              }
+            },
+            "oldest_dead_letter_age_seconds": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "number",
+                  "v": "0"
+                },
+                "neox": {
+                  "__t": "null"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "expected_state": {
+        "__t": "object",
+        "v": {
+          "version": {
+            "__t": "number",
+            "v": "2"
+          },
+          "updated_at": {
+            "__t": "null"
+          },
+          "neo_n3": {
+            "__t": "object",
+            "v": {
+              "last_block": {
+                "__t": "null"
+              },
+              "last_request_id": {
+                "__t": "null"
+              },
+              "last_discovery_at": {
+                "__t": "number",
+                "v": "0"
+              },
+              "processed_records": {
+                "__t": "object",
+                "v": {
+                  "neo_n3:2:0xabc:3:100": {
+                    "__t": "object",
+                    "v": {
+                      "key": {
+                        "__t": "string",
+                        "v": "neo_n3:2:0xabc:3:100"
+                      },
+                      "status": {
+                        "__t": "string",
+                        "v": "ok"
+                      },
+                      "request_id": {
+                        "__t": "string",
+                        "v": "2"
+                      },
+                      "request_type": {
+                        "__t": "string",
+                        "v": "rng"
+                      },
+                      "module_id": {
+                        "__t": "string",
+                        "v": "random.generate"
+                      },
+                      "operation": {
+                        "__t": "string",
+                        "v": "rng"
+                      },
+                      "tx_hash": {
+                        "__t": "string",
+                        "v": "0xabc"
+                      },
+                      "block_number": {
+                        "__t": "number",
+                        "v": "100"
+                      },
+                      "completed_at": {
+                        "__t": "string",
+                        "v": "2026-01-15T12:00:00.010Z"
+                      },
+                      "price": {
+                        "__t": "string",
+                        "v": "12.34"
+                      }
+                    }
+                  },
+                  "neo_n3:3:0xabc:3:100": {
+                    "__t": "object",
+                    "v": {
+                      "key": {
+                        "__t": "string",
+                        "v": "neo_n3:3:0xabc:3:100"
+                      },
+                      "status": {
+                        "__t": "string",
+                        "v": "exhausted"
+                      },
+                      "request_id": {
+                        "__t": "string",
+                        "v": "3"
+                      },
+                      "request_type": {
+                        "__t": "string",
+                        "v": "oracle/query"
+                      },
+                      "module_id": {
+                        "__t": "string",
+                        "v": "oracle.fetch"
+                      },
+                      "operation": {
+                        "__t": "string",
+                        "v": "oracle/query"
+                      },
+                      "tx_hash": {
+                        "__t": "string",
+                        "v": "0xabc"
+                      },
+                      "block_number": {
+                        "__t": "number",
+                        "v": "100"
+                      },
+                      "completed_at": {
+                        "__t": "string",
+                        "v": "2026-01-15T12:00:00.020Z"
+                      },
+                      "note": {
+                        "__t": "string",
+                        "v": "gave up"
+                      }
+                    }
+                  }
+                }
+              },
+              "processed_order": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "neo_n3:2:0xabc:3:100"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "neo_n3:3:0xabc:3:100"
+                  }
+                ]
+              },
+              "retry_queue": {
+                "__t": "array",
+                "v": []
+              },
+              "dead_letters": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "object",
+                    "v": {
+                      "key": {
+                        "__t": "string",
+                        "v": "neo_n3:3:0xabc:3:100"
+                      },
+                      "request_id": {
+                        "__t": "string",
+                        "v": "3"
+                      },
+                      "request_type": {
+                        "__t": "string",
+                        "v": "oracle/query"
+                      },
+                      "module_id": {
+                        "__t": "string",
+                        "v": "oracle.fetch"
+                      },
+                      "operation": {
+                        "__t": "string",
+                        "v": "oracle/query"
+                      },
+                      "chain": {
+                        "__t": "string",
+                        "v": "neo_n3"
+                      },
+                      "event": {
+                        "__t": "object",
+                        "v": {
+                          "chain": {
+                            "__t": "string",
+                            "v": "neo_n3"
+                          },
+                          "requestType": {
+                            "__t": "string",
+                            "v": "oracle/query"
+                          },
+                          "requestId": {
+                            "__t": "string",
+                            "v": "3"
+                          },
+                          "txHash": {
+                            "__t": "string",
+                            "v": "0xabc"
+                          },
+                          "logIndex": {
+                            "__t": "number",
+                            "v": "3"
+                          },
+                          "blockNumber": {
+                            "__t": "number",
+                            "v": "100"
+                          }
+                        }
+                      },
+                      "exhausted_at": {
+                        "__t": "string",
+                        "v": "2026-01-15T12:00:00.020Z"
+                      },
+                      "note": {
+                        "__t": "string",
+                        "v": "gave up"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "neox": {
+            "__t": "object",
+            "v": {
+              "last_block": {
+                "__t": "null"
+              },
+              "last_request_id": {
+                "__t": "null"
+              },
+              "last_discovery_at": {
+                "__t": "number",
+                "v": "0"
+              },
+              "processed_records": {
+                "__t": "object",
+                "v": {}
+              },
+              "processed_order": {
+                "__t": "array",
+                "v": []
+              },
+              "retry_queue": {
+                "__t": "array",
+                "v": []
+              },
+              "dead_letters": {
+                "__t": "array",
+                "v": []
+              }
+            }
+          },
+          "metrics": {
+            "__t": "object",
+            "v": {
+              "ticks_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_scanned_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_processed_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_failed_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "duplicates_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retries_scheduled_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retries_exhausted_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "worker_calls_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "worker_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "fulfill_success_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "fulfill_failure_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "claim_conflicts_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "stale_reclaims_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "discovery_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "reconciliation_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "durable_claim_skipped_during_backoff_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "manual_actions_loaded_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_runs_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_success_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_error_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "backpressure_deferred_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "backpressure_retry_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retry_queue_overflow_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "last_feed_sync_started_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_completed_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_success_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_duration_ms": {
+                "__t": "null"
+              },
+              "last_tick_started_at": {
+                "__t": "null"
+              },
+              "last_tick_completed_at": {
+                "__t": "null"
+              },
+              "last_tick_duration_ms": {
+                "__t": "null"
+              },
+              "last_run_snapshot_persisted_at": {
+                "__t": "null"
+              },
+              "last_run_snapshot_error_at": {
+                "__t": "null"
+              },
+              "last_fulfill_latency_ms": {
+                "__t": "null"
+              },
+              "labeled_failures": {
+                "__t": "object",
+                "v": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "due retry items filter by time",
+      "ops": [
+        {
+          "op": "schedule_retry",
+          "chain": "neo_n3",
+          "event": {
+            "chain": "neo_n3",
+            "requestType": "oracle/query",
+            "requestId": "1",
+            "txHash": "0xabc",
+            "logIndex": 3,
+            "blockNumber": 100
+          },
+          "config": {
+            "maxRetries": 5,
+            "retryBaseDelayMs": 1000,
+            "retryMaxDelayMs": 8000,
+            "retryQueueLimit": 0,
+            "deadLetterLimit": 500
+          },
+          "rng": 0,
+          "now_ms": 1768478400000
+        },
+        {
+          "op": "schedule_retry",
+          "chain": "neo_n3",
+          "event": {
+            "chain": "neo_n3",
+            "requestType": "oracle/query",
+            "requestId": "2",
+            "txHash": "0xabc",
+            "logIndex": 3,
+            "blockNumber": 100
+          },
+          "config": {
+            "maxRetries": 5,
+            "retryBaseDelayMs": 1000,
+            "retryMaxDelayMs": 8000,
+            "retryQueueLimit": 0,
+            "deadLetterLimit": 500
+          },
+          "rng": 0.999,
+          "now_ms": 1768478400000
+        },
+        {
+          "op": "due_items",
+          "chain": "neo_n3",
+          "now_ms": 1768478400700
+        },
+        {
+          "op": "due_items",
+          "chain": "neo_n3",
+          "now_ms": 1768478500000
+        },
+        {
+          "op": "due_items",
+          "chain": "neox",
+          "now_ms": 1768478500000
+        }
+      ],
+      "expected_returns": [
+        {
+          "__t": "object",
+          "v": {
+            "status": {
+              "__t": "string",
+              "v": "scheduled"
+            },
+            "key": {
+              "__t": "string",
+              "v": "neo_n3:1:0xabc:3:100"
+            },
+            "item": {
+              "__t": "object",
+              "v": {
+                "key": {
+                  "__t": "string",
+                  "v": "neo_n3:1:0xabc:3:100"
+                },
+                "event": {
+                  "__t": "object",
+                  "v": {
+                    "chain": {
+                      "__t": "string",
+                      "v": "neo_n3"
+                    },
+                    "requestType": {
+                      "__t": "string",
+                      "v": "oracle/query"
+                    },
+                    "requestId": {
+                      "__t": "string",
+                      "v": "1"
+                    },
+                    "txHash": {
+                      "__t": "string",
+                      "v": "0xabc"
+                    },
+                    "logIndex": {
+                      "__t": "number",
+                      "v": "3"
+                    },
+                    "blockNumber": {
+                      "__t": "number",
+                      "v": "100"
+                    }
+                  }
+                },
+                "attempts": {
+                  "__t": "number",
+                  "v": "1"
+                },
+                "next_retry_at": {
+                  "__t": "number",
+                  "v": "1768478400500"
+                },
+                "first_failed_at": {
+                  "__t": "string",
+                  "v": "2026-01-15T12:00:00.000Z"
+                },
+                "updated_at": {
+                  "__t": "string",
+                  "v": "2026-01-15T12:00:00.000Z"
+                },
+                "last_error": {
+                  "__t": "string",
+                  "v": "boom"
+                }
+              }
+            }
+          }
+        },
+        {
+          "__t": "object",
+          "v": {
+            "status": {
+              "__t": "string",
+              "v": "scheduled"
+            },
+            "key": {
+              "__t": "string",
+              "v": "neo_n3:2:0xabc:3:100"
+            },
+            "item": {
+              "__t": "object",
+              "v": {
+                "key": {
+                  "__t": "string",
+                  "v": "neo_n3:2:0xabc:3:100"
+                },
+                "event": {
+                  "__t": "object",
+                  "v": {
+                    "chain": {
+                      "__t": "string",
+                      "v": "neo_n3"
+                    },
+                    "requestType": {
+                      "__t": "string",
+                      "v": "oracle/query"
+                    },
+                    "requestId": {
+                      "__t": "string",
+                      "v": "2"
+                    },
+                    "txHash": {
+                      "__t": "string",
+                      "v": "0xabc"
+                    },
+                    "logIndex": {
+                      "__t": "number",
+                      "v": "3"
+                    },
+                    "blockNumber": {
+                      "__t": "number",
+                      "v": "100"
+                    }
+                  }
+                },
+                "attempts": {
+                  "__t": "number",
+                  "v": "1"
+                },
+                "next_retry_at": {
+                  "__t": "number",
+                  "v": "1768478401000"
+                },
+                "first_failed_at": {
+                  "__t": "string",
+                  "v": "2026-01-15T12:00:00.000Z"
+                },
+                "updated_at": {
+                  "__t": "string",
+                  "v": "2026-01-15T12:00:00.000Z"
+                },
+                "last_error": {
+                  "__t": "string",
+                  "v": "boom"
+                }
+              }
+            }
+          }
+        },
+        {
+          "__t": "array",
+          "v": [
+            {
+              "__t": "object",
+              "v": {
+                "key": {
+                  "__t": "string",
+                  "v": "neo_n3:1:0xabc:3:100"
+                },
+                "event": {
+                  "__t": "object",
+                  "v": {
+                    "chain": {
+                      "__t": "string",
+                      "v": "neo_n3"
+                    },
+                    "requestType": {
+                      "__t": "string",
+                      "v": "oracle/query"
+                    },
+                    "requestId": {
+                      "__t": "string",
+                      "v": "1"
+                    },
+                    "txHash": {
+                      "__t": "string",
+                      "v": "0xabc"
+                    },
+                    "logIndex": {
+                      "__t": "number",
+                      "v": "3"
+                    },
+                    "blockNumber": {
+                      "__t": "number",
+                      "v": "100"
+                    }
+                  }
+                },
+                "attempts": {
+                  "__t": "number",
+                  "v": "1"
+                },
+                "next_retry_at": {
+                  "__t": "number",
+                  "v": "1768478400500"
+                },
+                "first_failed_at": {
+                  "__t": "string",
+                  "v": "2026-01-15T12:00:00.000Z"
+                },
+                "updated_at": {
+                  "__t": "string",
+                  "v": "2026-01-15T12:00:00.000Z"
+                },
+                "last_error": {
+                  "__t": "string",
+                  "v": "boom"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "__t": "array",
+          "v": [
+            {
+              "__t": "object",
+              "v": {
+                "key": {
+                  "__t": "string",
+                  "v": "neo_n3:1:0xabc:3:100"
+                },
+                "event": {
+                  "__t": "object",
+                  "v": {
+                    "chain": {
+                      "__t": "string",
+                      "v": "neo_n3"
+                    },
+                    "requestType": {
+                      "__t": "string",
+                      "v": "oracle/query"
+                    },
+                    "requestId": {
+                      "__t": "string",
+                      "v": "1"
+                    },
+                    "txHash": {
+                      "__t": "string",
+                      "v": "0xabc"
+                    },
+                    "logIndex": {
+                      "__t": "number",
+                      "v": "3"
+                    },
+                    "blockNumber": {
+                      "__t": "number",
+                      "v": "100"
+                    }
+                  }
+                },
+                "attempts": {
+                  "__t": "number",
+                  "v": "1"
+                },
+                "next_retry_at": {
+                  "__t": "number",
+                  "v": "1768478400500"
+                },
+                "first_failed_at": {
+                  "__t": "string",
+                  "v": "2026-01-15T12:00:00.000Z"
+                },
+                "updated_at": {
+                  "__t": "string",
+                  "v": "2026-01-15T12:00:00.000Z"
+                },
+                "last_error": {
+                  "__t": "string",
+                  "v": "boom"
+                }
+              }
+            },
+            {
+              "__t": "object",
+              "v": {
+                "key": {
+                  "__t": "string",
+                  "v": "neo_n3:2:0xabc:3:100"
+                },
+                "event": {
+                  "__t": "object",
+                  "v": {
+                    "chain": {
+                      "__t": "string",
+                      "v": "neo_n3"
+                    },
+                    "requestType": {
+                      "__t": "string",
+                      "v": "oracle/query"
+                    },
+                    "requestId": {
+                      "__t": "string",
+                      "v": "2"
+                    },
+                    "txHash": {
+                      "__t": "string",
+                      "v": "0xabc"
+                    },
+                    "logIndex": {
+                      "__t": "number",
+                      "v": "3"
+                    },
+                    "blockNumber": {
+                      "__t": "number",
+                      "v": "100"
+                    }
+                  }
+                },
+                "attempts": {
+                  "__t": "number",
+                  "v": "1"
+                },
+                "next_retry_at": {
+                  "__t": "number",
+                  "v": "1768478401000"
+                },
+                "first_failed_at": {
+                  "__t": "string",
+                  "v": "2026-01-15T12:00:00.000Z"
+                },
+                "updated_at": {
+                  "__t": "string",
+                  "v": "2026-01-15T12:00:00.000Z"
+                },
+                "last_error": {
+                  "__t": "string",
+                  "v": "boom"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "__t": "array",
+          "v": []
+        }
+      ],
+      "expected_state": {
+        "__t": "object",
+        "v": {
+          "version": {
+            "__t": "number",
+            "v": "2"
+          },
+          "updated_at": {
+            "__t": "null"
+          },
+          "neo_n3": {
+            "__t": "object",
+            "v": {
+              "last_block": {
+                "__t": "null"
+              },
+              "last_request_id": {
+                "__t": "null"
+              },
+              "last_discovery_at": {
+                "__t": "number",
+                "v": "0"
+              },
+              "processed_records": {
+                "__t": "object",
+                "v": {}
+              },
+              "processed_order": {
+                "__t": "array",
+                "v": []
+              },
+              "retry_queue": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "object",
+                    "v": {
+                      "key": {
+                        "__t": "string",
+                        "v": "neo_n3:1:0xabc:3:100"
+                      },
+                      "event": {
+                        "__t": "object",
+                        "v": {
+                          "chain": {
+                            "__t": "string",
+                            "v": "neo_n3"
+                          },
+                          "requestType": {
+                            "__t": "string",
+                            "v": "oracle/query"
+                          },
+                          "requestId": {
+                            "__t": "string",
+                            "v": "1"
+                          },
+                          "txHash": {
+                            "__t": "string",
+                            "v": "0xabc"
+                          },
+                          "logIndex": {
+                            "__t": "number",
+                            "v": "3"
+                          },
+                          "blockNumber": {
+                            "__t": "number",
+                            "v": "100"
+                          }
+                        }
+                      },
+                      "attempts": {
+                        "__t": "number",
+                        "v": "1"
+                      },
+                      "next_retry_at": {
+                        "__t": "number",
+                        "v": "1768478400500"
+                      },
+                      "first_failed_at": {
+                        "__t": "string",
+                        "v": "2026-01-15T12:00:00.000Z"
+                      },
+                      "updated_at": {
+                        "__t": "string",
+                        "v": "2026-01-15T12:00:00.000Z"
+                      },
+                      "last_error": {
+                        "__t": "string",
+                        "v": "boom"
+                      }
+                    }
+                  },
+                  {
+                    "__t": "object",
+                    "v": {
+                      "key": {
+                        "__t": "string",
+                        "v": "neo_n3:2:0xabc:3:100"
+                      },
+                      "event": {
+                        "__t": "object",
+                        "v": {
+                          "chain": {
+                            "__t": "string",
+                            "v": "neo_n3"
+                          },
+                          "requestType": {
+                            "__t": "string",
+                            "v": "oracle/query"
+                          },
+                          "requestId": {
+                            "__t": "string",
+                            "v": "2"
+                          },
+                          "txHash": {
+                            "__t": "string",
+                            "v": "0xabc"
+                          },
+                          "logIndex": {
+                            "__t": "number",
+                            "v": "3"
+                          },
+                          "blockNumber": {
+                            "__t": "number",
+                            "v": "100"
+                          }
+                        }
+                      },
+                      "attempts": {
+                        "__t": "number",
+                        "v": "1"
+                      },
+                      "next_retry_at": {
+                        "__t": "number",
+                        "v": "1768478401000"
+                      },
+                      "first_failed_at": {
+                        "__t": "string",
+                        "v": "2026-01-15T12:00:00.000Z"
+                      },
+                      "updated_at": {
+                        "__t": "string",
+                        "v": "2026-01-15T12:00:00.000Z"
+                      },
+                      "last_error": {
+                        "__t": "string",
+                        "v": "boom"
+                      }
+                    }
+                  }
+                ]
+              },
+              "dead_letters": {
+                "__t": "array",
+                "v": []
+              }
+            }
+          },
+          "neox": {
+            "__t": "object",
+            "v": {
+              "last_block": {
+                "__t": "null"
+              },
+              "last_request_id": {
+                "__t": "null"
+              },
+              "last_discovery_at": {
+                "__t": "number",
+                "v": "0"
+              },
+              "processed_records": {
+                "__t": "object",
+                "v": {}
+              },
+              "processed_order": {
+                "__t": "array",
+                "v": []
+              },
+              "retry_queue": {
+                "__t": "array",
+                "v": []
+              },
+              "dead_letters": {
+                "__t": "array",
+                "v": []
+              }
+            }
+          },
+          "metrics": {
+            "__t": "object",
+            "v": {
+              "ticks_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_scanned_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_processed_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_failed_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "duplicates_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retries_scheduled_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retries_exhausted_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "worker_calls_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "worker_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "fulfill_success_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "fulfill_failure_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "claim_conflicts_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "stale_reclaims_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "discovery_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "reconciliation_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "durable_claim_skipped_during_backoff_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "manual_actions_loaded_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_runs_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_success_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_error_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "backpressure_deferred_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "backpressure_retry_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retry_queue_overflow_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "last_feed_sync_started_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_completed_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_success_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_duration_ms": {
+                "__t": "null"
+              },
+              "last_tick_started_at": {
+                "__t": "null"
+              },
+              "last_tick_completed_at": {
+                "__t": "null"
+              },
+              "last_tick_duration_ms": {
+                "__t": "null"
+              },
+              "last_run_snapshot_persisted_at": {
+                "__t": "null"
+              },
+              "last_run_snapshot_error_at": {
+                "__t": "null"
+              },
+              "last_fulfill_latency_ms": {
+                "__t": "null"
+              },
+              "labeled_failures": {
+                "__t": "object",
+                "v": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "labeled failures expand in snapshot",
+      "ops": [
+        {
+          "op": "increment_labeled",
+          "chain": "neo_n3",
+          "module": "oracle.fetch",
+          "operation": "privacy_oracle",
+          "delta": 2
+        },
+        {
+          "op": "increment_labeled",
+          "chain": "neox",
+          "module": "oracle.fetch",
+          "operation": "privacy_oracle",
+          "delta": 1
+        },
+        {
+          "op": "increment_labeled",
+          "chain": "neo_n3",
+          "module": "rng.generate",
+          "operation": "rng",
+          "delta": 1
+        },
+        {
+          "op": "snapshot",
+          "now_ms": 1768478400000
+        }
+      ],
+      "expected_returns": [
+        {
+          "__t": "undefined"
+        },
+        {
+          "__t": "undefined"
+        },
+        {
+          "__t": "undefined"
+        },
+        {
+          "__t": "object",
+          "v": {
+            "ticks_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "events_scanned_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "events_processed_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "events_failed_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "duplicates_skipped_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "retries_scheduled_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "retries_exhausted_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "worker_calls_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "worker_failures_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "fulfill_success_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "fulfill_failure_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "claim_conflicts_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "stale_reclaims_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "discovery_failures_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "reconciliation_failures_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "durable_claim_skipped_during_backoff_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "manual_actions_loaded_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "feed_sync_runs_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "feed_sync_success_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "feed_sync_error_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "feed_sync_skipped_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "backpressure_deferred_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "backpressure_retry_skipped_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "retry_queue_overflow_total": {
+              "__t": "number",
+              "v": "0"
+            },
+            "last_feed_sync_started_at": {
+              "__t": "null"
+            },
+            "last_feed_sync_completed_at": {
+              "__t": "null"
+            },
+            "last_feed_sync_success_at": {
+              "__t": "null"
+            },
+            "last_feed_sync_duration_ms": {
+              "__t": "null"
+            },
+            "last_tick_started_at": {
+              "__t": "null"
+            },
+            "last_tick_completed_at": {
+              "__t": "null"
+            },
+            "last_tick_duration_ms": {
+              "__t": "null"
+            },
+            "last_run_snapshot_persisted_at": {
+              "__t": "null"
+            },
+            "last_run_snapshot_error_at": {
+              "__t": "null"
+            },
+            "last_fulfill_latency_ms": {
+              "__t": "null"
+            },
+            "labeled_failures": {
+              "__t": "array",
+              "v": [
+                {
+                  "__t": "object",
+                  "v": {
+                    "chain": {
+                      "__t": "string",
+                      "v": "neo_n3"
+                    },
+                    "module": {
+                      "__t": "string",
+                      "v": "oracle.fetch"
+                    },
+                    "operation": {
+                      "__t": "string",
+                      "v": "privacy_oracle"
+                    },
+                    "value": {
+                      "__t": "number",
+                      "v": "2"
+                    }
+                  }
+                },
+                {
+                  "__t": "object",
+                  "v": {
+                    "chain": {
+                      "__t": "string",
+                      "v": "neox"
+                    },
+                    "module": {
+                      "__t": "string",
+                      "v": "oracle.fetch"
+                    },
+                    "operation": {
+                      "__t": "string",
+                      "v": "privacy_oracle"
+                    },
+                    "value": {
+                      "__t": "number",
+                      "v": "1"
+                    }
+                  }
+                },
+                {
+                  "__t": "object",
+                  "v": {
+                    "chain": {
+                      "__t": "string",
+                      "v": "neo_n3"
+                    },
+                    "module": {
+                      "__t": "string",
+                      "v": "rng.generate"
+                    },
+                    "operation": {
+                      "__t": "string",
+                      "v": "rng"
+                    },
+                    "value": {
+                      "__t": "number",
+                      "v": "1"
+                    }
+                  }
+                }
+              ]
+            },
+            "retry_queue_sizes": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "number",
+                  "v": "0"
+                },
+                "neox": {
+                  "__t": "number",
+                  "v": "0"
+                }
+              }
+            },
+            "dead_letter_sizes": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "number",
+                  "v": "0"
+                },
+                "neox": {
+                  "__t": "number",
+                  "v": "0"
+                }
+              }
+            },
+            "checkpoints": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "null"
+                },
+                "neox": {
+                  "__t": "null"
+                }
+              }
+            },
+            "request_checkpoints": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "null"
+                },
+                "neox": {
+                  "__t": "null"
+                }
+              }
+            },
+            "oldest_retry_age_seconds": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "null"
+                },
+                "neox": {
+                  "__t": "null"
+                }
+              }
+            },
+            "oldest_dead_letter_age_seconds": {
+              "__t": "object",
+              "v": {
+                "neo_n3": {
+                  "__t": "null"
+                },
+                "neox": {
+                  "__t": "null"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "expected_state": {
+        "__t": "object",
+        "v": {
+          "version": {
+            "__t": "number",
+            "v": "2"
+          },
+          "updated_at": {
+            "__t": "null"
+          },
+          "neo_n3": {
+            "__t": "object",
+            "v": {
+              "last_block": {
+                "__t": "null"
+              },
+              "last_request_id": {
+                "__t": "null"
+              },
+              "last_discovery_at": {
+                "__t": "number",
+                "v": "0"
+              },
+              "processed_records": {
+                "__t": "object",
+                "v": {}
+              },
+              "processed_order": {
+                "__t": "array",
+                "v": []
+              },
+              "retry_queue": {
+                "__t": "array",
+                "v": []
+              },
+              "dead_letters": {
+                "__t": "array",
+                "v": []
+              }
+            }
+          },
+          "neox": {
+            "__t": "object",
+            "v": {
+              "last_block": {
+                "__t": "null"
+              },
+              "last_request_id": {
+                "__t": "null"
+              },
+              "last_discovery_at": {
+                "__t": "number",
+                "v": "0"
+              },
+              "processed_records": {
+                "__t": "object",
+                "v": {}
+              },
+              "processed_order": {
+                "__t": "array",
+                "v": []
+              },
+              "retry_queue": {
+                "__t": "array",
+                "v": []
+              },
+              "dead_letters": {
+                "__t": "array",
+                "v": []
+              }
+            }
+          },
+          "metrics": {
+            "__t": "object",
+            "v": {
+              "ticks_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_scanned_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_processed_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "events_failed_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "duplicates_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retries_scheduled_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retries_exhausted_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "worker_calls_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "worker_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "fulfill_success_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "fulfill_failure_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "claim_conflicts_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "stale_reclaims_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "discovery_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "reconciliation_failures_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "durable_claim_skipped_during_backoff_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "manual_actions_loaded_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_runs_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_success_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_error_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "feed_sync_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "backpressure_deferred_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "backpressure_retry_skipped_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "retry_queue_overflow_total": {
+                "__t": "number",
+                "v": "0"
+              },
+              "last_feed_sync_started_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_completed_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_success_at": {
+                "__t": "null"
+              },
+              "last_feed_sync_duration_ms": {
+                "__t": "null"
+              },
+              "last_tick_started_at": {
+                "__t": "null"
+              },
+              "last_tick_completed_at": {
+                "__t": "null"
+              },
+              "last_tick_duration_ms": {
+                "__t": "null"
+              },
+              "last_run_snapshot_persisted_at": {
+                "__t": "null"
+              },
+              "last_run_snapshot_error_at": {
+                "__t": "null"
+              },
+              "last_fulfill_latency_ms": {
+                "__t": "null"
+              },
+              "labeled_failures": {
+                "__t": "object",
+                "v": {
+                  "neo_n3|oracle.fetch|privacy_oracle": {
+                    "__t": "number",
+                    "v": "2"
+                  },
+                  "neox|oracle.fetch|privacy_oracle": {
+                    "__t": "number",
+                    "v": "1"
+                  },
+                  "neo_n3|rng.generate|rng": {
+                    "__t": "number",
+                    "v": "1"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

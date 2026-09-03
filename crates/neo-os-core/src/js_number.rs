@@ -76,6 +76,120 @@ pub fn json_number_to_string(x: f64) -> String {
     }
 }
 
+/// JS `Number(string)` (ECMA-262 StringNumericLiteral). Empty/whitespace-only
+/// input is 0, `Infinity` (signed) is exact, `0x`/`0o`/`0b` integer literals
+/// are exact-prefix forms, and any other decimal literal — including `1.`,
+/// `.5`, `1e+3` — must round-trip through the same correctly-rounded parse
+/// V8 performs (Rust's `f64::from_str` is also correctly rounded, so after a
+/// strict grammar check the two agree bit-for-bit). Everything else is NaN;
+/// notably `Number('1_000')`, `Number('12abc')` and `Number('inf')` are all
+/// NaN, and hex prefixes require at least one digit.
+pub fn parse_js_number(raw: &str) -> f64 {
+    let s = crate::js_value::js_trim(raw);
+    if s.is_empty() {
+        return 0.0;
+    }
+    let (sign, body) = match s.as_bytes().first() {
+        Some(b'+') => (1.0, &s[1..]),
+        Some(b'-') => (-1.0, &s[1..]),
+        _ => (1.0, s),
+    };
+    if body == "Infinity" {
+        return sign * f64::INFINITY;
+    }
+    // Radix-prefixed integer literals: sign is NOT allowed before 0x/0o/0b
+    // in StringNumericLiteral ('-0x10' is NaN) — the sign was already peeled
+    // only for the Infinity/decimal forms, so check the *original* string.
+    for (prefix, radix) in [
+        ("0x", 16u32),
+        ("0X", 16),
+        ("0o", 8),
+        ("0O", 8),
+        ("0b", 2),
+        ("0B", 2),
+    ] {
+        if let Some(digits) = s.strip_prefix(prefix) {
+            if !digits.is_empty()
+                && digits
+                    .bytes()
+                    .all(|b| (b as char).is_digit(radix))
+            {
+                // u128 covers every literal the vectors exercise; larger
+                // literals would need bignum rounding (documented gap).
+                return u128::from_str_radix(digits, radix)
+                    .map(|v| v as f64)
+                    .unwrap_or(f64::NAN);
+            }
+            return f64::NAN;
+        }
+    }
+    if !is_decimal_numeric_literal(body) {
+        return f64::NAN;
+    }
+    // The grammar check rejects inf/infinity/NaN spellings, so from_str here
+    // can only produce the correctly-rounded decimal value.
+    body.parse::<f64>()
+        .map(|v| if v == 0.0 { v.copysign(sign) } else { sign * v })
+        .unwrap_or(f64::NAN)
+}
+
+/// ECMA-262 StrDecimalLiteral: `[+-]?` was already peeled; accept
+/// `digits[.digits?]` | `.digits`, optionally followed by an exponent.
+fn is_decimal_numeric_literal(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    let mut int_digits = 0;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+        int_digits += 1;
+    }
+    let mut frac_digits = 0;
+    if i < bytes.len() && bytes[i] == b'.' {
+        i += 1;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+            frac_digits += 1;
+        }
+    }
+    if int_digits == 0 && frac_digits == 0 {
+        return false;
+    }
+    if i < bytes.len() && (bytes[i] == b'e' || bytes[i] == b'E') {
+        i += 1;
+        if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
+            i += 1;
+        }
+        let mut exp_digits = 0;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+            exp_digits += 1;
+        }
+        if exp_digits == 0 {
+            return false;
+        }
+    }
+    i == bytes.len()
+}
+
+/// JS `Number(value)` coercion over the dynamic value model (ECMA-262
+/// ToNumber for the shapes reachable from parsed JSON): objects/arrays via
+/// their ToString form, BigInt via its decimal value, undefined → NaN.
+pub fn number_of(value: &crate::js_value::JsValue) -> f64 {
+    use crate::js_value::JsValue;
+    match value {
+        JsValue::Undefined => f64::NAN,
+        JsValue::Null => 0.0,
+        JsValue::Bool(true) => 1.0,
+        JsValue::Bool(false) => 0.0,
+        JsValue::Number(n) => *n,
+        JsValue::BigInt(v) => v.parse::<u128>().map(|x| x as f64).unwrap_or(f64::NAN),
+        JsValue::Str(s) => parse_js_number(s),
+        JsValue::Array(_) | JsValue::Object(_) => {
+            parse_js_number(&crate::js_value::to_display_string(value))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

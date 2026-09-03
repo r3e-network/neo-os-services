@@ -23,6 +23,16 @@
 //!   the byte-parity tests run on; without them serde_json's BTreeMap key
 //!   order and ryu number styling would silently change hashes.
 //!
+//! Modules (T02 — relayer pure-logic sink):
+//! - `config_schema` / `config` — the generated CONFIG_SCHEMA table (109
+//!   entries / 152 aliases) and the alias-chain env resolution plus the pure
+//!   field derivation of `createRelayerConfig()`, gate error strings included
+//! - `state` — the relayer state machine: cursors, the processed-record LRU,
+//!   retry queue with ceiling shed into dead letters, metrics snapshot
+//! - `retry` — `computeRetryDelayMs` exponential backoff with jitter
+//! - `cursor` — request cursor floor + checkpoint block validation
+//! - `secret_redaction` — secret-name / secret-value log redaction
+//!
 //! Nothing here performs IO. Consumers: the enclave host, the custody service
 //! (attestation binding) and, later, the Rust relayer.
 
@@ -51,7 +61,10 @@ pub type CoreResult<T> = Result<T, CoreError>;
 
 pub mod base64;
 pub mod cbor;
+pub mod config;
+pub mod config_schema;
 pub mod cose;
+pub mod cursor;
 pub mod digest;
 pub mod envelope;
 pub mod error_codes;
@@ -61,7 +74,10 @@ pub mod js_value;
 pub mod kernel;
 pub mod n3_tx;
 pub mod neo_encoding;
+pub mod retry;
+pub mod secret_redaction;
 pub mod stable_stringify;
+pub mod state;
 
 /// Lowercase hex encoding (Buffer.prototype.toString('hex')).
 pub fn hex_encode(bytes: &[u8]) -> String {

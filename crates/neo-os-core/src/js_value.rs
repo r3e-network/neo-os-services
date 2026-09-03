@@ -62,6 +62,13 @@ impl JsObject {
         self.entries.iter().find(|(k, _)| k == key).map(|(_, v)| v)
     }
 
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut JsValue> {
+        self.entries
+            .iter_mut()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v)
+    }
+
     /// Assign like `{...obj, key: value}`: an existing key keeps its position,
     /// a new key is appended.
     pub fn set(&mut self, key: impl Into<String>, value: JsValue) {
@@ -70,6 +77,16 @@ impl JsObject {
             slot.1 = value;
         } else {
             self.entries.push((key, value));
+        }
+    }
+
+    /// JS `obj[key].push(value)` for the array-valued properties the state
+    /// machine maintains: push into the existing array, create it when absent.
+    pub fn push_array(&mut self, key: &str, value: JsValue) {
+        if let Some(JsValue::Array(items)) = self.get_mut(key) {
+            items.push(value);
+        } else {
+            self.set(key, JsValue::Array(vec![value]));
         }
     }
 
@@ -142,6 +159,27 @@ impl JsValue {
             JsValue::Array(items) => Some(items),
             _ => None,
         }
+    }
+
+    pub fn as_object_mut(&mut self) -> Option<&mut JsObject> {
+        match self {
+            JsValue::Object(obj) => Some(obj),
+            _ => None,
+        }
+    }
+
+    pub fn as_array_mut(&mut self) -> Option<&mut Vec<JsValue>> {
+        match self {
+            JsValue::Array(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    /// JS `value?.key` for the dynamic lookups the config/state paths use:
+    /// only objects carry properties; on anything else the access yields
+    /// "undefined", which maps to `None` here.
+    pub fn get(&self, key: &str) -> Option<&JsValue> {
+        self.as_object().and_then(|obj| obj.get(key))
     }
 
     /// ECMAScript ToString for the value shapes reachable from parsed JSON and
@@ -238,11 +276,9 @@ impl JsValue {
             _ => JsValue::from_json(value),
         }
     }
-
     /// Re-encode into the exporter's tagged form so tests can deep-compare
     /// against the committed vectors.
-    pub fn to_tagged(&self) -> Json {
-        match self {
+    pub fn to_tagged(&self) -> Json {        match self {
             JsValue::Undefined => serde_json::json!({ "__t": "undefined" }),
             JsValue::Null => serde_json::json!({ "__t": "null" }),
             JsValue::Bool(b) => serde_json::json!({ "__t": "bool", "v": b }),
@@ -262,5 +298,33 @@ impl JsValue {
                 serde_json::json!({ "__t": "object", "v": map })
             }
         }
+    }
+}
+
+/// ECMAScript `String(value)` for the shapes the relayer config/state paths
+/// reach: arrays join with "," (null/undefined elements become empty),
+/// plain objects stringify as "[object Object]", numbers go through the
+/// ECMAScript double formatter. Unlike [`JsValue::to_string_js`] (which fails
+/// closed on arrays/objects because digest paths must never see them), this
+/// is the lenient coercion the dynamic config/state code relies on.
+pub fn to_display_string(value: &JsValue) -> String {
+    match value {
+        JsValue::Undefined => "undefined".to_string(),
+        JsValue::Null => "null".to_string(),
+        JsValue::Bool(true) => "true".to_string(),
+        JsValue::Bool(false) => "false".to_string(),
+        JsValue::Number(n) => number_to_string(*n),
+        JsValue::BigInt(v) => v.clone(),
+        JsValue::Str(s) => s.clone(),
+        JsValue::Array(items) => items
+            .iter()
+            .map(|item| match item {
+                JsValue::Undefined | JsValue::Null => String::new(),
+                other => to_display_string(other),
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+        // JS String({}) calls toString -> "[object Object]" for plain objects.
+        JsValue::Object(_) => "[object Object]".to_string(),
     }
 }

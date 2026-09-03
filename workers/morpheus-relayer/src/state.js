@@ -294,7 +294,9 @@ export function removeDeadLetter(state, chain, eventOrKey) {
  * dead-letter manual-replay lane. No-op when the limit is 0/unset so the live box
  * is unchanged until the operator opts in. Returns the number of items shed.
  */
-export function enforceRetryQueueLimit(state, chain, limits = {}) {
+// `nowMs` is injectable (default Date.now()) so the golden-vector exporter can
+// produce deterministic exhausted_at timestamps; runtime callers are unchanged.
+export function enforceRetryQueueLimit(state, chain, limits = {}, nowMs = Date.now()) {
   const limit = Math.max(Number(limits.retryQueueLimit || 0), 0);
   if (limit <= 0) return 0;
   const chainState = state[chain];
@@ -318,7 +320,7 @@ export function enforceRetryQueueLimit(state, chain, limits = {}) {
       event,
       attempts: Number(item.attempts || 0),
       last_error: item.last_error || 'retry_queue_overflow',
-      exhausted_at: new Date().toISOString(),
+      exhausted_at: new Date(nowMs).toISOString(),
       shed_reason: 'retry_queue_overflow',
     });
   }
@@ -327,16 +329,16 @@ export function enforceRetryQueueLimit(state, chain, limits = {}) {
   return shed.length;
 }
 
-export function enqueueRetryItem(state, chain, event, options = {}) {
+export function enqueueRetryItem(state, chain, event, options = {}, nowMs = Date.now()) {
   const chainState = state[chain];
   const key = buildEventKey(event);
   const item = {
     key,
     event,
     attempts: Number(options.attempts || 0),
-    next_retry_at: Number(options.next_retry_at || Date.now()),
-    first_failed_at: options.first_failed_at || new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    next_retry_at: Number(options.next_retry_at || nowMs),
+    first_failed_at: options.first_failed_at || new Date(nowMs).toISOString(),
+    updated_at: new Date(nowMs).toISOString(),
     last_error: options.last_error || null,
     manual_action: options.manual_action || null,
     finalize_only: Boolean(options.finalize_only),
@@ -355,14 +357,27 @@ export function enqueueRetryItem(state, chain, event, options = {}) {
   }
   // Shed the oldest overflow into the dead-letter lane when a ceiling is set. The
   // item just enqueued is the newest (tail), so an overflow sheds older items.
-  enforceRetryQueueLimit(state, chain, {
-    retryQueueLimit: options.retryQueueLimit,
-    deadLetterLimit: options.deadLetterLimit,
-  });
+  enforceRetryQueueLimit(
+    state,
+    chain,
+    {
+      retryQueueLimit: options.retryQueueLimit,
+      deadLetterLimit: options.deadLetterLimit,
+    },
+    nowMs
+  );
   return item;
 }
 
-export function recordProcessedEvent(state, chain, event, status, meta = {}, limits = {}) {
+export function recordProcessedEvent(
+  state,
+  chain,
+  event,
+  status,
+  meta = {},
+  limits = {},
+  nowMs = Date.now()
+) {
   const chainState = state[chain];
   const key = buildEventKey(event);
   const kernelIntent = resolveKernelIntent(event.requestType);
@@ -378,7 +393,7 @@ export function recordProcessedEvent(state, chain, event, status, meta = {}, lim
     operation: kernelIntent.operation,
     tx_hash: String(event.txHash || ''),
     block_number: Number(event.blockNumber ?? 0),
-    completed_at: new Date().toISOString(),
+    completed_at: new Date(nowMs).toISOString(),
     ...meta,
   };
   chainState.retry_queue = chainState.retry_queue.filter((item) => item.key !== key);
@@ -391,7 +406,7 @@ export function recordProcessedEvent(state, chain, event, status, meta = {}, lim
       operation: kernelIntent.operation,
       chain,
       event,
-      exhausted_at: new Date().toISOString(),
+      exhausted_at: new Date(nowMs).toISOString(),
       ...meta,
     });
     pruneDeadLetters(chainState, limits.deadLetterLimit || 200);
@@ -400,7 +415,15 @@ export function recordProcessedEvent(state, chain, event, status, meta = {}, lim
   return chainState.processed_records[key];
 }
 
-export function scheduleRetry(state, chain, event, errorMessage, config, rng = Math.random) {
+export function scheduleRetry(
+  state,
+  chain,
+  event,
+  errorMessage,
+  config,
+  rng = Math.random,
+  nowMs = Date.now()
+) {
   const chainState = state[chain];
   const key = buildEventKey(event);
   const existing = chainState.retry_queue.find((item) => item.key === key);
@@ -423,9 +446,9 @@ export function scheduleRetry(state, chain, event, errorMessage, config, rng = M
     key,
     event,
     attempts,
-    next_retry_at: Date.now() + delayMs,
-    first_failed_at: existing?.first_failed_at || new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    next_retry_at: nowMs + delayMs,
+    first_failed_at: existing?.first_failed_at || new Date(nowMs).toISOString(),
+    updated_at: new Date(nowMs).toISOString(),
     last_error: errorMessage,
   };
 
@@ -436,10 +459,15 @@ export function scheduleRetry(state, chain, event, errorMessage, config, rng = M
     chainState.retry_queue.push(item);
   }
 
-  enforceRetryQueueLimit(state, chain, {
-    retryQueueLimit: config?.retryQueueLimit,
-    deadLetterLimit: config?.deadLetterLimit,
-  });
+  enforceRetryQueueLimit(
+    state,
+    chain,
+    {
+      retryQueueLimit: config?.retryQueueLimit,
+      deadLetterLimit: config?.deadLetterLimit,
+    },
+    nowMs
+  );
 
   return { status: 'scheduled', key, item };
 }

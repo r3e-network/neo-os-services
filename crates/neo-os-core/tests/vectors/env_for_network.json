@@ -1,0 +1,338 @@
+{
+  "family": "env_for_network",
+  "cases": [
+    {
+      "name": "alias chain first set wins",
+      "process_env": {
+        "A_PRIMARY": "p",
+        "A_SECONDARY": "s"
+      },
+      "runtime_config": null,
+      "calls": [
+        {
+          "kind": "env",
+          "names": [
+            "A_PRIMARY",
+            "A_SECONDARY"
+          ]
+        },
+        {
+          "kind": "env",
+          "names": [
+            "A_SECONDARY",
+            "A_PRIMARY"
+          ]
+        },
+        {
+          "kind": "env",
+          "names": [
+            "A_MISSING"
+          ]
+        }
+      ],
+      "expected": [
+        {
+          "__t": "string",
+          "v": "p"
+        },
+        {
+          "__t": "string",
+          "v": "s"
+        },
+        {
+          "__t": "string",
+          "v": ""
+        }
+      ]
+    },
+    {
+      "name": "runtime config fallback and coercion",
+      "process_env": {},
+      "runtime_config": {
+        "B": "from-runtime",
+        "N": 42,
+        "Z": 0,
+        "E": "",
+        "NL": null,
+        "NEG": -3.5
+      },
+      "calls": [
+        {
+          "kind": "env",
+          "names": [
+            "B"
+          ]
+        },
+        {
+          "kind": "env",
+          "names": [
+            "N"
+          ]
+        },
+        {
+          "kind": "env",
+          "names": [
+            "Z"
+          ]
+        },
+        {
+          "kind": "env",
+          "names": [
+            "NEG"
+          ]
+        },
+        {
+          "kind": "env",
+          "names": [
+            "E"
+          ]
+        },
+        {
+          "kind": "env",
+          "names": [
+            "NL"
+          ]
+        },
+        {
+          "kind": "env",
+          "names": [
+            "MISSING_BOTH"
+          ]
+        }
+      ],
+      "expected": [
+        {
+          "__t": "string",
+          "v": "from-runtime"
+        },
+        {
+          "__t": "string",
+          "v": "42"
+        },
+        {
+          "__t": "string",
+          "v": "0"
+        },
+        {
+          "__t": "string",
+          "v": "-3.5"
+        },
+        {
+          "__t": "string",
+          "v": ""
+        },
+        {
+          "__t": "string",
+          "v": ""
+        },
+        {
+          "__t": "string",
+          "v": ""
+        }
+      ]
+    },
+    {
+      "name": "process env beats runtime config",
+      "process_env": {
+        "K": "direct"
+      },
+      "runtime_config": {
+        "K": "from-runtime"
+      },
+      "calls": [
+        {
+          "kind": "env",
+          "names": [
+            "K"
+          ]
+        }
+      ],
+      "expected": [
+        {
+          "__t": "string",
+          "v": "direct"
+        }
+      ]
+    },
+    {
+      "name": "whitespace trims and blank skips",
+      "process_env": {
+        "W": "  padded  ",
+        "BLANK": "   "
+      },
+      "runtime_config": {
+        "RW": "  rt-padded  "
+      },
+      "calls": [
+        {
+          "kind": "env",
+          "names": [
+            "W"
+          ]
+        },
+        {
+          "kind": "env",
+          "names": [
+            "BLANK",
+            "RW"
+          ]
+        },
+        {
+          "kind": "env",
+          "names": [
+            "BLANK"
+          ]
+        }
+      ],
+      "expected": [
+        {
+          "__t": "string",
+          "v": "padded"
+        },
+        {
+          "__t": "string",
+          "v": "rt-padded"
+        },
+        {
+          "__t": "string",
+          "v": ""
+        }
+      ]
+    },
+    {
+      "name": "network scoped testnet suffix wins",
+      "process_env": {
+        "MY_KEY_TESTNET": "tn",
+        "MY_KEY": "generic"
+      },
+      "runtime_config": null,
+      "calls": [
+        {
+          "kind": "env_network_scoped",
+          "network": "testnet",
+          "generic_key": "MY_KEY"
+        }
+      ],
+      "expected": [
+        {
+          "__t": "string",
+          "v": "tn"
+        }
+      ]
+    },
+    {
+      "name": "network scoped mainnet suffix wins",
+      "process_env": {
+        "MY_KEY_MAINNET": "mn",
+        "MY_KEY": "generic"
+      },
+      "runtime_config": null,
+      "calls": [
+        {
+          "kind": "env_network_scoped",
+          "network": "mainnet",
+          "generic_key": "MY_KEY"
+        }
+      ],
+      "expected": [
+        {
+          "__t": "string",
+          "v": "mn"
+        }
+      ]
+    },
+    {
+      "name": "network scoped falls back to generic",
+      "process_env": {
+        "ONLY_GENERIC": "g"
+      },
+      "runtime_config": null,
+      "calls": [
+        {
+          "kind": "env_network_scoped",
+          "network": "testnet",
+          "generic_key": "ONLY_GENERIC"
+        }
+      ],
+      "expected": [
+        {
+          "__t": "string",
+          "v": "g"
+        }
+      ]
+    },
+    {
+      "name": "network scoped reads runtime config",
+      "process_env": {},
+      "runtime_config": {
+        "SCOPED_TESTNET": "rt-tn",
+        "PLAIN_SCOPED": "rt-plain"
+      },
+      "calls": [
+        {
+          "kind": "env_network_scoped",
+          "network": "testnet",
+          "generic_key": "SCOPED"
+        },
+        {
+          "kind": "env_network_scoped",
+          "network": "testnet",
+          "generic_key": "PLAIN_SCOPED"
+        }
+      ],
+      "expected": [
+        {
+          "__t": "string",
+          "v": "rt-tn"
+        },
+        {
+          "__t": "string",
+          "v": "rt-plain"
+        }
+      ]
+    },
+    {
+      "name": "non-mainnet network uses testnet suffix",
+      "process_env": {
+        "SUFFIXED_TESTNET": "t"
+      },
+      "runtime_config": null,
+      "calls": [
+        {
+          "kind": "env_network_scoped",
+          "network": "weird-network",
+          "generic_key": "SUFFIXED"
+        }
+      ],
+      "expected": [
+        {
+          "__t": "string",
+          "v": "t"
+        }
+      ]
+    },
+    {
+      "name": "empty process value defers to runtime",
+      "process_env": {
+        "P2": ""
+      },
+      "runtime_config": {
+        "P2": "rt-val"
+      },
+      "calls": [
+        {
+          "kind": "env",
+          "names": [
+            "P2"
+          ]
+        }
+      ],
+      "expected": [
+        {
+          "__t": "string",
+          "v": "rt-val"
+        }
+      ]
+    }
+  ]
+}

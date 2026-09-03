@@ -1,0 +1,5423 @@
+{
+  "family": "config_resolution",
+  "cases": [
+    {
+      "name": "defaults are testnet combined",
+      "process_env": {},
+      "runtime_config": null,
+      "network": "testnet",
+      "registry": {
+        "network": "testnet",
+        "nitro": {
+          "cvm_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+          "cvm_name": "oracle-morpheus-neo-r3e",
+          "public_api_url": "https://oracle.meshmini.app/testnet",
+          "edge_public_url": "https://edge.meshmini.app/testnet",
+          "control_plane_url": "https://control.meshmini.app",
+          "oracle_attestation_explorer_url": "",
+          "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
+          "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
+          "datafeed_attestation_explorer_url": ""
+        },
+        "neo_n3": {
+          "rpc_url": "https://api.n3index.dev/testnet",
+          "rpc_urls": [
+            "https://api.n3index.dev/testnet",
+            "https://testnet1.neo.coz.io:443",
+            "http://seed1t5.neo.org:20332",
+            "http://seed2t5.neo.org:20332",
+            "http://seed3t5.neo.org:20332",
+            "http://seed4t5.neo.org:20332",
+            "http://seed5t5.neo.org:20332",
+            "http://seed3.neo.org:20332",
+            "http://seed4.neo.org:20332",
+            "http://seed5.neo.org:20332"
+          ],
+          "network_magic": 894710606,
+          "domains": {
+            "morpheus_oracle": "",
+            "morpheus_datafeed": "",
+            "morpheus_aa": "",
+            "morpheus_aa_alias": "",
+            "morpheus_neodid": ""
+          },
+          "contracts": {
+            "morpheus_oracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+            "morpheus_oracle_legacy_v1_retired": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "morpheus_datafeed": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
+            "abstract_account": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
+            "aa_address_market": "0x6b979cdd246cc6491a20000a2a822e497c92c23b",
+            "morpheus_neodid": ""
+          },
+          "aa_runtime": {
+            "display_name": "UnifiedSmartWalletV3",
+            "abi_generation": "v3",
+            "core_deploy_tx": "0xbcee817781bb57e66d7373c25c1b951bbe7bce9ebc355fb38f7d23b21cc515c0",
+            "core_update_tx": "0x62148cca4a7bb15efa288f6bc80cda4d86e4f7ffcdf99234c7180b5c5daa1202",
+            "web3auth_verifier_deploy_tx": "0x84bea53fb8344fb3258ad5596bc8368201e4eb3c0340914e5c98952d3f0a8805",
+            "web3auth_verifier_authorize_core_tx": "0x1a59299e397ce7e8b482691338485cd0ee2d82aa6655f836a338d24d4c6ab472",
+            "web3auth_verifier_nef_checksum": 2926105305
+          },
+          "aa_subdomains": {
+            "core": "",
+            "web3auth": "",
+            "recovery": "",
+            "tee": "",
+            "session": "",
+            "webauthn": "",
+            "multisig": "",
+            "subscription": "",
+            "credential_hook": "",
+            "whitelist_hook": "",
+            "daily_limit_hook": "",
+            "token_hook": "",
+            "multi_hook": ""
+          },
+          "aa_verifiers": {
+            "web3auth": "0x1111f5b6b046a964c75d208998c13945ce172e85",
+            "social_recovery": ""
+          },
+          "examples": {
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "feed_reader": "0xae9c17da3d8d1cc45b2a95f77ddce391b9bdcad4"
+          }
+        }
+      },
+      "expected": {
+        "__t": "object",
+        "v": {
+          "network": {
+            "__t": "string",
+            "v": "testnet"
+          },
+          "nodeEnv": {
+            "__t": "string",
+            "v": ""
+          },
+          "mode": {
+            "__t": "string",
+            "v": "combined"
+          },
+          "useDerivedKeys": {
+            "__t": "bool",
+            "v": false
+          },
+          "activeChains": {
+            "__t": "array",
+            "v": [
+              {
+                "__t": "string",
+                "v": "neo_n3"
+              }
+            ]
+          },
+          "pollIntervalMs": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "discoveryIdleBackoffMs": {
+            "__t": "number",
+            "v": "0"
+          },
+          "concurrency": {
+            "__t": "number",
+            "v": "4"
+          },
+          "maxBlocksPerTick": {
+            "__t": "number",
+            "v": "250"
+          },
+          "maxRetries": {
+            "__t": "number",
+            "v": "5"
+          },
+          "maxCallbackRetries": {
+            "__t": "number",
+            "v": "10"
+          },
+          "retryBaseDelayMs": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "retryMaxDelayMs": {
+            "__t": "number",
+            "v": "10000"
+          },
+          "statePersistMinIntervalMs": {
+            "__t": "number",
+            "v": "250"
+          },
+          "processedCacheSize": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "deadLetterLimit": {
+            "__t": "number",
+            "v": "500"
+          },
+          "retryQueueLimit": {
+            "__t": "number",
+            "v": "0"
+          },
+          "durableQueue": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "failClosed": {
+                "__t": "bool",
+                "v": false
+              },
+              "allowLocalClaimDuringBackoff": {
+                "__t": "bool",
+                "v": false
+              },
+              "syncLimit": {
+                "__t": "number",
+                "v": "200"
+              },
+              "staleProcessingMs": {
+                "__t": "number",
+                "v": "45000"
+              }
+            }
+          },
+          "runSnapshots": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "errorBackoffMs": {
+                "__t": "number",
+                "v": "300000"
+              }
+            }
+          },
+          "backpressure": {
+            "__t": "object",
+            "v": {
+              "maxFreshEventsPerTick": {
+                "__t": "number",
+                "v": "32"
+              },
+              "maxRetryEventsPerTick": {
+                "__t": "number",
+                "v": "16"
+              },
+              "deferDelayMs": {
+                "__t": "number",
+                "v": "5000"
+              }
+            }
+          },
+          "feedSync": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "waitForSubmission": {
+                "__t": "bool",
+                "v": false
+              },
+              "projectSlug": {
+                "__t": "string",
+                "v": "morpheus"
+              },
+              "projectConfigEnabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "provider": {
+                "__t": "string",
+                "v": ""
+              },
+              "providers": {
+                "__t": "array",
+                "v": []
+              },
+              "symbols": {
+                "__t": "array",
+                "v": []
+              },
+              "changeThresholdBps": {
+                "__t": "string",
+                "v": "10"
+              },
+              "minUpdateIntervalMs": {
+                "__t": "string",
+                "v": "60000"
+              },
+              "staleAfterMs": {
+                "__t": "string",
+                "v": "300000"
+              }
+            }
+          },
+          "automation": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "batchSize": {
+                "__t": "number",
+                "v": "50"
+              },
+              "maxQueuedPerTick": {
+                "__t": "number",
+                "v": "10"
+              },
+              "pricePollPairsPerTick": {
+                "__t": "number",
+                "v": "25"
+              },
+              "defaultPriceCooldownMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "claimStaleMs": {
+                "__t": "number",
+                "v": "120000"
+              },
+              "idleBackoffMs": {
+                "__t": "number",
+                "v": "0"
+              }
+            }
+          },
+          "logFormat": {
+            "__t": "string",
+            "v": "json"
+          },
+          "logLevel": {
+            "__t": "string",
+            "v": "info"
+          },
+          "confirmations": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "number",
+                "v": "1"
+              },
+              "neox": {
+                "__t": "number",
+                "v": "2"
+              }
+            }
+          },
+          "startRequestIds": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "null"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "startBlocks": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "null"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "nitro": {
+            "__t": "object",
+            "v": {
+              "apiUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "allowFallback": {
+                "__t": "bool",
+                "v": true
+              },
+              "signerUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "custodyUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "custodyToken": {
+                "__t": "string",
+                "v": ""
+              },
+              "enclaveFulfill": {
+                "__t": "bool",
+                "v": false
+              },
+              "expectedPcr0": {
+                "__t": "string",
+                "v": ""
+              },
+              "verifyEnclaveSignature": {
+                "__t": "bool",
+                "v": false
+              },
+              "enclaveFulfillUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "decryptUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "nitroRootCertPem": {
+                "__t": "string",
+                "v": ""
+              },
+              "attestationMaxAgeMs": {
+                "__t": "number",
+                "v": "0"
+              },
+              "token": {
+                "__t": "string",
+                "v": ""
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "useDerivedKeys": {
+                "__t": "bool",
+                "v": false
+              }
+            }
+          },
+          "neo_n3": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "n3index_notifications"
+              },
+              "fulfillConfirmTimeoutMs": {
+                "__t": "null"
+              },
+              "fulfillConfirmThrowOnTimeout": {
+                "__t": "bool",
+                "v": true
+              },
+              "indexerUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/rest/v1"
+              },
+              "startRequestId": {
+                "__t": "null"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/testnet"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://api.n3index.dev/testnet"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://testnet1.neo.coz.io:443"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed1t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed2t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed3t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed4t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed5t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed3.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed4.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed5.neo.org:20332"
+                  }
+                ]
+              },
+              "networkMagic": {
+                "__t": "number",
+                "v": "894710606"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef"
+              },
+              "datafeedContract": {
+                "__t": "string",
+                "v": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064"
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "oracle_verifier": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
+              },
+              "feeTopUp": {
+                "__t": "object",
+                "v": {
+                  "enabled": {
+                    "__t": "bool",
+                    "v": true
+                  },
+                  "minBalance": {
+                    "__t": "string",
+                    "v": "50000000"
+                  },
+                  "topUpAmount": {
+                    "__t": "string",
+                    "v": "100000000"
+                  },
+                  "maxTopUpAmount": {
+                    "__t": "string",
+                    "v": "500000000"
+                  }
+                }
+              }
+            }
+          },
+          "neox": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "request_cursor"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://neoxt4seed1.ngd.network"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://neoxt4seed1.ngd.network"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://neoxt4seed2.ngd.network"
+                  }
+                ]
+              },
+              "chainId": {
+                "__t": "number",
+                "v": "12227332"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "allowHostSigner": {
+                "__t": "bool",
+                "v": false
+              },
+              "updaterPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "verifierPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "confirmTimeoutMs": {
+                "__t": "number",
+                "v": "45000"
+              },
+              "workerUrl": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "metricsServer": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": "127.0.0.1"
+              },
+              "port": {
+                "__t": "number",
+                "v": "9464"
+              },
+              "path": {
+                "__t": "string",
+                "v": "/metrics"
+              }
+            }
+          },
+          "heartbeats": {
+            "__t": "object",
+            "v": {
+              "relayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedRelayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "failure": {
+                "__t": "string",
+                "v": ""
+              },
+              "deadLetter": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "mainnet via MORPHEUS_NETWORK",
+      "process_env": {
+        "MORPHEUS_NETWORK": "mainnet"
+      },
+      "runtime_config": null,
+      "network": "mainnet",
+      "registry": {
+        "network": "mainnet",
+        "nitro": {
+          "cvm_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+          "cvm_name": "oracle-morpheus-neo-r3e",
+          "public_api_url": "https://oracle.meshmini.app/mainnet",
+          "edge_public_url": "https://edge.meshmini.app/mainnet",
+          "control_plane_url": "https://control.meshmini.app",
+          "oracle_attestation_explorer_url": "",
+          "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
+          "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
+          "datafeed_attestation_explorer_url": ""
+        },
+        "neo_n3": {
+          "rpc_url": "https://api.n3index.dev/mainnet",
+          "rpc_urls": [
+            "https://api.n3index.dev/mainnet",
+            "https://mainnet1.neo.coz.io:443",
+            "https://mainnet2.neo.coz.io:443",
+            "http://seed1.neo.org:10332",
+            "http://seed2.neo.org:10332",
+            "http://seed3.neo.org:10332"
+          ],
+          "network_magic": 860833102,
+          "domains": {
+            "morpheus_oracle": "oracle.morpheus.neo",
+            "morpheus_callback_consumer": "callback.morpheus.neo",
+            "morpheus_datafeed": "pricefeed.morpheus.neo",
+            "morpheus_aa": "smartwallet.neo",
+            "morpheus_aa_alias": "aa.morpheus.neo",
+            "morpheus_neodid": "neodid.morpheus.neo"
+          },
+          "aa_subdomains": {
+            "core": "core.smartwallet.neo",
+            "web3auth": "web3auth.smartwallet.neo",
+            "recovery": "recovery.smartwallet.neo",
+            "tee": "teeverifier.smartwallet.neo",
+            "session": "sessionkey.smartwallet.neo",
+            "webauthn": "webauthn.smartwallet.neo",
+            "multisig": "multisig.smartwallet.neo",
+            "subscription": "subscription.smartwallet.neo",
+            "credential_hook": "credential.smartwallet.neo",
+            "whitelist_hook": "whitelist.smartwallet.neo",
+            "daily_limit_hook": "dailylimit.smartwallet.neo",
+            "token_hook": "tokenhook.smartwallet.neo",
+            "multi_hook": "multihook.smartwallet.neo",
+            "market": "market.smartwallet.neo",
+            "paymaster": "paymaster.smartwallet.neo"
+          },
+          "contracts": {
+            "morpheus_oracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+            "oracle_callback_consumer": "0xe1226268f2fe08bea67fb29e1c8fda0d7c8e9844",
+            "morpheus_datafeed": "0x03013f49c42a14546c8bbe58f9d434c3517fccab",
+            "abstract_account": "0x0268a387913b250166ddec032b03332690a1ef78",
+            "morpheus_neodid": "0xb81f31ea81e279793b30411b82c2e82078b63105",
+            "aa_address_market": "0xae7afe3a85ab08bfd1d4907b35ae8b80c75b3a69",
+            "aa_paymaster": "0xa0defa2bc6d7a71ba1e237149287c8ca4ff46caf"
+          },
+          "aa_runtime": {
+            "display_name": "UnifiedSmartWalletV3",
+            "abi_generation": "v3",
+            "core_deploy_tx": "0x029403034a14cd86f956c6e52dbd253476b3a70c3cfa41444c36255078d4ca11",
+            "core_update_tx": "",
+            "latest_mainnet_smoke_tx": "0xaabcfdf91e77f320bee204ea59ca0c98114b9c71c875a4cdac4abdbd4443ee57",
+            "legacy_core_hash": "0x9742b4ed62a84a886f404d36149da6147528ee33",
+            "legacy_core_update_tx": "0xb0e163734ffd0641b44c6091f373f0b09acdde03c693f465c97e6659f2dda035"
+          },
+          "aa_verifiers": {
+            "web3auth": "0xf5c452cd4ba29dcdc47026383568c0d8b38d9272",
+            "social_recovery": "0x198b3a9cec9bccc2110d19bd929b10374a9d034d",
+            "session_key": "0x3ba8333406e59f9fd83cf378b33706a33d9f3755"
+          },
+          "examples": {
+            "oracle_callback_consumer": "0x89b05cac00804648c666b47ecb1c57bc185821b7",
+            "feed_reader": "0x11e454261c21a32f1c9262472ca72a3156f9051f"
+          }
+        }
+      },
+      "expected": {
+        "__t": "object",
+        "v": {
+          "network": {
+            "__t": "string",
+            "v": "mainnet"
+          },
+          "nodeEnv": {
+            "__t": "string",
+            "v": ""
+          },
+          "mode": {
+            "__t": "string",
+            "v": "combined"
+          },
+          "useDerivedKeys": {
+            "__t": "bool",
+            "v": false
+          },
+          "activeChains": {
+            "__t": "array",
+            "v": [
+              {
+                "__t": "string",
+                "v": "neo_n3"
+              }
+            ]
+          },
+          "pollIntervalMs": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "discoveryIdleBackoffMs": {
+            "__t": "number",
+            "v": "0"
+          },
+          "concurrency": {
+            "__t": "number",
+            "v": "4"
+          },
+          "maxBlocksPerTick": {
+            "__t": "number",
+            "v": "250"
+          },
+          "maxRetries": {
+            "__t": "number",
+            "v": "5"
+          },
+          "maxCallbackRetries": {
+            "__t": "number",
+            "v": "10"
+          },
+          "retryBaseDelayMs": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "retryMaxDelayMs": {
+            "__t": "number",
+            "v": "10000"
+          },
+          "statePersistMinIntervalMs": {
+            "__t": "number",
+            "v": "250"
+          },
+          "processedCacheSize": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "deadLetterLimit": {
+            "__t": "number",
+            "v": "500"
+          },
+          "retryQueueLimit": {
+            "__t": "number",
+            "v": "0"
+          },
+          "durableQueue": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "failClosed": {
+                "__t": "bool",
+                "v": false
+              },
+              "allowLocalClaimDuringBackoff": {
+                "__t": "bool",
+                "v": false
+              },
+              "syncLimit": {
+                "__t": "number",
+                "v": "200"
+              },
+              "staleProcessingMs": {
+                "__t": "number",
+                "v": "45000"
+              }
+            }
+          },
+          "runSnapshots": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "errorBackoffMs": {
+                "__t": "number",
+                "v": "300000"
+              }
+            }
+          },
+          "backpressure": {
+            "__t": "object",
+            "v": {
+              "maxFreshEventsPerTick": {
+                "__t": "number",
+                "v": "32"
+              },
+              "maxRetryEventsPerTick": {
+                "__t": "number",
+                "v": "16"
+              },
+              "deferDelayMs": {
+                "__t": "number",
+                "v": "5000"
+              }
+            }
+          },
+          "feedSync": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "waitForSubmission": {
+                "__t": "bool",
+                "v": false
+              },
+              "projectSlug": {
+                "__t": "string",
+                "v": "morpheus"
+              },
+              "projectConfigEnabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "provider": {
+                "__t": "string",
+                "v": ""
+              },
+              "providers": {
+                "__t": "array",
+                "v": []
+              },
+              "symbols": {
+                "__t": "array",
+                "v": []
+              },
+              "changeThresholdBps": {
+                "__t": "string",
+                "v": "10"
+              },
+              "minUpdateIntervalMs": {
+                "__t": "string",
+                "v": "60000"
+              },
+              "staleAfterMs": {
+                "__t": "string",
+                "v": "300000"
+              }
+            }
+          },
+          "automation": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "batchSize": {
+                "__t": "number",
+                "v": "50"
+              },
+              "maxQueuedPerTick": {
+                "__t": "number",
+                "v": "10"
+              },
+              "pricePollPairsPerTick": {
+                "__t": "number",
+                "v": "25"
+              },
+              "defaultPriceCooldownMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "claimStaleMs": {
+                "__t": "number",
+                "v": "120000"
+              },
+              "idleBackoffMs": {
+                "__t": "number",
+                "v": "0"
+              }
+            }
+          },
+          "logFormat": {
+            "__t": "string",
+            "v": "json"
+          },
+          "logLevel": {
+            "__t": "string",
+            "v": "info"
+          },
+          "confirmations": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "number",
+                "v": "1"
+              },
+              "neox": {
+                "__t": "number",
+                "v": "2"
+              }
+            }
+          },
+          "startRequestIds": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "null"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "startBlocks": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "null"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "nitro": {
+            "__t": "object",
+            "v": {
+              "apiUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/mainnet,https://edge.meshmini.app/mainnet"
+              },
+              "allowFallback": {
+                "__t": "bool",
+                "v": true
+              },
+              "signerUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/mainnet,https://edge.meshmini.app/mainnet"
+              },
+              "custodyUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "custodyToken": {
+                "__t": "string",
+                "v": ""
+              },
+              "enclaveFulfill": {
+                "__t": "bool",
+                "v": false
+              },
+              "expectedPcr0": {
+                "__t": "string",
+                "v": ""
+              },
+              "verifyEnclaveSignature": {
+                "__t": "bool",
+                "v": false
+              },
+              "enclaveFulfillUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/mainnet,https://edge.meshmini.app/mainnet"
+              },
+              "decryptUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/mainnet,https://edge.meshmini.app/mainnet"
+              },
+              "nitroRootCertPem": {
+                "__t": "string",
+                "v": ""
+              },
+              "attestationMaxAgeMs": {
+                "__t": "number",
+                "v": "0"
+              },
+              "token": {
+                "__t": "string",
+                "v": ""
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "useDerivedKeys": {
+                "__t": "bool",
+                "v": false
+              }
+            }
+          },
+          "neo_n3": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "block_cursor"
+              },
+              "fulfillConfirmTimeoutMs": {
+                "__t": "null"
+              },
+              "fulfillConfirmThrowOnTimeout": {
+                "__t": "bool",
+                "v": true
+              },
+              "indexerUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/rest/v1"
+              },
+              "startRequestId": {
+                "__t": "null"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/mainnet"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://api.n3index.dev/mainnet"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://mainnet1.neo.coz.io:443"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://mainnet2.neo.coz.io:443"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed1.neo.org:10332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed2.neo.org:10332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed3.neo.org:10332"
+                  }
+                ]
+              },
+              "networkMagic": {
+                "__t": "number",
+                "v": "860833102"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef"
+              },
+              "datafeedContract": {
+                "__t": "string",
+                "v": "0x03013f49c42a14546c8bbe58f9d434c3517fccab"
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "oracle_verifier": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
+              },
+              "feeTopUp": {
+                "__t": "object",
+                "v": {
+                  "enabled": {
+                    "__t": "bool",
+                    "v": true
+                  },
+                  "minBalance": {
+                    "__t": "string",
+                    "v": "50000000"
+                  },
+                  "topUpAmount": {
+                    "__t": "string",
+                    "v": "100000000"
+                  },
+                  "maxTopUpAmount": {
+                    "__t": "string",
+                    "v": "500000000"
+                  }
+                }
+              }
+            }
+          },
+          "neox": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "request_cursor"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://mainnet-1.rpc.banelabs.org"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://mainnet-1.rpc.banelabs.org"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://mainnet-2.rpc.banelabs.org"
+                  }
+                ]
+              },
+              "chainId": {
+                "__t": "number",
+                "v": "47763"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "allowHostSigner": {
+                "__t": "bool",
+                "v": false
+              },
+              "updaterPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "verifierPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "confirmTimeoutMs": {
+                "__t": "number",
+                "v": "45000"
+              },
+              "workerUrl": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "metricsServer": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": "127.0.0.1"
+              },
+              "port": {
+                "__t": "number",
+                "v": "9464"
+              },
+              "path": {
+                "__t": "string",
+                "v": "/metrics"
+              }
+            }
+          },
+          "heartbeats": {
+            "__t": "object",
+            "v": {
+              "relayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedRelayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "failure": {
+                "__t": "string",
+                "v": ""
+              },
+              "deadLetter": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "explicit overrides and aliases",
+      "process_env": {
+        "NEXT_PUBLIC_MORPHEUS_NETWORK": "mainnet",
+        "MORPHEUS_RELAYER_MODE": "oracle",
+        "NODE_ENV": "production",
+        "MORPHEUS_RELAYER_MAX_RETRIES": "7",
+        "MORPHEUS_RELAYER_MAX_CALLBACK_RETRIES": "3",
+        "MORPHEUS_RELAYER_RETRY_BASE_DELAY_MS": "250",
+        "MORPHEUS_RELAYER_RETRY_MAX_DELAY_MS": "900000",
+        "MORPHEUS_RELAYER_CONCURRENCY": "2",
+        "MORPHEUS_RELAYER_MAX_BLOCKS_PER_TICK": "500",
+        "MORPHEUS_RELAYER_DEAD_LETTER_LIMIT": "50",
+        "MORPHEUS_RELAYER_PROCESSED_CACHE_SIZE": "100",
+        "MORPHEUS_RELAYER_NEO_N3_START_REQUEST_ID": "42",
+        "MORPHEUS_RELAYER_NEOX_START_BLOCK": "12345",
+        "MORPHEUS_RELAYER_LOG_LEVEL": "debug",
+        "LOG_FORMAT": "pretty",
+        "MORPHEUS_FEED_SYNC_ENABLED": "false",
+        "MORPHEUS_AUTOMATION_ENABLED": "false",
+        "MORPHEUS_RELAYER_ENCLAVE_FULFILL": "true",
+        "SIGNER_SERVICE_URL": "https://custody.internal",
+        "MORPHEUS_EXPECTED_PCR0": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "runtime_config": null,
+      "network": "mainnet",
+      "registry": {
+        "network": "mainnet",
+        "nitro": {
+          "cvm_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+          "cvm_name": "oracle-morpheus-neo-r3e",
+          "public_api_url": "https://oracle.meshmini.app/mainnet",
+          "edge_public_url": "https://edge.meshmini.app/mainnet",
+          "control_plane_url": "https://control.meshmini.app",
+          "oracle_attestation_explorer_url": "",
+          "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
+          "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
+          "datafeed_attestation_explorer_url": ""
+        },
+        "neo_n3": {
+          "rpc_url": "https://api.n3index.dev/mainnet",
+          "rpc_urls": [
+            "https://api.n3index.dev/mainnet",
+            "https://mainnet1.neo.coz.io:443",
+            "https://mainnet2.neo.coz.io:443",
+            "http://seed1.neo.org:10332",
+            "http://seed2.neo.org:10332",
+            "http://seed3.neo.org:10332"
+          ],
+          "network_magic": 860833102,
+          "domains": {
+            "morpheus_oracle": "oracle.morpheus.neo",
+            "morpheus_callback_consumer": "callback.morpheus.neo",
+            "morpheus_datafeed": "pricefeed.morpheus.neo",
+            "morpheus_aa": "smartwallet.neo",
+            "morpheus_aa_alias": "aa.morpheus.neo",
+            "morpheus_neodid": "neodid.morpheus.neo"
+          },
+          "aa_subdomains": {
+            "core": "core.smartwallet.neo",
+            "web3auth": "web3auth.smartwallet.neo",
+            "recovery": "recovery.smartwallet.neo",
+            "tee": "teeverifier.smartwallet.neo",
+            "session": "sessionkey.smartwallet.neo",
+            "webauthn": "webauthn.smartwallet.neo",
+            "multisig": "multisig.smartwallet.neo",
+            "subscription": "subscription.smartwallet.neo",
+            "credential_hook": "credential.smartwallet.neo",
+            "whitelist_hook": "whitelist.smartwallet.neo",
+            "daily_limit_hook": "dailylimit.smartwallet.neo",
+            "token_hook": "tokenhook.smartwallet.neo",
+            "multi_hook": "multihook.smartwallet.neo",
+            "market": "market.smartwallet.neo",
+            "paymaster": "paymaster.smartwallet.neo"
+          },
+          "contracts": {
+            "morpheus_oracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+            "oracle_callback_consumer": "0xe1226268f2fe08bea67fb29e1c8fda0d7c8e9844",
+            "morpheus_datafeed": "0x03013f49c42a14546c8bbe58f9d434c3517fccab",
+            "abstract_account": "0x0268a387913b250166ddec032b03332690a1ef78",
+            "morpheus_neodid": "0xb81f31ea81e279793b30411b82c2e82078b63105",
+            "aa_address_market": "0xae7afe3a85ab08bfd1d4907b35ae8b80c75b3a69",
+            "aa_paymaster": "0xa0defa2bc6d7a71ba1e237149287c8ca4ff46caf"
+          },
+          "aa_runtime": {
+            "display_name": "UnifiedSmartWalletV3",
+            "abi_generation": "v3",
+            "core_deploy_tx": "0x029403034a14cd86f956c6e52dbd253476b3a70c3cfa41444c36255078d4ca11",
+            "core_update_tx": "",
+            "latest_mainnet_smoke_tx": "0xaabcfdf91e77f320bee204ea59ca0c98114b9c71c875a4cdac4abdbd4443ee57",
+            "legacy_core_hash": "0x9742b4ed62a84a886f404d36149da6147528ee33",
+            "legacy_core_update_tx": "0xb0e163734ffd0641b44c6091f373f0b09acdde03c693f465c97e6659f2dda035"
+          },
+          "aa_verifiers": {
+            "web3auth": "0xf5c452cd4ba29dcdc47026383568c0d8b38d9272",
+            "social_recovery": "0x198b3a9cec9bccc2110d19bd929b10374a9d034d",
+            "session_key": "0x3ba8333406e59f9fd83cf378b33706a33d9f3755"
+          },
+          "examples": {
+            "oracle_callback_consumer": "0x89b05cac00804648c666b47ecb1c57bc185821b7",
+            "feed_reader": "0x11e454261c21a32f1c9262472ca72a3156f9051f"
+          }
+        }
+      },
+      "expected": {
+        "__t": "object",
+        "v": {
+          "network": {
+            "__t": "string",
+            "v": "mainnet"
+          },
+          "nodeEnv": {
+            "__t": "string",
+            "v": "production"
+          },
+          "mode": {
+            "__t": "string",
+            "v": "combined"
+          },
+          "useDerivedKeys": {
+            "__t": "bool",
+            "v": false
+          },
+          "activeChains": {
+            "__t": "array",
+            "v": [
+              {
+                "__t": "string",
+                "v": "neo_n3"
+              }
+            ]
+          },
+          "pollIntervalMs": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "discoveryIdleBackoffMs": {
+            "__t": "number",
+            "v": "0"
+          },
+          "concurrency": {
+            "__t": "number",
+            "v": "2"
+          },
+          "maxBlocksPerTick": {
+            "__t": "number",
+            "v": "500"
+          },
+          "maxRetries": {
+            "__t": "number",
+            "v": "7"
+          },
+          "maxCallbackRetries": {
+            "__t": "number",
+            "v": "3"
+          },
+          "retryBaseDelayMs": {
+            "__t": "number",
+            "v": "250"
+          },
+          "retryMaxDelayMs": {
+            "__t": "number",
+            "v": "600000"
+          },
+          "statePersistMinIntervalMs": {
+            "__t": "number",
+            "v": "250"
+          },
+          "processedCacheSize": {
+            "__t": "number",
+            "v": "100"
+          },
+          "deadLetterLimit": {
+            "__t": "number",
+            "v": "50"
+          },
+          "retryQueueLimit": {
+            "__t": "number",
+            "v": "0"
+          },
+          "durableQueue": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "failClosed": {
+                "__t": "bool",
+                "v": true
+              },
+              "allowLocalClaimDuringBackoff": {
+                "__t": "bool",
+                "v": false
+              },
+              "syncLimit": {
+                "__t": "number",
+                "v": "200"
+              },
+              "staleProcessingMs": {
+                "__t": "number",
+                "v": "45000"
+              }
+            }
+          },
+          "runSnapshots": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "errorBackoffMs": {
+                "__t": "number",
+                "v": "300000"
+              }
+            }
+          },
+          "backpressure": {
+            "__t": "object",
+            "v": {
+              "maxFreshEventsPerTick": {
+                "__t": "number",
+                "v": "32"
+              },
+              "maxRetryEventsPerTick": {
+                "__t": "number",
+                "v": "16"
+              },
+              "deferDelayMs": {
+                "__t": "number",
+                "v": "5000"
+              }
+            }
+          },
+          "feedSync": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "waitForSubmission": {
+                "__t": "bool",
+                "v": false
+              },
+              "projectSlug": {
+                "__t": "string",
+                "v": "morpheus"
+              },
+              "projectConfigEnabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "provider": {
+                "__t": "string",
+                "v": ""
+              },
+              "providers": {
+                "__t": "array",
+                "v": []
+              },
+              "symbols": {
+                "__t": "array",
+                "v": []
+              },
+              "changeThresholdBps": {
+                "__t": "string",
+                "v": "10"
+              },
+              "minUpdateIntervalMs": {
+                "__t": "string",
+                "v": "60000"
+              },
+              "staleAfterMs": {
+                "__t": "string",
+                "v": "300000"
+              }
+            }
+          },
+          "automation": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "batchSize": {
+                "__t": "number",
+                "v": "50"
+              },
+              "maxQueuedPerTick": {
+                "__t": "number",
+                "v": "10"
+              },
+              "pricePollPairsPerTick": {
+                "__t": "number",
+                "v": "25"
+              },
+              "defaultPriceCooldownMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "claimStaleMs": {
+                "__t": "number",
+                "v": "120000"
+              },
+              "idleBackoffMs": {
+                "__t": "number",
+                "v": "0"
+              }
+            }
+          },
+          "logFormat": {
+            "__t": "string",
+            "v": "pretty"
+          },
+          "logLevel": {
+            "__t": "string",
+            "v": "debug"
+          },
+          "confirmations": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "number",
+                "v": "1"
+              },
+              "neox": {
+                "__t": "number",
+                "v": "2"
+              }
+            }
+          },
+          "startRequestIds": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "number",
+                "v": "42"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "startBlocks": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "null"
+              },
+              "neox": {
+                "__t": "number",
+                "v": "12345"
+              }
+            }
+          },
+          "nitro": {
+            "__t": "object",
+            "v": {
+              "apiUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "allowFallback": {
+                "__t": "bool",
+                "v": false
+              },
+              "signerUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "custodyUrl": {
+                "__t": "string",
+                "v": "https://custody.internal"
+              },
+              "custodyToken": {
+                "__t": "string",
+                "v": ""
+              },
+              "enclaveFulfill": {
+                "__t": "bool",
+                "v": true
+              },
+              "expectedPcr0": {
+                "__t": "string",
+                "v": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "verifyEnclaveSignature": {
+                "__t": "bool",
+                "v": true
+              },
+              "enclaveFulfillUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "decryptUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "nitroRootCertPem": {
+                "__t": "string",
+                "v": ""
+              },
+              "attestationMaxAgeMs": {
+                "__t": "number",
+                "v": "0"
+              },
+              "token": {
+                "__t": "string",
+                "v": ""
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "useDerivedKeys": {
+                "__t": "bool",
+                "v": false
+              }
+            }
+          },
+          "neo_n3": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "block_cursor"
+              },
+              "fulfillConfirmTimeoutMs": {
+                "__t": "null"
+              },
+              "fulfillConfirmThrowOnTimeout": {
+                "__t": "bool",
+                "v": true
+              },
+              "indexerUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/rest/v1"
+              },
+              "startRequestId": {
+                "__t": "number",
+                "v": "42"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/mainnet"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://api.n3index.dev/mainnet"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://mainnet1.neo.coz.io:443"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://mainnet2.neo.coz.io:443"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed1.neo.org:10332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed2.neo.org:10332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed3.neo.org:10332"
+                  }
+                ]
+              },
+              "networkMagic": {
+                "__t": "number",
+                "v": "860833102"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef"
+              },
+              "datafeedContract": {
+                "__t": "string",
+                "v": "0x03013f49c42a14546c8bbe58f9d434c3517fccab"
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "oracle_verifier": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
+              },
+              "feeTopUp": {
+                "__t": "object",
+                "v": {
+                  "enabled": {
+                    "__t": "bool",
+                    "v": true
+                  },
+                  "minBalance": {
+                    "__t": "string",
+                    "v": "50000000"
+                  },
+                  "topUpAmount": {
+                    "__t": "string",
+                    "v": "100000000"
+                  },
+                  "maxTopUpAmount": {
+                    "__t": "string",
+                    "v": "500000000"
+                  }
+                }
+              }
+            }
+          },
+          "neox": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "request_cursor"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://mainnet-1.rpc.banelabs.org"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://mainnet-1.rpc.banelabs.org"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://mainnet-2.rpc.banelabs.org"
+                  }
+                ]
+              },
+              "chainId": {
+                "__t": "number",
+                "v": "47763"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "allowHostSigner": {
+                "__t": "bool",
+                "v": false
+              },
+              "updaterPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "verifierPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "confirmTimeoutMs": {
+                "__t": "number",
+                "v": "45000"
+              },
+              "workerUrl": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "metricsServer": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": "127.0.0.1"
+              },
+              "port": {
+                "__t": "number",
+                "v": "9464"
+              },
+              "path": {
+                "__t": "string",
+                "v": "/metrics"
+              }
+            }
+          },
+          "heartbeats": {
+            "__t": "object",
+            "v": {
+              "relayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedRelayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "failure": {
+                "__t": "string",
+                "v": ""
+              },
+              "deadLetter": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "runtime config supplies values",
+      "process_env": {},
+      "runtime_config": {
+        "MORPHEUS_RELAYER_MAX_RETRIES": 9,
+        "MORPHEUS_RELAYER_POLL_INTERVAL_MS": "1500",
+        "MORPHEUS_RELAYER_RETRY_BASE_DELAY_MS": 250,
+        "SUPABASE_URL": "https://supabase.example",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "MORPHEUS_DURABLE_QUEUE_ENABLED": "false",
+        "MORPHEUS_RELAYER_ALLOW_RUNTIME_FALLBACKS": "false",
+        "MORPHEUS_RELAYER_NEO_N3_START_REQUEST_ID": "abc"
+      },
+      "network": "testnet",
+      "registry": {
+        "network": "testnet",
+        "nitro": {
+          "cvm_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+          "cvm_name": "oracle-morpheus-neo-r3e",
+          "public_api_url": "https://oracle.meshmini.app/testnet",
+          "edge_public_url": "https://edge.meshmini.app/testnet",
+          "control_plane_url": "https://control.meshmini.app",
+          "oracle_attestation_explorer_url": "",
+          "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
+          "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
+          "datafeed_attestation_explorer_url": ""
+        },
+        "neo_n3": {
+          "rpc_url": "https://api.n3index.dev/testnet",
+          "rpc_urls": [
+            "https://api.n3index.dev/testnet",
+            "https://testnet1.neo.coz.io:443",
+            "http://seed1t5.neo.org:20332",
+            "http://seed2t5.neo.org:20332",
+            "http://seed3t5.neo.org:20332",
+            "http://seed4t5.neo.org:20332",
+            "http://seed5t5.neo.org:20332",
+            "http://seed3.neo.org:20332",
+            "http://seed4.neo.org:20332",
+            "http://seed5.neo.org:20332"
+          ],
+          "network_magic": 894710606,
+          "domains": {
+            "morpheus_oracle": "",
+            "morpheus_datafeed": "",
+            "morpheus_aa": "",
+            "morpheus_aa_alias": "",
+            "morpheus_neodid": ""
+          },
+          "contracts": {
+            "morpheus_oracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+            "morpheus_oracle_legacy_v1_retired": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "morpheus_datafeed": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
+            "abstract_account": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
+            "aa_address_market": "0x6b979cdd246cc6491a20000a2a822e497c92c23b",
+            "morpheus_neodid": ""
+          },
+          "aa_runtime": {
+            "display_name": "UnifiedSmartWalletV3",
+            "abi_generation": "v3",
+            "core_deploy_tx": "0xbcee817781bb57e66d7373c25c1b951bbe7bce9ebc355fb38f7d23b21cc515c0",
+            "core_update_tx": "0x62148cca4a7bb15efa288f6bc80cda4d86e4f7ffcdf99234c7180b5c5daa1202",
+            "web3auth_verifier_deploy_tx": "0x84bea53fb8344fb3258ad5596bc8368201e4eb3c0340914e5c98952d3f0a8805",
+            "web3auth_verifier_authorize_core_tx": "0x1a59299e397ce7e8b482691338485cd0ee2d82aa6655f836a338d24d4c6ab472",
+            "web3auth_verifier_nef_checksum": 2926105305
+          },
+          "aa_subdomains": {
+            "core": "",
+            "web3auth": "",
+            "recovery": "",
+            "tee": "",
+            "session": "",
+            "webauthn": "",
+            "multisig": "",
+            "subscription": "",
+            "credential_hook": "",
+            "whitelist_hook": "",
+            "daily_limit_hook": "",
+            "token_hook": "",
+            "multi_hook": ""
+          },
+          "aa_verifiers": {
+            "web3auth": "0x1111f5b6b046a964c75d208998c13945ce172e85",
+            "social_recovery": ""
+          },
+          "examples": {
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "feed_reader": "0xae9c17da3d8d1cc45b2a95f77ddce391b9bdcad4"
+          }
+        }
+      },
+      "expected": {
+        "__t": "object",
+        "v": {
+          "network": {
+            "__t": "string",
+            "v": "testnet"
+          },
+          "nodeEnv": {
+            "__t": "string",
+            "v": ""
+          },
+          "mode": {
+            "__t": "string",
+            "v": "combined"
+          },
+          "useDerivedKeys": {
+            "__t": "bool",
+            "v": false
+          },
+          "activeChains": {
+            "__t": "array",
+            "v": [
+              {
+                "__t": "string",
+                "v": "neo_n3"
+              }
+            ]
+          },
+          "pollIntervalMs": {
+            "__t": "number",
+            "v": "1500"
+          },
+          "discoveryIdleBackoffMs": {
+            "__t": "number",
+            "v": "0"
+          },
+          "concurrency": {
+            "__t": "number",
+            "v": "4"
+          },
+          "maxBlocksPerTick": {
+            "__t": "number",
+            "v": "250"
+          },
+          "maxRetries": {
+            "__t": "number",
+            "v": "9"
+          },
+          "maxCallbackRetries": {
+            "__t": "number",
+            "v": "18"
+          },
+          "retryBaseDelayMs": {
+            "__t": "number",
+            "v": "250"
+          },
+          "retryMaxDelayMs": {
+            "__t": "number",
+            "v": "10000"
+          },
+          "statePersistMinIntervalMs": {
+            "__t": "number",
+            "v": "250"
+          },
+          "processedCacheSize": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "deadLetterLimit": {
+            "__t": "number",
+            "v": "500"
+          },
+          "retryQueueLimit": {
+            "__t": "number",
+            "v": "0"
+          },
+          "durableQueue": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "failClosed": {
+                "__t": "bool",
+                "v": false
+              },
+              "allowLocalClaimDuringBackoff": {
+                "__t": "bool",
+                "v": false
+              },
+              "syncLimit": {
+                "__t": "number",
+                "v": "200"
+              },
+              "staleProcessingMs": {
+                "__t": "number",
+                "v": "45000"
+              }
+            }
+          },
+          "runSnapshots": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "errorBackoffMs": {
+                "__t": "number",
+                "v": "300000"
+              }
+            }
+          },
+          "backpressure": {
+            "__t": "object",
+            "v": {
+              "maxFreshEventsPerTick": {
+                "__t": "number",
+                "v": "32"
+              },
+              "maxRetryEventsPerTick": {
+                "__t": "number",
+                "v": "16"
+              },
+              "deferDelayMs": {
+                "__t": "number",
+                "v": "5000"
+              }
+            }
+          },
+          "feedSync": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "waitForSubmission": {
+                "__t": "bool",
+                "v": false
+              },
+              "projectSlug": {
+                "__t": "string",
+                "v": "morpheus"
+              },
+              "projectConfigEnabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "provider": {
+                "__t": "string",
+                "v": ""
+              },
+              "providers": {
+                "__t": "array",
+                "v": []
+              },
+              "symbols": {
+                "__t": "array",
+                "v": []
+              },
+              "changeThresholdBps": {
+                "__t": "string",
+                "v": "10"
+              },
+              "minUpdateIntervalMs": {
+                "__t": "string",
+                "v": "60000"
+              },
+              "staleAfterMs": {
+                "__t": "string",
+                "v": "300000"
+              }
+            }
+          },
+          "automation": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "batchSize": {
+                "__t": "number",
+                "v": "50"
+              },
+              "maxQueuedPerTick": {
+                "__t": "number",
+                "v": "10"
+              },
+              "pricePollPairsPerTick": {
+                "__t": "number",
+                "v": "25"
+              },
+              "defaultPriceCooldownMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "claimStaleMs": {
+                "__t": "number",
+                "v": "120000"
+              },
+              "idleBackoffMs": {
+                "__t": "number",
+                "v": "0"
+              }
+            }
+          },
+          "logFormat": {
+            "__t": "string",
+            "v": "json"
+          },
+          "logLevel": {
+            "__t": "string",
+            "v": "info"
+          },
+          "confirmations": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "number",
+                "v": "1"
+              },
+              "neox": {
+                "__t": "number",
+                "v": "2"
+              }
+            }
+          },
+          "startRequestIds": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "number",
+                "v": "null"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "startBlocks": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "null"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "nitro": {
+            "__t": "object",
+            "v": {
+              "apiUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "allowFallback": {
+                "__t": "bool",
+                "v": false
+              },
+              "signerUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "custodyUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "custodyToken": {
+                "__t": "string",
+                "v": ""
+              },
+              "enclaveFulfill": {
+                "__t": "bool",
+                "v": false
+              },
+              "expectedPcr0": {
+                "__t": "string",
+                "v": ""
+              },
+              "verifyEnclaveSignature": {
+                "__t": "bool",
+                "v": false
+              },
+              "enclaveFulfillUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "decryptUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "nitroRootCertPem": {
+                "__t": "string",
+                "v": ""
+              },
+              "attestationMaxAgeMs": {
+                "__t": "number",
+                "v": "0"
+              },
+              "token": {
+                "__t": "string",
+                "v": ""
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "useDerivedKeys": {
+                "__t": "bool",
+                "v": false
+              }
+            }
+          },
+          "neo_n3": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "n3index_notifications"
+              },
+              "fulfillConfirmTimeoutMs": {
+                "__t": "null"
+              },
+              "fulfillConfirmThrowOnTimeout": {
+                "__t": "bool",
+                "v": true
+              },
+              "indexerUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/rest/v1"
+              },
+              "startRequestId": {
+                "__t": "number",
+                "v": "null"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/testnet"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://api.n3index.dev/testnet"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://testnet1.neo.coz.io:443"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed1t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed2t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed3t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed4t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed5t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed3.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed4.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed5.neo.org:20332"
+                  }
+                ]
+              },
+              "networkMagic": {
+                "__t": "number",
+                "v": "894710606"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef"
+              },
+              "datafeedContract": {
+                "__t": "string",
+                "v": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064"
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "oracle_verifier": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
+              },
+              "feeTopUp": {
+                "__t": "object",
+                "v": {
+                  "enabled": {
+                    "__t": "bool",
+                    "v": true
+                  },
+                  "minBalance": {
+                    "__t": "string",
+                    "v": "50000000"
+                  },
+                  "topUpAmount": {
+                    "__t": "string",
+                    "v": "100000000"
+                  },
+                  "maxTopUpAmount": {
+                    "__t": "string",
+                    "v": "500000000"
+                  }
+                }
+              }
+            }
+          },
+          "neox": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "request_cursor"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://neoxt4seed1.ngd.network"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://neoxt4seed1.ngd.network"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://neoxt4seed2.ngd.network"
+                  }
+                ]
+              },
+              "chainId": {
+                "__t": "number",
+                "v": "12227332"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "allowHostSigner": {
+                "__t": "bool",
+                "v": false
+              },
+              "updaterPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "verifierPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "confirmTimeoutMs": {
+                "__t": "number",
+                "v": "45000"
+              },
+              "workerUrl": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "metricsServer": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": "127.0.0.1"
+              },
+              "port": {
+                "__t": "number",
+                "v": "9464"
+              },
+              "path": {
+                "__t": "string",
+                "v": "/metrics"
+              }
+            }
+          },
+          "heartbeats": {
+            "__t": "object",
+            "v": {
+              "relayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedRelayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "failure": {
+                "__t": "string",
+                "v": ""
+              },
+              "deadLetter": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "process env beats runtime config",
+      "process_env": {
+        "MORPHEUS_RELAYER_MAX_RETRIES": "3"
+      },
+      "runtime_config": {
+        "MORPHEUS_RELAYER_MAX_RETRIES": 9,
+        "MORPHEUS_RELAYER_CONCURRENCY": 8
+      },
+      "network": "testnet",
+      "registry": {
+        "network": "testnet",
+        "nitro": {
+          "cvm_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+          "cvm_name": "oracle-morpheus-neo-r3e",
+          "public_api_url": "https://oracle.meshmini.app/testnet",
+          "edge_public_url": "https://edge.meshmini.app/testnet",
+          "control_plane_url": "https://control.meshmini.app",
+          "oracle_attestation_explorer_url": "",
+          "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
+          "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
+          "datafeed_attestation_explorer_url": ""
+        },
+        "neo_n3": {
+          "rpc_url": "https://api.n3index.dev/testnet",
+          "rpc_urls": [
+            "https://api.n3index.dev/testnet",
+            "https://testnet1.neo.coz.io:443",
+            "http://seed1t5.neo.org:20332",
+            "http://seed2t5.neo.org:20332",
+            "http://seed3t5.neo.org:20332",
+            "http://seed4t5.neo.org:20332",
+            "http://seed5t5.neo.org:20332",
+            "http://seed3.neo.org:20332",
+            "http://seed4.neo.org:20332",
+            "http://seed5.neo.org:20332"
+          ],
+          "network_magic": 894710606,
+          "domains": {
+            "morpheus_oracle": "",
+            "morpheus_datafeed": "",
+            "morpheus_aa": "",
+            "morpheus_aa_alias": "",
+            "morpheus_neodid": ""
+          },
+          "contracts": {
+            "morpheus_oracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+            "morpheus_oracle_legacy_v1_retired": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "morpheus_datafeed": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
+            "abstract_account": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
+            "aa_address_market": "0x6b979cdd246cc6491a20000a2a822e497c92c23b",
+            "morpheus_neodid": ""
+          },
+          "aa_runtime": {
+            "display_name": "UnifiedSmartWalletV3",
+            "abi_generation": "v3",
+            "core_deploy_tx": "0xbcee817781bb57e66d7373c25c1b951bbe7bce9ebc355fb38f7d23b21cc515c0",
+            "core_update_tx": "0x62148cca4a7bb15efa288f6bc80cda4d86e4f7ffcdf99234c7180b5c5daa1202",
+            "web3auth_verifier_deploy_tx": "0x84bea53fb8344fb3258ad5596bc8368201e4eb3c0340914e5c98952d3f0a8805",
+            "web3auth_verifier_authorize_core_tx": "0x1a59299e397ce7e8b482691338485cd0ee2d82aa6655f836a338d24d4c6ab472",
+            "web3auth_verifier_nef_checksum": 2926105305
+          },
+          "aa_subdomains": {
+            "core": "",
+            "web3auth": "",
+            "recovery": "",
+            "tee": "",
+            "session": "",
+            "webauthn": "",
+            "multisig": "",
+            "subscription": "",
+            "credential_hook": "",
+            "whitelist_hook": "",
+            "daily_limit_hook": "",
+            "token_hook": "",
+            "multi_hook": ""
+          },
+          "aa_verifiers": {
+            "web3auth": "0x1111f5b6b046a964c75d208998c13945ce172e85",
+            "social_recovery": ""
+          },
+          "examples": {
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "feed_reader": "0xae9c17da3d8d1cc45b2a95f77ddce391b9bdcad4"
+          }
+        }
+      },
+      "expected": {
+        "__t": "object",
+        "v": {
+          "network": {
+            "__t": "string",
+            "v": "testnet"
+          },
+          "nodeEnv": {
+            "__t": "string",
+            "v": ""
+          },
+          "mode": {
+            "__t": "string",
+            "v": "combined"
+          },
+          "useDerivedKeys": {
+            "__t": "bool",
+            "v": false
+          },
+          "activeChains": {
+            "__t": "array",
+            "v": [
+              {
+                "__t": "string",
+                "v": "neo_n3"
+              }
+            ]
+          },
+          "pollIntervalMs": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "discoveryIdleBackoffMs": {
+            "__t": "number",
+            "v": "0"
+          },
+          "concurrency": {
+            "__t": "number",
+            "v": "8"
+          },
+          "maxBlocksPerTick": {
+            "__t": "number",
+            "v": "250"
+          },
+          "maxRetries": {
+            "__t": "number",
+            "v": "3"
+          },
+          "maxCallbackRetries": {
+            "__t": "number",
+            "v": "6"
+          },
+          "retryBaseDelayMs": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "retryMaxDelayMs": {
+            "__t": "number",
+            "v": "10000"
+          },
+          "statePersistMinIntervalMs": {
+            "__t": "number",
+            "v": "250"
+          },
+          "processedCacheSize": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "deadLetterLimit": {
+            "__t": "number",
+            "v": "500"
+          },
+          "retryQueueLimit": {
+            "__t": "number",
+            "v": "0"
+          },
+          "durableQueue": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "failClosed": {
+                "__t": "bool",
+                "v": false
+              },
+              "allowLocalClaimDuringBackoff": {
+                "__t": "bool",
+                "v": false
+              },
+              "syncLimit": {
+                "__t": "number",
+                "v": "200"
+              },
+              "staleProcessingMs": {
+                "__t": "number",
+                "v": "45000"
+              }
+            }
+          },
+          "runSnapshots": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "errorBackoffMs": {
+                "__t": "number",
+                "v": "300000"
+              }
+            }
+          },
+          "backpressure": {
+            "__t": "object",
+            "v": {
+              "maxFreshEventsPerTick": {
+                "__t": "number",
+                "v": "32"
+              },
+              "maxRetryEventsPerTick": {
+                "__t": "number",
+                "v": "16"
+              },
+              "deferDelayMs": {
+                "__t": "number",
+                "v": "5000"
+              }
+            }
+          },
+          "feedSync": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "waitForSubmission": {
+                "__t": "bool",
+                "v": false
+              },
+              "projectSlug": {
+                "__t": "string",
+                "v": "morpheus"
+              },
+              "projectConfigEnabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "provider": {
+                "__t": "string",
+                "v": ""
+              },
+              "providers": {
+                "__t": "array",
+                "v": []
+              },
+              "symbols": {
+                "__t": "array",
+                "v": []
+              },
+              "changeThresholdBps": {
+                "__t": "string",
+                "v": "10"
+              },
+              "minUpdateIntervalMs": {
+                "__t": "string",
+                "v": "60000"
+              },
+              "staleAfterMs": {
+                "__t": "string",
+                "v": "300000"
+              }
+            }
+          },
+          "automation": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "batchSize": {
+                "__t": "number",
+                "v": "50"
+              },
+              "maxQueuedPerTick": {
+                "__t": "number",
+                "v": "10"
+              },
+              "pricePollPairsPerTick": {
+                "__t": "number",
+                "v": "25"
+              },
+              "defaultPriceCooldownMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "claimStaleMs": {
+                "__t": "number",
+                "v": "120000"
+              },
+              "idleBackoffMs": {
+                "__t": "number",
+                "v": "0"
+              }
+            }
+          },
+          "logFormat": {
+            "__t": "string",
+            "v": "json"
+          },
+          "logLevel": {
+            "__t": "string",
+            "v": "info"
+          },
+          "confirmations": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "number",
+                "v": "1"
+              },
+              "neox": {
+                "__t": "number",
+                "v": "2"
+              }
+            }
+          },
+          "startRequestIds": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "null"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "startBlocks": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "null"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "nitro": {
+            "__t": "object",
+            "v": {
+              "apiUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "allowFallback": {
+                "__t": "bool",
+                "v": true
+              },
+              "signerUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "custodyUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "custodyToken": {
+                "__t": "string",
+                "v": ""
+              },
+              "enclaveFulfill": {
+                "__t": "bool",
+                "v": false
+              },
+              "expectedPcr0": {
+                "__t": "string",
+                "v": ""
+              },
+              "verifyEnclaveSignature": {
+                "__t": "bool",
+                "v": false
+              },
+              "enclaveFulfillUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "decryptUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "nitroRootCertPem": {
+                "__t": "string",
+                "v": ""
+              },
+              "attestationMaxAgeMs": {
+                "__t": "number",
+                "v": "0"
+              },
+              "token": {
+                "__t": "string",
+                "v": ""
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "useDerivedKeys": {
+                "__t": "bool",
+                "v": false
+              }
+            }
+          },
+          "neo_n3": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "n3index_notifications"
+              },
+              "fulfillConfirmTimeoutMs": {
+                "__t": "null"
+              },
+              "fulfillConfirmThrowOnTimeout": {
+                "__t": "bool",
+                "v": true
+              },
+              "indexerUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/rest/v1"
+              },
+              "startRequestId": {
+                "__t": "null"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/testnet"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://api.n3index.dev/testnet"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://testnet1.neo.coz.io:443"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed1t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed2t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed3t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed4t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed5t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed3.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed4.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed5.neo.org:20332"
+                  }
+                ]
+              },
+              "networkMagic": {
+                "__t": "number",
+                "v": "894710606"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef"
+              },
+              "datafeedContract": {
+                "__t": "string",
+                "v": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064"
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "oracle_verifier": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
+              },
+              "feeTopUp": {
+                "__t": "object",
+                "v": {
+                  "enabled": {
+                    "__t": "bool",
+                    "v": true
+                  },
+                  "minBalance": {
+                    "__t": "string",
+                    "v": "50000000"
+                  },
+                  "topUpAmount": {
+                    "__t": "string",
+                    "v": "100000000"
+                  },
+                  "maxTopUpAmount": {
+                    "__t": "string",
+                    "v": "500000000"
+                  }
+                }
+              }
+            }
+          },
+          "neox": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "request_cursor"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://neoxt4seed1.ngd.network"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://neoxt4seed1.ngd.network"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://neoxt4seed2.ngd.network"
+                  }
+                ]
+              },
+              "chainId": {
+                "__t": "number",
+                "v": "12227332"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "allowHostSigner": {
+                "__t": "bool",
+                "v": false
+              },
+              "updaterPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "verifierPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "confirmTimeoutMs": {
+                "__t": "number",
+                "v": "45000"
+              },
+              "workerUrl": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "metricsServer": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": "127.0.0.1"
+              },
+              "port": {
+                "__t": "number",
+                "v": "9464"
+              },
+              "path": {
+                "__t": "string",
+                "v": "/metrics"
+              }
+            }
+          },
+          "heartbeats": {
+            "__t": "object",
+            "v": {
+              "relayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedRelayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "failure": {
+                "__t": "string",
+                "v": ""
+              },
+              "deadLetter": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "production flips the fail-closed defaults",
+      "process_env": {
+        "NODE_ENV": "production"
+      },
+      "runtime_config": null,
+      "network": "testnet",
+      "registry": {
+        "network": "testnet",
+        "nitro": {
+          "cvm_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+          "cvm_name": "oracle-morpheus-neo-r3e",
+          "public_api_url": "https://oracle.meshmini.app/testnet",
+          "edge_public_url": "https://edge.meshmini.app/testnet",
+          "control_plane_url": "https://control.meshmini.app",
+          "oracle_attestation_explorer_url": "",
+          "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
+          "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
+          "datafeed_attestation_explorer_url": ""
+        },
+        "neo_n3": {
+          "rpc_url": "https://api.n3index.dev/testnet",
+          "rpc_urls": [
+            "https://api.n3index.dev/testnet",
+            "https://testnet1.neo.coz.io:443",
+            "http://seed1t5.neo.org:20332",
+            "http://seed2t5.neo.org:20332",
+            "http://seed3t5.neo.org:20332",
+            "http://seed4t5.neo.org:20332",
+            "http://seed5t5.neo.org:20332",
+            "http://seed3.neo.org:20332",
+            "http://seed4.neo.org:20332",
+            "http://seed5.neo.org:20332"
+          ],
+          "network_magic": 894710606,
+          "domains": {
+            "morpheus_oracle": "",
+            "morpheus_datafeed": "",
+            "morpheus_aa": "",
+            "morpheus_aa_alias": "",
+            "morpheus_neodid": ""
+          },
+          "contracts": {
+            "morpheus_oracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+            "morpheus_oracle_legacy_v1_retired": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "morpheus_datafeed": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
+            "abstract_account": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
+            "aa_address_market": "0x6b979cdd246cc6491a20000a2a822e497c92c23b",
+            "morpheus_neodid": ""
+          },
+          "aa_runtime": {
+            "display_name": "UnifiedSmartWalletV3",
+            "abi_generation": "v3",
+            "core_deploy_tx": "0xbcee817781bb57e66d7373c25c1b951bbe7bce9ebc355fb38f7d23b21cc515c0",
+            "core_update_tx": "0x62148cca4a7bb15efa288f6bc80cda4d86e4f7ffcdf99234c7180b5c5daa1202",
+            "web3auth_verifier_deploy_tx": "0x84bea53fb8344fb3258ad5596bc8368201e4eb3c0340914e5c98952d3f0a8805",
+            "web3auth_verifier_authorize_core_tx": "0x1a59299e397ce7e8b482691338485cd0ee2d82aa6655f836a338d24d4c6ab472",
+            "web3auth_verifier_nef_checksum": 2926105305
+          },
+          "aa_subdomains": {
+            "core": "",
+            "web3auth": "",
+            "recovery": "",
+            "tee": "",
+            "session": "",
+            "webauthn": "",
+            "multisig": "",
+            "subscription": "",
+            "credential_hook": "",
+            "whitelist_hook": "",
+            "daily_limit_hook": "",
+            "token_hook": "",
+            "multi_hook": ""
+          },
+          "aa_verifiers": {
+            "web3auth": "0x1111f5b6b046a964c75d208998c13945ce172e85",
+            "social_recovery": ""
+          },
+          "examples": {
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "feed_reader": "0xae9c17da3d8d1cc45b2a95f77ddce391b9bdcad4"
+          }
+        }
+      },
+      "expected": {
+        "__t": "object",
+        "v": {
+          "network": {
+            "__t": "string",
+            "v": "testnet"
+          },
+          "nodeEnv": {
+            "__t": "string",
+            "v": "production"
+          },
+          "mode": {
+            "__t": "string",
+            "v": "combined"
+          },
+          "useDerivedKeys": {
+            "__t": "bool",
+            "v": false
+          },
+          "activeChains": {
+            "__t": "array",
+            "v": [
+              {
+                "__t": "string",
+                "v": "neo_n3"
+              }
+            ]
+          },
+          "pollIntervalMs": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "discoveryIdleBackoffMs": {
+            "__t": "number",
+            "v": "0"
+          },
+          "concurrency": {
+            "__t": "number",
+            "v": "4"
+          },
+          "maxBlocksPerTick": {
+            "__t": "number",
+            "v": "250"
+          },
+          "maxRetries": {
+            "__t": "number",
+            "v": "5"
+          },
+          "maxCallbackRetries": {
+            "__t": "number",
+            "v": "10"
+          },
+          "retryBaseDelayMs": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "retryMaxDelayMs": {
+            "__t": "number",
+            "v": "10000"
+          },
+          "statePersistMinIntervalMs": {
+            "__t": "number",
+            "v": "250"
+          },
+          "processedCacheSize": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "deadLetterLimit": {
+            "__t": "number",
+            "v": "500"
+          },
+          "retryQueueLimit": {
+            "__t": "number",
+            "v": "0"
+          },
+          "durableQueue": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "failClosed": {
+                "__t": "bool",
+                "v": true
+              },
+              "allowLocalClaimDuringBackoff": {
+                "__t": "bool",
+                "v": false
+              },
+              "syncLimit": {
+                "__t": "number",
+                "v": "200"
+              },
+              "staleProcessingMs": {
+                "__t": "number",
+                "v": "45000"
+              }
+            }
+          },
+          "runSnapshots": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "errorBackoffMs": {
+                "__t": "number",
+                "v": "300000"
+              }
+            }
+          },
+          "backpressure": {
+            "__t": "object",
+            "v": {
+              "maxFreshEventsPerTick": {
+                "__t": "number",
+                "v": "32"
+              },
+              "maxRetryEventsPerTick": {
+                "__t": "number",
+                "v": "16"
+              },
+              "deferDelayMs": {
+                "__t": "number",
+                "v": "5000"
+              }
+            }
+          },
+          "feedSync": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "waitForSubmission": {
+                "__t": "bool",
+                "v": false
+              },
+              "projectSlug": {
+                "__t": "string",
+                "v": "morpheus"
+              },
+              "projectConfigEnabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "provider": {
+                "__t": "string",
+                "v": ""
+              },
+              "providers": {
+                "__t": "array",
+                "v": []
+              },
+              "symbols": {
+                "__t": "array",
+                "v": []
+              },
+              "changeThresholdBps": {
+                "__t": "string",
+                "v": "10"
+              },
+              "minUpdateIntervalMs": {
+                "__t": "string",
+                "v": "60000"
+              },
+              "staleAfterMs": {
+                "__t": "string",
+                "v": "300000"
+              }
+            }
+          },
+          "automation": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "batchSize": {
+                "__t": "number",
+                "v": "50"
+              },
+              "maxQueuedPerTick": {
+                "__t": "number",
+                "v": "10"
+              },
+              "pricePollPairsPerTick": {
+                "__t": "number",
+                "v": "25"
+              },
+              "defaultPriceCooldownMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "claimStaleMs": {
+                "__t": "number",
+                "v": "120000"
+              },
+              "idleBackoffMs": {
+                "__t": "number",
+                "v": "0"
+              }
+            }
+          },
+          "logFormat": {
+            "__t": "string",
+            "v": "json"
+          },
+          "logLevel": {
+            "__t": "string",
+            "v": "info"
+          },
+          "confirmations": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "number",
+                "v": "1"
+              },
+              "neox": {
+                "__t": "number",
+                "v": "2"
+              }
+            }
+          },
+          "startRequestIds": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "null"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "startBlocks": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "null"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "nitro": {
+            "__t": "object",
+            "v": {
+              "apiUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "allowFallback": {
+                "__t": "bool",
+                "v": false
+              },
+              "signerUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "custodyUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "custodyToken": {
+                "__t": "string",
+                "v": ""
+              },
+              "enclaveFulfill": {
+                "__t": "bool",
+                "v": false
+              },
+              "expectedPcr0": {
+                "__t": "string",
+                "v": ""
+              },
+              "verifyEnclaveSignature": {
+                "__t": "bool",
+                "v": true
+              },
+              "enclaveFulfillUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "decryptUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "nitroRootCertPem": {
+                "__t": "string",
+                "v": ""
+              },
+              "attestationMaxAgeMs": {
+                "__t": "number",
+                "v": "0"
+              },
+              "token": {
+                "__t": "string",
+                "v": ""
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "useDerivedKeys": {
+                "__t": "bool",
+                "v": false
+              }
+            }
+          },
+          "neo_n3": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "n3index_notifications"
+              },
+              "fulfillConfirmTimeoutMs": {
+                "__t": "null"
+              },
+              "fulfillConfirmThrowOnTimeout": {
+                "__t": "bool",
+                "v": true
+              },
+              "indexerUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/rest/v1"
+              },
+              "startRequestId": {
+                "__t": "null"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/testnet"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://api.n3index.dev/testnet"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://testnet1.neo.coz.io:443"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed1t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed2t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed3t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed4t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed5t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed3.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed4.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed5.neo.org:20332"
+                  }
+                ]
+              },
+              "networkMagic": {
+                "__t": "number",
+                "v": "894710606"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef"
+              },
+              "datafeedContract": {
+                "__t": "string",
+                "v": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064"
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "oracle_verifier": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
+              },
+              "feeTopUp": {
+                "__t": "object",
+                "v": {
+                  "enabled": {
+                    "__t": "bool",
+                    "v": true
+                  },
+                  "minBalance": {
+                    "__t": "string",
+                    "v": "50000000"
+                  },
+                  "topUpAmount": {
+                    "__t": "string",
+                    "v": "100000000"
+                  },
+                  "maxTopUpAmount": {
+                    "__t": "string",
+                    "v": "500000000"
+                  }
+                }
+              }
+            }
+          },
+          "neox": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "request_cursor"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://neoxt4seed1.ngd.network"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://neoxt4seed1.ngd.network"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://neoxt4seed2.ngd.network"
+                  }
+                ]
+              },
+              "chainId": {
+                "__t": "number",
+                "v": "12227332"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "allowHostSigner": {
+                "__t": "bool",
+                "v": false
+              },
+              "updaterPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "verifierPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "confirmTimeoutMs": {
+                "__t": "number",
+                "v": "45000"
+              },
+              "workerUrl": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "metricsServer": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": "127.0.0.1"
+              },
+              "port": {
+                "__t": "number",
+                "v": "9464"
+              },
+              "path": {
+                "__t": "string",
+                "v": "/metrics"
+              }
+            }
+          },
+          "heartbeats": {
+            "__t": "object",
+            "v": {
+              "relayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedRelayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "failure": {
+                "__t": "string",
+                "v": ""
+              },
+              "deadLetter": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "gate: neo n3 host signing key configured",
+      "process_env": {
+        "MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "runtime_config": null,
+      "network": "testnet",
+      "registry": {
+        "network": "testnet",
+        "nitro": {
+          "cvm_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+          "cvm_name": "oracle-morpheus-neo-r3e",
+          "public_api_url": "https://oracle.meshmini.app/testnet",
+          "edge_public_url": "https://edge.meshmini.app/testnet",
+          "control_plane_url": "https://control.meshmini.app",
+          "oracle_attestation_explorer_url": "",
+          "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
+          "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
+          "datafeed_attestation_explorer_url": ""
+        },
+        "neo_n3": {
+          "rpc_url": "https://api.n3index.dev/testnet",
+          "rpc_urls": [
+            "https://api.n3index.dev/testnet",
+            "https://testnet1.neo.coz.io:443",
+            "http://seed1t5.neo.org:20332",
+            "http://seed2t5.neo.org:20332",
+            "http://seed3t5.neo.org:20332",
+            "http://seed4t5.neo.org:20332",
+            "http://seed5t5.neo.org:20332",
+            "http://seed3.neo.org:20332",
+            "http://seed4.neo.org:20332",
+            "http://seed5.neo.org:20332"
+          ],
+          "network_magic": 894710606,
+          "domains": {
+            "morpheus_oracle": "",
+            "morpheus_datafeed": "",
+            "morpheus_aa": "",
+            "morpheus_aa_alias": "",
+            "morpheus_neodid": ""
+          },
+          "contracts": {
+            "morpheus_oracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+            "morpheus_oracle_legacy_v1_retired": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "morpheus_datafeed": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
+            "abstract_account": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
+            "aa_address_market": "0x6b979cdd246cc6491a20000a2a822e497c92c23b",
+            "morpheus_neodid": ""
+          },
+          "aa_runtime": {
+            "display_name": "UnifiedSmartWalletV3",
+            "abi_generation": "v3",
+            "core_deploy_tx": "0xbcee817781bb57e66d7373c25c1b951bbe7bce9ebc355fb38f7d23b21cc515c0",
+            "core_update_tx": "0x62148cca4a7bb15efa288f6bc80cda4d86e4f7ffcdf99234c7180b5c5daa1202",
+            "web3auth_verifier_deploy_tx": "0x84bea53fb8344fb3258ad5596bc8368201e4eb3c0340914e5c98952d3f0a8805",
+            "web3auth_verifier_authorize_core_tx": "0x1a59299e397ce7e8b482691338485cd0ee2d82aa6655f836a338d24d4c6ab472",
+            "web3auth_verifier_nef_checksum": 2926105305
+          },
+          "aa_subdomains": {
+            "core": "",
+            "web3auth": "",
+            "recovery": "",
+            "tee": "",
+            "session": "",
+            "webauthn": "",
+            "multisig": "",
+            "subscription": "",
+            "credential_hook": "",
+            "whitelist_hook": "",
+            "daily_limit_hook": "",
+            "token_hook": "",
+            "multi_hook": ""
+          },
+          "aa_verifiers": {
+            "web3auth": "0x1111f5b6b046a964c75d208998c13945ce172e85",
+            "social_recovery": ""
+          },
+          "examples": {
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "feed_reader": "0xae9c17da3d8d1cc45b2a95f77ddce391b9bdcad4"
+          }
+        }
+      },
+      "expected": {
+        "__t": "error",
+        "v": "host Neo N3 signing key configuration is forbidden in the relayer; use custody key ids instead (configured: MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY)"
+      }
+    },
+    {
+      "name": "gate: production neox host signing key",
+      "process_env": {
+        "NODE_ENV": "production",
+        "MORPHEUS_RELAYER_NEOX_UPDATER_PK": "02ab"
+      },
+      "runtime_config": null,
+      "network": "testnet",
+      "registry": {
+        "network": "testnet",
+        "nitro": {
+          "cvm_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+          "cvm_name": "oracle-morpheus-neo-r3e",
+          "public_api_url": "https://oracle.meshmini.app/testnet",
+          "edge_public_url": "https://edge.meshmini.app/testnet",
+          "control_plane_url": "https://control.meshmini.app",
+          "oracle_attestation_explorer_url": "",
+          "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
+          "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
+          "datafeed_attestation_explorer_url": ""
+        },
+        "neo_n3": {
+          "rpc_url": "https://api.n3index.dev/testnet",
+          "rpc_urls": [
+            "https://api.n3index.dev/testnet",
+            "https://testnet1.neo.coz.io:443",
+            "http://seed1t5.neo.org:20332",
+            "http://seed2t5.neo.org:20332",
+            "http://seed3t5.neo.org:20332",
+            "http://seed4t5.neo.org:20332",
+            "http://seed5t5.neo.org:20332",
+            "http://seed3.neo.org:20332",
+            "http://seed4.neo.org:20332",
+            "http://seed5.neo.org:20332"
+          ],
+          "network_magic": 894710606,
+          "domains": {
+            "morpheus_oracle": "",
+            "morpheus_datafeed": "",
+            "morpheus_aa": "",
+            "morpheus_aa_alias": "",
+            "morpheus_neodid": ""
+          },
+          "contracts": {
+            "morpheus_oracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+            "morpheus_oracle_legacy_v1_retired": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "morpheus_datafeed": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
+            "abstract_account": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
+            "aa_address_market": "0x6b979cdd246cc6491a20000a2a822e497c92c23b",
+            "morpheus_neodid": ""
+          },
+          "aa_runtime": {
+            "display_name": "UnifiedSmartWalletV3",
+            "abi_generation": "v3",
+            "core_deploy_tx": "0xbcee817781bb57e66d7373c25c1b951bbe7bce9ebc355fb38f7d23b21cc515c0",
+            "core_update_tx": "0x62148cca4a7bb15efa288f6bc80cda4d86e4f7ffcdf99234c7180b5c5daa1202",
+            "web3auth_verifier_deploy_tx": "0x84bea53fb8344fb3258ad5596bc8368201e4eb3c0340914e5c98952d3f0a8805",
+            "web3auth_verifier_authorize_core_tx": "0x1a59299e397ce7e8b482691338485cd0ee2d82aa6655f836a338d24d4c6ab472",
+            "web3auth_verifier_nef_checksum": 2926105305
+          },
+          "aa_subdomains": {
+            "core": "",
+            "web3auth": "",
+            "recovery": "",
+            "tee": "",
+            "session": "",
+            "webauthn": "",
+            "multisig": "",
+            "subscription": "",
+            "credential_hook": "",
+            "whitelist_hook": "",
+            "daily_limit_hook": "",
+            "token_hook": "",
+            "multi_hook": ""
+          },
+          "aa_verifiers": {
+            "web3auth": "0x1111f5b6b046a964c75d208998c13945ce172e85",
+            "social_recovery": ""
+          },
+          "examples": {
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "feed_reader": "0xae9c17da3d8d1cc45b2a95f77ddce391b9bdcad4"
+          }
+        }
+      },
+      "expected": {
+        "__t": "error",
+        "v": "host signing key configuration is forbidden in the production relayer; use custody/enclave signing instead (configured: MORPHEUS_RELAYER_NEOX_UPDATER_PK)"
+      }
+    },
+    {
+      "name": "gate: development neox host key without opt-in",
+      "process_env": {
+        "NODE_ENV": "development",
+        "MORPHEUS_RELAYER_NEOX_UPDATER_PK": "02ab"
+      },
+      "runtime_config": null,
+      "network": "testnet",
+      "registry": {
+        "network": "testnet",
+        "nitro": {
+          "cvm_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+          "cvm_name": "oracle-morpheus-neo-r3e",
+          "public_api_url": "https://oracle.meshmini.app/testnet",
+          "edge_public_url": "https://edge.meshmini.app/testnet",
+          "control_plane_url": "https://control.meshmini.app",
+          "oracle_attestation_explorer_url": "",
+          "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
+          "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
+          "datafeed_attestation_explorer_url": ""
+        },
+        "neo_n3": {
+          "rpc_url": "https://api.n3index.dev/testnet",
+          "rpc_urls": [
+            "https://api.n3index.dev/testnet",
+            "https://testnet1.neo.coz.io:443",
+            "http://seed1t5.neo.org:20332",
+            "http://seed2t5.neo.org:20332",
+            "http://seed3t5.neo.org:20332",
+            "http://seed4t5.neo.org:20332",
+            "http://seed5t5.neo.org:20332",
+            "http://seed3.neo.org:20332",
+            "http://seed4.neo.org:20332",
+            "http://seed5.neo.org:20332"
+          ],
+          "network_magic": 894710606,
+          "domains": {
+            "morpheus_oracle": "",
+            "morpheus_datafeed": "",
+            "morpheus_aa": "",
+            "morpheus_aa_alias": "",
+            "morpheus_neodid": ""
+          },
+          "contracts": {
+            "morpheus_oracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+            "morpheus_oracle_legacy_v1_retired": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "morpheus_datafeed": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
+            "abstract_account": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
+            "aa_address_market": "0x6b979cdd246cc6491a20000a2a822e497c92c23b",
+            "morpheus_neodid": ""
+          },
+          "aa_runtime": {
+            "display_name": "UnifiedSmartWalletV3",
+            "abi_generation": "v3",
+            "core_deploy_tx": "0xbcee817781bb57e66d7373c25c1b951bbe7bce9ebc355fb38f7d23b21cc515c0",
+            "core_update_tx": "0x62148cca4a7bb15efa288f6bc80cda4d86e4f7ffcdf99234c7180b5c5daa1202",
+            "web3auth_verifier_deploy_tx": "0x84bea53fb8344fb3258ad5596bc8368201e4eb3c0340914e5c98952d3f0a8805",
+            "web3auth_verifier_authorize_core_tx": "0x1a59299e397ce7e8b482691338485cd0ee2d82aa6655f836a338d24d4c6ab472",
+            "web3auth_verifier_nef_checksum": 2926105305
+          },
+          "aa_subdomains": {
+            "core": "",
+            "web3auth": "",
+            "recovery": "",
+            "tee": "",
+            "session": "",
+            "webauthn": "",
+            "multisig": "",
+            "subscription": "",
+            "credential_hook": "",
+            "whitelist_hook": "",
+            "daily_limit_hook": "",
+            "token_hook": "",
+            "multi_hook": ""
+          },
+          "aa_verifiers": {
+            "web3auth": "0x1111f5b6b046a964c75d208998c13945ce172e85",
+            "social_recovery": ""
+          },
+          "examples": {
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "feed_reader": "0xae9c17da3d8d1cc45b2a95f77ddce391b9bdcad4"
+          }
+        }
+      },
+      "expected": {
+        "__t": "error",
+        "v": "Neo X host signing is development-only and disabled; remove the EVM private key or set MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER=true for an explicit non-production test"
+      }
+    },
+    {
+      "name": "development neox host key with explicit opt-in",
+      "process_env": {
+        "NODE_ENV": "development",
+        "MORPHEUS_RELAYER_NEOX_UPDATER_PK": "02ab",
+        "MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER": "true"
+      },
+      "runtime_config": null,
+      "network": "testnet",
+      "registry": {
+        "network": "testnet",
+        "nitro": {
+          "cvm_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+          "cvm_name": "oracle-morpheus-neo-r3e",
+          "public_api_url": "https://oracle.meshmini.app/testnet",
+          "edge_public_url": "https://edge.meshmini.app/testnet",
+          "control_plane_url": "https://control.meshmini.app",
+          "oracle_attestation_explorer_url": "",
+          "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
+          "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
+          "datafeed_attestation_explorer_url": ""
+        },
+        "neo_n3": {
+          "rpc_url": "https://api.n3index.dev/testnet",
+          "rpc_urls": [
+            "https://api.n3index.dev/testnet",
+            "https://testnet1.neo.coz.io:443",
+            "http://seed1t5.neo.org:20332",
+            "http://seed2t5.neo.org:20332",
+            "http://seed3t5.neo.org:20332",
+            "http://seed4t5.neo.org:20332",
+            "http://seed5t5.neo.org:20332",
+            "http://seed3.neo.org:20332",
+            "http://seed4.neo.org:20332",
+            "http://seed5.neo.org:20332"
+          ],
+          "network_magic": 894710606,
+          "domains": {
+            "morpheus_oracle": "",
+            "morpheus_datafeed": "",
+            "morpheus_aa": "",
+            "morpheus_aa_alias": "",
+            "morpheus_neodid": ""
+          },
+          "contracts": {
+            "morpheus_oracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+            "morpheus_oracle_legacy_v1_retired": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "morpheus_datafeed": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
+            "abstract_account": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
+            "aa_address_market": "0x6b979cdd246cc6491a20000a2a822e497c92c23b",
+            "morpheus_neodid": ""
+          },
+          "aa_runtime": {
+            "display_name": "UnifiedSmartWalletV3",
+            "abi_generation": "v3",
+            "core_deploy_tx": "0xbcee817781bb57e66d7373c25c1b951bbe7bce9ebc355fb38f7d23b21cc515c0",
+            "core_update_tx": "0x62148cca4a7bb15efa288f6bc80cda4d86e4f7ffcdf99234c7180b5c5daa1202",
+            "web3auth_verifier_deploy_tx": "0x84bea53fb8344fb3258ad5596bc8368201e4eb3c0340914e5c98952d3f0a8805",
+            "web3auth_verifier_authorize_core_tx": "0x1a59299e397ce7e8b482691338485cd0ee2d82aa6655f836a338d24d4c6ab472",
+            "web3auth_verifier_nef_checksum": 2926105305
+          },
+          "aa_subdomains": {
+            "core": "",
+            "web3auth": "",
+            "recovery": "",
+            "tee": "",
+            "session": "",
+            "webauthn": "",
+            "multisig": "",
+            "subscription": "",
+            "credential_hook": "",
+            "whitelist_hook": "",
+            "daily_limit_hook": "",
+            "token_hook": "",
+            "multi_hook": ""
+          },
+          "aa_verifiers": {
+            "web3auth": "0x1111f5b6b046a964c75d208998c13945ce172e85",
+            "social_recovery": ""
+          },
+          "examples": {
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "feed_reader": "0xae9c17da3d8d1cc45b2a95f77ddce391b9bdcad4"
+          }
+        }
+      },
+      "expected": {
+        "__t": "object",
+        "v": {
+          "network": {
+            "__t": "string",
+            "v": "testnet"
+          },
+          "nodeEnv": {
+            "__t": "string",
+            "v": "development"
+          },
+          "mode": {
+            "__t": "string",
+            "v": "combined"
+          },
+          "useDerivedKeys": {
+            "__t": "bool",
+            "v": false
+          },
+          "activeChains": {
+            "__t": "array",
+            "v": [
+              {
+                "__t": "string",
+                "v": "neo_n3"
+              }
+            ]
+          },
+          "pollIntervalMs": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "discoveryIdleBackoffMs": {
+            "__t": "number",
+            "v": "0"
+          },
+          "concurrency": {
+            "__t": "number",
+            "v": "4"
+          },
+          "maxBlocksPerTick": {
+            "__t": "number",
+            "v": "250"
+          },
+          "maxRetries": {
+            "__t": "number",
+            "v": "5"
+          },
+          "maxCallbackRetries": {
+            "__t": "number",
+            "v": "10"
+          },
+          "retryBaseDelayMs": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "retryMaxDelayMs": {
+            "__t": "number",
+            "v": "10000"
+          },
+          "statePersistMinIntervalMs": {
+            "__t": "number",
+            "v": "250"
+          },
+          "processedCacheSize": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "deadLetterLimit": {
+            "__t": "number",
+            "v": "500"
+          },
+          "retryQueueLimit": {
+            "__t": "number",
+            "v": "0"
+          },
+          "durableQueue": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "failClosed": {
+                "__t": "bool",
+                "v": false
+              },
+              "allowLocalClaimDuringBackoff": {
+                "__t": "bool",
+                "v": false
+              },
+              "syncLimit": {
+                "__t": "number",
+                "v": "200"
+              },
+              "staleProcessingMs": {
+                "__t": "number",
+                "v": "45000"
+              }
+            }
+          },
+          "runSnapshots": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "errorBackoffMs": {
+                "__t": "number",
+                "v": "300000"
+              }
+            }
+          },
+          "backpressure": {
+            "__t": "object",
+            "v": {
+              "maxFreshEventsPerTick": {
+                "__t": "number",
+                "v": "32"
+              },
+              "maxRetryEventsPerTick": {
+                "__t": "number",
+                "v": "16"
+              },
+              "deferDelayMs": {
+                "__t": "number",
+                "v": "5000"
+              }
+            }
+          },
+          "feedSync": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "waitForSubmission": {
+                "__t": "bool",
+                "v": false
+              },
+              "projectSlug": {
+                "__t": "string",
+                "v": "morpheus"
+              },
+              "projectConfigEnabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "provider": {
+                "__t": "string",
+                "v": ""
+              },
+              "providers": {
+                "__t": "array",
+                "v": []
+              },
+              "symbols": {
+                "__t": "array",
+                "v": []
+              },
+              "changeThresholdBps": {
+                "__t": "string",
+                "v": "10"
+              },
+              "minUpdateIntervalMs": {
+                "__t": "string",
+                "v": "60000"
+              },
+              "staleAfterMs": {
+                "__t": "string",
+                "v": "300000"
+              }
+            }
+          },
+          "automation": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "batchSize": {
+                "__t": "number",
+                "v": "50"
+              },
+              "maxQueuedPerTick": {
+                "__t": "number",
+                "v": "10"
+              },
+              "pricePollPairsPerTick": {
+                "__t": "number",
+                "v": "25"
+              },
+              "defaultPriceCooldownMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "claimStaleMs": {
+                "__t": "number",
+                "v": "120000"
+              },
+              "idleBackoffMs": {
+                "__t": "number",
+                "v": "0"
+              }
+            }
+          },
+          "logFormat": {
+            "__t": "string",
+            "v": "json"
+          },
+          "logLevel": {
+            "__t": "string",
+            "v": "info"
+          },
+          "confirmations": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "number",
+                "v": "1"
+              },
+              "neox": {
+                "__t": "number",
+                "v": "2"
+              }
+            }
+          },
+          "startRequestIds": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "null"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "startBlocks": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "null"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "nitro": {
+            "__t": "object",
+            "v": {
+              "apiUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "allowFallback": {
+                "__t": "bool",
+                "v": true
+              },
+              "signerUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "custodyUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "custodyToken": {
+                "__t": "string",
+                "v": ""
+              },
+              "enclaveFulfill": {
+                "__t": "bool",
+                "v": false
+              },
+              "expectedPcr0": {
+                "__t": "string",
+                "v": ""
+              },
+              "verifyEnclaveSignature": {
+                "__t": "bool",
+                "v": false
+              },
+              "enclaveFulfillUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "decryptUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "nitroRootCertPem": {
+                "__t": "string",
+                "v": ""
+              },
+              "attestationMaxAgeMs": {
+                "__t": "number",
+                "v": "0"
+              },
+              "token": {
+                "__t": "string",
+                "v": ""
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "useDerivedKeys": {
+                "__t": "bool",
+                "v": false
+              }
+            }
+          },
+          "neo_n3": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "n3index_notifications"
+              },
+              "fulfillConfirmTimeoutMs": {
+                "__t": "null"
+              },
+              "fulfillConfirmThrowOnTimeout": {
+                "__t": "bool",
+                "v": true
+              },
+              "indexerUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/rest/v1"
+              },
+              "startRequestId": {
+                "__t": "null"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/testnet"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://api.n3index.dev/testnet"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://testnet1.neo.coz.io:443"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed1t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed2t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed3t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed4t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed5t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed3.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed4.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed5.neo.org:20332"
+                  }
+                ]
+              },
+              "networkMagic": {
+                "__t": "number",
+                "v": "894710606"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef"
+              },
+              "datafeedContract": {
+                "__t": "string",
+                "v": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064"
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "oracle_verifier": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
+              },
+              "feeTopUp": {
+                "__t": "object",
+                "v": {
+                  "enabled": {
+                    "__t": "bool",
+                    "v": true
+                  },
+                  "minBalance": {
+                    "__t": "string",
+                    "v": "50000000"
+                  },
+                  "topUpAmount": {
+                    "__t": "string",
+                    "v": "100000000"
+                  },
+                  "maxTopUpAmount": {
+                    "__t": "string",
+                    "v": "500000000"
+                  }
+                }
+              }
+            }
+          },
+          "neox": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "request_cursor"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://neoxt4seed1.ngd.network"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://neoxt4seed1.ngd.network"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://neoxt4seed2.ngd.network"
+                  }
+                ]
+              },
+              "chainId": {
+                "__t": "number",
+                "v": "12227332"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "allowHostSigner": {
+                "__t": "bool",
+                "v": true
+              },
+              "updaterPrivateKey": {
+                "__t": "string",
+                "v": "02ab"
+              },
+              "verifierPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "confirmTimeoutMs": {
+                "__t": "number",
+                "v": "45000"
+              },
+              "workerUrl": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "metricsServer": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": "127.0.0.1"
+              },
+              "port": {
+                "__t": "number",
+                "v": "9464"
+              },
+              "path": {
+                "__t": "string",
+                "v": "/metrics"
+              }
+            }
+          },
+          "heartbeats": {
+            "__t": "object",
+            "v": {
+              "relayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedRelayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "failure": {
+                "__t": "string",
+                "v": ""
+              },
+              "deadLetter": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "gate: neox active chain in production",
+      "process_env": {
+        "NODE_ENV": "production",
+        "MORPHEUS_ACTIVE_CHAINS": "neo_n3,neox"
+      },
+      "runtime_config": null,
+      "network": "testnet",
+      "registry": {
+        "network": "testnet",
+        "nitro": {
+          "cvm_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+          "cvm_name": "oracle-morpheus-neo-r3e",
+          "public_api_url": "https://oracle.meshmini.app/testnet",
+          "edge_public_url": "https://edge.meshmini.app/testnet",
+          "control_plane_url": "https://control.meshmini.app",
+          "oracle_attestation_explorer_url": "",
+          "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
+          "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
+          "datafeed_attestation_explorer_url": ""
+        },
+        "neo_n3": {
+          "rpc_url": "https://api.n3index.dev/testnet",
+          "rpc_urls": [
+            "https://api.n3index.dev/testnet",
+            "https://testnet1.neo.coz.io:443",
+            "http://seed1t5.neo.org:20332",
+            "http://seed2t5.neo.org:20332",
+            "http://seed3t5.neo.org:20332",
+            "http://seed4t5.neo.org:20332",
+            "http://seed5t5.neo.org:20332",
+            "http://seed3.neo.org:20332",
+            "http://seed4.neo.org:20332",
+            "http://seed5.neo.org:20332"
+          ],
+          "network_magic": 894710606,
+          "domains": {
+            "morpheus_oracle": "",
+            "morpheus_datafeed": "",
+            "morpheus_aa": "",
+            "morpheus_aa_alias": "",
+            "morpheus_neodid": ""
+          },
+          "contracts": {
+            "morpheus_oracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+            "morpheus_oracle_legacy_v1_retired": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "morpheus_datafeed": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
+            "abstract_account": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
+            "aa_address_market": "0x6b979cdd246cc6491a20000a2a822e497c92c23b",
+            "morpheus_neodid": ""
+          },
+          "aa_runtime": {
+            "display_name": "UnifiedSmartWalletV3",
+            "abi_generation": "v3",
+            "core_deploy_tx": "0xbcee817781bb57e66d7373c25c1b951bbe7bce9ebc355fb38f7d23b21cc515c0",
+            "core_update_tx": "0x62148cca4a7bb15efa288f6bc80cda4d86e4f7ffcdf99234c7180b5c5daa1202",
+            "web3auth_verifier_deploy_tx": "0x84bea53fb8344fb3258ad5596bc8368201e4eb3c0340914e5c98952d3f0a8805",
+            "web3auth_verifier_authorize_core_tx": "0x1a59299e397ce7e8b482691338485cd0ee2d82aa6655f836a338d24d4c6ab472",
+            "web3auth_verifier_nef_checksum": 2926105305
+          },
+          "aa_subdomains": {
+            "core": "",
+            "web3auth": "",
+            "recovery": "",
+            "tee": "",
+            "session": "",
+            "webauthn": "",
+            "multisig": "",
+            "subscription": "",
+            "credential_hook": "",
+            "whitelist_hook": "",
+            "daily_limit_hook": "",
+            "token_hook": "",
+            "multi_hook": ""
+          },
+          "aa_verifiers": {
+            "web3auth": "0x1111f5b6b046a964c75d208998c13945ce172e85",
+            "social_recovery": ""
+          },
+          "examples": {
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "feed_reader": "0xae9c17da3d8d1cc45b2a95f77ddce391b9bdcad4"
+          }
+        }
+      },
+      "expected": {
+        "__t": "error",
+        "v": "Neo X production signing is unavailable: the shipped Rust enclave/custody runtime has no complete secp256k1 signer. Remove neox from MORPHEUS_ACTIVE_CHAINS until the measured custody/enclave signer and transaction relay are implemented."
+      }
+    },
+    {
+      "name": "active chains filter keeps supported only",
+      "process_env": {
+        "NODE_ENV": "development",
+        "MORPHEUS_ACTIVE_CHAINS": "Neo_N3, bogus, neox"
+      },
+      "runtime_config": null,
+      "network": "testnet",
+      "registry": {
+        "network": "testnet",
+        "nitro": {
+          "cvm_id": "ddff154546fe22d15b65667156dd4b7c611e6093",
+          "cvm_name": "oracle-morpheus-neo-r3e",
+          "public_api_url": "https://oracle.meshmini.app/testnet",
+          "edge_public_url": "https://edge.meshmini.app/testnet",
+          "control_plane_url": "https://control.meshmini.app",
+          "oracle_attestation_explorer_url": "",
+          "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
+          "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
+          "datafeed_attestation_explorer_url": ""
+        },
+        "neo_n3": {
+          "rpc_url": "https://api.n3index.dev/testnet",
+          "rpc_urls": [
+            "https://api.n3index.dev/testnet",
+            "https://testnet1.neo.coz.io:443",
+            "http://seed1t5.neo.org:20332",
+            "http://seed2t5.neo.org:20332",
+            "http://seed3t5.neo.org:20332",
+            "http://seed4t5.neo.org:20332",
+            "http://seed5t5.neo.org:20332",
+            "http://seed3.neo.org:20332",
+            "http://seed4.neo.org:20332",
+            "http://seed5.neo.org:20332"
+          ],
+          "network_magic": 894710606,
+          "domains": {
+            "morpheus_oracle": "",
+            "morpheus_datafeed": "",
+            "morpheus_aa": "",
+            "morpheus_aa_alias": "",
+            "morpheus_neodid": ""
+          },
+          "contracts": {
+            "morpheus_oracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+            "morpheus_oracle_legacy_v1_retired": "0x4b882e94ed766807c4fd728768f972e13008ad52",
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "morpheus_datafeed": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
+            "abstract_account": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
+            "aa_address_market": "0x6b979cdd246cc6491a20000a2a822e497c92c23b",
+            "morpheus_neodid": ""
+          },
+          "aa_runtime": {
+            "display_name": "UnifiedSmartWalletV3",
+            "abi_generation": "v3",
+            "core_deploy_tx": "0xbcee817781bb57e66d7373c25c1b951bbe7bce9ebc355fb38f7d23b21cc515c0",
+            "core_update_tx": "0x62148cca4a7bb15efa288f6bc80cda4d86e4f7ffcdf99234c7180b5c5daa1202",
+            "web3auth_verifier_deploy_tx": "0x84bea53fb8344fb3258ad5596bc8368201e4eb3c0340914e5c98952d3f0a8805",
+            "web3auth_verifier_authorize_core_tx": "0x1a59299e397ce7e8b482691338485cd0ee2d82aa6655f836a338d24d4c6ab472",
+            "web3auth_verifier_nef_checksum": 2926105305
+          },
+          "aa_subdomains": {
+            "core": "",
+            "web3auth": "",
+            "recovery": "",
+            "tee": "",
+            "session": "",
+            "webauthn": "",
+            "multisig": "",
+            "subscription": "",
+            "credential_hook": "",
+            "whitelist_hook": "",
+            "daily_limit_hook": "",
+            "token_hook": "",
+            "multi_hook": ""
+          },
+          "aa_verifiers": {
+            "web3auth": "0x1111f5b6b046a964c75d208998c13945ce172e85",
+            "social_recovery": ""
+          },
+          "examples": {
+            "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
+            "feed_reader": "0xae9c17da3d8d1cc45b2a95f77ddce391b9bdcad4"
+          }
+        }
+      },
+      "expected": {
+        "__t": "object",
+        "v": {
+          "network": {
+            "__t": "string",
+            "v": "testnet"
+          },
+          "nodeEnv": {
+            "__t": "string",
+            "v": "development"
+          },
+          "mode": {
+            "__t": "string",
+            "v": "combined"
+          },
+          "useDerivedKeys": {
+            "__t": "bool",
+            "v": false
+          },
+          "activeChains": {
+            "__t": "array",
+            "v": [
+              {
+                "__t": "string",
+                "v": "neo_n3"
+              },
+              {
+                "__t": "string",
+                "v": "neox"
+              }
+            ]
+          },
+          "pollIntervalMs": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "discoveryIdleBackoffMs": {
+            "__t": "number",
+            "v": "0"
+          },
+          "concurrency": {
+            "__t": "number",
+            "v": "4"
+          },
+          "maxBlocksPerTick": {
+            "__t": "number",
+            "v": "250"
+          },
+          "maxRetries": {
+            "__t": "number",
+            "v": "5"
+          },
+          "maxCallbackRetries": {
+            "__t": "number",
+            "v": "10"
+          },
+          "retryBaseDelayMs": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "retryMaxDelayMs": {
+            "__t": "number",
+            "v": "10000"
+          },
+          "statePersistMinIntervalMs": {
+            "__t": "number",
+            "v": "250"
+          },
+          "processedCacheSize": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "deadLetterLimit": {
+            "__t": "number",
+            "v": "500"
+          },
+          "retryQueueLimit": {
+            "__t": "number",
+            "v": "0"
+          },
+          "durableQueue": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "failClosed": {
+                "__t": "bool",
+                "v": false
+              },
+              "allowLocalClaimDuringBackoff": {
+                "__t": "bool",
+                "v": false
+              },
+              "syncLimit": {
+                "__t": "number",
+                "v": "200"
+              },
+              "staleProcessingMs": {
+                "__t": "number",
+                "v": "45000"
+              }
+            }
+          },
+          "runSnapshots": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "errorBackoffMs": {
+                "__t": "number",
+                "v": "300000"
+              }
+            }
+          },
+          "backpressure": {
+            "__t": "object",
+            "v": {
+              "maxFreshEventsPerTick": {
+                "__t": "number",
+                "v": "32"
+              },
+              "maxRetryEventsPerTick": {
+                "__t": "number",
+                "v": "16"
+              },
+              "deferDelayMs": {
+                "__t": "number",
+                "v": "5000"
+              }
+            }
+          },
+          "feedSync": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "waitForSubmission": {
+                "__t": "bool",
+                "v": false
+              },
+              "projectSlug": {
+                "__t": "string",
+                "v": "morpheus"
+              },
+              "projectConfigEnabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "provider": {
+                "__t": "string",
+                "v": ""
+              },
+              "providers": {
+                "__t": "array",
+                "v": []
+              },
+              "symbols": {
+                "__t": "array",
+                "v": []
+              },
+              "changeThresholdBps": {
+                "__t": "string",
+                "v": "10"
+              },
+              "minUpdateIntervalMs": {
+                "__t": "string",
+                "v": "60000"
+              },
+              "staleAfterMs": {
+                "__t": "string",
+                "v": "300000"
+              }
+            }
+          },
+          "automation": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "batchSize": {
+                "__t": "number",
+                "v": "50"
+              },
+              "maxQueuedPerTick": {
+                "__t": "number",
+                "v": "10"
+              },
+              "pricePollPairsPerTick": {
+                "__t": "number",
+                "v": "25"
+              },
+              "defaultPriceCooldownMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "claimStaleMs": {
+                "__t": "number",
+                "v": "120000"
+              },
+              "idleBackoffMs": {
+                "__t": "number",
+                "v": "0"
+              }
+            }
+          },
+          "logFormat": {
+            "__t": "string",
+            "v": "json"
+          },
+          "logLevel": {
+            "__t": "string",
+            "v": "info"
+          },
+          "confirmations": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "number",
+                "v": "1"
+              },
+              "neox": {
+                "__t": "number",
+                "v": "2"
+              }
+            }
+          },
+          "startRequestIds": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "null"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "startBlocks": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "null"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "nitro": {
+            "__t": "object",
+            "v": {
+              "apiUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "allowFallback": {
+                "__t": "bool",
+                "v": true
+              },
+              "signerUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "custodyUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "custodyToken": {
+                "__t": "string",
+                "v": ""
+              },
+              "enclaveFulfill": {
+                "__t": "bool",
+                "v": false
+              },
+              "expectedPcr0": {
+                "__t": "string",
+                "v": ""
+              },
+              "verifyEnclaveSignature": {
+                "__t": "bool",
+                "v": false
+              },
+              "enclaveFulfillUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "decryptUrl": {
+                "__t": "string",
+                "v": "https://oracle.meshmini.app/testnet,https://edge.meshmini.app/testnet"
+              },
+              "nitroRootCertPem": {
+                "__t": "string",
+                "v": ""
+              },
+              "attestationMaxAgeMs": {
+                "__t": "number",
+                "v": "0"
+              },
+              "token": {
+                "__t": "string",
+                "v": ""
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "useDerivedKeys": {
+                "__t": "bool",
+                "v": false
+              }
+            }
+          },
+          "neo_n3": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "n3index_notifications"
+              },
+              "fulfillConfirmTimeoutMs": {
+                "__t": "null"
+              },
+              "fulfillConfirmThrowOnTimeout": {
+                "__t": "bool",
+                "v": true
+              },
+              "indexerUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/rest/v1"
+              },
+              "startRequestId": {
+                "__t": "null"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/testnet"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://api.n3index.dev/testnet"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://testnet1.neo.coz.io:443"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed1t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed2t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed3t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed4t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed5t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed3.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed4.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed5.neo.org:20332"
+                  }
+                ]
+              },
+              "networkMagic": {
+                "__t": "number",
+                "v": "894710606"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef"
+              },
+              "datafeedContract": {
+                "__t": "string",
+                "v": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064"
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "oracle_verifier": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
+              },
+              "feeTopUp": {
+                "__t": "object",
+                "v": {
+                  "enabled": {
+                    "__t": "bool",
+                    "v": true
+                  },
+                  "minBalance": {
+                    "__t": "string",
+                    "v": "50000000"
+                  },
+                  "topUpAmount": {
+                    "__t": "string",
+                    "v": "100000000"
+                  },
+                  "maxTopUpAmount": {
+                    "__t": "string",
+                    "v": "500000000"
+                  }
+                }
+              }
+            }
+          },
+          "neox": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "request_cursor"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://neoxt4seed1.ngd.network"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://neoxt4seed1.ngd.network"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://neoxt4seed2.ngd.network"
+                  }
+                ]
+              },
+              "chainId": {
+                "__t": "number",
+                "v": "12227332"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "allowHostSigner": {
+                "__t": "bool",
+                "v": false
+              },
+              "updaterPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "verifierPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "confirmTimeoutMs": {
+                "__t": "number",
+                "v": "45000"
+              },
+              "workerUrl": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "metricsServer": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": "127.0.0.1"
+              },
+              "port": {
+                "__t": "number",
+                "v": "9464"
+              },
+              "path": {
+                "__t": "string",
+                "v": "/metrics"
+              }
+            }
+          },
+          "heartbeats": {
+            "__t": "object",
+            "v": {
+              "relayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedRelayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "failure": {
+                "__t": "string",
+                "v": ""
+              },
+              "deadLetter": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

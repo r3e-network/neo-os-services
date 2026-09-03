@@ -45,7 +45,9 @@ const DEFAULT_NEO_N3_RPC_URLS = {
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(moduleDir, '../../..');
 
-function parseList(value) {
+// Exported for the golden-vector exporter (scripts/export-rust-vectors.mjs):
+// the Rust relayer port is pinned against these functions' live behavior.
+export function parseList(value) {
   const raw = trimString(value);
   if (!raw) return [];
   return raw
@@ -86,7 +88,7 @@ function parseUrlList(value) {
     .filter(Boolean);
 }
 
-function uniqueOrdered(values) {
+export function uniqueOrdered(values) {
   return [...new Set(values.filter(Boolean))];
 }
 
@@ -164,7 +166,7 @@ function resolveNeoN3RpcUrls(network, registry) {
   ]);
 }
 
-function resolveNeoN3NetworkMagic(network, registry) {
+export function resolveNeoN3NetworkMagic(network, registry) {
   const scopedMagic =
     network === 'mainnet'
       ? env('NEO_MAINNET_MAGIC', 'MAINNET_NETWORK_MAGIC')
@@ -224,7 +226,7 @@ function getRuntimeConfig() {
   return runtimeConfigCache;
 }
 
-function env(...names) {
+export function env(...names) {
   const runtimeConfig = getRuntimeConfig();
   for (const name of names) {
     const direct = trimString(process.env[name]);
@@ -259,7 +261,7 @@ function configuredHostSignerEnvNames() {
     .sort();
 }
 
-function envNetworkScoped(network, genericKey) {
+export function envNetworkScoped(network, genericKey) {
   const suffix = network === 'mainnet' ? 'MAINNET' : 'TESTNET';
   return env(`${genericKey}_${suffix}`) || env(genericKey);
 }
@@ -285,7 +287,7 @@ function resolveNetworkName() {
   return env('MORPHEUS_NETWORK', 'NEXT_PUBLIC_MORPHEUS_NETWORK') || 'testnet';
 }
 
-function resolvePublicRuntimeCandidates(network, registry) {
+export function resolvePublicRuntimeCandidates(network, registry) {
   // The runtime is the AWS Nitro enclave; read the `nitro` registry key.
   const runtimeRegistry = registry.nitro;
   return uniqueOrdered([
