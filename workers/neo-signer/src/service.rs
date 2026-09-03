@@ -50,6 +50,7 @@ use crate::{
     audit::{self, GuardRejection, Refusal},
     auth::{self, AccessRejection, CallerCredentials},
     crypto,
+    evm_tx::{self, EvmIntent, UnsignedEvmTransaction},
     metrics,
     model::{
         CallerCapability, KeyGrant, ScriptHash, SignerAuditAction, SignerAuditOutcome,
@@ -62,6 +63,7 @@ use crate::{
     tx::{self, ConsensusPayload, DbftCommitment, Intent, UnsignedTransaction},
     vault::MasterKey,
 };
+use sha3::{Digest, Keccak256};
 
 /// A caller-facing answer: either what was asked for, or a refusal carrying the
 /// code and message that are safe to send back.
@@ -253,6 +255,10 @@ enum Parsed {
         transaction: UnsignedTransaction,
         intents: Vec<Intent>,
     },
+    EvmTransaction {
+        transaction: UnsignedEvmTransaction,
+        intent: EvmIntent,
+    },
     Consensus {
         payload: ConsensusPayload,
     },
@@ -271,6 +277,13 @@ impl Parsed {
             } => SigningRequest::Transaction {
                 transaction,
                 intents,
+            },
+            Parsed::EvmTransaction {
+                transaction,
+                intent,
+            } => SigningRequest::EvmTransaction {
+                transaction,
+                intent,
             },
             Parsed::Consensus { payload } => SigningRequest::Consensus { payload },
             Parsed::Raw => SigningRequest::Raw,
@@ -1333,8 +1346,6 @@ impl SignerService {
                 format!("{key_id} has no usable public key on record"),
             )
         })?;
-        let parsed = self.parse(unsigned, kind)?;
-
         let boundary = self
             .repository
             .signer_policy_or_default(key_id)
@@ -1345,11 +1356,14 @@ impl SignerService {
                     format!("{key_id}: {error:?}"),
                 )
             })?;
+        let parsed = self.parse(unsigned, kind, &key, &boundary)?;
         let spent = self.window_spend(key_id, &boundary)?;
         let request = parsed.request();
         let intents = match request {
             SigningRequest::Transaction { intents, .. } => intents,
-            SigningRequest::Consensus { .. } | SigningRequest::Raw | SigningRequest::EvmTransaction { .. } => &[],
+            SigningRequest::Consensus { .. }
+            | SigningRequest::Raw
+            | SigningRequest::EvmTransaction { .. } => &[],
         };
         match policy::evaluate(&boundary, account, &request, &spent) {
             policy::Verdict::Allow => {}
@@ -1376,22 +1390,28 @@ impl SignerService {
         // anti-equivocation check has passed.
         let private_key = self.open_key(&key)?;
 
-        // The framed Neo preimage and the unframed raw bytes are two
-        // different signature primitives with two different replay domains —
-        // a magic-framed signature is worthless for a digest lane and a raw
-        // signature would be replayable across networks — so the kind picks
-        // the primitive, and the witness digest records what was signed.
-        //
-        // For multi-chain support:
-        // - Neo N3: use sign_transaction with network magic
-        // - NeoX (EVM): use sign_evm_transaction with chain ID
-        // - Raw: chain-agnostic signing
-        let (signature, digest, chain_family) = match kind {
-            RequestKind::Transaction | RequestKind::Consensus => {
-                // Check if this is a NeoX transaction based on network magic
-                // (For now, assume Neo N3. TODO: detect NeoX based on network config)
-                (
-                    crypto::sign_transaction(&private_key, unsigned, key.network_magic()).map_err(
+        let (digest, invocation, verification, signature_hex, chain_family) = match kind {
+            RequestKind::Transaction => match &parsed {
+                Parsed::EvmTransaction { transaction, .. } => {
+                    let signed_raw = evm_tx::sign_evm_tx(transaction, &private_key).map_err(|error| {
+                        Refusal::failed(
+                            "signer-signature-failed",
+                            "the EVM transaction signature could not be produced",
+                            error.to_string(),
+                        )
+                    })?;
+                    let tx_hash = format!("0x{}", hex::encode(Keccak256::digest(&signed_raw)));
+                    let sig_hex = format!("0x{}", hex::encode(&signed_raw));
+                    (
+                        tx_hash,
+                        Vec::new(),
+                        Vec::new(),
+                        Some(sig_hex),
+                        Some(ChainFamily::NeoX),
+                    )
+                }
+                Parsed::Transaction { .. } => {
+                    let sig = crypto::sign_transaction(&private_key, unsigned, key.network_magic()).map_err(
                         |error| {
                             Refusal::failed(
                                 "signer-signature-failed",
@@ -1399,26 +1419,51 @@ impl SignerService {
                                 error.to_string(),
                             )
                         },
-                    )?,
-                    // A transaction id is displayed byte-reversed — the explorer
-                    // order the digest exists to be found under.
+                    )?;
+                    (
+                        tx::script_hash_to_display(&crypto::transaction_hash(unsigned)),
+                        crypto::invocation_script(&sig),
+                        key.verification_script(),
+                        None,
+                        Some(ChainFamily::NeoN3),
+                    )
+                }
+                _ => unreachable!(),
+            },
+            RequestKind::Consensus => {
+                let sig = crypto::sign_transaction(&private_key, unsigned, key.network_magic()).map_err(
+                    |error| {
+                        Refusal::failed(
+                            "signer-signature-failed",
+                            "the signature could not be produced",
+                            error.to_string(),
+                        )
+                    },
+                )?;
+                (
                     tx::script_hash_to_display(&crypto::transaction_hash(unsigned)),
+                    crypto::invocation_script(&sig),
+                    key.verification_script(),
+                    None,
                     Some(ChainFamily::NeoN3),
                 )
             }
-            RequestKind::Raw => (
-                crypto::sign_raw(&private_key, unsigned).map_err(|error| {
+            RequestKind::Raw => {
+                let sig = crypto::sign_raw(&private_key, unsigned).map_err(|error| {
                     Refusal::failed(
                         "signer-signature-failed",
                         "the signature could not be produced",
                         error.to_string(),
                     )
-                })?,
-                // A raw digest is not an on-chain id, so it takes the order a
-                // verifier computes: plain SHA-256, un-reversed.
-                format!("0x{}", hex::encode(crypto::sha256(unsigned))),
-                None,
-            ),
+                })?;
+                (
+                    format!("0x{}", hex::encode(crypto::sha256(unsigned))),
+                    crypto::invocation_script(&sig),
+                    key.verification_script(),
+                    None,
+                    None,
+                )
+            }
         };
         Ok(Approved {
             witness: SignedWitness {
@@ -1426,15 +1471,15 @@ impl SignerService {
                 script_hash: account,
                 address: key.address(),
                 digest,
-                invocation: crypto::invocation_script(&signature),
-                verification: key.verification_script(),
-                signature_hex: None, // TODO: populate for NeoX transactions
+                invocation,
+                verification,
+                signature_hex,
                 chain_family,
             },
             kind,
             intents: match parsed {
                 Parsed::Transaction { intents, .. } => intents,
-                Parsed::Consensus { .. } | Parsed::Raw => Vec::new(),
+                Parsed::EvmTransaction { .. } | Parsed::Consensus { .. } | Parsed::Raw => Vec::new(),
             },
             consensus,
         })
@@ -1534,27 +1579,54 @@ impl SignerService {
     }
 
     /// Read and decode the bytes a signature is about to cover.
-    fn parse(&self, unsigned: &[u8], kind: RequestKind) -> Result<Parsed, Refusal> {
+    fn parse(
+        &self,
+        unsigned: &[u8],
+        kind: RequestKind,
+        key: &SignerKey,
+        boundary: &SignerPolicy,
+    ) -> Result<Parsed, Refusal> {
         match kind {
             RequestKind::Transaction => {
-                let transaction = UnsignedTransaction::parse(unsigned).map_err(|error| {
-                    Refusal::failed(
-                        "signer-transaction-unparsable",
-                        "the transaction could not be read",
-                        error.to_string(),
-                    )
-                })?;
-                let intents = transaction.intents().map_err(|error| {
-                    Refusal::failed(
-                        "signer-script-unparsable",
-                        "the transaction script could not be read",
-                        error.to_string(),
-                    )
-                })?;
-                Ok(Parsed::Transaction {
-                    transaction,
-                    intents,
-                })
+                let is_neox = boundary.chain_family == Some(ChainFamily::NeoX)
+                    || unsigned.first() == Some(&evm_tx::EIP1559_TX_TYPE);
+                if is_neox {
+                    let chain_id = boundary
+                        .evm_chain_id
+                        .unwrap_or_else(|| network::neox_chain_id(key.network));
+                    let transaction =
+                        UnsignedEvmTransaction::parse(unsigned, chain_id).map_err(|error| {
+                            Refusal::failed(
+                                "signer-transaction-unparsable",
+                                "the EVM transaction could not be read",
+                                error.to_string(),
+                            )
+                        })?;
+                    let intent = transaction.intent();
+                    Ok(Parsed::EvmTransaction {
+                        transaction,
+                        intent,
+                    })
+                } else {
+                    let transaction = UnsignedTransaction::parse(unsigned).map_err(|error| {
+                        Refusal::failed(
+                            "signer-transaction-unparsable",
+                            "the transaction could not be read",
+                            error.to_string(),
+                        )
+                    })?;
+                    let intents = transaction.intents().map_err(|error| {
+                        Refusal::failed(
+                            "signer-script-unparsable",
+                            "the transaction script could not be read",
+                            error.to_string(),
+                        )
+                    })?;
+                    Ok(Parsed::Transaction {
+                        transaction,
+                        intents,
+                    })
+                }
             }
             RequestKind::Consensus => {
                 let payload = ConsensusPayload::parse(unsigned).map_err(|error| {
