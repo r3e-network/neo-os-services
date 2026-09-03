@@ -33,3 +33,17 @@ test('encodeUint256Word rejects negatives and overflow instead of truncating', (
   assert.throws(() => encodeUint256Word(2n ** 256n), /overflows uint256/);
   assert.throws(() => encodeUint256Word('not-a-number', 'nonce'), /nonce must be a uint256 string/);
 });
+
+// encodeUint256Word parses through BigInt(String(value)) — the StringToBigInt
+// grammar, NOT the stricter BigInt literal grammar. The Rust port pins these
+// two directions, so the oracle side must pin them too: leading decimal zeros
+// are accepted, underscore separators (legal in `1_0n` literals) are not.
+test('encodeUint256Word follows the StringToBigInt grammar for string inputs', () => {
+  assert.equal(encodeUint256Word('012').toString('hex'), '0'.repeat(62) + '0c', 'leading zero');
+  assert.throws(() => encodeUint256Word('1_0'), /must be a uint256 string/, 'underscore');
+  assert.equal(encodeUint256Word(' 5 ').toString('hex'), '0'.repeat(63) + '5', 'JS-trimmed');
+  assert.equal(encodeUint256Word('-0').toString('hex'), '0'.repeat(64), 'negative zero is 0n');
+  // `'' ?? '0'` is '' (?? only collapses null/undefined) and BigInt('') is 0n.
+  assert.equal(encodeUint256Word('').toString('hex'), '0'.repeat(64), 'empty string is 0n');
+  assert.equal(encodeUint256Word(null).toString('hex'), '0'.repeat(64), "nullish coalesces to '0'");
+});

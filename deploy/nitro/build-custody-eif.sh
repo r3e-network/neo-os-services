@@ -17,7 +17,9 @@
 #   NITRO_CLI_BLOBS         nitro-cli blobs dir (default /usr/share/nitro_enclaves/blobs)
 #   MORPHEUS_RELEASE        release id for the manifest (default custody-<UTC date>)
 #   MORPHEUS_NETWORK        network label for the manifest (default testnet)
-#   --verify-reproducible   build the docker image twice and require identical PCRs
+#   --verify-reproducible   rebuild the docker image FROM SCRATCH and require
+#                           identical PCRs. Costs a second full build (the Rust
+#                           stage compiles twice) — that is the check.
 #   --no-eif                build (and optionally verify) the docker image only;
 #                           skip nitro-cli build-enclave (for boxes without it)
 set -euo pipefail
@@ -63,15 +65,25 @@ image_id_1="$(docker image inspect --format '{{.Id}}' "$image")"
 echo "==> image id: $image_id_1"
 
 if [ "$verify_reproducible" -eq 1 ]; then
-  echo "==> reproducibility check: building a second, independent image"
+  echo "==> reproducibility check: rebuilding the whole image from scratch (--no-cache)"
   image2="${image%:*}:repro-check"
+  # --no-cache is the entire point of this branch. BuildKit's layer cache is
+  # keyed on the parent chain + instruction + context checksum, NOT on the image
+  # tag, and it is shared across the daemon — so a second plain `docker build`
+  # of the same context replays build #1's layers byte-for-byte and the PCR
+  # comparison below can only ever pass. That would certify "nitro-cli is
+  # deterministic", which was never in question, instead of "this Dockerfile
+  # produces the same rootfs every time", which is what the KMS policy needs.
+  # Base images no longer add drift of their own: both stages of
+  # Dockerfile.signer pull a resolved @sha256, so --no-cache covers everything
+  # that varies and --pull would add nothing.
   DOCKER_BUILDKIT=1 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1749859200}" \
-    docker build -f "$dockerfile" -t "$image2" "$repo_root"
+    docker build --no-cache -f "$dockerfile" -t "$image2" "$repo_root"
   image_id_2="$(docker image inspect --format '{{.Id}}' "$image2")"
   echo "    build #1 image id: $image_id_1"
   echo "    build #2 image id: $image_id_2"
   if [ "$build_eif" -eq 1 ]; then
-    # AUTHORITATIVE GATE: compare the nitro-cli PCRs of the two independent
+    # AUTHORITATIVE GATE: compare the nitro-cli PCRs of the two from-scratch
     # builds. Docker IMAGE IDs are NOT a valid reproducibility signal — the
     # image config carries a build-time `created`/`history` timestamp, so two
     # identical rootfs builds can yield different image IDs. PCR0/1/2 are
@@ -87,12 +99,13 @@ if [ "$verify_reproducible" -eq 1 ]; then
     echo "    build #1 PCRs: $pcrs_a"
     echo "    build #2 PCRs: $pcrs_b"
     if [ "$pcrs_a" != "$pcrs_b" ] || [ "$pcrs_a" = "||" ]; then
-      echo "ERROR: custody enclave is NOT reproducible — PCRs differ across two independent builds." >&2
+      echo "ERROR: custody enclave is NOT reproducible — PCRs differ across two from-scratch builds." >&2
       echo "       A measurements manifest from a non-reproducible build cannot be independently verified." >&2
       docker image rm "$image2" >/dev/null 2>&1 || true
       exit 1
     fi
-    echo "    OK: identical PCR0/PCR1/PCR2 across two independent builds -> reproducible enclave"
+    echo "    OK: identical PCR0/PCR1/PCR2 across two from-scratch builds -> reproducible enclave"
+    echo "        (bases are digest-pinned, so this covers every layer that varies)"
   else
     # --no-eif: nitro-cli is unavailable/skipped, so fall back to the weaker
     # image-ID heuristic (which can false-negative on config timestamps).
@@ -142,6 +155,15 @@ if [ -f "$output" ]; then
 fi
 
 built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+if [ "$verify_reproducible" -ne 1 ]; then
+  echo "WARNING: --verify-reproducible was not passed, so this PCR0 was never re-derived" >&2
+  echo "         from an independent build. That is the assumption the next step rests on:" >&2
+  echo "         committing this manifest and pinning the same PCR0 in the custody KMS key" >&2
+  echo "         policy. If the image turns out NOT to be reproducible, the next rebuild" >&2
+  echo "         measures a different PCR0 and /provision can no longer decrypt the master" >&2
+  echo "         key — an outage discovered while booting, not while building." >&2
+fi
 
 echo "==> writing manifest $manifest"
 RELEASE="$release" APP_ID="morpheus-custody" NETWORK="$network" \

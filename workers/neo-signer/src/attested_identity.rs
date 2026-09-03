@@ -26,7 +26,10 @@
 
 use serde_json::{json, Value};
 
-use crate::{crypto, model::ScriptHash, model::SignerKey, model::SignerPolicy};
+use crate::{
+    crypto,
+    model::{ContractMethod, ScriptHash, SignerKey, SignerPolicy},
+};
 
 /// The runtime name the attestation claims, shared between the `user_data`
 /// bytes and the `/attestation` response so both name the same thing.
@@ -37,6 +40,7 @@ pub const RUNTIME_NAME: &str = "neo-signer-custody";
 pub struct KeyBoundary {
     pub key_id: String,
     pub network: String,
+    pub network_magic: u32,
     pub address: String,
     pub script_hash: String,
     pub disabled: bool,
@@ -55,6 +59,7 @@ impl KeyBoundary {
         Ok(KeyBoundary {
             key_id: key.id.clone(),
             network: key.network.to_string(),
+            network_magic: key.network_magic(),
             address: key.address(),
             script_hash: script_hash.to_string(),
             disabled: key.disabled,
@@ -68,13 +73,24 @@ impl KeyBoundary {
     pub fn to_json(&self) -> Value {
         let policy = json!({
             "allow_consensus": self.policy.allow_consensus,
+            "allow_raw": self.policy.allow_raw,
             "allow_transfer": self.policy.allow_transfer,
             "allow_contract_call": self.policy.allow_contract_call,
             "allow_global_scope": self.policy.allow_global_scope,
             "contract_whitelist": hashes(&self.policy.contract_whitelist),
             "contract_blacklist": hashes(&self.policy.contract_blacklist),
+            "contract_method_whitelist": contract_methods(&self.policy.contract_method_whitelist),
+            "contract_method_blacklist": contract_methods(&self.policy.contract_method_blacklist),
             "asset_whitelist": hashes(&self.policy.asset_whitelist),
             "asset_blacklist": hashes(&self.policy.asset_blacklist),
+            "asset_limits": self.policy.asset_limits.iter().map(|limit| json!({
+                "asset": limit.asset.to_display(),
+                "max_single_amount": limit.max_single_amount,
+                "window_limit": limit.window_limit.map(|window| json!({
+                    "seconds": window.seconds,
+                    "max_amount": window.max_amount,
+                })),
+            })).collect::<Vec<_>>(),
             "transfer_to_whitelist": hashes(&self.policy.transfer_to_whitelist),
             "transfer_to_blacklist": hashes(&self.policy.transfer_to_blacklist),
             "max_single_amount": self.policy.max_single_amount,
@@ -82,10 +98,18 @@ impl KeyBoundary {
                 "seconds": limit.seconds,
                 "max_amount": limit.max_amount,
             })),
+            "max_signers": self.policy.max_signers,
+            "max_system_fee": self.policy.max_system_fee,
+            "max_network_fee": self.policy.max_network_fee,
+            "max_signatures": self.policy.max_signatures.map(|limit| json!({
+                "seconds": limit.seconds,
+                "count": limit.count,
+            })),
         });
         json!({
             "key_id": self.key_id,
             "network": self.network,
+            "network_magic": self.network_magic,
             "address": self.address,
             "script_hash": self.script_hash,
             "disabled": self.disabled,
@@ -96,6 +120,17 @@ impl KeyBoundary {
 
 fn hashes(list: &[ScriptHash]) -> Vec<String> {
     list.iter().map(|hash| hash.to_string()).collect()
+}
+
+fn contract_methods(list: &[ContractMethod]) -> Vec<Value> {
+    list.iter()
+        .map(|entry| {
+            json!({
+                "contract": entry.contract.to_string(),
+                "method": entry.method,
+            })
+        })
+        .collect()
 }
 
 /// The full boundaries document, in canonical compact form. This exact byte

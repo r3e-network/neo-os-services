@@ -1,5 +1,22 @@
 # Phase C (complete) — KMS attestation-gated key release
 
+> **Current measured-Rust contract (September 2026).** The production frontier
+> uses `nitro_attest::release_bytes` for the runtime token, X25519 key, and
+> NeoDID salt. That API generates a fresh ephemeral RSA key, embeds its public
+> key in an NSM Recipient attestation, submits KMS `Decrypt`, parses KMS's CMS
+> BER response, and unwraps plaintext only in enclave memory. The measured
+> Rust binary does not compile an ordinary Secrets Manager `GetSecretValue`
+> client and has no parent-decrypted fallback.
+>
+> The parent role is denied `secretsmanager:GetSecretValue`, `kms:Encrypt`,
+> `kms:ReEncrypt*`, and `kms:GenerateDataKey*`. Sealing is performed offline by
+> a distinct release-operator principal. Granting the parent encryption would
+> let it choose attacker-known plaintext and defeat release provenance even
+> though recipient attestation still hid the returned bytes.
+>
+> The historical Node/Go rollout notes below explain the incident and CMS-BER
+> discovery; they are not the current runtime implementation or IAM contract.
+
 > **✅ DEPLOYED + END-TO-END VALIDATED (2026-06-15).** The X25519 oracle decryption key is
 > released ONLY to the attested enclave via KMS. Live: EIF `oracle-enclave-exec-2026-06-15.9`
 > (PCR0 `842f4f53…`); CMK `alias/morpheus-enclave-master` gates `kms:Decrypt` on

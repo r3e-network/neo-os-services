@@ -6,6 +6,15 @@
 # signer_service binary inside a Node-free enclave — and that is what
 # build-custody-eif.sh measures.
 #
+# Deliberately NOT digest-pinned, unlike Dockerfile.enclave and Dockerfile.signer.
+# Pinning today's digests here would not recover the measurement this image was
+# originally built with — it would produce a different rootfs that merely looked
+# pinned. The Go stage below is the harder case anyway: `go get …@latest` with an
+# in-image `go mod init` has no lockfile, so this image is not bit-reproducible at
+# all any more. Treat it as a build target for a rollback *decision*: redeploy an
+# EIF that was measured when it shipped, and only rebuild from this file if you
+# accept that the result is a new, newly-measured image.
+#
 # Stage 1: build the static NSM attestation helper (no host Go toolchain needed).
 FROM golang:1.22-bookworm AS nsmbuild
 WORKDIR /build
@@ -25,14 +34,31 @@ FROM rust:1.98.0-bookworm AS signerbuild
 WORKDIR /build
 
 # Manifests first, with stub sources, so the dependency graph and the compiled
-# SQLite land in a cached layer that a source edit does not invalidate.
+# SQLite land in a cached layer that a source edit does not invalidate. EVERY
+# member's manifest must be present, and so must vendor/: cargo loads the whole
+# workspace graph even when building one bin, and a [patch.crates-io] entry whose
+# path is missing fails that load. This image exists only as a rollback build
+# target, so a stale member list would make the historical path unbuildable.
 COPY Cargo.toml Cargo.lock ./
+COPY vendor ./vendor
 COPY workers/neo-signer/Cargo.toml workers/neo-signer/Cargo.toml
+COPY workers/nitro-enclave-host/Cargo.toml workers/nitro-enclave-host/Cargo.toml
 COPY crates/morpheus-core/Cargo.toml crates/morpheus-core/Cargo.toml
-RUN mkdir -p workers/neo-signer/src/bin crates/morpheus-core/src \
+COPY crates/nitro-attest/Cargo.toml crates/nitro-attest/Cargo.toml
+COPY crates/nitro-init/Cargo.toml crates/nitro-init/Cargo.toml
+COPY crates/morpheus-compute/Cargo.toml crates/morpheus-compute/Cargo.toml
+RUN mkdir -p workers/neo-signer/src/bin workers/nitro-enclave-host/src \
+      crates/morpheus-core/src crates/nitro-attest/src/bin crates/nitro-init/src \
+      crates/morpheus-compute/src \
   && printf '' > workers/neo-signer/src/lib.rs \
   && printf 'fn main() {}\n' > workers/neo-signer/src/bin/signer_service.rs \
+  && printf 'fn main() {}\n' > workers/nitro-enclave-host/src/main.rs \
   && printf '' > crates/morpheus-core/src/lib.rs \
+  && printf '' > crates/nitro-attest/src/lib.rs \
+  && printf 'fn main() {}\n' > crates/nitro-attest/src/bin/nsm-attest-rs.rs \
+  && printf '' > crates/nitro-init/src/lib.rs \
+  && printf 'fn main() {}\n' > crates/nitro-init/src/main.rs \
+  && printf '' > crates/morpheus-compute/src/lib.rs \
   && cargo fetch --locked
 
 COPY workers/neo-signer ./workers/neo-signer

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Build the MERGED Morpheus Oracle compute+sign enclave image (EIF) AND capture
-# its measurements (PCR0/1/2) into a committed, versioned manifest so the
+# Build the Morpheus Oracle enclave image (EIF) — the Rust-only frontier — AND
+# capture its measurements (PCR0/1/2) into a committed, versioned manifest so the
 # attestation verifier has a pinned source of truth.
 #
 # Derived from build-nitro-signer-eif.sh, with three additions required by the
 # design (§4):
-#   1. Uses Dockerfile.enclave (the merged image), not Dockerfile.signer.
+#   1. Uses Dockerfile.enclave (the enclave runtime image), not Dockerfile.signer.
 #   2. Captures `nitro-cli build-enclave` Measurements JSON into
 #      deploy/nitro/measurements/<release>.json and FAILS if PCRs are empty.
-#   3. Optional --verify-reproducible: builds the docker image TWICE and asserts
-#      identical image IDs (the reproducibility gate; PCRs are meaningless if the
-#      image is not reproducible).
+#   3. Optional --verify-reproducible: rebuilds the docker image FROM SCRATCH and
+#      asserts identical PCRs (the reproducibility gate; PCRs are meaningless if
+#      the image is not reproducible).
 #
 # Env / flags:
 #   MORPHEUS_NITRO_IMAGE   docker tag for the enclave image (default morpheus-oracle-enclave:latest)
@@ -19,7 +19,11 @@
 #   NITRO_CLI_BLOBS        nitro-cli blobs dir (default /usr/share/nitro_enclaves/blobs)
 #   MORPHEUS_RELEASE       release id for the manifest (default oracle-<UTC date>)
 #   MORPHEUS_NETWORK       network label for the manifest (default testnet)
-#   --verify-reproducible  build the docker image twice and require identical IDs
+#   SIGNER_SERVICE_URL and SIGNER_ROLE_{ORACLE_VERIFIER,UPDATER,RELAYER,WORKER}_KEY_ID
+#                          immutable custody trust anchors baked into PCR0
+#   --verify-reproducible  rebuild the docker image FROM SCRATCH and require
+#                          identical PCRs. Costs a second full build (the Rust
+#                          stage compiles twice) — that is the check.
 #   --no-eif               build (and optionally verify) the docker image only;
 #                          skip nitro-cli build-enclave (for boxes without it)
 set -euo pipefail
@@ -30,10 +34,27 @@ output="${MORPHEUS_NITRO_EIF:-/opt/morpheus/nitro/morpheus-oracle.eif}"
 artifacts="${NITRO_CLI_ARTIFACTS:-/opt/morpheus/nitro/artifacts}"
 blobs="${NITRO_CLI_BLOBS:-/usr/share/nitro_enclaves/blobs}"
 network="${MORPHEUS_NETWORK:-testnet}"
+signer_service_url="${SIGNER_SERVICE_URL:-}"
+signer_role_oracle_verifier_key_id="${SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID:-}"
+signer_role_updater_key_id="${SIGNER_ROLE_UPDATER_KEY_ID:-}"
+signer_role_relayer_key_id="${SIGNER_ROLE_RELAYER_KEY_ID:-}"
+signer_role_worker_key_id="${SIGNER_ROLE_WORKER_KEY_ID:-}"
 release="${MORPHEUS_RELEASE:-oracle-$(date -u +%Y-%m-%d)}"
 dockerfile="$repo_root/deploy/nitro/Dockerfile.enclave"
 measurements_dir="$repo_root/deploy/nitro/measurements"
 manifest="$measurements_dir/${release}.json"
+
+for required_value in \
+  "$signer_service_url" \
+  "$signer_role_oracle_verifier_key_id" \
+  "$signer_role_updater_key_id" \
+  "$signer_role_relayer_key_id" \
+  "$signer_role_worker_key_id"; do
+  if [ -z "$required_value" ]; then
+    echo "ERROR: signer service URL and all four SIGNER_ROLE_*_KEY_ID values are required build-time trust anchors" >&2
+    exit 2
+  fi
+done
 
 verify_reproducible=0
 build_eif=1
@@ -55,24 +76,39 @@ extract_measurement() { # $1=json blob  $2=field name
 }
 
 echo "==> building enclave image $image from $dockerfile"
+build_args=(
+  --build-arg "MORPHEUS_NETWORK=$network"
+  --build-arg "SIGNER_SERVICE_URL=$signer_service_url"
+  --build-arg "SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=$signer_role_oracle_verifier_key_id"
+  --build-arg "SIGNER_ROLE_UPDATER_KEY_ID=$signer_role_updater_key_id"
+  --build-arg "SIGNER_ROLE_RELAYER_KEY_ID=$signer_role_relayer_key_id"
+  --build-arg "SIGNER_ROLE_WORKER_KEY_ID=$signer_role_worker_key_id"
+)
 # SOURCE_DATE_EPOCH is also set in the Dockerfile; pass it through for any
 # builder that honors it at the layer level.
 DOCKER_BUILDKIT=1 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1749859200}" \
-  docker build -f "$dockerfile" -t "$image" "$repo_root"
+  docker build "${build_args[@]}" -f "$dockerfile" -t "$image" "$repo_root"
 
 image_id_1="$(docker image inspect --format '{{.Id}}' "$image")"
 echo "==> image id: $image_id_1"
 
 if [ "$verify_reproducible" -eq 1 ]; then
-  echo "==> reproducibility check: building a second, independent image"
+  echo "==> reproducibility check: rebuilding the whole image from scratch (--no-cache)"
   image2="${image%:*}:repro-check"
+  # --no-cache is the entire point of this branch. BuildKit's layer cache is
+  # keyed on the parent chain + instruction + context checksum, NOT on the image
+  # tag, and it is shared across the daemon — so a second plain `docker build`
+  # of the same context replays build #1's layers byte-for-byte and nothing below
+  # can fail. Base images no longer add drift of their own: both stages of
+  # Dockerfile.enclave pull a resolved @sha256, so --no-cache covers everything
+  # that varies and --pull would add nothing.
   DOCKER_BUILDKIT=1 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1749859200}" \
-    docker build -f "$dockerfile" -t "$image2" "$repo_root"
+    docker build --no-cache "${build_args[@]}" -f "$dockerfile" -t "$image2" "$repo_root"
   image_id_2="$(docker image inspect --format '{{.Id}}' "$image2")"
   echo "    build #1 image id: $image_id_1"
   echo "    build #2 image id: $image_id_2"
   if [ "$build_eif" -eq 1 ]; then
-    # AUTHORITATIVE GATE: compare the nitro-cli PCRs of the two independent
+    # AUTHORITATIVE GATE: compare the nitro-cli PCRs of the two from-scratch
     # builds. Docker IMAGE IDs are NOT a valid reproducibility signal — the image
     # config carries a build-time `created`/`history` timestamp, so two identical
     # rootfs builds can yield different image IDs. PCR0/1/2 are derived from the
@@ -87,12 +123,13 @@ if [ "$verify_reproducible" -eq 1 ]; then
     echo "    build #1 PCRs: $pcrs_a"
     echo "    build #2 PCRs: $pcrs_b"
     if [ "$pcrs_a" != "$pcrs_b" ] || [ "$pcrs_a" = "||" ]; then
-      echo "ERROR: enclave is NOT reproducible — PCRs differ across two independent builds." >&2
+      echo "ERROR: enclave is NOT reproducible — PCRs differ across two from-scratch builds." >&2
       echo "       A measurements manifest from a non-reproducible build cannot be independently verified." >&2
       docker image rm "$image2" >/dev/null 2>&1 || true
       exit 1
     fi
-    echo "    OK: identical PCR0/PCR1/PCR2 across two independent builds -> reproducible enclave"
+    echo "    OK: identical PCR0/PCR1/PCR2 across two from-scratch builds -> reproducible enclave"
+    echo "        (bases are digest-pinned, so this covers every layer that varies)"
   else
     # --no-eif: nitro-cli is unavailable/skipped, so fall back to the weaker
     # image-ID heuristic (which can false-negative on config timestamps).
@@ -144,16 +181,35 @@ fi
 
 built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+if [ "$verify_reproducible" -ne 1 ]; then
+  echo "WARNING: --verify-reproducible was not passed, so this PCR0 was never re-derived" >&2
+  echo "         from an independent build. Committing this manifest makes it the" >&2
+  echo "         verifier's source of truth for an enclave whose measurement nobody has" >&2
+  echo "         reproduced — if a later build changes the PCR, the enclave is refused." >&2
+fi
+
 echo "==> writing manifest $manifest"
 RELEASE="$release" APP_ID="morpheus-oracle" NETWORK="$network" \
 GIT_COMMIT="$git_commit" EIF_SHA256="$eif_sha256" HASH_ALGO="$hash_algo" \
 PCR0="$pcr0" PCR1="$pcr1" PCR2="$pcr2" BUILT_AT="$built_at" IMAGE_ID="$image_id_1" \
+SIGNER_SERVICE_URL="$signer_service_url" \
+SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID="$signer_role_oracle_verifier_key_id" \
+SIGNER_ROLE_UPDATER_KEY_ID="$signer_role_updater_key_id" \
+SIGNER_ROLE_RELAYER_KEY_ID="$signer_role_relayer_key_id" \
+SIGNER_ROLE_WORKER_KEY_ID="$signer_role_worker_key_id" \
 node -e '
 const fs = require("node:fs");
 const m = {
   release: process.env.RELEASE,
   app_id: process.env.APP_ID,
   network: process.env.NETWORK,
+  custody_boundary: {
+    service_url: process.env.SIGNER_SERVICE_URL,
+    oracle_verifier_key_id: process.env.SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID,
+    updater_key_id: process.env.SIGNER_ROLE_UPDATER_KEY_ID,
+    relayer_key_id: process.env.SIGNER_ROLE_RELAYER_KEY_ID,
+    worker_key_id: process.env.SIGNER_ROLE_WORKER_KEY_ID,
+  },
   git_commit: process.env.GIT_COMMIT,
   image_id: process.env.IMAGE_ID,
   eif_sha256: process.env.EIF_SHA256 || null,

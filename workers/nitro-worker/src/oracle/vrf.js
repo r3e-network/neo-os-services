@@ -6,7 +6,7 @@ export async function handleVrf(payload) {
   const randomness = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
   const signed = await buildSignedResultEnvelope({ randomness }, payload);
   // signed.tee_attestation already binds signed.output_hash (sha256 of the result);
-  // reuse it instead of a second /attest call with the same report_data.
+  // reuse it instead of a second /attestation call with the same report_data.
   return json(200, {
     request_id: payload.request_id || crypto.randomUUID(),
     randomness,

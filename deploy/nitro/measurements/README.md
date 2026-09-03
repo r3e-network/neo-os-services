@@ -20,9 +20,18 @@ its `Measurements` JSON, and writes `deploy/nitro/measurements/<release>.json`.
 The script **fails if any PCR is empty** so an empty/garbage manifest can never
 be committed.
 
+The manifest also records the public custody boundary baked into that PCR:
+service URL and all four role key ids. Independent rebuilds must supply those
+exact values; none is a secret.
+
 ```
 # on the box, from the repo root:
 MORPHEUS_RELEASE=oracle-2026-06-14 MORPHEUS_NETWORK=testnet \
+  SIGNER_SERVICE_URL=<custody-url> \
+  SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=<raw-verifier-key-id> \
+  SIGNER_ROLE_UPDATER_KEY_ID=<raw-updater-key-id> \
+  SIGNER_ROLE_RELAYER_KEY_ID=<raw-relayer-key-id> \
+  SIGNER_ROLE_WORKER_KEY_ID=<raw-worker-key-id> \
   bash deploy/nitro/build-enclave-eif.sh
 git add deploy/nitro/measurements/oracle-2026-06-14.json   # review the PCRs, then commit
 ```
@@ -35,21 +44,36 @@ version control** and shippable to the client-side verifier as a static asset.
 The API route (`apps/web/app/api/attestation/measurements`, Phase 2) serves this
 same committed file; the offline/in-browser verifier ships its own pinned copy.
 
-## Reproducibility — why these PCRs are independently verifiable
+## Reproducibility — how far these PCRs actually are
 
 PCR0/1/2 are derived deterministically from the docker image. The image is
-reproducible by construction (`Dockerfile.enclave`): digest-pinned base images,
-`npm ci` from the committed `package-lock.json`, a pinned Go module
-(`nsm-attest/go.mod` + `go.sum`), and `SOURCE_DATE_EPOCH` + normalized mtimes.
-Anyone can rebuild the EIF off the recorded `git_commit` and confirm the same
-PCRs. Verify the docker layer is reproducible locally with:
+reproducible by construction (`Dockerfile.enclave`, and `Dockerfile.signer` the
+same way): both stages pull a **digest-pinned** base (`@sha256`, resolved
+2026-09-02 from the Docker Hub registry API), `cargo build --locked` resolves
+against the committed `Cargo.lock` and the vendored Boa patches under `vendor/`
+(no network resolution, no lockfile drift), apt packages are pinned to exact
+bookworm versions with their logs and caches deleted in the same layer, and
+`SOURCE_DATE_EPOCH` plus a whole-rootfs mtime pass fixes every final mtime. Anyone
+can rebuild the EIF off the recorded `git_commit` and confirm the same PCRs.
+
+The operator's share of that bargain: a base digest is bumped deliberately, never
+as a side effect of a dependency update, because changing one changes the
+measurement. Verify locally with:
 
 ```
-bash deploy/nitro/build-enclave-eif.sh --verify-reproducible --no-eif
+SIGNER_SERVICE_URL=<custody-url> \
+SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=<raw-verifier-key-id> \
+SIGNER_ROLE_UPDATER_KEY_ID=<raw-updater-key-id> \
+SIGNER_ROLE_RELAYER_KEY_ID=<raw-relayer-key-id> \
+SIGNER_ROLE_WORKER_KEY_ID=<raw-worker-key-id> \
+  bash deploy/nitro/build-enclave-eif.sh --verify-reproducible --no-eif
 ```
 
-(`--no-eif` skips `nitro-cli`, which is box-only; `--verify-reproducible` builds
-the docker image twice and asserts identical image IDs.)
+(`--no-eif` skips `nitro-cli`, which is box-only. `--verify-reproducible` rebuilds
+the docker image from scratch — `--no-cache`, so the Rust stage compiles twice —
+and compares image IDs; without `--no-eif` it compares the PCRs themselves, which
+is the authoritative check. Cached layers would make the comparison vacuous, since
+BuildKit keys its cache on content rather than on the image tag.)
 
 ## Manifest schema
 

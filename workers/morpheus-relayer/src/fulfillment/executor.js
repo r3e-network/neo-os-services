@@ -63,10 +63,8 @@ export {
 
 // Re-export signing helpers so they remain available from the executor module.
 export {
-  resetLocalVerifierCacheForTests,
   resolveEventFulfillmentContext,
   resolveFulfillmentSigningContext,
-  resolveLocalVerifierAccountForTests,
   signFulfillmentPayload,
 } from './signer.js';
 

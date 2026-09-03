@@ -6,9 +6,10 @@ impl Store {
         connection.execute(
             "INSERT INTO signer_callers (
                 id, label, token_digest, key_grant_mode, key_grants, allowed_origins,
-                created_at_unix, disabled, capabilities
+                created_at_unix, disabled, capabilities, workload_public_key,
+                workload_subject
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 &caller.id,
                 &caller.label,
@@ -19,6 +20,14 @@ impl Store {
                 caller.created_at_unix,
                 caller.disabled,
                 encode_capabilities(&caller.capabilities),
+                caller
+                    .workload_identity
+                    .as_ref()
+                    .map(|identity| identity.public_key.to_vec()),
+                caller
+                    .workload_identity
+                    .as_ref()
+                    .and_then(|identity| identity.subject.as_deref()),
             ],
         )?;
         Ok(())
@@ -34,7 +43,8 @@ impl Store {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
             "SELECT id, label, token_digest, key_grant_mode, key_grants, allowed_origins,
-                    created_at_unix, disabled, capabilities
+                    created_at_unix, disabled, capabilities, workload_public_key,
+                    workload_subject
              FROM signer_callers
              ORDER BY label COLLATE NOCASE ASC, id ASC",
         )?;
@@ -59,7 +69,8 @@ impl Store {
         connection
             .query_row(
                 "SELECT id, label, token_digest, key_grant_mode, key_grants, allowed_origins,
-                        created_at_unix, disabled, capabilities
+                        created_at_unix, disabled, capabilities, workload_public_key,
+                        workload_subject
                  FROM signer_callers
                  WHERE id = ?1",
                 params![id],

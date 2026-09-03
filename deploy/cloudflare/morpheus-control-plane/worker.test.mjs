@@ -2,6 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import worker, { AutomationExecuteWorkflow, CallbackBroadcastWorkflow } from './worker.mjs';
+import {
+  assertEdgeSigningKeysAbsent,
+  getAppBackendConfig,
+  getExecutionPlaneConfig,
+} from './lib/execution-plane.js';
 
 function createEnv(overrides = {}) {
   const oracleMessages = [];
@@ -48,6 +53,56 @@ function jsonResponse(status, body) {
     headers: { 'content-type': 'application/json' },
   });
 }
+
+test('control-plane configuration rejects host WIF/private-key variables', () => {
+  assert.throws(
+    () =>
+      assertEdgeSigningKeysAbsent(
+        {
+          MORPHEUS_CUSTOM_SIGNER_PRIVATE_KEY: 'host-secret',
+        },
+        'testnet'
+      ),
+    /host signing keys must not be configured.*MORPHEUS_CUSTOM_SIGNER_PRIVATE_KEY/i
+  );
+  assert.doesNotThrow(() =>
+    assertEdgeSigningKeysAbsent(
+      {
+        SIGNER_ROLE_UPDATER_KEY_ID: 'custody/updater',
+        MORPHEUS_UPDATER_PUBLIC_KEY: '02public',
+      },
+      'testnet'
+    )
+  );
+});
+
+test('workflow backend authentication never falls back to the runtime token', () => {
+  assert.throws(
+    () =>
+      getAppBackendConfig({
+        MORPHEUS_APP_BACKEND_URL: 'https://app.test',
+        MORPHEUS_RUNTIME_TOKEN: 'runtime-only',
+      }),
+    /workflow backend credential is not configured/i
+  );
+  assert.throws(
+    () =>
+      getAppBackendConfig({
+        MORPHEUS_APP_BACKEND_URL: 'https://app.test',
+        MORPHEUS_WORKFLOW_API_KEY: 'shared-token',
+        MORPHEUS_RUNTIME_TOKEN: 'shared-token',
+      }),
+    /must be independent from runtime data-plane credentials/i
+  );
+  assert.equal(
+    getAppBackendConfig({
+      MORPHEUS_APP_BACKEND_URL: 'https://app.test',
+      MORPHEUS_WORKFLOW_API_KEY: 'workflow-only',
+      MORPHEUS_RUNTIME_TOKEN: 'runtime-only',
+    }).token,
+    'workflow-only'
+  );
+});
 
 function parseRequestBody(init = {}) {
   if (!init.body) return null;
@@ -244,6 +299,26 @@ test('control plane fails closed when no API keys are configured', async () => {
   assert.equal(response.status, 503);
   const body = await response.json();
   assert.equal(body.error, 'auth_not_configured');
+});
+
+test('control plane rejects a configured key that reuses the runtime token value', async () => {
+  const env = createEnv({
+    MORPHEUS_CONTROL_PLANE_API_KEY: 'shared-token',
+    MORPHEUS_OPERATOR_API_KEY: '',
+    MORPHEUS_RUNTIME_TOKEN: 'shared-token',
+  });
+
+  const response = await worker.fetch(
+    new Request('https://control-plane.test/testnet/health', {
+      method: 'GET',
+      headers: { authorization: 'Bearer shared-token' },
+    }),
+    env
+  );
+
+  assert.equal(response.status, 503);
+  const body = await response.json();
+  assert.equal(body.error, 'auth_credential_collision');
 });
 
 test('control plane allows an empty key set only with the explicit anonymous opt-in', async () => {
@@ -631,6 +706,7 @@ test('feed_tick consumer prefers a dedicated DataFeed execution plane when confi
 test('oracle_request consumer falls back to the next execution runtime when the first returns retryable status', async () => {
   const env = createEnv({
     MORPHEUS_TESTNET_EXECUTION_BASE_URL: 'https://exec-a.test,https://exec-b.test',
+    MORPHEUS_ENVIRONMENT: 'test',
   });
   const state = createState();
   global.fetch = createFetchMock(state);
@@ -670,6 +746,7 @@ test('oracle_request consumer falls back to the next execution runtime when the 
 test('oracle_request consumer falls back when the first runtime wraps a retryable upstream failure in a 400', async () => {
   const env = createEnv({
     MORPHEUS_TESTNET_EXECUTION_BASE_URL: 'https://exec-a.test,https://exec-b.test',
+    MORPHEUS_ENVIRONMENT: 'test',
   });
   const state = createState();
   global.fetch = createFetchMock(state);
@@ -704,6 +781,21 @@ test('oracle_request consumer falls back when the first runtime wraps a retryabl
   assert.equal(state.executionCalls.length, 2);
   assert.notEqual(state.executionCalls[0].origin, state.executionCalls[1].origin);
   assert.equal(state.jobs.get('job-oracle-fallback-wrapped')?.status, 'succeeded');
+});
+
+test('production confidential execution rejects multi-origin pools', () => {
+  assert.throws(
+    () =>
+      getExecutionPlaneConfig(
+        createEnv({
+          MORPHEUS_ENVIRONMENT: 'production',
+          MORPHEUS_TESTNET_EXECUTION_BASE_URL:
+            'https://exec-a.test,https://exec-b.test',
+        }),
+        'testnet'
+      ),
+    /exactly one confidential origin in production/
+  );
 });
 
 test('callbacks/broadcast is a redundant no-op: returns 200 and never enqueues a duplicate host-signed broadcast', async () => {

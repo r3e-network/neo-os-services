@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseDotEnv } from './lib-env.mjs';
 import { trimString } from './lib-strings.mjs';
+import { findCredentialDomainCollisions } from './lib-credential-separation.mjs';
 
 const envPath = path.resolve(process.cwd(), '.env');
 const strict = process.argv.includes('--strict');
@@ -32,30 +33,6 @@ function isSectionConfigured(env, keys) {
   return keys.some((key) => trimString(env[key]));
 }
 
-function neoN3FeedSignerKeys(network) {
-  const upper = trimString(network).toUpperCase() === 'MAINNET' ? 'MAINNET' : 'TESTNET';
-  return [
-    `MORPHEUS_${upper}_FEED_NEO_N3_WIF`,
-    `MORPHEUS_${upper}_FEED_NEO_N3_PRIVATE_KEY`,
-    `MORPHEUS_FEED_NEO_N3_WIF_${upper}`,
-    `MORPHEUS_FEED_NEO_N3_PRIVATE_KEY_${upper}`,
-    `MORPHEUS_${upper}_UPDATER_NEO_N3_WIF`,
-    `MORPHEUS_${upper}_UPDATER_NEO_N3_PRIVATE_KEY`,
-    `MORPHEUS_UPDATER_NEO_N3_WIF_${upper}`,
-    `MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_${upper}`,
-    `MORPHEUS_${upper}_RELAYER_NEO_N3_WIF`,
-    `MORPHEUS_${upper}_RELAYER_NEO_N3_PRIVATE_KEY`,
-    `MORPHEUS_RELAYER_NEO_N3_WIF_${upper}`,
-    `MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_${upper}`,
-    'MORPHEUS_FEED_NEO_N3_WIF',
-    'MORPHEUS_FEED_NEO_N3_PRIVATE_KEY',
-    'MORPHEUS_UPDATER_NEO_N3_WIF',
-    'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY',
-    'MORPHEUS_RELAYER_NEO_N3_WIF',
-    'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
-  ];
-}
-
 let fileEnv = {};
 try {
   fileEnv = parseDotEnv(await fs.readFile(envPath, 'utf8'));
@@ -78,13 +55,7 @@ const required = {
 };
 
 const optional = {
-  auth: [
-    [
-      'MORPHEUS_CONTROL_PLANE_API_KEY',
-      'MORPHEUS_OPERATOR_API_KEY',
-      'MORPHEUS_PROVIDER_CONFIG_API_KEY',
-    ],
-  ],
+  auth: [['MORPHEUS_CONTROL_PLANE_API_KEY', 'MORPHEUS_OPERATOR_API_KEY']],
   rate_limit: [['UPSTASH_REDIS_REST_URL'], ['UPSTASH_REDIS_REST_TOKEN']],
   execution_plane: [
     ['MORPHEUS_MAINNET_EXECUTION_BASE_URL', 'MORPHEUS_EXECUTION_BASE_URL'],
@@ -106,17 +77,10 @@ const optional = {
       'MORPHEUS_EXECUTION_BASE_URL',
     ],
     ['MORPHEUS_EXECUTION_TOKEN'],
-    neoN3FeedSignerKeys('MAINNET'),
-    neoN3FeedSignerKeys('TESTNET'),
   ],
   app_backend: [
     ['MORPHEUS_APP_BACKEND_URL'],
-    [
-      'MORPHEUS_APP_BACKEND_TOKEN',
-      'MORPHEUS_CONTROL_PLANE_API_KEY',
-      'MORPHEUS_OPERATOR_API_KEY',
-      'MORPHEUS_PROVIDER_CONFIG_API_KEY',
-    ],
+    ['MORPHEUS_WORKFLOW_API_KEY', 'MORPHEUS_APP_BACKEND_TOKEN'],
   ],
   web_cutover: [['MORPHEUS_CONTROL_PLANE_URL']],
 };
@@ -158,13 +122,7 @@ const executionPlaneConfigured =
   sharedExecutionConfigured ||
   mainnetFeedExecutionConfigured ||
   testnetFeedExecutionConfigured ||
-  Boolean(
-    getValue(env, [
-      ...neoN3FeedSignerKeys('MAINNET'),
-      ...neoN3FeedSignerKeys('TESTNET'),
-      'MORPHEUS_EXECUTION_TOKEN',
-    ])
-  );
+  Boolean(trimString(env.MORPHEUS_EXECUTION_TOKEN));
 const appBackendConfigured = isSectionConfigured(env, ['MORPHEUS_APP_BACKEND_URL']);
 const webCutoverConfigured = isSectionConfigured(env, ['MORPHEUS_CONTROL_PLANE_URL']);
 
@@ -219,8 +177,36 @@ const report = {
     web_cutover_configured: webCutoverConfigured,
   },
   urls,
+  forbidden_signer_env: Object.keys(env)
+    .filter((name) => {
+      if (!trimString(env[name])) return false;
+      const normalized = name.toUpperCase();
+      return (
+        /(?:^|_)WIF(?:_|$)/.test(normalized) ||
+        (/(?:^|_)(?:PRIVATE_KEY|PK)(?:_|$)/.test(normalized) &&
+          /(NEO|NEOX|EVM|MORPHEUS|SIGNER)/.test(normalized))
+      );
+    })
+    .sort(),
+  reused_runtime_credential_env: [],
+  credential_domain_collisions: [],
   ok: false,
 };
+
+const runtimeCredentialValues = new Set(
+  ['MORPHEUS_RUNTIME_TOKEN', 'NITRO_API_TOKEN', 'NITRO_SHARED_SECRET']
+    .map((name) => trimString(env[name]))
+    .filter(Boolean)
+);
+report.reused_runtime_credential_env = [
+  'MORPHEUS_CONTROL_PLANE_API_KEY',
+  'MORPHEUS_OPERATOR_API_KEY',
+  'MORPHEUS_WORKFLOW_API_KEY',
+  'MORPHEUS_APP_BACKEND_TOKEN',
+].filter(
+  (name) => Boolean(trimString(env[name])) && runtimeCredentialValues.has(trimString(env[name]))
+);
+report.credential_domain_collisions = findCredentialDomainCollisions(env);
 
 const requiredOk =
   Object.values(missing).every((items) => items.length === 0) &&
@@ -233,9 +219,6 @@ if (executionPlaneConfigured) {
   if (mainnetExecutionConfigured || sharedExecutionConfigured) {
     if (!getValue(env, ['MORPHEUS_MAINNET_EXECUTION_BASE_URL', 'MORPHEUS_EXECUTION_BASE_URL'])) {
       executionMissing.push('MORPHEUS_MAINNET_EXECUTION_BASE_URL');
-    }
-    if (!getValue(env, neoN3FeedSignerKeys('MAINNET'))) {
-      executionMissing.push(neoN3FeedSignerKeys('MAINNET').join(' | '));
     }
   }
   if (
@@ -254,9 +237,6 @@ if (executionPlaneConfigured) {
   if (testnetExecutionConfigured || sharedExecutionConfigured) {
     if (!getValue(env, ['MORPHEUS_TESTNET_EXECUTION_BASE_URL', 'MORPHEUS_EXECUTION_BASE_URL'])) {
       executionMissing.push('MORPHEUS_TESTNET_EXECUTION_BASE_URL');
-    }
-    if (!getValue(env, neoN3FeedSignerKeys('TESTNET'))) {
-      executionMissing.push(neoN3FeedSignerKeys('TESTNET').join(' | '));
     }
   }
   if (
@@ -283,17 +263,8 @@ if (appBackendConfigured) {
   if (!getValue(env, ['MORPHEUS_APP_BACKEND_URL'])) {
     backendMissing.push('MORPHEUS_APP_BACKEND_URL');
   }
-  if (
-    !getValue(env, [
-      'MORPHEUS_APP_BACKEND_TOKEN',
-      'MORPHEUS_CONTROL_PLANE_API_KEY',
-      'MORPHEUS_OPERATOR_API_KEY',
-      'MORPHEUS_PROVIDER_CONFIG_API_KEY',
-    ])
-  ) {
-    backendMissing.push(
-      'MORPHEUS_APP_BACKEND_TOKEN | MORPHEUS_CONTROL_PLANE_API_KEY | MORPHEUS_OPERATOR_API_KEY | MORPHEUS_PROVIDER_CONFIG_API_KEY'
-    );
+  if (!getValue(env, ['MORPHEUS_WORKFLOW_API_KEY', 'MORPHEUS_APP_BACKEND_TOKEN'])) {
+    backendMissing.push('MORPHEUS_WORKFLOW_API_KEY | MORPHEUS_APP_BACKEND_TOKEN');
   }
   partiallyConfiguredMissing.app_backend = backendMissing;
 }
@@ -306,7 +277,11 @@ if (webCutoverConfigured) {
 
 report.missing_optional_when_configured = partiallyConfiguredMissing;
 
-report.ok = requiredOk && Object.values(partiallyConfiguredMissing).every((v) => v.length === 0);
+report.ok =
+  requiredOk &&
+  report.forbidden_signer_env.length === 0 &&
+  report.credential_domain_collisions.length === 0 &&
+  Object.values(partiallyConfiguredMissing).every((v) => v.length === 0);
 
 console.log(JSON.stringify(report, null, 2));
 if (!report.ok) process.exitCode = 1;

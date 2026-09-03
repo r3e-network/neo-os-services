@@ -1,7 +1,7 @@
 //! The enclave host binary: axum in front of the pure dispatch core, wiring
 //! the production seams — the NSM attestation source, the attestation-gated
-//! KMS release, the loopback bridge to the keyless compute child, and the
-//! process-env overlay that /provision mutates.
+//! KMS release, the in-process Rust compute plane, the custody-backed signing
+//! plane, and the process-env overlay that /provision mutates.
 //!
 //! The HTTP layer is a faithful port of `enclave-server.mjs`'s
 //! `createServer`: JSON responses with `cache-control: no-store`, the body
@@ -10,10 +10,12 @@
 //! One deliberate divergence: an unparseable body-cap value falls back to
 //! the 256 KiB default instead of JS's NaN disabling the cap entirely.
 //!
-//! The signing plane is fail-closed until the custody client lands: the
-//! host never holds keys, and with no custody connection every role reports
-//! unconfigured — the same 503 the Node server produced when no key env was
-//! provisioned. /health surfaces that state; nothing signs by accident.
+//! The signing plane is the custody client: the host never holds keys, and
+//! until `/provision` connects custody (`SIGNER_SERVICE_URL`) every role
+//! reports unconfigured — the same 503 the Node server produced when no key
+//! env was provisioned. /health surfaces that state; nothing signs by
+//! accident. The oracle read lanes ride the [`ProductionOracleIo`] plane:
+//! the enclave egress transport, the SSRF DNS pin, and the wall clock.
 
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
@@ -26,39 +28,14 @@ use axum::routing::any;
 use axum::Router;
 use nitro_attest::release::NsmAttestation;
 
-use nitro_enclave_host::bridge::LoopbackBridge;
+use nitro_enclave_host::custody::{CustodySigner, ReqwestCustodyTransport};
 use nitro_enclave_host::dispatch::dispatch;
+use nitro_enclave_host::feed_sign::TwelveDataPrices;
 use nitro_enclave_host::kms_release::ProductionKms;
 use nitro_enclave_host::overlay::EnvOverlay;
-use nitro_enclave_host::state::{AppState, KmsDiag, RoleReport, SignerPlane};
-use nitro_enclave_host::{http_error, DispatchOutcome, RuntimeError, RUNTIME_NAME};
-
-/// The signing plane of a host whose custody connection is not configured.
-/// Every role reads as unconfigured and every sign request fails closed with
-/// the exact 503 the Node server produced for an unprovisioned key — there
-/// is no path here that could ever touch key material.
-struct NoCustodySigner;
-
-impl SignerPlane for NoCustodySigner {
-    fn role_report(&self, _network: &str, role: &str) -> RoleReport {
-        RoleReport {
-            issues: vec![format!("{role}: no custody signing plane is connected")],
-            ..RoleReport::not_configured()
-        }
-    }
-
-    fn sign_payload(
-        &self,
-        _network: &str,
-        role: &str,
-        _data_hex: &str,
-    ) -> Result<serde_json::Value, RuntimeError> {
-        Err(http_error(
-            503,
-            format!("{role} signer is not configured or does not match pinned identity"),
-        ))
-    }
-}
+use nitro_enclave_host::state::{AppState, KmsDiag};
+use nitro_enclave_host::DispatchOutcome;
+use nitro_enclave_host::RUNTIME_NAME;
 
 #[derive(Clone)]
 struct ShimState {
@@ -66,69 +43,111 @@ struct ShimState {
     max_body_bytes: usize,
 }
 
-#[tokio::main]
-async fn main() {
-    let port = env_port();
-    let host = env_host();
-    let worker_port = env_worker_port();
-    let max_body_bytes = max_body_bytes();
+/// The oracle lanes' production IO: `reqwest_transport` (the same client the
+/// compatibility worker used, sync over the egress proxy), `(host, 0)` →
+/// `ToSocketAddrs` for the SSRF pin, `SystemTime`/`thread::sleep` for the
+/// fetch timeouts. Tests substitute a fake through the same trait.
+struct ProductionOracleIo;
 
-    let overlay = EnvOverlay::from_process();
-    let bridge_child = nitro_enclave_host::child::BridgeChild::from_env(worker_port).map(Arc::new);
-    if let Some(child) = &bridge_child {
-        child.ensure_running(&overlay);
+impl nitro_enclave_host::state::OracleIo for ProductionOracleIo {
+    fn fetch(
+        &self,
+        request: &morpheus_compute::transport::HttpRequest,
+    ) -> Result<morpheus_compute::transport::HttpResponse, String> {
+        morpheus_compute::transport::reqwest_transport()(request)
     }
 
-    let app_state = Arc::new(AppState {
-        overlay: RwLock::new(overlay),
-        runtime_token_kms_version: AtomicU64::new(0),
-        attest: Box::new(NsmAttestation),
-        signer: Box::new(NoCustodySigner),
-        bridge: Box::new(LoopbackBridge::new(worker_port)),
-        kms: Box::new(ProductionKms::new()),
-        kms_diag: Mutex::new(KmsDiag::default()),
-        bridge_child: bridge_child.clone(),
-    });
-
-    // The child's liveness watch: respawn a crashed child on a 1s cadence with
-    // the CURRENT overlay (post-/provision) — the enclave keeps serving
-    // through child crashes the way the merged server did.
-    if bridge_child.is_some() {
-        let watch_state = app_state.clone();
-        std::thread::Builder::new()
-            .name("bridge-child-watch".to_string())
-            .spawn(move || loop {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-                let snapshot = watch_state.overlay.read().expect("overlay lock").clone();
-                if let Some(child) = &watch_state.bridge_child {
-                    child.ensure_running(&snapshot);
+    fn dns_lookup(
+        &self,
+        host: &str,
+    ) -> Result<Vec<morpheus_compute::ssrf::ResolvedAddress>, String> {
+        use std::net::ToSocketAddrs;
+        Ok((host, 0u16)
+            .to_socket_addrs()
+            .map_err(|error| error.to_string())?
+            .map(|socket| {
+                let ip = socket.ip();
+                morpheus_compute::ssrf::ResolvedAddress {
+                    address: ip.to_string(),
+                    family: if ip.is_ipv4() { 4 } else { 6 },
                 }
             })
-            .expect("bridge child watch thread");
+            .collect())
     }
+
+    fn now_ms(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_millis() as u64)
+            .unwrap_or(0)
+    }
+
+    fn sleep_ms(&self, ms: u64) {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
+}
+
+fn main() {
+    let port = env_port();
+    let host = env_host();
+    let max_body_bytes = max_body_bytes();
+
+    // Boot is deliberately synchronous — including the custody transport, a
+    // `reqwest::blocking::Client` that carries its own internal tokio runtime.
+    // Under `#[tokio::main]` that creation (and any drop) happens inside an
+    // async context, which panics ("Cannot drop a runtime in a context where
+    // blocking is not allowed"); outside one, it is a plain value whose
+    // requests run on `spawn_blocking` threads.
+    let overlay = Arc::new(RwLock::new(EnvOverlay::from_process()));
+
+    let app_state = Arc::new(AppState {
+        overlay: overlay.clone(),
+        runtime_token_kms_version: AtomicU64::new(0),
+        attest: Box::new(NsmAttestation),
+        signer: Box::new(CustodySigner::new(
+            overlay.clone(),
+            Box::new(ReqwestCustodyTransport::new()),
+        )),
+        kms: Box::new(ProductionKms::new()),
+        price: Box::new(TwelveDataPrices::new(overlay.clone())),
+        oracle_io: Box::new(ProductionOracleIo),
+        oracle_runtime: Mutex::new(morpheus_compute::oracle::providers::ProviderRuntime::default()),
+        kms_diag: Mutex::new(KmsDiag::default()),
+    });
 
     let router = Router::new().fallback(any(serve)).with_state(ShimState {
         app: app_state.clone(),
         max_body_bytes,
     });
 
-    let listener = tokio::net::TcpListener::bind((host.as_str(), port))
-        .await
-        .unwrap_or_else(|error| panic!("cannot bind {host}:{port}: {error}"));
-    println!(
-        "{}",
-        serde_json::json!({
-            "level": "info",
-            "msg": "morpheus enclave-server listening",
-            "host": host,
-            "port": port,
-            "network": app_state.resolve_network(),
-            "bridge_child_pid": bridge_child.as_ref().and_then(|c| c.pid()),
-        })
-    );
-    axum::serve(listener, router)
-        .await
-        .expect("enclave host server");
+    // Only the serve loop is async, so the runtime is built here, after every
+    // runtime-carrying value exists. (If serve ever returned, the future's
+    // state would drop on a runtime worker — but the runtime carries no
+    // runtime-carrying values of its own at that point, and a server that
+    // stops serving is process-exit territory anyway.)
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    runtime.block_on(async move {
+        let listener = tokio::net::TcpListener::bind((host.as_str(), port))
+            .await
+            .unwrap_or_else(|error| panic!("cannot bind {host}:{port}: {error}"));
+        println!(
+            "{}",
+            serde_json::json!({
+                "level": "info",
+                "msg": "morpheus enclave-server listening",
+                "host": host,
+                "port": port,
+                "network": app_state.resolve_network(),
+                "execution_plane": "rust-in-process",
+            })
+        );
+        axum::serve(listener, router)
+            .await
+            .expect("enclave host server");
+    });
 }
 
 async fn serve(State(shim): State<ShimState>, request: Request<Body>) -> Response {
@@ -210,11 +229,6 @@ fn env_number(name: &str) -> Option<f64> {
 /// `Math.max(Number(PORT || ENCLAVE_PORT || 8787), 1)`.
 fn env_port() -> u16 {
     port_from(&["PORT", "ENCLAVE_PORT"], 8787)
-}
-
-/// The keyless compute child's loopback port (the plan's split: :8090).
-fn env_worker_port() -> u16 {
-    port_from(&["ENCLAVE_WORKER_PORT"], 8090)
 }
 
 fn port_from(names: &[&str], default: u16) -> u16 {

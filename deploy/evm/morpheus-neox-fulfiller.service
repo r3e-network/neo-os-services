@@ -6,6 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/opt/morpheus/nitro/neox-fulfiller.env
+Environment=NODE_ENV=production
 # run from the repo checkout so ethers/neon resolve from its node_modules
 WorkingDirectory=/opt/neoos/services
 ExecStart=/usr/bin/node deploy/evm/neox-fulfiller.mjs

@@ -24,12 +24,16 @@ If one of these is wrong, the system usually stops working.
 ### Runtime Access / Runtime 访问
 
 - `MORPHEUS_RUNTIME_URL`
-  English: Preferred public URL of the unified Morpheus runtime. The web app and scripts should use this first.
-  中文：统一 Morpheus runtime 的优先公网地址。前端和运维脚本应优先使用它。
+  English: Explicit URL of the confidential Morpheus runtime. In production, confidential/mutating calls try this endpoint only; the web tier and relayer do not append or traverse the `oracle.meshmini.app` / `edge.meshmini.app` public fallbacks.
+  中文：机密 Morpheus runtime 的显式地址。生产环境中的机密/变更类调用只尝试此端点；web 与 relayer 不会追加或遍历 `oracle.meshmini.app` / `edge.meshmini.app` 公网回退。
 
 - `MORPHEUS_MAINNET_RUNTIME_URL` / `MORPHEUS_TESTNET_RUNTIME_URL`
   English: Optional network-scoped runtime URLs when you want explicit mainnet/testnet separation.
   中文：可选的分网络 runtime 地址，用于显式区分 mainnet/testnet。
+
+- `NEXT_PUBLIC_MORPHEUS_RUNTIME_URL`
+  English: Browser/public runtime URL used only by explicitly non-confidential status and catalog operations. In production it is never promoted into the server's confidential Nitro candidate list and never receives the server's runtime bearer on fallback.
+  中文：仅供显式标记为非机密的状态与目录操作使用的浏览器/公网 runtime 地址。生产环境绝不会将其提升为服务端机密 Nitro 候选地址，回退请求也绝不会携带服务端 runtime bearer。
 
 - `MORPHEUS_BOX_HEALTH_URL_MAINNET` / `MORPHEUS_BOX_HEALTH_URL_TESTNET`
   English: Network-scoped health endpoints for the attested box used by `apps/web` runtime status. Configure both in production; a URL may contain the `{network}` placeholder. A generic `MORPHEUS_BOX_HEALTH_URL` is only a fallback and a reported network mismatch is fail-closed.
@@ -37,8 +41,8 @@ If one of these is wrong, the system usually stops working.
 
 - `MORPHEUS_RUNTIME_TOKEN`
 - `NITRO_API_TOKEN` or `NITRO_SHARED_SECRET`
-  English: Authentication secret for the runtime. Prefer `MORPHEUS_RUNTIME_TOKEN`.
-  中文：runtime 的鉴权密钥。优先使用 `MORPHEUS_RUNTIME_TOKEN`。
+  English: Data-plane authentication secret for the Nitro runtime. Prefer `MORPHEUS_RUNTIME_TOKEN`. It does not authorize control-plane workflow, broadcast, feed-tick, automation, or relayer-operations routes. In production the web proxy attaches it only to exact server-configured `MORPHEUS_RUNTIME_URL` candidates, never public/registry fallbacks.
+  中文：Nitro runtime 数据面的鉴权密钥。优先使用 `MORPHEUS_RUNTIME_TOKEN`。它不授权控制面 workflow、广播、feed-tick、自动化或 relayer 运维接口。生产环境的 web 代理只会把它发往服务端显式配置的 `MORPHEUS_RUNTIME_URL` 候选地址，绝不会发给公网/注册表回退地址。
 
 ### Edge Hardening / 边缘防护
 
@@ -97,6 +101,18 @@ If one of these is wrong, the system usually stops working.
   English: Admin key for provider-config management routes ONLY. It does not authorize control-plane execution (callback broadcast, feed-tick, automation, job reads) or Cloudflare control-plane ingress — use an operator/control-plane key for those.
   中文：仅用于 provider 配置管理接口的管理员 key。它**不**授权控制面执行（回调广播、feed-tick、自动化、任务读取）或 Cloudflare 控制面入口——这些请使用 operator / 控制面 key。
 
+- `CONTROL_PLANE_API_KEY`
+  English: Primary control-plane credential. In production it must be configured independently from all Nitro runtime data-plane tokens.
+  中文：主控制面凭据。生产环境中必须单独配置，不能与任何 Nitro runtime 数据面 token 共用。
+
+- `MORPHEUS_WORKFLOW_API_KEY`
+  English: Credential for workflow callbacks, feed ticks, and automation execution. The Cloudflare control plane should use this when calling the application backend.
+  中文：workflow 回调、feed tick 与自动化执行凭据。Cloudflare 控制面调用应用后端时应使用它。
+
+- `MORPHEUS_RELAYER_API_KEY`
+  English: Independent credential for relayer-originated control-plane calls.
+  中文：relayer 发起控制面调用时使用的独立凭据。
+
 - `MORPHEUS_RELAYER_ADMIN_API_KEY`
   English: Admin key for relayer metrics, jobs, retry, and replay routes.
   中文：relayer 监控、任务、重试、重放接口使用的管理员 key。
@@ -110,8 +126,16 @@ If one of these is wrong, the system usually stops working.
   中文：`/api/relay/transaction` 使用的管理员 key。
 
 - `MORPHEUS_OPERATOR_API_KEY`
-  English: Optional wider-scope operator key that can act as a shared fallback for relayer/signing/relay admin routes.
-  中文：可选的运维总控 key，可作为 relayer / 签名 / relay 管理接口的共享回退 key。
+  English: Operator/control-plane credential. Production does not reuse it as
+  a fallback for relayer, signing, or relay routes: every privilege domain must
+  have a pairwise-distinct value.
+  中文：运维/控制面凭据。生产环境不会再将其复用为 relayer、签名或 relay
+  路由的回退凭据；每个权限域都必须使用两两不同的值。
+
+- `MORPHEUS_CONTROL_PLANE_LEGACY_RUNTIME_TOKEN_COMPAT`
+- `MORPHEUS_ALLOW_LEGACY_RUNTIME_CONTROL_PLANE` (migration alias)
+  English: Development-only migration switch allowing a runtime token on control-plane scopes. Production ignores it and fails closed. Independently named credentials that reuse a runtime token value are also rejected.
+  中文：仅开发环境使用的迁移开关，临时允许 runtime token 用于控制面作用域。生产环境忽略此开关并 fail-closed；独立命名但复用 runtime token 值的凭据同样会被拒绝。
 
 - `ADMIN_CONSOLE_API_KEY`
   English: Legacy fallback admin key. Prefer scoped keys above in production.
@@ -140,26 +164,40 @@ If one of these is wrong, the system usually stops working.
   中文：Neo N3 共享数值资源模块合约地址。
 
 - `MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY` or `MORPHEUS_WORKER_NEO_N3_WIF`
-  English: Worker-side Neo N3 signing material.
-  中文：worker 使用的 Neo N3 签名私钥。
+  English: Legacy worker-side Neo N3 signing material. No worker lane reads it any more — worker signing goes through the custody signer service (`SIGNER_ROLE_WORKER_KEY_ID`).
+  中文：遗留的 worker Neo N3 签名私钥。worker 各通道均已不再读取——worker 签名一律走托管签名服务（`SIGNER_ROLE_WORKER_KEY_ID`）。
 
 - `MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY` or `MORPHEUS_ORACLE_VERIFIER_WIF`
-  English: Preferred dedicated Neo N3 signer for async Oracle fulfillment signatures.
-  中文：异步 Oracle fulfill 签名优先使用的独立 Neo N3 signer。
+  English: Legacy verifier signing material. No lane reads it any more — on-chain result verification uses the public key only (`MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY`), and the name survives only in the pinned-registry drift checks.
+  中文：遗留的 verifier 签名私钥。任何通道均已不再读取——链上结果校验只使用公钥（`MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY`）；该变量名仅存在于 pinned 注册表 drift 校验。
 
 - `NEO_N3_WIF`
-  English: Preferred generic Neo N3 operator WIF for local scripts and deploy helpers.
-  中文：本地脚本和部署辅助工具优先使用的通用 Neo N3 WIF。
+  English: Generic Neo N3 operator WIF consumed only by local smoke tooling (`scripts/smoke-oracle-n3.mjs`, `run-testnet-rng-local.sh`). No deployed runtime lane reads it — all signing is custody-side.
+  中文：通用 Neo N3 WIF，仅本地冒烟工具（`scripts/smoke-oracle-n3.mjs`、`run-testnet-rng-local.sh`）消费。部署的运行时通道均不读取——签名全部走托管服务。
 
 - `MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY` or `MORPHEUS_RELAYER_NEO_N3_WIF`
-  English: Relayer/updater Neo N3 signing material.
-  中文：relayer / updater 使用的 Neo N3 签名私钥。
+  English: Legacy relayer/updater Neo N3 signing material. No runtime lane reads it any more: relayer signing is custody-only and the web control plane relays through the worker's txproxy lane, leaving only smoke tooling and the pinned-registry drift checks.
+  中文：旧版 relayer / updater 的 Neo N3 签名私钥。运行时通道均已不再读取：relayer 签名只走托管服务，web 控制面经 worker 的 txproxy 通道转发，仅剩冒烟工具与 pinned 注册表 drift 校验消费。
 
-  English: If the dedicated `oracle_verifier` role is unset and the derived signer is unavailable, the worker can fall back to its general Neo N3 signing material.
-  中文：如果没有单独设置 `oracle_verifier` signer，且派生 signer 也不可用，worker 会回退到通用的 Neo N3 签名材料。
+  English: There is no local or derived key fallback on any signing lane, including NeoDID digest signatures — provisioning `SIGNER_ROLE_WORKER_KEY_ID` is mandatory.
+  中文：任何签名通道（包括 NeoDID 摘要签名）都不存在本地或派生密钥回退——必须配置 `SIGNER_ROLE_WORKER_KEY_ID`。
 
   English: The generated testnet Nitro env now disables derived signing by default when it injects an explicit verifier signer, so the published testnet verifier key is not accidentally shadowed by a derived role key.
   中文：现在生成的 testnet Nitro env 在注入显式 verifier signer 时会默认关闭派生签名覆盖，避免已发布到链上的 testnet verifier key 被派生角色密钥意外替换。
+
+### Neo X signer boundary / Neo X 签名边界
+
+- `MORPHEUS_FEED_PUSHER_ENCLAVE_SIGN=true` and `NEOX_FEED_FROM`
+  English: Explicitly select an attested feed-pusher enclave signing route and declare its public EVM address. Production refuses the host-key route; the currently shipped Rust frontier returns `503` for Neo X `/feed/sign`, so this setting is usable only after a compatible measured secp256k1 signer EIF is deployed and attested.
+  中文：显式选择经过证明的 feed-pusher enclave 签名路径并声明其公开 EVM 地址。生产环境拒绝 host-key 路径；当前发布的 Rust frontier 对 Neo X `/feed/sign` 返回 `503`，因此只有部署并验证兼容的 secp256k1 signer EIF 后才能启用此配置。
+
+- `MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER=true`
+  English: Development-only opt-in for legacy host-side Neo X signing. It never enables host signing in production.
+  中文：仅开发环境使用的旧版 host-side Neo X 签名开关。它绝不会在生产环境启用 host 签名。
+
+- `NEOX_FEED_PK`, `NEOX_UPDATER_PK`, `NEOX_VERIFIER_PK`
+  English: Legacy host private keys. Vercel, control-plane, relayer, and production feed-pusher environments must not define them. The standalone host fulfiller is also production-disabled until a custody/enclave secp256k1 signer is wired.
+  中文：旧版 host 私钥。Vercel、控制面、relayer 与生产 feed-pusher 环境不得定义这些变量。在 custody/enclave secp256k1 signer 接通前，独立 host fulfiller 在生产环境同样禁用。
 
 ### Provider Data Source / 数据源
 
@@ -402,31 +440,41 @@ rename them. Format: default + one-line semantics.
 但之前没有任何文档。变量名是 Nitro box systemd env 文件的集成契约——绝不能改名。
 格式：默认值 + 一句话语义。
 
+### Custody Signer Service / 托管签名服务
+
+- `SIGNER_SERVICE_URL` / `SIGNER_SERVICE_TOKEN`
+  English: Base URL and bearer token of the custody signer service (inside the Nitro enclave). All Neo N3 signing — relayer lanes and both worker lanes (`handleSignPayload` / `buildSignedResultEnvelope`, `loadNeoN3Context` / `relayNeoN3Invocation`) — goes through it; neither the relayer nor the worker holds or reads any signing WIF. See `docs/SIGNER_SERVICE.md` §5.
+  中文：托管签名服务（Nitro enclave 内）的地址与 Bearer token。全部 Neo N3 签名——relayer 各通道与 worker 两条通道（`handleSignPayload` / `buildSignedResultEnvelope`、`loadNeoN3Context` / `relayNeoN3Invocation`）——都经由它完成，relayer 与 worker 自身均不再持有或读取任何签名 WIF。见 `docs/SIGNER_SERVICE.md` §5。
+
+- `SIGNER_ROLE_UPDATER_KEY_ID` / `SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID` / `SIGNER_ROLE_FEE_FUNDER_KEY_ID` / `SIGNER_ROLE_WORKER_KEY_ID`
+  English: Custody key ids per signing role. Updater and oracle_verifier are required for the relayer's Neo N3 lanes; updater is also the tx-relay lane's on-chain identity on the worker (the lane relays oracle-contract invocations — `fulfillRequest` / `queueAutomationRequest` — as the updater account), and worker is required for the worker sign lane (`check-nitro-env.mjs` enforces all three); fee_funder is optional (auto fee top-up only, best-effort).
+  中文：各签名角色对应的托管 key id。updater 与 oracle_verifier 是 relayer Neo N3 通道的必需项；updater 同时也是 worker tx-relay 通道的链上身份（该通道以 updater 账户转发 oracle 合约调用——`fulfillRequest` / `queueAutomationRequest`）；worker 是 worker 签名通道的必需项（`check-nitro-env.mjs` 强制校验）；fee_funder 可选（仅自动手续费补充，尽力而为）。
+
 ### Signer Pinning And Network-Scoped Keys / 签名 pinning 与分网络密钥
 
 - `MORPHEUS_ALLOW_UNPINNED_SIGNERS`
-  English: Security toggle (default unset = pinned-only). When true-like, signer roles may fall back to unpinned key material instead of failing closed.
-  中文：安全开关（默认不设置 = 只允许 pinned）。为 true 时 signer 角色可回退到未 pinned 的密钥材料，而不是直接失败。
+  English: Security toggle (default unset = pinned-only). When true-like, signer roles may fall back to unpinned key material instead of failing closed. A runtime env file that sets it true fails `scripts/check-nitro-env.mjs` (`forbidden_settings`); only the bootstrap files under `.secrets/` that `scripts/generate-nitro-signer-identity.mjs` generates may carry it true.
+  中文：安全开关（默认不设置 = 只允许 pinned）。为 true 时 signer 角色可回退到未 pinned 的密钥材料，而不是直接失败。运行时 env 文件里为 true 会被 `scripts/check-nitro-env.mjs` 拒绝（`forbidden_settings`）；只有 `scripts/generate-nitro-signer-identity.mjs` 生成的 `.secrets/` 下 bootstrap 文件允许为 true。
 
 - `MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET` / `MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET` (and `..._PRIVATE_KEY_{MAINNET,TESTNET}`)
-  English: Network-scoped relayer signing material; takes precedence over the unscoped `MORPHEUS_RELAYER_NEO_N3_WIF` for that network.
-  中文：分网络 relayer 签名密钥；对应网络上优先于不带后缀的 `MORPHEUS_RELAYER_NEO_N3_WIF`。
+  English: Network-scoped relayer signing material; takes precedence over the unscoped `MORPHEUS_RELAYER_NEO_N3_WIF` for that network. No signing lane reads these any more (all Neo N3 signing is custody-only since the custody migration); they remain consumed only by smoke tooling and the pinned-registry drift checks.
+  中文：分网络 relayer 签名密钥；对应网络上优先于不带后缀的 `MORPHEUS_RELAYER_NEO_N3_WIF`。所有签名通道均已不再读取（custody 迁移后 Neo N3 签名只走托管服务）；目前仅冒烟工具与 pinned 注册表 drift 校验仍会消费。
 
 - `MORPHEUS_UPDATER_NEO_N3_WIF` / `MORPHEUS_UPDATER_NEO_N3_WIF_{MAINNET,TESTNET}` (and `..._PRIVATE_KEY` forms)
-  English: Dedicated feed-updater signing material; same network-scoped precedence rules as the relayer keys.
-  中文：feed updater 专用签名密钥；分网络优先级规则与 relayer 密钥相同。
+  English: Dedicated feed-updater signing material; same network-scoped precedence rules as the relayer keys. No runtime lane reads these any more: the web control plane's feed-tick and callback-broadcast routes no longer resolve or forward signer material (the worker signs through custody under the updater role), leaving only smoke tooling and the pinned-registry drift checks.
+  中文：feed updater 专用签名密钥；分网络优先级规则与 relayer 密钥相同。运行时通道均已不再读取：web 控制面的 feed-tick 与 callback-broadcast 路由不再解析或转发签名材料（worker 以 updater 角色经托管服务签名），仅剩冒烟工具与 pinned 注册表 drift 校验消费。
 
 - `MORPHEUS_ORACLE_VERIFIER_WIF_TESTNET` (and `_MAINNET`, `..._PRIVATE_KEY` forms)
-  English: Network-scoped async-fulfillment verifier signer; overrides the unscoped verifier names on that network.
-  中文：分网络异步 fulfill verifier signer；对应网络上覆盖不带后缀的 verifier 变量。
+  English: Network-scoped legacy verifier signing material; drift-check only. The runtime surface receives `MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_{MAINNET,TESTNET}` (public key) for on-chain result verification.
+  中文：分网络的遗留 verifier 签名材料；仅用于 drift 校验。运行时表面只接收 `MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_{MAINNET,TESTNET}`（公钥），用于链上结果校验。
 
 - `MORPHEUS_WORKER_NEO_N3_WIF_{MAINNET,TESTNET}` / `MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_{MAINNET,TESTNET}`
-  English: Network-scoped worker Neo N3 signing material; overrides the unscoped worker key on the matching network.
-  中文：分网络的 worker Neo N3 签名材料；在对应网络上覆盖不带后缀的 worker 密钥。
+  English: Network-scoped worker Neo N3 signing material (legacy). No worker lane reads these any more — both worker lanes sign through the custody service (`SIGNER_ROLE_WORKER_KEY_ID`); the names remain only in the pinned-registry drift checks and legacy smoke tooling.
+  中文：分网络的 worker Neo N3 签名材料（遗留）。worker 两条通道均已不再读取——签名一律走托管服务（`SIGNER_ROLE_WORKER_KEY_ID`）；该变量名仅存在于 pinned 注册表 drift 校验与旧的冒烟工具中。
 
 - `NEO_TESTNET_WIF`
-  English: Legacy generic testnet operator WIF accepted as a low-priority fallback by scripts and signer resolution.
-  中文：旧的通用 testnet WIF，脚本与 signer 解析会作为低优先级回退接受。
+  English: Legacy generic testnet operator WIF accepted only by local smoke tooling and the pinned-registry drift checks; no runtime lane reads it.
+  中文：旧的通用 testnet WIF，仅本地冒烟工具与 pinned 注册表 drift 校验接受；运行时通道均不读取。
 
 ### RPC Endpoint Aliases / RPC 地址别名
 
@@ -551,8 +599,8 @@ rename them. Format: default + one-line semantics.
 ### Nitro Signer And AWS Integration / Nitro 签名器与 AWS 集成
 
 - `NITRO_SIGNER_ENDPOINT` (alias `MORPHEUS_NITRO_SIGNER_ENDPOINT`)
-  English: Default `http://127.0.0.1:8787`. Enclave signer endpoint holding the Neo signing keys.
-  中文：默认 `http://127.0.0.1:8787`。持有 Neo 签名密钥的 enclave signer 地址。
+  English: Default `http://127.0.0.1:8787`. The frontier enclave, used only for the `/health` runtime marker and the `/attestation` NSM document. It holds no signing key — signing goes to the custody enclave via `SIGNER_SERVICE_URL`.
+  中文：默认 `http://127.0.0.1:8787`。frontier enclave，仅用于 `/health` 运行时标记与 `/attestation` NSM 证明文档。它不持有签名密钥——签名走 custody enclave 的 `SIGNER_SERVICE_URL`。
 
 - `NITRO_ATTEST_ENDPOINT`
   English: Defaults to `NITRO_SIGNER_ENDPOINT`. Endpoint used to fetch Nitro attestation documents.
@@ -588,9 +636,9 @@ rename them. Format: default + one-line semantics.
   English: Default false. In non-production development, allows a process-lifetime ephemeral oracle key when no stable key source is available — decryptability ends with the process. The worker rejects this opt-in when `NODE_ENV=production` and logs stable/configured key-source failures before any development fallback.
   中文：默认 false。在非生产开发环境中，没有稳定密钥来源时允许使用进程级临时 oracle 密钥——进程结束后密文不可解。`NODE_ENV=production` 时 worker 会拒绝此选项，并在开发回退前记录稳定/显式密钥来源失败。
 
-- `NEODID_SECRET_SALT` / `NEODID_NEO_N3_PRIVATE_KEY`
-  English: NeoDID commitment salt and dedicated signer overrides.
-  中文：NeoDID 承诺 salt 与专用 signer 覆盖项。
+- `NEODID_SECRET_SALT`
+  English: NeoDID commitment salt. NeoDID digest signatures are custody-side (the enclave signs under `SIGNER_ROLE_WORKER_KEY_ID`); there is no `NEODID_NEO_N3_PRIVATE_KEY` any more.
+  中文：NeoDID 承诺 salt。NeoDID 摘要签名走托管服务（enclave 以 `SIGNER_ROLE_WORKER_KEY_ID` 签名）；`NEODID_NEO_N3_PRIVATE_KEY` 已移除。
 
 ### Chain Write Safety Toggles / 链上写入安全开关
 

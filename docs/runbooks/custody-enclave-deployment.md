@@ -15,17 +15,46 @@ responsibility on the box.
 ## What the enclave runs
 
 - `Dockerfile.signer` — two stages; the last (measured) one is
-  `debian:bookworm-slim` plus the two Rust binaries, `socat`, `iproute2`, the
-  entrypoint, and nothing else. No Node runtime exists in the enclave.
-- `deploy/nitro/entrypoint-custody.sh` — brings loopback up (an enclave boots
-  with `lo` DOWN), starts the egress bridge (127.0.0.1:3128 → vsock
-  CID 3:8788, the parent's allow-listed CONNECT proxy), starts
-  `signer_service serve` (attested boot is baked in), readiness-probes it,
-  then bridges vsock 8787 → 127.0.0.1:8081. Fail-stop: if any of the three
-  processes dies, the whole enclave tears down.
+  `debian:bookworm-slim` plus the three Rust binaries, `socat`, `iproute2`,
+  `libcap2-bin` (present only so the layer can run `setcap`), and nothing else. No
+  Node runtime and no `/bin/sh` entrypoint exist in the enclave.
+- `/app/bin/nitro_init custody` (`crates/nitro-init`) — PID 1: brings loopback up,
+  starts the egress bridge (127.0.0.1:3128 → vsock CID 3:8788, the parent's
+  allow-listed CONNECT proxy), starts `signer_service serve` (attested boot is baked
+  in), readiness-probes it over loopback, then bridges vsock 8787 → 127.0.0.1:8081.
+  Fail-stop: if any of the three processes dies, the whole enclave tears down. The
+  POSIX shell it replaced, `deploy/nitro/entrypoint-custody.sh`, lives in git history.
+- **Verify by hand:** PID 1 runs as uid 8021, and an unprivileged process cannot bring
+  an interface up — so `Dockerfile.signer` grants the `ip` binary the
+  `cap_net_admin+ep` file capability and leaves every other one with none. Whether
+  that capability survives to runtime is the open part: it needs the
+  `security.capable` xattr to come through `nitro-cli` flattening the rootfs into the
+  EIF, and the rootfs to be mounted without `nosuid` (a nosuid mount ignores file
+  capabilities). Check both from inside the first booted enclave with
+  `getcap "$(command -v ip)"`. The boot is correct under either answer as long as the
+  enclave kernel left `lo` up on its own, in which case the `ip` call is a no-op. If
+  the capability did not survive and `lo` is down, the readiness probe never connects
+  and the boot aborts — `nitro-init: signer_service ready; exposing over vsock :8787`
+  is the line that proves it worked — and the remaining fix is to run PID 1 as root,
+  which changes the measurement.
 - `deploy/nitro/start-nitro-custody.sh` — the host side: terminates any enclave
-  already holding the CID, runs the EIF, bridges host port 8787 → vsock 8787,
+  already holding the CID, runs the EIF, bridges host port 8789 → vsock 8787,
   waits for `/health`, then provisions (below).
+- **The CID and host port are not the frontier's.** A host runs two enclaves: the
+  frontier (`start-nitro-signer.sh`, `morpheus-oracle.eif`, built from
+  `Dockerfile.enclave`) on CID 16 / host port 8787 — the endpoint
+  `MORPHEUS_RUNTIME_URL`, `NITRO_API_URL` and the feed-pusher's `SIGNER_URL` all
+  name, and where `provision-enclave-compute.sh` pushes the compute config — and
+  custody on CID 17 / host port 8789. Both are set in
+  `deploy/nitro/morpheus-nitro.env.example`, which is the `EnvironmentFile` of
+  both units. They have to differ: the start script terminates whatever enclave
+  holds its CID before booting, so a shared CID means killing the frontier and
+  answering its consumers with a vault, and a shared host port means the second
+  socat bridge cannot bind. `start-nitro-custody.sh` refuses either — but only
+  when the frontier's value is actually declared (`MORPHEUS_NITRO_CID` /
+  `MORPHEUS_NITRO_HOST_PORT`), so a custody-only host is still free to use 16 and 8787. The vsock port stays 8787 on both: it is per-enclave, and it is what
+  `NITRO_SIGNER_VSOCK_PORT` inside the measured image declares, so changing it
+  changes PCR0.
 
 ## KMS setup (one-time per enclave release)
 
@@ -54,6 +83,13 @@ releases the plaintext only if the document's PCR0 matches the key policy.
 3. Ensure the instance role running the host can `kms:Decrypt` that key — the
    policy's principal is the role whose credentials `start-nitro-custody.sh`
    fetches from IMDSv2.
+
+The host role is deliberately decrypt-only at this boundary. Do not grant it
+`secretsmanager:GetSecretValue`, `kms:Encrypt`, `kms:ReEncrypt*`, or
+`kms:GenerateDataKey*`. Ciphertext creation is an offline release-operator
+ceremony under a different principal. Otherwise a compromised parent could
+encrypt attacker-known plaintext and ask an admitted enclave to install it,
+which would defeat the recipient-attestation boundary without breaking KMS.
 
 ## Preparing the provisioning env file
 
@@ -87,11 +123,17 @@ MORPHEUS_RELEASE=custody-$(date -u +%F) \
   deploy/nitro/build-custody-eif.sh --verify-reproducible
 ```
 
-`--verify-reproducible` builds the image twice and asserts identical PCRs —
-the authoritative reproducibility gate (equal PCRs ⇔ reproducible enclave;
-Docker image IDs are not a valid signal). The script writes
-`deploy/nitro/measurements/<release>.json` and refuses to write a manifest
-with empty PCRs.
+`--verify-reproducible` rebuilds the image with `--no-cache` and asserts identical
+PCRs — the authoritative reproducibility gate (equal PCRs ⇔ reproducible enclave;
+Docker image IDs are not a valid signal). The rebuild is uncached on purpose:
+BuildKit's layer cache is keyed on content rather than on the tag, so a second
+plain `docker build` replays the first build's layers byte-for-byte and the
+comparison can never fail. Expect a second full Rust compile. Both stages pull a
+resolved `@sha256` base, so that rebuild is the whole story — bumping a base digest
+is itself a re-measurement, not a routine dependency update. Omitting
+the flag still writes a manifest, but prints a warning first, because that PCR0
+is about to become a KMS key-policy condition nobody reproduced. The script
+refuses to write a manifest with empty PCRs either way.
 
 **Verify by hand:** read the manifest before committing it — release, network,
 git commit — and confirm the PCR0 matches what the KMS key policy pins. The
@@ -111,16 +153,44 @@ enclave start and a successful provision, `/health` answers
 once per boot; a second call answers `409 signer-provision-already-done`. The
 window is as short as the readiness loop plus one provision round-trip.
 
-**Verify by hand:** `curl -s http://127.0.0.1:8787/health` says `ok`, and the
+**Verify by hand:** `curl -s http://127.0.0.1:8789/health` says `ok`, and the
 fingerprint is the one you expect for the master key you sealed (the
 fingerprint is SHA-256 of the key, truncated — it identifies the key without
 being derived from anything signable).
+
+## Supervision (systemd)
+
+Run by hand, the script stays in the foreground — it ends in `wait` on the socat
+bridge, which is what keeps the enclave reachable — so it dies with your
+terminal, and nothing brings the enclave back after a reboot or a crash. That
+matters more here than for the frontier: the rootfs is memory-backed, so every
+boot starts sealed, and an unsupervised crash therefore leaves a host whose
+custody routes answer `503 signer-not-provisioned` indefinitely while the
+consumers that sign through it (relayer, worker, feed-pusher) fail with it.
+
+`deploy/systemd/morpheus-nitro-custody.service` owns that lifecycle:
+
+```sh
+sudo cp deploy/systemd/morpheus-nitro-custody.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now morpheus-nitro-custody.service
+journalctl -u morpheus-nitro-custody.service -f
+```
+
+It is a **peer** of `morpheus-nitro-signer.service`, not a replacement: the two
+units run the two enclaves on their own CID and port, and the frontier's
+dependents (`morpheus-nitro-kms-proxy`, `morpheus-nitro-provision`,
+`morpheus-relayer-nitro`) keep pointing at the frontier unit alone. Custody
+orders itself after `morpheus-nitro-egress.service` instead, because the KMS
+`Decrypt` that `/provision` performs leaves through the parent's allow-listed
+CONNECT proxy — not through the vsock KMS proxy on 8001, which serves the
+frontier's in-enclave kmstool path.
 
 ## Attestation check (what a remote verifier does)
 
 ```sh
 NONCE=$(openssl rand -hex 16)
-curl -s "http://127.0.0.1:8787/attestation?nonce=$NONCE" | jq .
+curl -s "http://127.0.0.1:8789/attestation?nonce=$NONCE" | jq .
 ```
 
 The reply carries the vault fingerprint, the boundary JSON with its
@@ -130,6 +200,29 @@ the one it supplied, `user_data` decodes to
 `{"runtime":"neo-signer-custody","vault":…,"boundaries_sha256":…}` and the
 digest equals SHA-256 of the boundary JSON in the reply. The same check runs
 without a nonce for a quick liveness read.
+
+Each boundary entry includes both the network label and numeric
+`network_magic`; verify both against the intended chain. A magic-only change
+must change `boundaries_sha256`.
+
+## Provision dedicated raw-only roles
+
+The frontier's `worker`, updater-compatibility, or other digest lanes must not
+reuse a transaction/consensus authority key. For each required raw lane:
+
+1. generate/import a dedicated key;
+2. save a policy with `allow_raw: true` and all of `allow_consensus`,
+   `allow_transfer`, `allow_contract_call`, and `allow_global_scope` false;
+3. create a caller granted only that key and capability `raw_sign`;
+4. bind the role key id into the frontier EIF build, then seal the caller token
+   as the `neoos/custody-caller-token/v1` network/version envelope and place
+   only its ciphertext in the frontier signer env as
+   `SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64`.
+
+The signer rejects a mixed raw/semantic policy, and `/sign/raw` rejects a
+caller that has only `sign`. The collision preimage
+`networkMagicLE || SHA256(unsignedTransaction)` is therefore not signable by a
+semantic authority key.
 
 ## Failures worth knowing by name
 

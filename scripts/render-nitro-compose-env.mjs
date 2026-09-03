@@ -2,11 +2,8 @@ import { trimString } from './lib-strings.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseDotEnv } from './lib-env.mjs';
-import {
-  NEO_N3_SIGNER_ENV_KEYS,
-  resolvePinnedNeoN3Role,
-  resolvePinnedNeoN3RolePreferMatch,
-} from './lib-neo-signers.mjs';
+import { findCredentialDomainCollisions } from './lib-credential-separation.mjs';
+import { NEO_N3_SIGNER_ENV_KEYS, resolvePinnedNeoN3RolePreferMatch } from './lib-neo-signers.mjs';
 
 const repoRoot = process.cwd();
 const rootEnvPath = path.resolve(repoRoot, '.env');
@@ -274,9 +271,7 @@ function mergeCsvList(primary, additions = []) {
 
 const workerSigner = resolvePinnedRoleMaterial('worker');
 const relayerSigner = resolvePinnedRoleMaterial('relayer');
-const updaterSigner = resolvePinnedRoleMaterial('updater');
 const verifierSigner = resolvePinnedRoleMaterial('oracle_verifier');
-const networkEnvSuffix = network.toUpperCase();
 
 const runtimeConfig = {
   TWELVEDATA_API_KEY: get('TWELVEDATA_API_KEY'),
@@ -287,21 +282,9 @@ const runtimeConfig = {
     'MORPHEUS_PROVIDER_CONFIG_API_KEY',
     'ADMIN_CONSOLE_API_KEY'
   ),
-  MORPHEUS_RELAYER_ADMIN_API_KEY: get(
-    'MORPHEUS_RELAYER_ADMIN_API_KEY',
-    'MORPHEUS_OPERATOR_API_KEY',
-    'ADMIN_CONSOLE_API_KEY'
-  ),
-  MORPHEUS_SIGNING_ADMIN_API_KEY: get(
-    'MORPHEUS_SIGNING_ADMIN_API_KEY',
-    'MORPHEUS_OPERATOR_API_KEY',
-    'ADMIN_CONSOLE_API_KEY'
-  ),
-  MORPHEUS_RELAY_ADMIN_API_KEY: get(
-    'MORPHEUS_RELAY_ADMIN_API_KEY',
-    'MORPHEUS_OPERATOR_API_KEY',
-    'ADMIN_CONSOLE_API_KEY'
-  ),
+  MORPHEUS_RELAYER_ADMIN_API_KEY: get('MORPHEUS_RELAYER_ADMIN_API_KEY'),
+  MORPHEUS_SIGNING_ADMIN_API_KEY: get('MORPHEUS_SIGNING_ADMIN_API_KEY'),
+  MORPHEUS_RELAY_ADMIN_API_KEY: get('MORPHEUS_RELAY_ADMIN_API_KEY'),
   MORPHEUS_OPERATOR_API_KEY: get('MORPHEUS_OPERATOR_API_KEY', 'ADMIN_CONSOLE_API_KEY'),
   MORPHEUS_NETWORK: network,
   NEO_RPC_URL: resolveRegistryBackedValue(registry.neo_n3?.rpc_url || '', 'NEO_RPC_URL'),
@@ -321,18 +304,6 @@ const runtimeConfig = {
     registry.neo_n3?.contracts?.morpheus_datafeed || '',
     'CONTRACT_MORPHEUS_DATAFEED_HASH'
   ),
-  MORPHEUS_WORKER_NEO_N3_WIF: workerSigner.wif,
-  MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY: workerSigner.privateKey,
-  [`MORPHEUS_WORKER_NEO_N3_WIF_${networkEnvSuffix}`]: workerSigner.wif,
-  [`MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_${networkEnvSuffix}`]: workerSigner.privateKey,
-  MORPHEUS_ORACLE_VERIFIER_WIF: verifierSigner.wif,
-  MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY: verifierSigner.privateKey,
-  MORPHEUS_UPDATER_NEO_N3_WIF: updaterSigner.wif,
-  MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY: updaterSigner.privateKey,
-  [`MORPHEUS_UPDATER_NEO_N3_WIF_${networkEnvSuffix}`]: updaterSigner.wif,
-  [`MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_${networkEnvSuffix}`]: updaterSigner.privateKey,
-  MORPHEUS_RELAYER_NEO_N3_WIF: relayerSigner.wif,
-  MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY: relayerSigner.privateKey,
   MORPHEUS_FEED_PROJECT_SLUG: get('MORPHEUS_FEED_PROJECT_SLUG') || 'morpheus',
   MORPHEUS_FEED_PROVIDER: get('MORPHEUS_FEED_PROVIDER') || 'twelvedata',
   MORPHEUS_FEED_PROVIDERS: get('MORPHEUS_FEED_PROVIDERS') || 'twelvedata',
@@ -448,14 +419,6 @@ const signerDiagnostics = [workerSigner.report, relayerSigner.report, verifierSi
 if (signerDiagnostics.length > 0) {
   console.error(`render-nitro-compose-env signer corrections applied for ${network}:`);
   for (const line of signerDiagnostics) console.error(`- ${line}`);
-}
-
-const runtimeUsesDerivedKeys = resolveUseDerivedKeysDefault().toLowerCase() === 'true';
-for (const role of ['worker', 'relayer', 'updater', 'oracle_verifier']) {
-  resolvePinnedNeoN3Role(network, role, {
-    env: runtimeConfig,
-    allowMissing: runtimeUsesDerivedKeys && role !== 'oracle_verifier',
-  });
 }
 
 const lines = [
@@ -595,15 +558,15 @@ const lines = [
   ),
   line(
     'MORPHEUS_RELAYER_ADMIN_API_KEY',
-    get('MORPHEUS_RELAYER_ADMIN_API_KEY', 'MORPHEUS_OPERATOR_API_KEY', 'ADMIN_CONSOLE_API_KEY')
+    get('MORPHEUS_RELAYER_ADMIN_API_KEY')
   ),
   line(
     'MORPHEUS_SIGNING_ADMIN_API_KEY',
-    get('MORPHEUS_SIGNING_ADMIN_API_KEY', 'MORPHEUS_OPERATOR_API_KEY', 'ADMIN_CONSOLE_API_KEY')
+    get('MORPHEUS_SIGNING_ADMIN_API_KEY')
   ),
   line(
     'MORPHEUS_RELAY_ADMIN_API_KEY',
-    get('MORPHEUS_RELAY_ADMIN_API_KEY', 'MORPHEUS_OPERATOR_API_KEY', 'ADMIN_CONSOLE_API_KEY')
+    get('MORPHEUS_RELAY_ADMIN_API_KEY')
   ),
   line('MORPHEUS_OPERATOR_API_KEY', get('MORPHEUS_OPERATOR_API_KEY', 'ADMIN_CONSOLE_API_KEY')),
   '',
@@ -617,12 +580,18 @@ const lines = [
     runtimeConfig.CONTRACT_ORACLE_CALLBACK_CONSUMER_HASH
   ),
   line('CONTRACT_MORPHEUS_DATAFEED_HASH', runtimeConfig.CONTRACT_MORPHEUS_DATAFEED_HASH),
-  line('MORPHEUS_WORKER_NEO_N3_WIF', runtimeConfig.MORPHEUS_WORKER_NEO_N3_WIF),
-  line('MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY', runtimeConfig.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY),
-  line('MORPHEUS_ORACLE_VERIFIER_WIF', runtimeConfig.MORPHEUS_ORACLE_VERIFIER_WIF),
-  line('MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY', runtimeConfig.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY),
-  line('MORPHEUS_RELAYER_NEO_N3_WIF', runtimeConfig.MORPHEUS_RELAYER_NEO_N3_WIF),
-  line('MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY', runtimeConfig.MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY),
+  // Custody signer service (docs/SIGNER_SERVICE.md §5): all relayer and worker
+  // Neo N3 lanes (sign and tx-relay) hold no key material and resolve their
+  // role key ids through the custody service. The verifier value emitted here
+  // is the PUBLIC key only (on-chain result verification); no WIF/private key
+  // is ever rendered into a runtime env file.
+  line('MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY', verifierSigner.publicKey),
+  line('SIGNER_SERVICE_URL', get('SIGNER_SERVICE_URL')),
+  line('SIGNER_SERVICE_TOKEN', get('SIGNER_SERVICE_TOKEN')),
+  line('SIGNER_ROLE_UPDATER_KEY_ID', get('SIGNER_ROLE_UPDATER_KEY_ID')),
+  line('SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID', get('SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID')),
+  line('SIGNER_ROLE_WORKER_KEY_ID', get('SIGNER_ROLE_WORKER_KEY_ID')),
+  line('SIGNER_ROLE_FEE_FUNDER_KEY_ID', get('SIGNER_ROLE_FEE_FUNDER_KEY_ID')),
   '',
   line('MORPHEUS_FEED_PROJECT_SLUG', get('MORPHEUS_FEED_PROJECT_SLUG') || 'morpheus'),
   line('MORPHEUS_FEED_PROVIDER', get('MORPHEUS_FEED_PROVIDER') || 'twelvedata'),
@@ -770,5 +739,11 @@ const lines = [
   '',
 ];
 
-await writeSecretFile(outputPath, `${lines.join('\n')}\n`);
+const rendered = `${lines.join('\n')}\n`;
+const credentialCollisions = findCredentialDomainCollisions(parseDotEnv(rendered));
+if (credentialCollisions.length > 0) {
+  const names = credentialCollisions.map(({ names }) => names.join(', ')).join('; ');
+  throw new Error(`credentials must be pairwise distinct across trust domains: ${names}`);
+}
+await writeSecretFile(outputPath, rendered);
 console.log(`Wrote ${outputPath} for network=${network}`);

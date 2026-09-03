@@ -5,7 +5,7 @@
 //! is assembled from the support doubles; nothing here touches a socket.
 
 use super::*;
-use crate::{state::BridgeReply, RUNTIME_NAME};
+use crate::RUNTIME_NAME;
 use serde_json::json;
 
 #[path = "support.rs"]
@@ -152,20 +152,6 @@ fn health_is_503_and_carries_the_signer_error_when_degraded() {
     assert_eq!(outcome.body["key_source"]["oracle_verifier"], "none");
 }
 
-#[test]
-fn health_degrades_when_the_compute_child_is_down() {
-    let harness = test_state(
-        &healthy_overlay(),
-        FakeAttest::with_document(b"doc"),
-        FakeSigner::healthy(),
-        FakeBridge::unreachable(),
-        FakeKms::default(),
-    );
-    let outcome = dispatch_outcome(&harness, "GET", "/health", &plain(), "");
-    assert_eq!(outcome.status, 503);
-    assert_eq!(outcome.body["checks"]["compute"], false);
-}
-
 // ---------------------------------------------------------------------------
 // Auth gate + fail-closed
 // ---------------------------------------------------------------------------
@@ -185,6 +171,9 @@ fn sensitive_routes_fail_closed_without_any_configured_token() {
         ("POST", "/sign/payload"),
         ("POST", "/keys/derived"),
         ("POST", "/oracle/query"),
+        ("POST", "/oracle/smart-fetch"),
+        ("POST", "/oracle/decrypt"),
+        ("POST", "/oracle/message-reveal"),
     ] {
         let outcome = dispatch_outcome(&harness, method, path, &plain(), "{}");
         assert_eq!(outcome.status, 401, "{path}");
@@ -211,6 +200,9 @@ fn sensitive_routes_require_a_matching_bearer() {
         ("POST", "/sign/payload"),
         ("POST", "/keys/derived"),
         ("POST", "/oracle/query"),
+        ("POST", "/oracle/smart-fetch"),
+        ("POST", "/oracle/decrypt"),
+        ("POST", "/oracle/message-reveal"),
     ] {
         let outcome = dispatch_outcome(&harness, method, path, &plain(), "{}");
         assert_eq!(outcome.status, 401, "{path}");
@@ -219,11 +211,11 @@ fn sensitive_routes_require_a_matching_bearer() {
 }
 
 // ---------------------------------------------------------------------------
-// Compute passthrough
+// Oracle read lanes — Phase 9: in-process
 // ---------------------------------------------------------------------------
 
 #[test]
-fn the_passthrough_forwards_authed_calls_to_the_worker_route() {
+fn the_oracle_query_lane_is_served_in_process() {
     let harness = test_state(
         &healthy_overlay(),
         FakeAttest::with_document(b"doc"),
@@ -231,32 +223,27 @@ fn the_passthrough_forwards_authed_calls_to_the_worker_route() {
         FakeBridge::new(),
         FakeKms::default(),
     );
-    harness.bridge.set_reply(BridgeReply {
-        ok: true,
-        status: 200,
-        body: json!({ "answer": 42 }),
-    });
     let outcome = dispatch_outcome(
         &harness,
         "POST",
         "/mainnet/oracle/query",
         &bearer("s3cret"),
-        &body_json(&json!({ "question": "block-height" })),
+        &body_json(&json!({ "url": "https://example.com/data" })),
     );
     assert_eq!(outcome.status, 200);
-    assert_eq!(outcome.body, json!({ "answer": 42 }));
-
-    let forwards = harness.bridge.forwards();
-    assert_eq!(forwards.len(), 1);
-    let (route, payload, token) = &forwards[0];
-    assert_eq!(route, "/oracle/query");
-    assert_eq!(payload["question"], "block-height");
-    // The worker-auth token rides along exactly as resolveWorkerAuthToken did.
-    assert_eq!(token.as_deref(), Some("s3cret"));
+    // The fold's own envelope — `buildOracleResponse` — not the child's reply.
+    assert_eq!(outcome.body["mode"], "fetch");
+    assert_eq!(outcome.body["status_code"], 200);
+    assert_eq!(outcome.body["request_source"], "chain-dispatcher");
+    assert_eq!(outcome.body["result"], json!({}));
+    // Nothing reached the unmigrated-fulfillment seam; the upstream went
+    // through the in-process IO plane.
+    assert!(harness.bridge.forwards().is_empty());
+    assert_eq!(harness.oracle_io.fetches()[0].1, "https://example.com/data");
 }
 
 #[test]
-fn every_passthrough_route_is_gated() {
+fn the_oracle_public_key_route_is_ungated_and_resolves_in_process() {
     let harness = test_state(
         &healthy_overlay(),
         FakeAttest::with_document(b"doc"),
@@ -264,37 +251,17 @@ fn every_passthrough_route_is_gated() {
         FakeBridge::new(),
         FakeKms::default(),
     );
-    for route in crate::routes::EXECUTION_PLANE_PASSTHROUGH {
-        let outcome = dispatch_outcome(&harness, "POST", route, &plain(), "{}");
-        assert_eq!(outcome.status, 401, "{route}");
-        assert!(
-            harness.bridge.forwards().is_empty(),
-            "{route} must not forward"
-        );
-    }
-}
-
-#[test]
-fn the_oracle_public_key_route_is_ungated_but_still_forwarded() {
-    let harness = test_state(
-        &healthy_overlay(),
-        FakeAttest::with_document(b"doc"),
-        FakeSigner::healthy(),
-        FakeBridge::new(),
-        FakeKms::default(),
-    );
-    harness.bridge.set_reply(BridgeReply {
-        ok: true,
-        status: 200,
-        body: json!({ "public_key": "6b4f…".to_string() }),
-    });
+    // No bearer header — the lane stays public, exactly like the Node dispatch.
     let outcome = dispatch_outcome(&harness, "GET", "/oracle/public-key", &plain(), "");
-    assert_eq!(outcome.status, 200);
-    assert_eq!(outcome.body["public_key"], "6b4f…");
-    let forwards = harness.bridge.forwards();
-    assert_eq!(forwards[0].0, "/oracle/public-key");
-    // GET bodies are empty on this lane.
-    assert_eq!(forwards[0].1, json!({}));
+    // The harness carries no oracle key material, so the full
+    // ensureOracleKeyMaterial tree runs in-process and fails closed.
+    assert_eq!(outcome.status, 400);
+    assert!(outcome.body["error"]
+        .as_str()
+        .expect("error string")
+        .starts_with("oracle key material unavailable"));
+    // Nothing reached the unmigrated-fulfillment seam.
+    assert!(harness.bridge.forwards().is_empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -388,7 +355,6 @@ fn the_first_provision_bootstraps_from_the_kms_envelope() {
         &body_json(&json!({
             "env": {
                 "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64": RUNTIME_CIPHERTEXT,
-                "MORPHEUS_NETWORK": "testnet",
                 "TD_KEY": "twelve-data-key",
             }
         })),
@@ -402,11 +368,7 @@ fn the_first_provision_bootstraps_from_the_kms_envelope() {
     // ciphertext included (the mjs fixture asserts its presence too).
     assert_eq!(
         outcome.body["env_keys"],
-        json!([
-            "MORPHEUS_NETWORK",
-            "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64",
-            "TD_KEY"
-        ])
+        json!(["MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64", "TD_KEY"])
     );
     assert_eq!(outcome.body["roles"].as_array().expect("roles").len(), 2);
 

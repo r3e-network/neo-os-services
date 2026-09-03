@@ -1,67 +1,19 @@
+// Worker Neo N3 signing lanes (docs/SIGNER_SERVICE.md §5). The worker holds no
+// key material: signatures come from the custody signer service, which signs the
+// exact submitted bytes inside the attested boundary under the role's allow_raw
+// key. Caller-supplied key material is rejected unconditionally; there is no
+// local-signing path or environment escape hatch.
 import {
   REPLAY_WINDOW_MS,
   env,
-  resolvePayloadNetwork,
+  normalizeMorpheusNetwork,
   sha256Hex,
   stableStringify,
   strip0x,
   trimString,
 } from '../platform/core.js';
-import { wallet as neoWallet } from '@cityofzion/neon-js';
-import {
-  deriveNeoN3PrivateKeyHex,
-  maybeBuildDstackAttestation,
-  shouldUseDerivedKeys,
-} from '../platform/nitro-signer.js';
-import {
-  normalizeMorpheusNetwork,
-  reportPinnedNeoN3Role,
-} from '../../../../scripts/lib-neo-signers.mjs';
-
-// The pinned worker / oracle_verifier signer is resolved from process env via
-// reportPinnedNeoN3Role, which scans NEO_N3_SIGNER_ENV_KEYS and derives up to six
-// secp256r1 accounts to find the role match. Env is immutable for the process
-// lifetime, so memoize the resolved key per (role, network) to skip that scan on
-// every signed response, and cache the derived neon-js Account per key so its
-// secp256r1 public-key derivation is paid once. Both are cleared between tests
-// (which vary the signer env per case) via __resetSigningCachesForTests.
-const envRoleKeyCache = new Map();
-const signingAccountCache = new Map();
-const MAX_SIGNING_ACCOUNT_CACHE = 32;
-
-function resolveEnvRoleKey(role, network) {
-  const cacheKey = `${role}:${network}`;
-  if (envRoleKeyCache.has(cacheKey)) return envRoleKeyCache.get(cacheKey);
-  const report = reportPinnedNeoN3Role(network, role, { env, allowMissing: true });
-  if (report.issues.length > 0) {
-    throw new Error(report.issues.join('; '));
-  }
-  const key = report.materialized?.private_key || report.materialized?.wif || '';
-  envRoleKeyCache.set(cacheKey, key);
-  return key;
-}
-
-function signingAccountFor(privateKey) {
-  const key = trimString(privateKey);
-  if (!key) return null;
-  const cached = signingAccountCache.get(key);
-  if (cached) return cached;
-  const account = new neoWallet.Account(key);
-  // Bound memory: caller-supplied keys (maybeSignNeoN3Bytes lane) would otherwise
-  // grow this unbounded; the hot worker/verifier lane reuses a tiny fixed key set,
-  // so a small LRU-style cap keeps the common path cached without leaking.
-  if (signingAccountCache.size >= MAX_SIGNING_ACCOUNT_CACHE) {
-    const oldest = signingAccountCache.keys().next().value;
-    if (oldest !== undefined) signingAccountCache.delete(oldest);
-  }
-  signingAccountCache.set(key, account);
-  return account;
-}
-
-export function __resetSigningCachesForTests() {
-  envRoleKeyCache.clear();
-  signingAccountCache.clear();
-}
+import { custodyKeyId, custodyKeyInfo, custodySignRaw } from '../platform/custody.js';
+import { maybeBuildDstackAttestation } from '../platform/nitro-signer.js';
 
 function hasCallerSuppliedKeyMaterial(payload = {}) {
   return Boolean(
@@ -70,61 +22,26 @@ function hasCallerSuppliedKeyMaterial(payload = {}) {
 }
 
 // The enclave-resident signing lanes (sign/payload + signed-result envelopes)
-// must sign with the worker's own key, never with raw key material a caller put
-// in the request body. Accepting caller-supplied keys here is a key-confusion
+// must sign with the custody key, never with raw key material a caller put in
+// the request body. Accepting caller-supplied keys here is a key-confusion
 // hazard (a caller could substitute an arbitrary key for the enclave's, or probe
-// the signing path with attacker-controlled material). Reject by default; an
-// operator can deliberately re-open the legacy behavior with
-// MORPHEUS_ALLOW_CALLER_SIGNING_KEY=true.
-function allowCallerSuppliedSigningKey() {
-  const raw = trimString(env('MORPHEUS_ALLOW_CALLER_SIGNING_KEY')).toLowerCase();
-  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
-}
-
-function rejectCallerSuppliedSigningKey(payload = {}) {
-  if (hasCallerSuppliedKeyMaterial(payload) && !allowCallerSuppliedSigningKey()) {
+// the signing path with attacker-controlled material). This boundary is
+// unconditional and cannot be weakened by runtime configuration.
+export function rejectCallerSuppliedSigningKey(payload = {}) {
+  if (hasCallerSuppliedKeyMaterial(payload)) {
     throw new Error(
       'caller-supplied signing key material (private_key/signing_key/wif) is not accepted ' +
-        'on this signing lane; the enclave-resident key is used instead'
+        'on this signing lane; the custody signer service key is used instead'
     );
   }
 }
 
-function resolveKeySource(payload = {}) {
-  if (hasCallerSuppliedKeyMaterial(payload)) {
-    return 'caller';
-  }
-  return 'worker';
-}
-
-function resolveOracleVerifierRole(payload = {}) {
-  const explicit = trimString(payload.dstack_key_role || payload.key_role || '');
-  return explicit.toLowerCase() === 'oracle_verifier';
-}
-
-function resolveRequestedNeoN3DerivedRole(payload = {}) {
-  const explicit = trimString(payload.dstack_key_role || payload.key_role || '');
-  return explicit || 'worker';
-}
-
-function resolveNeoN3OracleVerifierKey(payload = {}) {
-  const network = resolvePayloadNetwork(
-    payload,
-    normalizeMorpheusNetwork(env('MORPHEUS_NETWORK', 'NEXT_PUBLIC_MORPHEUS_NETWORK') || 'testnet')
-  );
-  return resolveEnvRoleKey('oracle_verifier', network);
-}
-
-function resolveNeoN3WorkerKey(payload = {}) {
-  const network = resolvePayloadNetwork(
-    payload,
-    normalizeMorpheusNetwork(env('MORPHEUS_NETWORK', 'NEXT_PUBLIC_MORPHEUS_NETWORK') || 'testnet')
-  );
-  return resolveEnvRoleKey('worker', network);
-}
-
 const seenRequestIds = new Map();
 const MAX_SEEN_REQUEST_IDS = 50_000;
+
+export function __resetSigningCachesForTests() {
+  seenRequestIds.clear();
+}
 
 export function pruneSeenRequestIds() {
   const cutoff = Date.now() - REPLAY_WINDOW_MS;
@@ -168,89 +85,95 @@ export function resolveSigningBytes(payload) {
   throw new Error('one of data, message, data_hex, or data_base64 is required');
 }
 
-export async function maybeSignNeoN3Bytes(bytes, payload = {}) {
-  rejectCallerSuppliedSigningKey(payload);
-  const keySource = resolveKeySource(payload);
-  const useOracleVerifierRole = resolveOracleVerifierRole(payload);
-  const requestScopedKey =
-    trimString(payload.private_key) || trimString(payload.signing_key) || trimString(payload.wif);
-  const configuredOracleVerifierKey = useOracleVerifierRole
-    ? resolveNeoN3OracleVerifierKey(payload)
-    : '';
-  let privateKey =
-    requestScopedKey || configuredOracleVerifierKey || resolveNeoN3WorkerKey(payload);
-
-  const allowDerivedOverride =
-    !requestScopedKey && (!useOracleVerifierRole || !configuredOracleVerifierKey);
-  if (shouldUseDerivedKeys(payload) && allowDerivedOverride) {
-    const requestedRole = resolveRequestedNeoN3DerivedRole(payload);
-    try {
-      privateKey = await deriveNeoN3PrivateKeyHex(requestedRole);
-    } catch {
-      // If the dedicated oracle_verifier path is absent, reuse the worker role.
-      if (useOracleVerifierRole && requestedRole !== 'worker') {
-        try {
-          privateKey = await deriveNeoN3PrivateKeyHex('worker');
-        } catch {
-          // fall back to explicit/env key material if available
-        }
-      }
-    }
+// Role for the custody lane: an explicit dstack_key_role/key_role selects the
+// provisioned key (oracle_verifier, updater, ...); default is the worker key.
+// Constrained exactly like the derived-key path it replaces.
+function resolveCustodyRole(payload = {}) {
+  const role = trimString(payload.dstack_key_role || payload.key_role || '') || 'worker';
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(role)) {
+    throw new Error('invalid key role: must be 1-64 alphanumeric/dash/underscore chars');
   }
-  if (!privateKey) return null;
+  return role;
+}
 
-  const account = signingAccountFor(privateKey);
+// Custody lane: the enclave signs the exact bytes under the role's allow_raw key
+// boundary and returns the signature together with the key's public identity.
+// Nothing is cached across calls, so a rotated key can never keep signing under
+// a stale identity, and there is no local or derived-key fallback: provisioning
+// SIGNER_ROLE_{ROLE}_KEY_ID is required.
+export async function custodySignBytes(role, bytes) {
+  const keyId = custodyKeyId(role);
+  const key = await custodyKeyInfo(keyId);
+  const network = normalizeMorpheusNetwork(env('MORPHEUS_NETWORK'), 'testnet');
+  const expectedMagic = network === 'mainnet' ? 860833102 : 894710606;
+  const ready =
+    key &&
+    key.signing_enabled === true &&
+    trimString(key.network) === network &&
+    Number(key.network_magic) === expectedMagic &&
+    trimString(key.public_key) &&
+    trimString(key.address) &&
+    trimString(key.script_hash);
+  if (!ready) {
+    const error = new Error(
+      `custody key for role ${role} is missing, disabled, incomplete, or bound to the wrong network`
+    );
+    error.status = 503;
+    throw error;
+  }
   const payloadBuffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+  const signed = await custodySignRaw(keyId, payloadBuffer.toString('hex'));
+  const signature = trimString(signed.signature || '');
+  const publicKey = trimString(signed.public_key || '');
+  if (!signature || !publicKey) {
+    const error = new Error('custody signer returned an incomplete signature envelope');
+    error.status = 503;
+    throw error;
+  }
+  if (
+    publicKey !== trimString(key.public_key) ||
+    trimString(signed.address) !== trimString(key.address) ||
+    trimString(signed.script_hash) !== trimString(key.script_hash)
+  ) {
+    const error = new Error('custody signer response contradicts the pinned key identity');
+    error.status = 503;
+    throw error;
+  }
   return {
-    signature: neoWallet.sign(payloadBuffer.toString('hex'), account.privateKey),
-    public_key: account.publicKey,
-    address: account.address,
-    script_hash: `0x${account.scriptHash}`,
-    key_source: keySource,
+    signature,
+    public_key: publicKey,
+    address: trimString(signed.address || ''),
+    script_hash: trimString(signed.script_hash || ''),
+    key_source: 'custody',
   };
 }
 
-async function maybeSignWorkerNeoN3Bytes(bytes, payload = {}) {
-  let privateKey = resolveNeoN3WorkerKey(payload);
-  if (shouldUseDerivedKeys(payload)) {
-    try {
-      privateKey = await deriveNeoN3PrivateKeyHex(
-        trimString(payload.dstack_key_role || payload.key_role || 'worker') || 'worker'
-      );
-    } catch {
-      // fall back to configured worker key material if available
-    }
-  }
-  if (!privateKey) return null;
+export async function maybeSignNeoN3Bytes(bytes, payload = {}) {
+  rejectCallerSuppliedSigningKey(payload);
+  return custodySignBytes(resolveCustodyRole(payload), bytes);
+}
 
-  const account = signingAccountFor(privateKey);
-  const payloadBuffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
-  return {
-    signature: neoWallet.sign(payloadBuffer.toString('hex'), account.privateKey),
-    public_key: account.publicKey,
-    address: account.address,
-    script_hash: `0x${account.scriptHash}`,
-  };
+async function maybeSignWorkerNeoN3Bytes(bytes) {
+  return custodySignBytes('worker', bytes);
 }
 
 export async function buildSignedResultEnvelope(result, payload = {}) {
-  // This lane always signs with the enclave-resident worker key
-  // (maybeSignWorkerNeoN3Bytes ignores any caller-supplied key). Reject
-  // caller-supplied key material so the request can't masquerade as a
-  // caller-keyed signature or attempt key confusion.
+  // This lane always signs with the custody worker key (maybeSignWorkerNeoN3Bytes
+  // never touches caller material). Reject caller-supplied key material so the
+  // request can't masquerade as a caller-keyed signature or attempt key confusion.
   rejectCallerSuppliedSigningKey(payload);
-  const keySource = hasCallerSuppliedKeyMaterial(payload) ? 'caller' : 'worker';
+  const keySource = 'custody';
   const payloadBytes = Buffer.from(stableStringify(result), 'utf8');
   const outputHash = sha256Hex(payloadBytes);
-  const signature = await maybeSignWorkerNeoN3Bytes(payloadBytes, payload);
+  const signature = await maybeSignWorkerNeoN3Bytes(payloadBytes);
   const teeAttestation = await maybeBuildDstackAttestation(payload, outputHash, keySource);
   return {
     output_hash: outputHash,
     attestation_hash: outputHash,
-    signature: signature?.signature || null,
-    public_key: signature?.public_key || null,
-    signer_address: signature?.address || null,
-    signer_script_hash: signature?.script_hash || null,
+    signature: signature.signature,
+    public_key: signature.public_key,
+    signer_address: signature.address,
+    signer_script_hash: signature.script_hash,
     key_source: keySource,
     tee_attestation: teeAttestation,
   };
@@ -275,10 +198,15 @@ export function buildVerificationEnvelope(signed) {
 // verification (+ tee_attestation). Additive — callers spread their lane-specific
 // fields alongside this; existing keys are preserved.
 export function buildLaneSignedEnvelope(signed) {
+  if (!trimString(signed?.signature) || !trimString(signed?.public_key)) {
+    const error = new Error('signed result envelope requires custody signature and public key');
+    error.status = 503;
+    throw error;
+  }
   return {
     output_hash: signed.output_hash,
-    signature: signed.signature || null,
-    public_key: signed.public_key || null,
+    signature: signed.signature,
+    public_key: signed.public_key,
     attestation_hash: signed.attestation_hash,
     tee_attestation: signed.tee_attestation ?? null,
     verification: buildVerificationEnvelope(signed),

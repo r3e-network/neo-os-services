@@ -21,6 +21,7 @@ const {
   pushNeoN3,
   rebuildNeoXUpdateFeedsData,
   assertEnclaveNeoXTxMatches,
+  resolveNeoXFeedSignerMode,
   toTwelveDataSymbol,
   partitionMappedSymbols,
   assertTwelveDataResponse,
@@ -59,9 +60,7 @@ test('TwelveData provider errors fail even when the transport returned HTTP 200'
 });
 
 test('TwelveData validation accepts a normal price payload and redacts API keys in errors', () => {
-  assert.doesNotThrow(() =>
-    assertTwelveDataResponse({ ok: true, status: 200 }, { price: '1.23' })
-  );
+  assert.doesNotThrow(() => assertTwelveDataResponse({ ok: true, status: 200 }, { price: '1.23' }));
   assert.throws(
     () =>
       assertTwelveDataResponse(
@@ -721,6 +720,67 @@ test('pushNeoN3 refuses to broadcast when the enclave tx message diverges from t
 });
 
 // ── Phase D: in-TEE EVM (Neo X) feed-sign host-side assert helpers ──────────────
+test('Neo X feed signing refuses host private keys in production', () => {
+  assert.throws(
+    () =>
+      resolveNeoXFeedSignerMode({
+        nodeEnv: 'production',
+        hostPrivateKey: '0xhost-key',
+        allowInsecureHostSigner: true,
+      }),
+    /production.*refuses.*host/i
+  );
+});
+
+test('Neo X host feed signing requires explicit non-production opt-in', () => {
+  assert.throws(
+    () =>
+      resolveNeoXFeedSignerMode({
+        nodeEnv: 'development',
+        hostPrivateKey: '0xhost-key',
+      }),
+    /host feed signing is disabled/i
+  );
+  assert.equal(
+    resolveNeoXFeedSignerMode({
+      nodeEnv: 'development',
+      hostPrivateKey: '0xhost-key',
+      allowInsecureHostSigner: true,
+    }),
+    'host_dev'
+  );
+});
+
+test('Neo X production feed signing accepts only the explicit enclave route', () => {
+  assert.equal(
+    resolveNeoXFeedSignerMode({
+      nodeEnv: 'production',
+      enclaveSign: true,
+      enclaveSignerAddress: '0x0000000000000000000000000000000000000001',
+    }),
+    'enclave'
+  );
+  assert.throws(
+    () =>
+      resolveNeoXFeedSignerMode({
+        nodeEnv: 'production',
+        enclaveSign: true,
+        enclaveSignerAddress: '',
+      }),
+    /enclave signer configuration is incomplete/i
+  );
+  assert.throws(
+    () =>
+      resolveNeoXFeedSignerMode({
+        nodeEnv: 'production',
+        enclaveSign: true,
+        enclaveSignerAddress: '0x0000000000000000000000000000000000000001',
+        hostPrivateKey: '0xstale-host-key',
+      }),
+    /production.*refuses.*host/i
+  );
+});
+
 test('neox enclave feed-sign: host re-encodes the calldata + accepts a matching signed tx', async () => {
   const FEED_PK = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
   const from = new ethers.Wallet(FEED_PK).address;

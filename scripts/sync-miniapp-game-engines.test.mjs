@@ -19,14 +19,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { driftReport } from './sync-miniapp-game-engines.mjs';
+import { driftReport, ENGINE_SOURCES } from './sync-miniapp-game-engines.mjs';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 const configuredRoot = process.env.MINIGAMES_ROOT || process.env.MINIAPPS_ROOT;
 const minigamesRoot = configuredRoot
   ? path.resolve(configuredRoot)
   : path.resolve(repoRoot, '..', 'neo-os-minigames');
-const esbuildBin = path.join(minigamesRoot, 'node_modules', '.bin', 'esbuild');
+const esbuildCli = path.join(minigamesRoot, 'node_modules', 'esbuild', 'bin', 'esbuild');
 const gameDir = path.join(repoRoot, 'workers', 'nitro-worker', 'src', 'game');
 
 function minigamesAvailable(t) {
@@ -34,8 +34,15 @@ function minigamesAvailable(t) {
     t.skip(`minigames repo not found at ${minigamesRoot} (set MINIGAMES_ROOT)`);
     return false;
   }
-  if (!fs.existsSync(esbuildBin)) {
-    t.skip(`esbuild not available at ${esbuildBin}`);
+  const missingSources = ENGINE_SOURCES.filter(
+    (entry) => !fs.existsSync(path.join(minigamesRoot, entry.source))
+  );
+  if (missingSources.length > 0) {
+    t.skip(`minigames source tree not available at ${minigamesRoot}/apps`);
+    return false;
+  }
+  if (!fs.existsSync(esbuildCli)) {
+    t.skip(`esbuild not available at ${esbuildCli}`);
     return false;
   }
   return true;
@@ -54,8 +61,9 @@ test('generated sudoku-data.js stays semantically identical to its TS twin', asy
   try {
     const outFile = path.join(tmpDir, 'sudoku-data.mjs');
     execFileSync(
-      esbuildBin,
+      process.execPath,
       [
+        esbuildCli,
         'apps/sudoku/src/logic/sudoku-data.ts',
         '--format=esm',
         '--platform=node',

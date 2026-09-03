@@ -14,9 +14,15 @@
 //! fail here.
 
 use anyhow::Result;
+use ed25519_dalek::{Signer as _, SigningKey};
+use rusqlite::Connection;
 
 use super::*;
-use crate::{model::WindowLimit, network, tx::HASH160_LEN};
+use crate::{
+    model::{AssetLimit, SignatureRateLimit, WindowLimit},
+    network,
+    tx::HASH160_LEN,
+};
 
 /// A recipient, an asset-agnostic account: nothing in these tests depends on it
 /// being a real wallet, only on it being an account that is not the key's own.
@@ -45,12 +51,19 @@ struct Custody {
 
 impl Custody {
     fn open() -> Result<Self> {
+        Self::open_with(Network::Testnet, None)
+    }
+
+    /// A harness whose vault key is held for `network`, bound to `magic` —
+    /// `None` meaning the canonical value, the way every existing consumer
+    /// asks.
+    fn open_with(network: Network, magic: Option<u32>) -> Result<Self> {
         let dir = tempfile::tempdir()?;
         let repository = Store::open(dir.path().join("neonexus.db"))?;
         let service = SignerService::new(repository, MasterKey::from_bytes([9u8; 32]));
         let (admin_row, admin_token) = provision_admin_caller(service.repository(), "bootstrap")?;
         let admin = CallerCredentials::server_to_server(&admin_token);
-        let key = allowed(service.generate_key(&admin, "treasury", Network::Testnet)?);
+        let key = allowed(service.generate_key(&admin, "treasury", network, magic)?);
         let (caller, token) = allowed(service.create_caller(
             &admin,
             "relayer",
@@ -203,14 +216,54 @@ fn transaction(account: [u8; HASH160_LEN], nonce: u32, script: &[u8]) -> Vec<u8>
 
 /// `SerializeUnsigned` for an extensible payload — the container dBFT uses.
 fn consensus_payload(category: &str, sender: [u8; HASH160_LEN]) -> Vec<u8> {
+    consensus_payload_for(
+        category,
+        sender,
+        tx::DbftMessageType::PrepareResponse as u8,
+        200,
+        0,
+        0,
+        &[0x01; 32],
+    )
+}
+
+fn consensus_payload_for(
+    category: &str,
+    sender: [u8; HASH160_LEN],
+    message_type: u8,
+    block_index: u32,
+    validator_index: u8,
+    view_number: u8,
+    body: &[u8],
+) -> Vec<u8> {
     let mut out = vec![category.len() as u8];
     out.extend_from_slice(category.as_bytes());
-    out.extend_from_slice(&100u32.to_le_bytes());
-    out.extend_from_slice(&200u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&block_index.to_le_bytes());
     out.extend_from_slice(&sender);
-    out.push(1);
-    out.push(0x01);
+    let data = [
+        vec![message_type],
+        block_index.to_le_bytes().to_vec(),
+        vec![validator_index, view_number],
+        body.to_vec(),
+    ]
+    .concat();
+    out.push(data.len() as u8);
+    out.extend(data);
     out
+}
+
+fn prepare_request_body(transaction_hashes: &[[u8; 32]]) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&0u32.to_le_bytes());
+    body.extend_from_slice(&[0x11; 32]);
+    body.extend_from_slice(&1_700_000_000u64.to_le_bytes());
+    body.extend_from_slice(&42u64.to_le_bytes());
+    body.push(transaction_hashes.len() as u8);
+    for hash in transaction_hashes {
+        body.extend_from_slice(hash);
+    }
+    body
 }
 
 // -- assertions -------------------------------------------------------------
@@ -232,6 +285,47 @@ fn refused<T>(outcome: Outcome<T>) -> Refusal {
         Outcome::Refused(refusal) => refusal,
         Outcome::Allowed(_) => unreachable!("expected a refusal, got a signature"),
     }
+}
+
+fn workload_credentials(
+    signing_key: &SigningKey,
+    caller_id: &str,
+    subject: Option<&str>,
+    nonce: &str,
+    body: &[u8],
+) -> CallerCredentials {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    let route = "/signer/api/v1/sign/transaction";
+    let body_digest = auth::body_sha256(body);
+    let message = auth::WorkloadMessage {
+        caller_id,
+        subject,
+        timestamp,
+        nonce,
+        method: "POST",
+        route,
+        body_digest: &body_digest,
+        origin: None,
+    }
+    .to_bytes();
+    let signature = hex::encode(signing_key.sign(&message).to_bytes());
+    CallerCredentials::request(
+        None,
+        None,
+        None,
+        auth::WorkloadRequestHeaders {
+            caller_id: Some(caller_id),
+            timestamp: Some(&timestamp.to_string()),
+            nonce: Some(nonce),
+            signature: Some(&signature),
+        },
+        "POST",
+        route,
+    )
+    .with_body_digest(body_digest)
 }
 
 /// The 64-byte `r||s` out of `0c 40 …`.
@@ -368,6 +462,93 @@ fn a_witness_does_not_carry_over_to_another_network() -> Result<()> {
 }
 
 #[test]
+fn a_private_network_key_binds_the_magic_it_was_created_with() -> Result<()> {
+    // Two private chains both default to 1230000, so a signature over the same
+    // bytes would be valid on both — the replay this binding exists to break.
+    // The key must commit to the magic it was created with, not to whatever the
+    // canonical table says today.
+    const DEPLOYMENT_MAGIC: u32 = 4_242_424;
+    let custody = Custody::open_with(Network::Private, Some(DEPLOYMENT_MAGIC))?;
+    assert_eq!(custody.key.network_magic, DEPLOYMENT_MAGIC);
+    custody.allow_neo_transfers()?;
+
+    let unsigned = custody.transfer(1, 5);
+    let witness = allowed(custody.sign(&unsigned)?);
+    let signature = signature_of(&witness);
+    assert!(
+        crypto::verify_signature(
+            &custody.key.public_key,
+            &preimage(&unsigned, DEPLOYMENT_MAGIC),
+            &signature
+        ),
+        "the signature covers the chain the key was bound to"
+    );
+    assert!(
+        !crypto::verify_signature(
+            &custody.key.public_key,
+            &preimage(&unsigned, network::network_magic(Network::Private)),
+            &signature
+        ),
+        "the default magic must not verify a key bound to a different chain"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unnamed_magic_takes_the_canonical_value_for_the_network() -> Result<()> {
+    let custody = Custody::open_with(Network::Private, None)?;
+    assert_eq!(
+        custody.key.network_magic,
+        network::network_magic(Network::Private),
+        "absent means the canonical table, which is what every pre-existing \
+         consumer sends"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_key_cannot_be_bound_to_a_magic_that_chain_does_not_use() -> Result<()> {
+    let custody = Custody::open()?;
+
+    for network in [Network::Mainnet, Network::Testnet] {
+        let foreign = if network == Network::Mainnet {
+            network::network_magic(Network::Testnet)
+        } else {
+            network::network_magic(Network::Mainnet)
+        };
+        let refusal = refused(custody.service.generate_key(
+            &custody.admin,
+            "replayed",
+            network,
+            Some(foreign),
+        )?);
+        assert_eq!(refusal.code, "signer-admin-request-invalid");
+        assert!(
+            refusal.message.contains("signs under magic"),
+            "{network}: {refusal:?}"
+        );
+    }
+    // Zero is not a chain identity on any network — not even a private one,
+    // where every other value is accepted.
+    for network in [Network::Mainnet, Network::Private] {
+        let zero = refused(custody.service.generate_key(
+            &custody.admin,
+            "zero",
+            network,
+            Some(0),
+        )?);
+        assert_eq!(zero.code, "signer-admin-request-invalid");
+        assert!(
+            zero.message.contains("not a usable chain identity"),
+            "{network}: {zero:?}"
+        );
+    }
+    // Refused every time, stored nothing.
+    assert_eq!(custody.service.repository().list_signer_keys()?.len(), 1);
+    Ok(())
+}
+
+#[test]
 fn a_rolling_window_counts_only_the_signatures_it_allowed() -> Result<()> {
     let custody = Custody::open()?;
     custody.save(&SignerPolicy {
@@ -398,6 +579,262 @@ fn a_rolling_window_counts_only_the_signatures_it_allowed() -> Result<()> {
     let events = custody.spend()?;
     assert_eq!(events.len(), 2);
     assert_eq!(events[1].amount, 400);
+    Ok(())
+}
+
+#[test]
+fn an_asset_specific_window_is_loaded_from_the_durable_ledger() -> Result<()> {
+    let custody = Custody::open()?;
+    custody.save(&SignerPolicy {
+        allow_transfer: true,
+        asset_limits: vec![AssetLimit {
+            asset: ScriptHash::from_wire(tx::native::NEO),
+            max_single_amount: Some(80),
+            window_limit: Some(WindowLimit {
+                seconds: 3_600,
+                max_amount: 100,
+            }),
+        }],
+        ..Default::default()
+    })?;
+
+    allowed(custody.sign(&custody.transfer(60, 21))?);
+    let refusal = refused(custody.sign(&custody.transfer(50, 22))?);
+    assert_eq!(
+        refusal.code,
+        policy::DenyReason::AssetWindowAmountExceeded.code()
+    );
+    assert_eq!(custody.spend()?.len(), 1);
+    allowed(custody.sign(&custody.transfer(40, 23))?);
+    assert_eq!(custody.spend()?.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn an_idempotency_id_returns_one_durable_witness_and_rejects_changed_bytes() -> Result<()> {
+    let custody = Custody::open()?;
+    custody.save(&SignerPolicy {
+        allow_transfer: true,
+        max_signatures: Some(SignatureRateLimit {
+            seconds: 3_600,
+            count: 1,
+        }),
+        ..Default::default()
+    })?;
+    let credentials = custody.credentials();
+    let first_bytes = custody.transfer(10, 51);
+    let first = allowed(custody.service.sign_transaction_with_request_id(
+        &credentials,
+        &custody.key.key_id,
+        &first_bytes,
+        Some("settlement:51"),
+    )?);
+    let repeated = allowed(custody.service.sign_transaction_with_request_id(
+        &credentials,
+        &custody.key.key_id,
+        &first_bytes,
+        Some("settlement:51"),
+    )?);
+    assert_eq!(repeated, first);
+    assert_eq!(custody.spend()?.len(), 1);
+    assert_eq!(
+        custody
+            .service
+            .repository()
+            .signer_signature_count(&custody.key.key_id, 0)?,
+        1,
+        "an exact retry consumes neither spend nor signature capacity"
+    );
+
+    let conflict = refused(custody.service.sign_transaction_with_request_id(
+        &credentials,
+        &custody.key.key_id,
+        &custody.transfer(10, 52),
+        Some("settlement:51"),
+    )?);
+    assert_eq!(conflict.code, audit::REQUEST_ID_CONFLICT);
+
+    let restarted = SignerService::new(
+        Store::open(custody._dir.path().join("neonexus.db"))?,
+        MasterKey::from_bytes([9u8; 32]),
+    );
+    let after_restart = allowed(restarted.sign_transaction_with_request_id(
+        &credentials,
+        &custody.key.key_id,
+        &first_bytes,
+        Some("settlement:51"),
+    )?);
+    assert_eq!(after_restart, first);
+    let stored = restarted
+        .repository()
+        .find_signer_request(&custody.caller_id, "settlement:51")?
+        .expect("completed request");
+    assert!(stored.audit_id.is_some());
+    Ok(())
+}
+
+#[test]
+fn concurrent_requests_share_one_signature_rate_ceiling() -> Result<()> {
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    let custody = Custody::open()?;
+    custody.save(&SignerPolicy {
+        allow_transfer: true,
+        max_signatures: Some(SignatureRateLimit {
+            seconds: 3_600,
+            count: 1,
+        }),
+        ..Default::default()
+    })?;
+
+    let barrier = Arc::new(Barrier::new(3));
+    let mut handles = Vec::new();
+    for unsigned in [custody.transfer(1, 31), custody.transfer(1, 32)] {
+        let service = custody.service.clone();
+        let token = custody.token.clone();
+        let key_id = custody.key.key_id.clone();
+        let barrier = Arc::clone(&barrier);
+        handles.push(thread::spawn(move || {
+            barrier.wait();
+            service.sign_transaction(
+                &CallerCredentials::server_to_server(&token),
+                &key_id,
+                &unsigned,
+            )
+        }));
+    }
+    barrier.wait();
+
+    let outcomes = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("signing thread panicked"))
+        .collect::<Result<Vec<_>>>()?;
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, Outcome::Allowed(_)))
+            .count(),
+        1
+    );
+    let refusal = outcomes
+        .into_iter()
+        .find_map(|outcome| match outcome {
+            Outcome::Refused(refusal) => Some(refusal),
+            Outcome::Allowed(_) => None,
+        })
+        .expect("one request is refused");
+    assert_eq!(
+        refusal.code,
+        policy::DenyReason::SignatureRateExceeded.code()
+    );
+    assert_eq!(
+        custody
+            .service
+            .repository()
+            .signer_signature_count(&custody.key.key_id, 0)?,
+        1,
+        "a refusal must not consume another signature slot"
+    );
+    Ok(())
+}
+
+#[test]
+fn concurrent_requests_cannot_both_spend_the_same_window_capacity() -> Result<()> {
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    let custody = Custody::open()?;
+    custody.save(&SignerPolicy {
+        allow_transfer: true,
+        window_limit: Some(WindowLimit {
+            seconds: 3_600,
+            max_amount: 100,
+        }),
+        ..Default::default()
+    })?;
+
+    let barrier = Arc::new(Barrier::new(3));
+    let mut handles = Vec::new();
+    for (nonce, unsigned) in [
+        (41, custody.transfer(60, 41)),
+        (42, custody.transfer(60, 42)),
+    ] {
+        let service = custody.service.clone();
+        let token = custody.token.clone();
+        let key_id = custody.key.key_id.clone();
+        let barrier = Arc::clone(&barrier);
+        handles.push(thread::spawn(move || {
+            barrier.wait();
+            let credentials = CallerCredentials::server_to_server(&token);
+            (
+                nonce,
+                service.sign_transaction(&credentials, &key_id, &unsigned),
+            )
+        }));
+    }
+    barrier.wait();
+
+    let outcomes = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("signing thread panicked").1)
+        .collect::<Result<Vec<_>>>()?;
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, Outcome::Allowed(_)))
+            .count(),
+        1,
+        "only one request may reserve the remaining capacity"
+    );
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| {
+                matches!(
+                    outcome,
+                    Outcome::Refused(refusal)
+                        if refusal.code == policy::DenyReason::WindowAmountExceeded.code()
+                )
+            })
+            .count(),
+        1
+    );
+    let events = custody.spend()?;
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].amount, 60);
+    Ok(())
+}
+
+#[test]
+fn an_audit_row_and_its_value_reservation_commit_or_roll_back_together() -> Result<()> {
+    let custody = Custody::open()?;
+    custody.allow_neo_transfers()?;
+    let audit_before = custody.audit()?.len();
+
+    let connection = rusqlite::Connection::open(custody.service.repository().db_path())?;
+    connection.execute_batch(
+        "CREATE TRIGGER reject_test_value_event
+         BEFORE INSERT ON signer_value_events
+         BEGIN
+           SELECT RAISE(ABORT, 'test ledger failure');
+         END;",
+    )?;
+    drop(connection);
+
+    let error = custody
+        .sign(&custody.transfer(25, 43))
+        .expect_err("the injected ledger failure must abort the decision");
+    assert!(
+        error.to_string().contains("test ledger failure"),
+        "unexpected error: {error:#}"
+    );
+    assert!(custody.spend()?.is_empty());
+    assert_eq!(
+        custody.audit()?.len(),
+        audit_before,
+        "the allowed audit insert must roll back with its failed ledger insert"
+    );
     Ok(())
 }
 
@@ -891,12 +1328,65 @@ fn a_rotation_changes_the_credential_and_nothing_else() -> Result<()> {
 }
 
 #[test]
+fn a_workload_identity_signs_by_proof_of_possession_and_rejects_replay() -> Result<()> {
+    let custody = Custody::open()?;
+    custody.allow_neo_transfers()?;
+    let signing_key = SigningKey::from_bytes(&[13u8; 32]);
+    let caller = allowed(custody.service.create_workload_caller(
+        &custody.admin,
+        WorkloadCallerSpec {
+            label: "neo-nexus-workload",
+            key_grant: KeyGrant::Only(vec![custody.key.key_id.clone()]),
+            capabilities: &[CallerCapability::Sign],
+            allowed_origins: &[],
+            public_key: signing_key.verifying_key().to_bytes(),
+            subject: Some("neo-nexus:test"),
+        },
+    )?);
+    assert_eq!(caller.auth_mode, "workload-ed25519");
+    assert_eq!(
+        caller.workload_public_key.as_deref(),
+        Some(hex::encode(signing_key.verifying_key().to_bytes()).as_str())
+    );
+    assert_eq!(caller.workload_subject.as_deref(), Some("neo-nexus:test"));
+
+    let unsigned = custody.transfer(10, 71);
+    let credentials = workload_credentials(
+        &signing_key,
+        &caller.id,
+        caller.workload_subject.as_deref(),
+        "nonce-0000000071",
+        &unsigned,
+    );
+    allowed(
+        custody
+            .service
+            .sign_transaction(&credentials, &custody.key.key_id, &unsigned)?,
+    );
+    let replay = refused(custody.service.sign_transaction(
+        &credentials,
+        &custody.key.key_id,
+        &unsigned,
+    )?);
+    assert_eq!(replay.code, AccessRejection::WorkloadReplay.code());
+
+    let rotation = refused(
+        custody
+            .service
+            .rotate_caller_token(&custody.admin, &caller.id)?,
+    );
+    assert_eq!(rotation.code, audit::ADMIN_REQUEST_INVALID);
+    Ok(())
+}
+
+#[test]
 fn an_admin_granted_one_key_cannot_read_the_vault() -> Result<()> {
     let custody = Custody::open()?;
     let second = allowed(custody.service.generate_key(
         &custody.admin,
         "other",
         Network::Testnet,
+        None,
     )?);
     let (_, token) = allowed(custody.service.create_caller(
         &custody.admin,
@@ -1008,6 +1498,303 @@ fn consensus_signing_needs_its_own_permission_and_its_own_sender() -> Result<()>
     Ok(())
 }
 
+#[test]
+fn d_bft_equivocation_is_refused_and_survives_a_restart() -> Result<()> {
+    let custody = Custody::open()?;
+    custody.save(&SignerPolicy {
+        allow_consensus: true,
+        ..Default::default()
+    })?;
+    let first = consensus_payload_for(
+        policy::CONSENSUS_CATEGORY,
+        custody.account(),
+        tx::DbftMessageType::Commit as u8,
+        501,
+        2,
+        4,
+        &[0x11; 64],
+    );
+    let conflicting = consensus_payload_for(
+        policy::CONSENSUS_CATEGORY,
+        custody.account(),
+        tx::DbftMessageType::Commit as u8,
+        501,
+        2,
+        4,
+        &[0x22; 64],
+    );
+
+    let first_witness = allowed(custody.service.sign_consensus(
+        &custody.credentials(),
+        &custody.key.key_id,
+        &first,
+    )?);
+    let retry_witness = allowed(custody.service.sign_consensus(
+        &custody.credentials(),
+        &custody.key.key_id,
+        &first,
+    )?);
+    assert_eq!(
+        first_witness.invocation, retry_witness.invocation,
+        "an exact retry is idempotent"
+    );
+
+    let restarted = SignerService::new(
+        Store::open(custody.service.repository().db_path())?,
+        MasterKey::from_bytes([9u8; 32]),
+    );
+    let refusal = refused(restarted.sign_consensus(
+        &custody.credentials(),
+        &custody.key.key_id,
+        &conflicting,
+    )?);
+    assert_eq!(refusal.code, "consensus-equivocation");
+    assert_eq!(refusal.outcome, SignerAuditOutcome::Denied);
+
+    let next_view = consensus_payload_for(
+        policy::CONSENSUS_CATEGORY,
+        custody.account(),
+        tx::DbftMessageType::Commit as u8,
+        501,
+        2,
+        5,
+        &[0x22; 64],
+    );
+    assert_eq!(
+        refused(restarted.sign_consensus(
+            &custody.credentials(),
+            &custody.key.key_id,
+            &next_view
+        )?)
+        .code,
+        "consensus-equivocation",
+        "commit view must not reopen a height-wide slot"
+    );
+    Ok(())
+}
+
+#[test]
+fn prepare_request_and_response_share_the_proposal_checkpoint() -> Result<()> {
+    let custody = Custody::open()?;
+    custody.save(&SignerPolicy {
+        allow_consensus: true,
+        ..Default::default()
+    })?;
+    let request = consensus_payload_for(
+        policy::CONSENSUS_CATEGORY,
+        custody.account(),
+        tx::DbftMessageType::PrepareRequest as u8,
+        502,
+        2,
+        4,
+        &prepare_request_body(&[[0x77; 32]]),
+    );
+    let preparation_hash: [u8; 32] = crypto::sha256(&request).try_into().expect("SHA-256");
+    let response = consensus_payload_for(
+        policy::CONSENSUS_CATEGORY,
+        custody.account(),
+        tx::DbftMessageType::PrepareResponse as u8,
+        502,
+        2,
+        4,
+        &preparation_hash,
+    );
+    allowed(custody.service.sign_consensus(
+        &custody.credentials(),
+        &custody.key.key_id,
+        &request,
+    )?);
+    allowed(custody.service.sign_consensus(
+        &custody.credentials(),
+        &custody.key.key_id,
+        &response,
+    )?);
+
+    let conflicting_response = consensus_payload_for(
+        policy::CONSENSUS_CATEGORY,
+        custody.account(),
+        tx::DbftMessageType::PrepareResponse as u8,
+        502,
+        2,
+        4,
+        &[0x99; 32],
+    );
+    assert_eq!(
+        refused(custody.service.sign_consensus(
+            &custody.credentials(),
+            &custody.key.key_id,
+            &conflicting_response,
+        )?)
+        .code,
+        "consensus-equivocation"
+    );
+    Ok(())
+}
+
+#[test]
+fn consensus_slot_is_durable_before_private_key_open() -> Result<()> {
+    let custody = Custody::open()?;
+    custody.save(&SignerPolicy {
+        allow_consensus: true,
+        ..Default::default()
+    })?;
+    let first = consensus_payload_for(
+        policy::CONSENSUS_CATEGORY,
+        custody.account(),
+        tx::DbftMessageType::Commit as u8,
+        503,
+        1,
+        2,
+        &[0x41; 64],
+    );
+    let conflicting = consensus_payload_for(
+        policy::CONSENSUS_CATEGORY,
+        custody.account(),
+        tx::DbftMessageType::Commit as u8,
+        503,
+        1,
+        3,
+        &[0x42; 64],
+    );
+    Connection::open(custody.service.repository().db_path())?.execute(
+        "UPDATE signer_keys SET ciphertext = X'00' WHERE id = ?1",
+        [&custody.key.key_id],
+    )?;
+
+    let failed = refused(custody.service.sign_consensus(
+        &custody.credentials(),
+        &custody.key.key_id,
+        &first,
+    )?);
+    assert_eq!(failed.code, "signer-vault-unreadable");
+
+    let conflict = refused(custody.service.sign_consensus(
+        &custody.credentials(),
+        &custody.key.key_id,
+        &conflicting,
+    )?);
+    assert_eq!(conflict.code, "consensus-equivocation");
+    Ok(())
+}
+
+#[test]
+fn deleting_and_reimporting_a_public_key_cannot_reset_consensus_slots() -> Result<()> {
+    let custody = Custody::open()?;
+    let consensus_policy = SignerPolicy {
+        allow_consensus: true,
+        ..Default::default()
+    };
+    custody.save(&consensus_policy)?;
+    let first = consensus_payload_for(
+        policy::CONSENSUS_CATEGORY,
+        custody.account(),
+        tx::DbftMessageType::Commit as u8,
+        504,
+        1,
+        1,
+        &[0x51; 64],
+    );
+    allowed(
+        custody
+            .service
+            .sign_consensus(&custody.credentials(), &custody.key.key_id, &first)?,
+    );
+
+    let stored = custody
+        .service
+        .repository()
+        .get_signer_key(&custody.key.key_id)?;
+    let private_key = custody
+        .service
+        .open_key(&stored)
+        .unwrap_or_else(|refusal| panic!("key should open before deletion: {refusal:?}"));
+    allowed(
+        custody
+            .service
+            .delete_key(&custody.admin, &custody.key.key_id)?,
+    );
+    let replacement = allowed(custody.service.import_key(
+        &custody.admin,
+        "same-validator",
+        Network::Testnet,
+        None,
+        &hex::encode(private_key.as_slice()),
+    )?);
+    allowed(
+        custody
+            .service
+            .save_policy(&custody.admin, &replacement.key_id, &consensus_policy)?,
+    );
+
+    let conflicting = consensus_payload_for(
+        policy::CONSENSUS_CATEGORY,
+        replacement.script_hash.as_bytes(),
+        tx::DbftMessageType::Commit as u8,
+        504,
+        1,
+        9,
+        &[0x52; 64],
+    );
+    assert_ne!(replacement.key_id, custody.key.key_id);
+    assert_eq!(
+        refused(custody.service.sign_consensus(
+            &custody.credentials(),
+            &replacement.key_id,
+            &conflicting,
+        )?)
+        .code,
+        "consensus-equivocation"
+    );
+    Ok(())
+}
+
+#[test]
+fn change_view_and_recovery_messages_do_not_consume_equivocation_slots() -> Result<()> {
+    let custody = Custody::open()?;
+    custody.save(&SignerPolicy {
+        allow_consensus: true,
+        ..Default::default()
+    })?;
+    for (message_type, bodies) in [
+        (
+            tx::DbftMessageType::ChangeView,
+            vec![
+                [1u64.to_le_bytes().as_slice(), &[0x00]].concat(),
+                [2u64.to_le_bytes().as_slice(), &[0x00]].concat(),
+            ],
+        ),
+        (
+            tx::DbftMessageType::RecoveryRequest,
+            vec![1u64.to_le_bytes().to_vec(), 2u64.to_le_bytes().to_vec()],
+        ),
+        (
+            tx::DbftMessageType::RecoveryMessage,
+            vec![
+                vec![0x00, 0x00, 0x00, 0x00, 0x00],
+                [&[0x00, 0x00, 0x20][..], &[0x55; 32], &[0x00, 0x00]].concat(),
+            ],
+        ),
+    ] {
+        for body in bodies {
+            let payload = consensus_payload_for(
+                policy::CONSENSUS_CATEGORY,
+                custody.account(),
+                message_type as u8,
+                700,
+                1,
+                3,
+                &body,
+            );
+            allowed(custody.service.sign_consensus(
+                &custody.credentials(),
+                &custody.key.key_id,
+                &payload,
+            )?);
+        }
+    }
+    Ok(())
+}
+
 // -- custody bookkeeping ----------------------------------------------------
 
 #[test]
@@ -1018,6 +1805,7 @@ fn a_key_already_in_custody_cannot_be_imported_twice() -> Result<()> {
         &custody.admin,
         "from-hex",
         Network::Mainnet,
+        None,
         &hex::encode(private_key),
     )?);
     assert_eq!(imported.network, Network::Mainnet);
@@ -1030,6 +1818,7 @@ fn a_key_already_in_custody_cannot_be_imported_twice() -> Result<()> {
         &custody.admin,
         "again",
         Network::Mainnet,
+        None,
         &hex::encode(private_key),
     )?);
     assert_eq!(refusal.code, "signer-admin-request-invalid");
@@ -1056,6 +1845,7 @@ fn a_nep2_import_seals_the_same_key_and_checks_the_passphrase_first() -> Result<
         &custody.admin,
         "from-nep2",
         Network::Testnet,
+        None,
         &nep2,
         "super-secret-passphrase",
     )?);
@@ -1075,6 +1865,7 @@ fn a_nep2_import_seals_the_same_key_and_checks_the_passphrase_first() -> Result<
         &custody.admin,
         "bad",
         Network::Testnet,
+        None,
         &nep2,
         "wrong-passphrase",
     )?);
@@ -1101,6 +1892,7 @@ fn an_unusable_private_key_is_refused_rather_than_stored() -> Result<()> {
             &custody.admin,
             label,
             Network::Testnet,
+            None,
             value,
         )?);
         assert_eq!(refusal.code, "signer-admin-request-invalid", "{label}");
@@ -1338,7 +2130,7 @@ fn a_restarted_service_signs_the_same_bytes_the_same_way() -> Result<()> {
 
     let (_admin, admin_token) = provision_admin_caller(first.repository(), "bootstrap")?;
     let admin = CallerCredentials::server_to_server(&admin_token);
-    let key = allowed(first.generate_key(&admin, "treasury", Network::Testnet)?);
+    let key = allowed(first.generate_key(&admin, "treasury", Network::Testnet, None)?);
     allowed(first.save_policy(
         &admin,
         &key.key_id,

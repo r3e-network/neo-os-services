@@ -10,23 +10,17 @@
 //!   The operator relays ciphertext and presents the token; KMS releases the
 //!   envelope only to the attested enclave, so the host cannot install a token
 //!   of its choice. The presented token must match the released one.
-//! * **Rotation** requires the current token (as a normal bearer credential)
-//!   and a strictly newer versioned envelope — 409 otherwise.
+//! * **Provisioning is one-shot.** A second call is a 409 even when it carries
+//!   the current token. Temporary AWS credentials rotate only through the
+//!   separately authenticated `/provision/credentials` route.
 //! * **Plaintext provisioning is permanently refused** (403): a compromised
 //!   host must not be able to inject a known signer key in one request. The
 //!   rejected names are sorted so the refusal is deterministic and greppable.
 //!
-//! The one deliberate divergence from the merged Node server: the
-//! `materialize*FromKms` key-recovery calls are NOT here. In the split, keys
-//! live in the custody service behind the signer plane — this host holds no
-//! key material, so there is nothing to materialize. The custody enclave is
-//! provisioned by the same start script with the same ciphertext envelopes.
-//! The other half of the merged server's `process.env[key] = text` write —
-//! the in-process worker handler observing the new env — becomes a compute
-//! child respawn ([`crate::child`]): the child's config surface is its boot
-//! env, so the host replaces it with the merged view once the overlay is
-//! updated. Best-effort: a failed respawn is logged and retried by the watch
-//! loop; the provision response still reports the applied keys.
+//! X25519 and NeoDID ciphertexts are materialized here through the same
+//! recipient-attested release seam as the runtime token. Their plaintext is
+//! validated against purpose/network/version envelopes and installed only in
+//! the in-memory overlay under internal source markers.
 
 use serde_json::Value;
 
@@ -35,8 +29,16 @@ use crate::auth::{
     RUNTIME_TOKEN_KMS_PURPOSE, TOKEN_ENV_KEYS,
 };
 use crate::http_error;
+use crate::overlay::{is_provisionable_name, CREDENTIAL_NAMES};
 use crate::state::{AppState, KmsReleaseParams, RoleReport};
 use crate::RuntimeError;
+
+pub const ORACLE_KMS_CIPHERTEXT_ENV: &str = "MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64";
+pub const ORACLE_KMS_PURPOSE: &str = "neoos/oracle-x25519/v1";
+pub const NEODID_KMS_CIPHERTEXT_ENV: &str = "MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64";
+pub const NEODID_KMS_PURPOSE: &str = "neoos/neodid-salt/v1";
+pub const CUSTODY_TOKEN_KMS_CIPHERTEXT_ENV: &str = "SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64";
+pub const CUSTODY_TOKEN_KMS_PURPOSE: &str = "neoos/custody-caller-token/v1";
 
 /// Plaintext signing-key env vars a host could otherwise inject via /provision
 /// to bypass the KMS-attested path. The `*_KMS_CIPHERTEXT_BASE64` variants are
@@ -171,22 +173,9 @@ pub fn materialize_provision_runtime_token(
             ))
         }
     };
-    // JS `env.MORPHEUS_NETWORK || process.env.MORPHEUS_NETWORK` — the env map
-    // wins only when it holds a non-empty (trimmed) string.
-    let network_source = env
-        .get("MORPHEUS_NETWORK")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            state
-                .overlay
-                .read()
-                .expect("overlay lock")
-                .get_trimmed("MORPHEUS_NETWORK")
-        });
-    let provision_network = crate::normalize_network(network_source.as_deref());
+    // Network is image-owned. Letting the untrusted parent restate it here
+    // would allow a valid testnet envelope to authorize a mainnet process.
+    let provision_network = state.resolve_network();
     let token = envelope
         .get("token")
         .and_then(Value::as_str)
@@ -216,46 +205,226 @@ pub fn materialize_provision_runtime_token(
     Ok(MaterializedToken { token, version })
 }
 
-/// The tokens /provision accepts: after a KMS-materialized token exists, ONLY
-/// that token (rotation presents the current credential); before it, the
-/// static trusted set from the token env keys.
-fn current_provision_tokens(state: &AppState) -> Vec<String> {
-    if state
-        .runtime_token_kms_version
-        .load(std::sync::atomic::Ordering::SeqCst)
-        > 0
-    {
-        let token = state
-            .overlay
-            .read()
-            .expect("overlay lock")
-            .get_trimmed("MORPHEUS_RUNTIME_TOKEN");
-        return token.into_iter().collect();
+fn release_context_envelope(
+    state: &AppState,
+    env: &serde_json::Map<String, Value>,
+    ciphertext_env: &str,
+    expected_purpose: &str,
+) -> Result<Option<Value>, RuntimeError> {
+    let Some(ciphertext) = env
+        .get(ciphertext_env)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let params = kms_release_params(state, env, ciphertext).ok_or_else(|| {
+        http_error(
+            503,
+            format!("attestation-gated {ciphertext_env} materialization failed"),
+        )
+    })?;
+    let plaintext = state.kms.decrypt(&params).map_err(|_| {
+        http_error(
+            503,
+            format!("attestation-gated {ciphertext_env} materialization failed"),
+        )
+    })?;
+    let envelope: Value = serde_json::from_slice(&plaintext)
+        .map_err(|_| http_error(400, format!("{ciphertext_env} KMS envelope is invalid")))?;
+    let version_ok = envelope
+        .get("version")
+        .and_then(Value::as_u64)
+        .is_some_and(|version| version > 0);
+    let purpose_ok = envelope.get("purpose").and_then(Value::as_str) == Some(expected_purpose);
+    let network_ok = crate::normalize_network(envelope.get("network").and_then(Value::as_str))
+        == state.resolve_network();
+    if !(version_ok && purpose_ok && network_ok) {
+        return Err(http_error(
+            400,
+            format!("{ciphertext_env} KMS envelope context is invalid"),
+        ));
     }
-    crate::auth::trusted_tokens(&state.overlay.read().expect("overlay lock"))
+    Ok(Some(envelope))
 }
 
-/// `assertProvisionAuthorized`. Returns the bootstrap token when this is the
-/// first provision (trusted set empty, token released from the envelope and
-/// matched against what was presented); `None` when the request authenticated
-/// against the current token set like any other route.
+fn materialize_oracle_key(
+    state: &AppState,
+    env: &serde_json::Map<String, Value>,
+) -> Result<Option<String>, RuntimeError> {
+    let Some(envelope) =
+        release_context_envelope(state, env, ORACLE_KMS_CIPHERTEXT_ENV, ORACLE_KMS_PURPOSE)?
+    else {
+        return Ok(None);
+    };
+    let material = envelope
+        .get("key_material")
+        .cloned()
+        .filter(Value::is_object)
+        .ok_or_else(|| {
+            http_error(
+                400,
+                format!("{ORACLE_KMS_CIPHERTEXT_ENV} KMS envelope key_material is invalid"),
+            )
+        })?;
+    let material_json = serde_json::to_string(&material).expect("JSON value serializes");
+    let lookup = |name: &str| match name {
+        "MORPHEUS_ORACLE_KEY_MATERIAL_JSON" => Some(material_json.clone()),
+        "MORPHEUS_ORACLE_KEY_SOURCE" => Some("nitro-recipient-kms".to_string()),
+        _ => None,
+    };
+    let parsed = morpheus_compute::oracle::crypto::parse_configured_oracle_key_material(&lookup)
+        .map_err(|_| {
+            http_error(
+                400,
+                format!("{ORACLE_KMS_CIPHERTEXT_ENV} KMS envelope key_material is invalid"),
+            )
+        })?
+        .ok_or_else(|| {
+            http_error(
+                400,
+                format!("{ORACLE_KMS_CIPHERTEXT_ENV} KMS envelope key_material is invalid"),
+            )
+        })?;
+    morpheus_compute::oracle::crypto::validate_oracle_key_material(&parsed).map_err(|_| {
+        http_error(
+            400,
+            format!("{ORACLE_KMS_CIPHERTEXT_ENV} KMS envelope key_material is invalid"),
+        )
+    })?;
+    Ok(Some(material_json))
+}
+
+fn materialize_neodid_salt(
+    state: &AppState,
+    env: &serde_json::Map<String, Value>,
+) -> Result<Option<String>, RuntimeError> {
+    let Some(envelope) =
+        release_context_envelope(state, env, NEODID_KMS_CIPHERTEXT_ENV, NEODID_KMS_PURPOSE)?
+    else {
+        return Ok(None);
+    };
+    let salt = envelope
+        .get("salt")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|salt| (32..=1024).contains(&salt.as_bytes().len()))
+        .ok_or_else(|| {
+            http_error(
+                400,
+                format!("{NEODID_KMS_CIPHERTEXT_ENV} KMS envelope salt is invalid"),
+            )
+        })?;
+    Ok(Some(salt.to_string()))
+}
+
+fn materialize_custody_token(
+    state: &AppState,
+    env: &serde_json::Map<String, Value>,
+) -> Result<Option<String>, RuntimeError> {
+    let Some(envelope) = release_context_envelope(
+        state,
+        env,
+        CUSTODY_TOKEN_KMS_CIPHERTEXT_ENV,
+        CUSTODY_TOKEN_KMS_PURPOSE,
+    )?
+    else {
+        return Ok(None);
+    };
+    let token = envelope
+        .get("token")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|token| (32..=512).contains(&token.chars().count()))
+        .ok_or_else(|| {
+            http_error(
+                400,
+                format!("{CUSTODY_TOKEN_KMS_CIPHERTEXT_ENV} KMS envelope token is invalid"),
+            )
+        })?;
+    Ok(Some(token.to_string()))
+}
+
+/// Validate the complete provisioning object before any KMS or state effect.
+fn validate_provision_env(env: &serde_json::Map<String, Value>) -> Result<(), RuntimeError> {
+    let mut plaintext: Vec<&str> = env
+        .iter()
+        .filter(|(key, value)| {
+            let value = value.as_str().map(str::trim).unwrap_or("");
+            !value.is_empty()
+                && (*key == "MORPHEUS_ALLOW_PLAINTEXT_KEY_PROVISION"
+                    || TOKEN_ENV_KEYS.contains(&key.as_str())
+                    || PLAINTEXT_KEY_ENV_KEYS.contains(&key.as_str()))
+        })
+        .map(|(key, _)| key.as_str())
+        .collect();
+    plaintext.sort_unstable();
+    if !plaintext.is_empty() {
+        return Err(http_error(
+            403,
+            format!(
+                "plaintext key or runtime-token provisioning is permanently disabled; provide an attestation-gated \
+                 *_KMS_CIPHERTEXT_BASE64 value instead. Rejected: {}",
+                plaintext.join(", ")
+            ),
+        ));
+    }
+
+    let mut unknown: Vec<&str> = env
+        .keys()
+        .filter(|key| !is_provisionable_name(key))
+        .map(String::as_str)
+        .collect();
+    unknown.sort_unstable();
+    if !unknown.is_empty() {
+        return Err(http_error(
+            400,
+            format!(
+                "provision env contains non-allowlisted names: {}",
+                unknown.join(", ")
+            ),
+        ));
+    }
+
+    let mut invalid: Vec<&str> = env
+        .iter()
+        .filter(|(_, value)| value.as_str().map(str::trim).is_none_or(str::is_empty))
+        .map(|(key, _)| key.as_str())
+        .collect();
+    invalid.sort_unstable();
+    if !invalid.is_empty() {
+        return Err(http_error(
+            400,
+            format!(
+                "provision env values must be non-empty strings: {}",
+                invalid.join(", ")
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// `assertProvisionAuthorized`. The first call is authorized only by the
+/// token released from its own KMS envelope. Existing image tokens never
+/// authorize bootstrap, and a provisioned instance cannot rotate through this
+/// route.
 pub fn assert_provision_authorized(
     state: &AppState,
     headers: &http::HeaderMap,
     payload: &Value,
 ) -> Result<Option<MaterializedToken>, RuntimeError> {
-    let trusted = current_provision_tokens(state);
-    if !trusted.is_empty() {
-        let token = extract_request_token(headers);
-        for trusted_token in &trusted {
-            if timing_safe_token_match(&token, trusted_token) {
-                return Ok(None);
-            }
-        }
-        return Err(http_error(401, "unauthorized"));
-    }
     let empty = serde_json::Map::new();
     let env = provision_env(payload).unwrap_or(&empty);
+    validate_provision_env(env)?;
+    if state
+        .runtime_token_kms_version
+        .load(std::sync::atomic::Ordering::SeqCst)
+        > 0
+    {
+        crate::auth::assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+        return Err(http_error(409, "provisioning is one-shot per enclave boot"));
+    }
     let materialized = materialize_provision_runtime_token(state, env)?;
     if timing_safe_token_match(&extract_request_token(headers), &materialized.token) {
         return Ok(Some(materialized));
@@ -339,56 +508,23 @@ pub fn handle_provision(
 ) -> Result<Value, RuntimeError> {
     let empty = serde_json::Map::new();
     let env = provision_env(payload).unwrap_or(&empty);
-
-    // The plaintext refusal runs before anything else and lists every offender
-    // at once, sorted — one deterministic refusal an operator can grep for.
-    let mut rejected: Vec<&str> = env
-        .iter()
-        .filter(|(key, value)| {
-            let value = value.as_str().map(str::trim).unwrap_or("");
-            !value.is_empty()
-                && (*key == "MORPHEUS_ALLOW_PLAINTEXT_KEY_PROVISION"
-                    || TOKEN_ENV_KEYS.contains(&key.as_str())
-                    || PLAINTEXT_KEY_ENV_KEYS.contains(&key.as_str()))
-        })
-        .map(|(key, _)| key.as_str())
-        .collect();
-    rejected.sort_unstable();
-    if !rejected.is_empty() {
-        return Err(http_error(
-            403,
-            format!(
-                "plaintext key or runtime-token provisioning is permanently disabled; provide an attestation-gated \
-                 *_KMS_CIPHERTEXT_BASE64 value instead. Rejected: {}",
-                rejected.join(", ")
-            ),
-        ));
+    validate_provision_env(env)?;
+    if state
+        .runtime_token_kms_version
+        .load(std::sync::atomic::Ordering::SeqCst)
+        > 0
+    {
+        return Err(http_error(409, "provisioning is one-shot per enclave boot"));
     }
+    let next_runtime_token = bootstrap
+        .ok_or_else(|| http_error(500, "provision bootstrap token was not materialized"))?;
 
-    let ciphertext_present = env
-        .get(RUNTIME_TOKEN_KMS_CIPHERTEXT_ENV)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty());
-    let next_runtime_token = if ciphertext_present {
-        match bootstrap {
-            Some(bootstrap) => Some(bootstrap),
-            None => Some(materialize_provision_runtime_token(state, env)?),
-        }
-    } else {
-        None
-    };
-    if let Some(next) = &next_runtime_token {
-        let current = state
-            .runtime_token_kms_version
-            .load(std::sync::atomic::Ordering::SeqCst);
-        if next.version <= current {
-            return Err(http_error(
-                409,
-                "runtime authorization KMS envelope version must increase monotonically",
-            ));
-        }
-    }
+    // Release and validate every optional confidential envelope before
+    // mutating state, so one bad ciphertext cannot leave a half-provisioned
+    // frontier.
+    let oracle_key = materialize_oracle_key(state, env)?;
+    let neodid_salt = materialize_neodid_salt(state, env)?;
+    let custody_token = materialize_custody_token(state, env)?;
 
     let mut applied: Vec<String> = Vec::new();
     {
@@ -398,23 +534,21 @@ pub fn handle_provision(
                 applied.push(key.clone());
             }
         }
-        if let Some(next) = &next_runtime_token {
-            overlay.set_runtime_token(&next.token);
+        overlay.set_runtime_token(&next_runtime_token.token);
+        if let Some(token) = &custody_token {
+            overlay.set_custody_token(token);
+        }
+        if let Some(material) = &oracle_key {
+            overlay.set_oracle_key_material(material);
+        }
+        if let Some(salt) = &neodid_salt {
+            overlay.set_neodid_salt(salt);
         }
     }
-    if let Some(next) = &next_runtime_token {
-        state
-            .runtime_token_kms_version
-            .store(next.version, std::sync::atomic::Ordering::SeqCst);
-    }
-
-    // The compute child's config surface is its boot env, so a provision
-    // event replaces it with the merged overlay — the split's equivalent of
-    // the merged server's `process.env` write reaching the worker handler.
-    if let Some(child) = &state.bridge_child {
-        let snapshot = state.overlay.read().expect("overlay lock").clone();
-        child.respawn_for_provision(&snapshot);
-    }
+    state.runtime_token_kms_version.store(
+        next_runtime_token.version,
+        std::sync::atomic::Ordering::SeqCst,
+    );
 
     let diag = run_kms_diag(state);
     *state.kms_diag.lock().expect("kms diag lock") = crate::state::KmsDiag { value: diag };
@@ -436,6 +570,71 @@ pub fn handle_provision(
         "provisioned": true,
         "env_keys": env_keys,
         "roles": roles,
+    }))
+}
+
+/// Rotate only temporary AWS credentials after one-shot provisioning.
+pub fn handle_provision_credentials(
+    state: &AppState,
+    payload: &Value,
+) -> Result<Value, RuntimeError> {
+    if state
+        .runtime_token_kms_version
+        .load(std::sync::atomic::Ordering::SeqCst)
+        == 0
+    {
+        return Err(http_error(409, "runtime must be provisioned first"));
+    }
+    let env = provision_env(payload)
+        .ok_or_else(|| http_error(400, "credential provision requires an env object"))?;
+    let mut unknown: Vec<&str> = env
+        .keys()
+        .filter(|key| !CREDENTIAL_NAMES.contains(&key.as_str()))
+        .map(String::as_str)
+        .collect();
+    unknown.sort_unstable();
+    if !unknown.is_empty() {
+        return Err(http_error(
+            400,
+            format!(
+                "credential provision contains non-credential names: {}",
+                unknown.join(", ")
+            ),
+        ));
+    }
+    let missing: Vec<&str> = CREDENTIAL_NAMES
+        .iter()
+        .copied()
+        .filter(|key| {
+            env.get(*key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .is_none_or(str::is_empty)
+        })
+        .collect();
+    if !missing.is_empty() {
+        return Err(http_error(
+            400,
+            format!(
+                "credential provision requires non-empty {}",
+                missing.join(", ")
+            ),
+        ));
+    }
+    let mut applied = Vec::new();
+    {
+        let mut overlay = state.overlay.write().expect("overlay lock");
+        for key in CREDENTIAL_NAMES {
+            if overlay.apply(key, env.get(key).expect("validated credential")) {
+                applied.push(key);
+            }
+        }
+    }
+    Ok(serde_json::json!({
+        "status": "ok",
+        "runtime": crate::RUNTIME_NAME,
+        "credentials_rotated": true,
+        "env_keys": applied,
     }))
 }
 

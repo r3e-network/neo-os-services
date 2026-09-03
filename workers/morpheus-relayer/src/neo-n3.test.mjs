@@ -81,8 +81,9 @@ test('buildSignAndBroadcastNeoN3Tx builds, fees, double-signs, and broadcasts a 
     // R2-1.2: this single getblockcount also pins the removal of the redundant pre-flight
     // health probe from fulfillNeoN3Request (Round-1 change b7642ba). buildSignAndBroadcastNeoN3Tx
     // is the actual submit path that probe used to pre-empt; asserting exactly one getblockcount
-    // here means a re-added probe would surface as a second entry. (A direct fulfillNeoN3Request-
-    // level test is impractical — neon's high-level SmartContract.invoke bypasses global.fetch.)
+    // here means a re-added probe would surface as a second entry. fulfillNeoN3Request itself
+    // (custody updater + this submit path) is covered end-to-end in relayer.test.mjs via the
+    // mocked custody signer service + Neo RPC fetch stubs.
     assert.deepEqual(calls[3].params, [signedBase64]);
   } finally {
     global.fetch = originalFetch;

@@ -1262,6 +1262,25 @@ test('keys/derived returns a pinned role identity (no secret)', async () => {
   assert.equal(body.neo_n3.public_key, UPDATER_ACCOUNT.publicKey);
 });
 
+test('enclave signer refuses to act under a defaulted or unmappable role', async () => {
+  // regression: normalizeSignerRole used to fall back to 'updater', so an
+  // absent or bogus key_role signed with the updater key
+  const absent = await dispatch('POST', '/sign/payload', AUTH, JSON.stringify({}));
+  assert.equal(absent.status, 400);
+  assert.match(absent.body.error, /key_role is required and must name a signer role/);
+  const bogus = await dispatch(
+    'POST',
+    '/sign/payload',
+    AUTH,
+    JSON.stringify({ key_role: 'superadmin', data_hex: '00' })
+  );
+  assert.equal(bogus.status, 400);
+  assert.match(bogus.body.error, /key_role is required and must name a signer role/);
+  const derived = await dispatch('POST', '/keys/derived', AUTH, JSON.stringify({}));
+  assert.equal(derived.status, 400);
+  assert.match(derived.body.error, /key_role is required and must name a signer role/);
+});
+
 test('provision applies env keys at runtime and reports role health', async () => {
   // Provision a benign extra key + re-affirm the network; the keys are already set
   // at module load, so roles should report ok. First-boot provisioning is not
@@ -1495,17 +1514,21 @@ test('first provision and rotation require versioned attestation-gated KMS runti
 
 test('start-nitro-signer requires a KMS-sealed runtime token bootstrap', () => {
   const source = readFileSync(new URL('./start-nitro-signer.sh', import.meta.url), 'utf8');
-  assert.match(source, /env\.MORPHEUS_RUNTIME_TOKEN/);
-  assert.match(source, /env\.NITRO_SIGNER_TOKEN/);
+  assert.match(source, /signer\.MORPHEUS_RUNTIME_TOKEN/);
+  assert.match(source, /signer\.NITRO_SIGNER_TOKEN/);
   assert.match(source, /MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64/);
+  assert.match(source, /SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64/);
+  assert.match(source, /MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64/);
+  assert.match(source, /MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64/);
   assert.match(source, /if \(!token\)/);
   assert.match(source, /authorization:\s*`Bearer \$\{token\}`/);
 });
 
-test('compute provisioning forwards only KMS ciphertext and has no host plaintext rollback', () => {
+test('credential rotation cannot replay confidential or runtime provisioning', () => {
   const source = readFileSync(new URL('./provision-enclave-compute.sh', import.meta.url), 'utf8');
-  assert.match(source, /MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64/);
-  assert.match(source, /MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64/);
+  assert.match(source, /\/provision\/credentials/);
+  assert.doesNotMatch(source, /MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64/);
+  assert.doesNotMatch(source, /MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64/);
   assert.doesNotMatch(source, /createDecipheriv|deriveKeyBytes/);
   assert.doesNotMatch(source, /env\.MORPHEUS_ORACLE_KEY_MATERIAL_(?:JSON|BASE64)\s*=/);
   assert.doesNotMatch(source, /env\.NEODID_SECRET_SALT\s*=/);

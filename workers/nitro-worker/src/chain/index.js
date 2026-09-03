@@ -10,6 +10,8 @@ export {
   buildSignedResultEnvelope,
   buildVerificationEnvelope,
   buildLaneSignedEnvelope,
+  custodySignBytes,
+  rejectCallerSuppliedSigningKey,
 } from './signing.js';
 export {
   loadNeoN3Context,
@@ -23,9 +25,16 @@ export async function handleSignPayload(payload) {
   const targetChain = normalizeTargetChain(payload.target_chain);
   if (targetChain === 'neo_n3') {
     const { bytes, source } = resolveSigningBytes(payload);
-    const signature = await maybeSignNeoN3Bytes(bytes, payload);
-    if (!signature) {
-      return json(400, { error: 'Neo N3 signing key is not configured' });
+    let signature;
+    try {
+      signature = await maybeSignNeoN3Bytes(bytes, payload);
+    } catch (error) {
+      // The lane is custody-only (no local key fallback), so provisioning gaps
+      // and enclave refusals surface as their mapped status, not a 500.
+      if (Number(error?.status) > 0) {
+        return json(Number(error.status), { error: String(error?.message || error) });
+      }
+      throw error;
     }
     return json(200, {
       target_chain: 'neo_n3',

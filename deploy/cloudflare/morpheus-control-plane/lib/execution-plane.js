@@ -27,7 +27,15 @@ function orderExecutionBaseUrls(baseUrls, seed) {
   return [...urls.slice(start), ...urls.slice(0, start)];
 }
 
+function isProductionExecution(env) {
+  const marker = trimString(
+    env.MORPHEUS_ENVIRONMENT || env.NODE_ENV || env.ENVIRONMENT || 'production'
+  ).toLowerCase();
+  return !['development', 'test', 'local'].includes(marker);
+}
+
 function getExecutionPlaneConfig(env, network, options = {}) {
+  assertEdgeSigningKeysAbsent(env, network);
   const normalized = network === 'mainnet' ? 'MAINNET' : 'TESTNET';
   const baseUrlCandidates = options.feed
     ? [
@@ -58,16 +66,22 @@ function getExecutionPlaneConfig(env, network, options = {}) {
       `${options.feed ? 'feed execution' : 'execution'} base URL is not configured for network ${network}`
     );
   }
+  const baseUrls = baseUrl
+    .split(',')
+    .map((entry) => trimString(entry).replace(/\/$/, ''))
+    .filter(Boolean);
+  if (isProductionExecution(env) && baseUrls.length !== 1) {
+    throw new Error(
+      `${options.feed ? 'feed execution' : 'execution'} must use exactly one confidential origin in production`
+    );
+  }
   return {
-    baseUrls: baseUrl
-      .split(',')
-      .map((entry) => trimString(entry).replace(/\/$/, ''))
-      .filter(Boolean),
+    baseUrls,
     token,
   };
 }
 
-// SECURITY (S5): the control plane must NEVER hold or forward Neo N3 signing
+// SECURITY (S5): the control plane must NEVER hold or forward blockchain signing
 // keys (WIF / private key). Key material lives exclusively inside the TEE
 // execution plane (KMS-attested materialization). These env names are the
 // legacy edge-held signer configuration; any one of them being set is a
@@ -80,6 +94,11 @@ const EDGE_HELD_SIGNER_ENV_NAMES = [
   'MORPHEUS_FEED_NEO_N3_PRIVATE_KEY',
   'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY',
   'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
+  'MORPHEUS_RELAYER_NEOX_UPDATER_PK',
+  'MORPHEUS_RELAYER_NEOX_VERIFIER_PK',
+  'NEOX_UPDATER_PK',
+  'NEOX_VERIFIER_PK',
+  'NEOX_FEED_PK',
 ];
 
 function networkScopedSignerEnvNames(upper) {
@@ -100,7 +119,7 @@ function networkScopedSignerEnvNames(upper) {
 }
 
 /**
- * Fail-closed guard: throw when any edge-held Neo N3 signing key is
+ * Fail-closed guard: throw when any edge-held blockchain signing key is
  * configured. The control plane signs nothing itself; signing happens inside
  * the TEE execution plane, which derives keys from its own (attested) secrets.
  * Keeping a WIF here would let it leak over the wire when the feed lane calls
@@ -108,11 +127,25 @@ function networkScopedSignerEnvNames(upper) {
  */
 function assertEdgeSigningKeysAbsent(env, network) {
   const upper = network === 'mainnet' ? 'MAINNET' : 'TESTNET';
-  const candidates = [...networkScopedSignerEnvNames(upper), ...EDGE_HELD_SIGNER_ENV_NAMES];
+  const discovered = Object.keys(env || {}).filter((name) => {
+    const normalized = name.toUpperCase();
+    return (
+      /(?:^|_)WIF(?:_|$)/.test(normalized) ||
+      (/(?:^|_)(?:PRIVATE_KEY|PK)(?:_|$)/.test(normalized) &&
+        /(NEO|NEOX|EVM|MORPHEUS|SIGNER)/.test(normalized))
+    );
+  });
+  const candidates = [
+    ...new Set([
+      ...networkScopedSignerEnvNames(upper),
+      ...EDGE_HELD_SIGNER_ENV_NAMES,
+      ...discovered,
+    ]),
+  ];
   const configured = candidates.filter((name) => trimString(env[name] || ''));
   if (configured.length > 0) {
     throw new Error(
-      `Neo N3 signing keys must not be configured on the control plane; ` +
+      `host signing keys must not be configured on the control plane; ` +
         `move signing into the TEE execution plane. Configured edge-held key env: ${configured.join(', ')}`
     );
   }
@@ -204,10 +237,6 @@ async function callExecutionPlane(env, job) {
 
 async function callExecutionFeedPlane(env, job) {
   const execution = getExecutionPlaneConfig(env, job.network, { feed: true });
-  // SECURITY (S5): fail closed unless no signing key is configured on the edge,
-  // and never attach key material to the outbound request. The execution plane
-  // signs with its own in-TEE keys.
-  assertEdgeSigningKeysAbsent(env, job.network);
   const headers = new Headers({ 'content-type': 'application/json' });
   if (execution.token) {
     headers.set('authorization', `Bearer ${execution.token}`);
@@ -254,14 +283,22 @@ async function callExecutionFeedPlane(env, job) {
 
 function getAppBackendConfig(env) {
   const baseUrl = trimString(env.MORPHEUS_APP_BACKEND_URL || '');
-  const token = trimString(
-    env.MORPHEUS_APP_BACKEND_TOKEN ||
-      env.MORPHEUS_CONTROL_PLANE_API_KEY ||
-      env.MORPHEUS_OPERATOR_API_KEY ||
-      ''
-  );
+  const token = trimString(env.MORPHEUS_WORKFLOW_API_KEY || env.MORPHEUS_APP_BACKEND_TOKEN || '');
+  const runtimeTokens = [env.MORPHEUS_RUNTIME_TOKEN, env.NITRO_API_TOKEN, env.NITRO_SHARED_SECRET]
+    .map((value) => trimString(value))
+    .filter(Boolean);
   if (!baseUrl) {
     throw new Error('MORPHEUS_APP_BACKEND_URL is not configured');
+  }
+  if (!token) {
+    throw new Error(
+      'workflow backend credential is not configured (MORPHEUS_WORKFLOW_API_KEY or MORPHEUS_APP_BACKEND_TOKEN)'
+    );
+  }
+  if (runtimeTokens.includes(token)) {
+    throw new Error(
+      'workflow backend credential must be independent from runtime data-plane credentials'
+    );
   }
   return {
     baseUrl: baseUrl.replace(/\/$/, ''),
@@ -298,6 +335,7 @@ export {
   EXECUTION_PLANE_ROUTES,
   stableExecutionPoolIndex,
   orderExecutionBaseUrls,
+  isProductionExecution,
   getExecutionPlaneConfig,
   assertEdgeSigningKeysAbsent,
   isRetryableStatus,

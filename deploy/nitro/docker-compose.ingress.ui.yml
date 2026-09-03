@@ -57,12 +57,18 @@ services:
       nitro-worker:
         condition: service_healthy
     environment:
+      NODE_ENV: production
       NITRO_API_URL: http://nitro-worker:${NITRO_WORKER_PORT}
       NITRO_SHARED_SECRET: ${NITRO_SHARED_SECRET}
       NITRO_API_TOKEN: ${NITRO_API_TOKEN}
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
       MORPHEUS_RUNTIME_CONFIG_JSON: ${MORPHEUS_RUNTIME_CONFIG_JSON}
+      # Relayer Neo N3 signing is custody-only (docs/SIGNER_SERVICE.md §5).
+      SIGNER_SERVICE_URL: ${SIGNER_SERVICE_URL:-}
+      SIGNER_SERVICE_TOKEN: ${SIGNER_SERVICE_TOKEN:-}
+      SIGNER_ROLE_UPDATER_KEY_ID: ${SIGNER_ROLE_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID: ${SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID:-}
       MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.${MORPHEUS_NETWORK}.${MORPHEUS_RELAYER_NEO_N3_START_BLOCK}.json
     volumes:
       - /var/run/dstack.sock:/var/run/dstack.sock

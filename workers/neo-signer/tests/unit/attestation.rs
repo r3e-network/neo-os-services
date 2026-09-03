@@ -133,7 +133,7 @@ fn from_pin_is_the_same_check_with_a_literal() {
     assert!(BootGuard::from_pin("zz").is_err());
     let guard = BootGuard::from_pin(PINNED_PCR0).expect("the constant parses");
     let error = guard
-        .verify(&FixedDocument(cose_sign1_with_pcr0(&[0x00; PCR0_LEN])))
+        .verify(&FixedDocument(cose_sign1_with_pcr0(&[0x2c; PCR0_LEN])))
         .expect_err("a different image is a different enclave");
     assert!(error.contains("does not match"), "{error}");
 }
@@ -141,11 +141,39 @@ fn from_pin_is_the_same_check_with_a_literal() {
 #[test]
 fn verify_refuses_a_different_measurement() {
     let guard = BootGuard::from_pin(PINNED_PCR0).expect("the constant parses");
-    let document = cose_sign1_with_pcr0(&[0x00; PCR0_LEN]);
+    let document = cose_sign1_with_pcr0(&[0x2c; PCR0_LEN]);
     let error = guard
         .verify(&FixedDocument(document))
         .expect_err("a different image is a different enclave");
     assert!(error.contains("does not match"), "{error}");
+}
+
+/// An all-zero PCR0 is the unmeasured-environment signature — an emulated or
+/// broken NSM — and is refused even when no pin narrows the acceptance.
+#[test]
+fn verify_refuses_an_all_zero_pcr0_without_a_pin() {
+    let _env = lock_env();
+    std::env::set_var(ATTESTED_BOOT_ENV, "require");
+    std::env::remove_var(EXPECTED_PCR0_ENV);
+    let guard = BootGuard::from_env()
+        .expect("parses")
+        .expect("require produces a guard");
+    let error = guard
+        .verify(&FixedDocument(cose_sign1_with_pcr0(&[0x00; PCR0_LEN])))
+        .expect_err("all zeros is not a measured image");
+    assert!(error.contains("all zeros"), "{error}");
+    std::env::remove_var(ATTESTED_BOOT_ENV);
+}
+
+/// The all-zero refusal precedes the pin comparison, so even a (nonsensical)
+/// all-zero pin cannot turn an unmeasured environment into a pass.
+#[test]
+fn the_all_zero_refusal_precedes_the_pin_comparison() {
+    let guard = BootGuard::from_pin(PINNED_PCR0).expect("the constant parses");
+    let error = guard
+        .verify(&FixedDocument(cose_sign1_with_pcr0(&[0x00; PCR0_LEN])))
+        .expect_err("all zeros is refused regardless of the pin");
+    assert!(error.contains("all zeros"), "{error}");
 }
 
 #[test]

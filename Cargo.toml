@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["workers/neo-signer", "workers/nitro-enclave-host", "crates/morpheus-core", "crates/nitro-attest"]
+members = ["workers/neo-signer", "workers/nitro-enclave-host", "crates/morpheus-core", "crates/nitro-attest", "crates/morpheus-compute", "crates/nitro-init"]
 
 # Every member keeps `workers/` or `crates/` positioning without a package.json,
 # so npm's `workers/*` glob and the JS lint/format gates keep skipping them (the
@@ -8,6 +8,23 @@ members = ["workers/neo-signer", "workers/nitro-enclave-host", "crates/morpheus-
 # lockfile, the CI gates and the target dir — it must not introduce path
 # dependencies between members: the custody service and the consensus core stay
 # independently auditable.
+
+# boa_engine 0.21 pins `icu_normalizer = "~2.0.0"` while icu_collator 2.3 (the
+# stableStringify 'en' collation sort) needs `~2.3.0`; cargo cannot build two
+# copies of the same 2.x crate, and a [patch]ed crate must still satisfy every
+# dependent's requirement. So boa_engine itself is vendored (extracted
+# byte-identical from the offline cargo cache) with that single requirement
+# loosened to `>=2.0.0, <2.4.0` — ICU4X keeps the 2.x line API-stable, and the
+# graph unifies on icu_normalizer 2.3. boa_parser/boa_gc carry the same tilde
+# pins on their icu deps and are vendored with the identical loosening ("PATCH"
+# markers in each vendored Cargo.toml); all other boa crates keep their
+# registry copies. The engine copy also carries two mechanical Rust 1.98
+# compatibility updates (`get_disjoint_mut` and explicit function-pointer
+# casts) so the workspace's `-D warnings` gate remains meaningful.
+[patch.crates-io]
+boa_engine = { path = "vendor/boa_engine-0.21.1" }
+boa_parser = { path = "vendor/boa_parser-0.21.1" }
+boa_gc = { path = "vendor/boa_gc-0.21.1" }
 
 [workspace.package]
 edition = "2021"

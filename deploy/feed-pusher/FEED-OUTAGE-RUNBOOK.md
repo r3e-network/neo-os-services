@@ -271,9 +271,13 @@ systemctl status morpheus-feed-topup.timer
 systemctl enable --now morpheus-feed-topup.timer
 ```
 
-It reads `TOPUP_WIF` from `/opt/morpheus/nitro/feed-topup.env` (chmod 600,
-generated on the box, never committed). If that file or key does not exist, the
-auto-topup has never worked and the wallet has only ever been refilled by hand.
+It reads `CUSTODY_URL`, `CUSTODY_TOKEN`, and `FUNDER_KEY_ID` from
+`/opt/morpheus/nitro/feed-topup.env` (chmod 600, generated on the box, never
+committed) and signs the GAS transfer through the custody signer service with
+the fee_funder key — the box holds no funder WIF. The funder key's custody
+policy must allow the GAS transfer to the updater address. If that file or
+those keys do not exist, the auto-topup has never worked and the wallet has
+only ever been refilled by hand.
 
 ### 2.3 Force one push and confirm
 

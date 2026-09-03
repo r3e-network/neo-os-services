@@ -7,6 +7,7 @@ Wants=network-online.target morpheus-nitro-signer.service
 Type=simple
 WorkingDirectory=/opt/neoos/services
 EnvironmentFile=/opt/morpheus/nitro/morpheus-relayer.env
+Environment=NODE_ENV=production
 ExecStart=/usr/bin/npm --prefix workers/morpheus-relayer run start
 Restart=always
 RestartSec=5

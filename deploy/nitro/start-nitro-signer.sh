@@ -11,6 +11,8 @@ fi
 
 eif="${MORPHEUS_NITRO_EIF:-/opt/morpheus/nitro/morpheus-oracle.eif}"
 signer_env="${MORPHEUS_NITRO_SIGNER_ENV:-/opt/morpheus/nitro/morpheus-nitro-signer.env}"
+worker_env="${MORPHEUS_NITRO_WORKER_ENV:-/opt/morpheus/nitro/nitro-worker.env}"
+feed_env="${MORPHEUS_NITRO_FEED_ENV:-/opt/morpheus/nitro/feed-pusher.env}"
 cid="${MORPHEUS_NITRO_CID:-16}"
 cpu_count="${MORPHEUS_NITRO_CPU_COUNT:-2}"
 memory_mib="${MORPHEUS_NITRO_MEMORY_MIB:-2048}"
@@ -65,52 +67,94 @@ done
 
 if [[ -r "$signer_env" ]]; then
   MORPHEUS_NITRO_SIGNER_ENV="$signer_env" \
+  MORPHEUS_NITRO_WORKER_ENV="$worker_env" \
+  MORPHEUS_NITRO_FEED_ENV="$feed_env" \
   MORPHEUS_NITRO_HOST_PORT="$host_port" \
   node --input-type=module - <<'NODE'
 import fs from 'node:fs';
 
-const envPath = process.env.MORPHEUS_NITRO_SIGNER_ENV;
 const port = process.env.MORPHEUS_NITRO_HOST_PORT || '8787';
-const env = {};
-for (const line of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
-  const trimmed = line.trim();
-  if (!trimmed || trimmed.startsWith('#')) continue;
-  const separator = trimmed.indexOf('=');
-  if (separator <= 0) continue;
-  const key = trimmed.slice(0, separator).trim();
-  const value = trimmed.slice(separator + 1).trim();
-  if (/^[A-Z0-9_]{1,96}$/.test(key) && value) env[key] = value;
+function parseEnv(path) {
+  const values = {};
+  try {
+    for (const line of fs.readFileSync(path, 'utf8').split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const separator = trimmed.indexOf('=');
+      if (separator <= 0) continue;
+      const key = trimmed.slice(0, separator).trim();
+      const value = trimmed.slice(separator + 1).trim();
+      if (/^[A-Z0-9_]{1,96}$/.test(key) && value) values[key] = value;
+    }
+  } catch {}
+  return values;
 }
+const signer = parseEnv(process.env.MORPHEUS_NITRO_SIGNER_ENV);
+const worker = parseEnv(process.env.MORPHEUS_NITRO_WORKER_ENV);
+const feed = parseEnv(process.env.MORPHEUS_NITRO_FEED_ENV);
 // The first token is operator-sealed under the enclave CMK. The parent presents
 // the plaintext transport token, but the enclave accepts it only after KMS
 // releases a matching, purpose/network/version-bound envelope to the expected
 // PCR. Plaintext token fields are never copied into the provisioning body.
 const token =
-  env.MORPHEUS_RUNTIME_TOKEN ||
-  env.NITRO_SIGNER_TOKEN ||
-  env.NITRO_API_TOKEN ||
-  env.NITRO_SHARED_SECRET ||
+  signer.MORPHEUS_RUNTIME_TOKEN ||
+  signer.NITRO_SIGNER_TOKEN ||
+  signer.NITRO_API_TOKEN ||
+  signer.NITRO_SHARED_SECRET ||
   '';
 if (!token) {
   throw new Error(
     'Nitro signer provision requires MORPHEUS_RUNTIME_TOKEN, NITRO_SIGNER_TOKEN, NITRO_API_TOKEN, or NITRO_SHARED_SECRET'
   );
 }
-if (!env.MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64) {
+if (!signer.MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64) {
   throw new Error(
     'Nitro signer provision requires MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64'
   );
 }
-
-const provisionEnv = { ...env };
-for (const key of [
-  'NITRO_SIGNER_TOKEN',
-  'MORPHEUS_RUNTIME_TOKEN',
-  'NITRO_API_TOKEN',
-  'NITRO_SHARED_SECRET',
-]) {
-  delete provisionEnv[key];
+if (!signer.SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64) {
+  throw new Error(
+    'Nitro signer provision requires SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64'
+  );
 }
+
+const provisionEnv = {
+  MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64:
+    signer.MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64,
+  SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64:
+    signer.SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64,
+};
+for (const key of [
+  'AWS_REGION',
+  'NITRO_AWS_REGION',
+  'MORPHEUS_ORACLE_KMS_DIAG_CIPHERTEXT',
+  'TWELVEDATA_API_KEY',
+]) {
+  if (worker[key]) provisionEnv[key] = worker[key];
+}
+if (feed.TD_KEY) provisionEnv.TD_KEY = feed.TD_KEY;
+
+function projectCiphertext(target, pathKey, fallbackPath) {
+  if (worker[target]) {
+    provisionEnv[target] = worker[target];
+    return;
+  }
+  const path = worker[pathKey] || fallbackPath;
+  try {
+    const ciphertext = fs.readFileSync(path, 'utf8').trim();
+    if (ciphertext) provisionEnv[target] = ciphertext;
+  } catch {}
+}
+projectCiphertext(
+  'MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64',
+  'MORPHEUS_ORACLE_KMS_CIPHERTEXT_PATH',
+  '/var/lib/morpheus/oracle-key-kms.b64'
+);
+projectCiphertext(
+  'MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64',
+  'MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_PATH',
+  '/var/lib/morpheus/neodid-salt-kms.b64'
+);
 
 // KMS needs AWS request credentials, while RecipientAttestation ensures the
 // returned plaintext is encrypted to an ephemeral key inside the enclave. Fetch

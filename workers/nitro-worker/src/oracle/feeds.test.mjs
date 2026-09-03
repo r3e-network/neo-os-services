@@ -35,8 +35,13 @@ import {
   normalizePairSymbol,
 } from './feeds.js';
 import { __resetProviderRuntimeCachesForTests } from './providers.js';
+import {
+  __resetCustodyTransportForTests,
+  __setCustodyTransportForTests,
+} from '../platform/custody.js';
 
 const originalFetch = global.fetch;
+const originalWorkerKeyId = process.env.SIGNER_ROLE_WORKER_KEY_ID;
 const originalFeedStatePath = process.env.MORPHEUS_FEED_STATE_PATH;
 const originalSupabaseUrl = process.env.SUPABASE_URL;
 const originalSupabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -53,6 +58,43 @@ const originalUpdaterKey = process.env.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY;
 const originalAllowUnpinned = process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS;
 const originalWorkerMainnetKey = process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET;
 const originalWorkerMainnetWif = process.env.MORPHEUS_WORKER_NEO_N3_WIF_MAINNET;
+
+test.before(() => {
+  process.env.SIGNER_ROLE_WORKER_KEY_ID = 'test-worker-key';
+  __setCustodyTransportForTests(async (method) => {
+    if (method === 'GET') {
+      const network =
+        String(process.env.MORPHEUS_NETWORK || '').toLowerCase() === 'mainnet'
+          ? 'mainnet'
+          : 'testnet';
+      return {
+          key_id: 'test-worker-key',
+          network,
+          network_magic: network === 'mainnet' ? 860833102 : 894710606,
+          public_key: `02${'22'.repeat(32)}`,
+          address: 'NTestWorkerCustodyAddress',
+          script_hash: `0x${'33'.repeat(20)}`,
+          signing_enabled: true,
+        };
+    }
+    return {
+      allowed: true,
+      signature: '11'.repeat(64),
+      public_key: `02${'22'.repeat(32)}`,
+      address: 'NTestWorkerCustodyAddress',
+      script_hash: `0x${'33'.repeat(20)}`,
+    };
+  });
+});
+
+test.after(() => {
+  if (originalWorkerKeyId === undefined) {
+    delete process.env.SIGNER_ROLE_WORKER_KEY_ID;
+  } else {
+    process.env.SIGNER_ROLE_WORKER_KEY_ID = originalWorkerKeyId;
+  }
+  __resetCustodyTransportForTests();
+});
 
 test.afterEach(async () => {
   global.fetch = originalFetch;

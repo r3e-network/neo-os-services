@@ -1,7 +1,11 @@
 import { isAlreadyFulfilledError } from '../workers/morpheus-relayer/src/fulfillment.js';
 
 export function allowSyntheticOracleFallback(value) {
-  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+  return ['1', 'true', 'yes', 'on'].includes(
+    String(value || '')
+      .trim()
+      .toLowerCase()
+  );
 }
 
 export function hasReceivedCallback(stackItem) {

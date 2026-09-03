@@ -5,6 +5,7 @@ account_id = "bf0d7e814f69945157f30505e9fba9fe"
 workers_dev = true
 
 [vars]
+MORPHEUS_ENVIRONMENT = "production"
 SUPABASE_URL = "https://przhhxbovqwopibssjzr.supabase.co"
 UPSTASH_REDIS_REST_URL = "https://major-sawfish-77541.upstash.io"
 # AA edge migration (see deploy/nitro/AA-EDGE-MIGRATION-RUNBOOK.md): the confidential
@@ -12,7 +13,8 @@ UPSTASH_REDIS_REST_URL = "https://major-sawfish-77541.upstash.io"
 # -> enclave worker, compute in-TEE). REPLACES the dead legacy runtime + the Vercel
 # "emergency-vercel-runtime" placeholder that oracle.meshmini.app / edge.meshmini.app
 # serve. Apply only AFTER the gateway is live + DNS points runtime.meshmini.app at
-# the box (the runbook gates the order). Comma-separate extra fallbacks if desired.
+# the box (the runbook gates the order). Production accepts exactly one
+# confidential execution origin and never retries a credential across origins.
 MORPHEUS_MAINNET_EXECUTION_BASE_URL = "https://runtime.meshmini.app/mainnet"
 MORPHEUS_TESTNET_EXECUTION_BASE_URL = "https://runtime.meshmini.app/testnet"
 # Feed lane RETIRED: /feeds/tick is a no-op at ingress (worker.mjs) because feeds

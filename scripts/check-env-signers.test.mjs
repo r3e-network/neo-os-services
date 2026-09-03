@@ -32,8 +32,7 @@ function generatedSignerLines() {
   };
 }
 
-test('check-nitro-env accepts suffix-scoped mainnet worker, relayer, and updater signers', () => {
-  const signer = generatedSignerLines();
+test('check-nitro-env accepts a custody-only env with no Neo N3 signer WIFs at all', () => {
   const envPath = writeEnvFile([
     'NITRO_SHARED_SECRET=test-secret',
     'SUPABASE_URL=https://supabase.test',
@@ -43,11 +42,13 @@ test('check-nitro-env accepts suffix-scoped mainnet worker, relayer, and updater
     'NEO_NETWORK_MAGIC=860833102',
     'CONTRACT_MORPHEUS_ORACLE_HASH=0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
     'CONTRACT_ORACLE_CALLBACK_CONSUMER_HASH=0xe1226268f2fe08bea67fb29e1c8fda0d7c8e9844',
-    'MORPHEUS_ALLOW_UNPINNED_SIGNERS=true',
-    `MORPHEUS_WORKER_NEO_N3_WIF_MAINNET=${signer.wif}`,
-    `MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET=${signer.wif}`,
-    `MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET=${signer.wif}`,
-    `MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET=${signer.wif}`,
+    'SIGNER_SERVICE_URL=https://custody.test',
+    'SIGNER_SERVICE_TOKEN=custody-token',
+    'SIGNER_ROLE_UPDATER_KEY_ID=key-updater',
+    'SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=key-oracle-verifier',
+    'SIGNER_ROLE_WORKER_KEY_ID=key-worker',
+    'MORPHEUS_SIGNING_ADMIN_API_KEY=signing-admin-token',
+    'MORPHEUS_RELAY_ADMIN_API_KEY=relay-admin-token',
   ]);
 
   const result = spawnSync(process.execPath, ['scripts/check-nitro-env.mjs'], {
@@ -60,10 +61,91 @@ test('check-nitro-env accepts suffix-scoped mainnet worker, relayer, and updater
   const report = JSON.parse(result.stdout);
   assert.equal(report.ok, true);
   assert.deepEqual(report.missing_either_of, []);
+  for (const entry of report.neo_n3_signers) {
+    assert.equal(entry.ok, true, `${entry.role} must pass with no local key material`);
+    assert.deepEqual(entry.issues, []);
+  }
+});
+
+test('check-nitro-env rejects the caller-supplied local signing escape hatch', () => {
+  const envPath = writeEnvFile([
+    'NITRO_SHARED_SECRET=test-secret',
+    'SUPABASE_URL=https://supabase.test',
+    'SUPABASE_SERVICE_ROLE_KEY=service-role-key',
+    'MORPHEUS_NETWORK=mainnet',
+    'NEO_RPC_URL=https://neo-rpc.test',
+    'NEO_NETWORK_MAGIC=860833102',
+    'CONTRACT_MORPHEUS_ORACLE_HASH=0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+    'CONTRACT_ORACLE_CALLBACK_CONSUMER_HASH=0xe1226268f2fe08bea67fb29e1c8fda0d7c8e9844',
+    'SIGNER_SERVICE_URL=https://custody.test',
+    'SIGNER_SERVICE_TOKEN=custody-token',
+    'SIGNER_ROLE_UPDATER_KEY_ID=key-updater',
+    'SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=key-oracle-verifier',
+    'SIGNER_ROLE_WORKER_KEY_ID=key-worker',
+    'MORPHEUS_SIGNING_ADMIN_API_KEY=signing-admin-token',
+    'MORPHEUS_RELAY_ADMIN_API_KEY=relay-admin-token',
+    'MORPHEUS_ALLOW_CALLER_SIGNING_KEY=true',
+  ]);
+
+  const result = spawnSync(process.execPath, ['scripts/check-nitro-env.mjs'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: baseSpawnEnv({ NITRO_ENV_FILE: envPath }),
+  });
+
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.deepEqual(
+    report.forbidden_settings.map((entry) => entry.key),
+    ['MORPHEUS_ALLOW_CALLER_SIGNING_KEY']
+  );
+});
+
+test('check-nitro-env fails a leftover WIF that disagrees with the pinned registry', () => {
+  const signer = generatedSignerLines();
+  const envPath = writeEnvFile([
+    'NITRO_SHARED_SECRET=test-secret',
+    'SUPABASE_URL=https://supabase.test',
+    'SUPABASE_SERVICE_ROLE_KEY=service-role-key',
+    'MORPHEUS_NETWORK=mainnet',
+    'NEO_RPC_URL=https://neo-rpc.test',
+    'NEO_NETWORK_MAGIC=860833102',
+    'CONTRACT_MORPHEUS_ORACLE_HASH=0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+    'CONTRACT_ORACLE_CALLBACK_CONSUMER_HASH=0xe1226268f2fe08bea67fb29e1c8fda0d7c8e9844',
+    `MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET=${signer.wif}`,
+    'SIGNER_SERVICE_URL=https://custody.test',
+    'SIGNER_SERVICE_TOKEN=custody-token',
+    'SIGNER_ROLE_UPDATER_KEY_ID=key-updater',
+    'SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=key-oracle-verifier',
+    'SIGNER_ROLE_WORKER_KEY_ID=key-worker',
+    'MORPHEUS_SIGNING_ADMIN_API_KEY=signing-admin-token',
+    'MORPHEUS_RELAY_ADMIN_API_KEY=relay-admin-token',
+  ]);
+
+  // Pinning stays ON in the subprocess env (no ALLOW_UNPINNED override): the
+  // absent-key case passes, but a present-and-mismatched WIF is still drift.
+  const result = spawnSync(process.execPath, ['scripts/check-nitro-env.mjs'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: {
+      PATH: process.env.PATH || '',
+      HOME: process.env.HOME || '',
+      NITRO_ENV_FILE: envPath,
+    },
+  });
+
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.ok, false);
+  const updater = report.neo_n3_signers.find((entry) => entry.role === 'updater');
+  assert.equal(updater.ok, false);
+  assert.ok(
+    updater.issues.some((issue) => /do not match pinned|not a valid/.test(issue)),
+    `expected drift issues, got: ${JSON.stringify(updater.issues)}`
+  );
 });
 
 test('check-nitro-env passes with NITRO_USE_DERIVED_KEYS and no pinned signer WIFs', () => {
-  const signer = generatedSignerLines();
   const envPath = writeEnvFile([
     'SUPABASE_URL=https://supabase.test',
     'SUPABASE_SERVICE_ROLE_KEY=service-role-key',
@@ -72,10 +154,15 @@ test('check-nitro-env passes with NITRO_USE_DERIVED_KEYS and no pinned signer WI
     'NEO_NETWORK_MAGIC=860833102',
     'CONTRACT_MORPHEUS_ORACLE_HASH=0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
     'CONTRACT_ORACLE_CALLBACK_CONSUMER_HASH=0xe1226268f2fe08bea67fb29e1c8fda0d7c8e9844',
-    'MORPHEUS_ALLOW_UNPINNED_SIGNERS=true',
     'NITRO_USE_DERIVED_KEYS=true',
     'NITRO_API_TOKEN=runtime-token',
-    `MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET=${signer.wif}`,
+    'SIGNER_SERVICE_URL=https://custody.test',
+    'SIGNER_SERVICE_TOKEN=custody-token',
+    'SIGNER_ROLE_UPDATER_KEY_ID=key-updater',
+    'SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=key-oracle-verifier',
+    'SIGNER_ROLE_WORKER_KEY_ID=key-worker',
+    'MORPHEUS_SIGNING_ADMIN_API_KEY=signing-admin-token',
+    'MORPHEUS_RELAY_ADMIN_API_KEY=relay-admin-token',
   ]);
 
   const result = spawnSync(process.execPath, ['scripts/check-nitro-env.mjs'], {
@@ -90,7 +177,7 @@ test('check-nitro-env passes with NITRO_USE_DERIVED_KEYS and no pinned signer WI
   assert.deepEqual(report.missing_required, []);
   assert.deepEqual(report.missing_either_of, []);
   const derivedRoles = report.neo_n3_signers.filter((entry) =>
-    ['worker', 'relayer', 'updater'].includes(entry.role)
+    ['worker', 'updater'].includes(entry.role)
   );
   for (const entry of derivedRoles) {
     assert.equal(entry.derived_key_mode, true);
@@ -99,14 +186,12 @@ test('check-nitro-env passes with NITRO_USE_DERIVED_KEYS and no pinned signer WI
   }
 });
 
-test('check-control-plane-env accepts suffix-scoped mainnet updater signer for feed execution', () => {
-  const signer = generatedSignerLines();
+test('check-control-plane-env accepts a custody-only execution plane with no signer WIFs', () => {
   const envPath = writeEnvFile([
     'SUPABASE_URL=https://supabase.test',
     'SUPABASE_SERVICE_ROLE_KEY=service-role-key',
     'MORPHEUS_MAINNET_EXECUTION_BASE_URL=https://execution.test',
     'MORPHEUS_EXECUTION_TOKEN=execution-token',
-    `MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET=${signer.wif}`,
   ]);
 
   const result = spawnSync(
@@ -122,5 +207,153 @@ test('check-control-plane-env accepts suffix-scoped mainnet updater signer for f
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const report = JSON.parse(result.stdout);
   assert.equal(report.ok, true);
+  assert.equal(report.mode.execution_plane_configured, true);
   assert.deepEqual(report.partially_configured_missing?.execution_plane || [], []);
+  // Signer WIFs no longer count toward the execution plane: signing is
+  // custody-side, so a WIF in a control-plane env is not an asset to detect.
+  assert.equal(
+    (report.optional_recommendations?.execution_plane || []).some((group) =>
+      group.includes('MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET')
+    ),
+    false,
+    'execution plane recommendations must not mention signer WIFs'
+  );
+});
+
+test('check-control-plane-env rejects host signing keys and runtime credential reuse', () => {
+  const envPath = writeEnvFile([
+    'SUPABASE_URL=https://supabase.test',
+    'SUPABASE_SERVICE_ROLE_KEY=service-role-key',
+    'MORPHEUS_RUNTIME_TOKEN=shared-token',
+    'MORPHEUS_CONTROL_PLANE_API_KEY=shared-token',
+    'MORPHEUS_CUSTOM_SIGNER_PRIVATE_KEY=host-key',
+  ]);
+
+  const result = spawnSync(
+    process.execPath,
+    [path.join(repoRoot, 'scripts/check-control-plane-env.mjs')],
+    {
+      cwd: path.dirname(envPath),
+      encoding: 'utf8',
+      env: baseSpawnEnv(),
+    }
+  );
+
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.deepEqual(report.forbidden_signer_env, ['MORPHEUS_CUSTOM_SIGNER_PRIVATE_KEY']);
+  assert.deepEqual(report.reused_runtime_credential_env, ['MORPHEUS_CONTROL_PLANE_API_KEY']);
+});
+
+test('check-nitro-env fails a runtime env file that disables signer pinning', () => {
+  const signer = generatedSignerLines();
+  const envPath = writeEnvFile([
+    'NITRO_SHARED_SECRET=test-secret',
+    'SUPABASE_URL=https://supabase.test',
+    'SUPABASE_SERVICE_ROLE_KEY=service-role-key',
+    'MORPHEUS_NETWORK=mainnet',
+    'NEO_RPC_URL=https://neo-rpc.test',
+    'NEO_NETWORK_MAGIC=860833102',
+    'CONTRACT_MORPHEUS_ORACLE_HASH=0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+    'CONTRACT_ORACLE_CALLBACK_CONSUMER_HASH=0xe1226268f2fe08bea67fb29e1c8fda0d7c8e9844',
+    'MORPHEUS_ALLOW_UNPINNED_SIGNERS=true',
+    `MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET=${signer.wif}`,
+    `MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET=${signer.wif}`,
+    'SIGNER_SERVICE_URL=https://custody.test',
+    'SIGNER_SERVICE_TOKEN=custody-token',
+    'SIGNER_ROLE_UPDATER_KEY_ID=key-updater',
+    'SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=key-oracle-verifier',
+    'SIGNER_ROLE_WORKER_KEY_ID=key-worker',
+    'MORPHEUS_SIGNING_ADMIN_API_KEY=signing-admin-token',
+    'MORPHEUS_RELAY_ADMIN_API_KEY=relay-admin-token',
+  ]);
+
+  const result = spawnSync(process.execPath, ['scripts/check-nitro-env.mjs'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: baseSpawnEnv({ NITRO_ENV_FILE: envPath }),
+  });
+
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.ok, false);
+  assert.deepEqual(
+    report.forbidden_settings.map((entry) => entry.key),
+    [
+      'MORPHEUS_ALLOW_UNPINNED_SIGNERS',
+      'MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET',
+      'MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET',
+    ]
+  );
+});
+
+test('check-nitro-env still rejects host WIFs when the unpinned switch is false', () => {
+  const signer = generatedSignerLines();
+  const envPath = writeEnvFile([
+    'NITRO_SHARED_SECRET=test-secret',
+    'SUPABASE_URL=https://supabase.test',
+    'SUPABASE_SERVICE_ROLE_KEY=service-role-key',
+    'MORPHEUS_NETWORK=mainnet',
+    'NEO_RPC_URL=https://neo-rpc.test',
+    'NEO_NETWORK_MAGIC=860833102',
+    'CONTRACT_MORPHEUS_ORACLE_HASH=0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+    'CONTRACT_ORACLE_CALLBACK_CONSUMER_HASH=0xe1226268f2fe08bea67fb29e1c8fda0d7c8e9844',
+    'MORPHEUS_ALLOW_UNPINNED_SIGNERS=false',
+    `MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET=${signer.wif}`,
+    `MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET=${signer.wif}`,
+    'SIGNER_SERVICE_URL=https://custody.test',
+    'SIGNER_SERVICE_TOKEN=custody-token',
+    'SIGNER_ROLE_UPDATER_KEY_ID=key-updater',
+    'SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=key-oracle-verifier',
+    'SIGNER_ROLE_WORKER_KEY_ID=key-worker',
+    'MORPHEUS_SIGNING_ADMIN_API_KEY=signing-admin-token',
+    'MORPHEUS_RELAY_ADMIN_API_KEY=relay-admin-token',
+  ]);
+
+  const result = spawnSync(process.execPath, ['scripts/check-nitro-env.mjs'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: baseSpawnEnv({ NITRO_ENV_FILE: envPath }),
+  });
+
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.ok, false);
+  assert.deepEqual(
+    report.forbidden_settings.map((entry) => entry.key),
+    ['MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET', 'MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET']
+  );
+});
+
+test('check-nitro-env requires admin credentials and rejects cross-domain reuse', () => {
+  const envPath = writeEnvFile([
+    'NITRO_SHARED_SECRET=shared-token',
+    'SUPABASE_URL=https://supabase.test',
+    'SUPABASE_SERVICE_ROLE_KEY=service-role-key',
+    'MORPHEUS_NETWORK=mainnet',
+    'NEO_RPC_URL=https://neo-rpc.test',
+    'NEO_NETWORK_MAGIC=860833102',
+    'CONTRACT_MORPHEUS_ORACLE_HASH=0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+    'CONTRACT_ORACLE_CALLBACK_CONSUMER_HASH=0xe1226268f2fe08bea67fb29e1c8fda0d7c8e9844',
+    'SIGNER_SERVICE_URL=https://custody.test',
+    'SIGNER_SERVICE_TOKEN=signing-token',
+    'SIGNER_ROLE_UPDATER_KEY_ID=key-updater',
+    'SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=key-oracle-verifier',
+    'SIGNER_ROLE_WORKER_KEY_ID=key-worker',
+    'MORPHEUS_SIGNING_ADMIN_API_KEY=shared-token',
+  ]);
+  const result = spawnSync(process.execPath, ['scripts/check-nitro-env.mjs'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: baseSpawnEnv({ NITRO_ENV_FILE: envPath }),
+  });
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.deepEqual(report.missing_required, ['MORPHEUS_RELAY_ADMIN_API_KEY']);
+  assert.deepEqual(report.credential_domain_collisions, [
+    {
+      domains: ['runtime', 'signing'],
+      names: ['MORPHEUS_SIGNING_ADMIN_API_KEY', 'NITRO_SHARED_SECRET'],
+    },
+  ]);
 });

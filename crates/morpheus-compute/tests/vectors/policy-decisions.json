@@ -1,0 +1,723 @@
+[
+  {
+    "name": "case-00",
+    "input": {},
+    "expected": {
+      "workflow_id": null,
+      "allow": true,
+      "decision": "allow",
+      "reason": "allowed",
+      "httpStatus": 200,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-01",
+    "input": {
+      "workflow_id": "paymaster.authorize",
+      "provider_enabled": false,
+      "require_attestation": true
+    },
+    "expected": {
+      "workflow_id": "paymaster.authorize",
+      "allow": false,
+      "decision": "deny",
+      "reason": "provider_disabled",
+      "httpStatus": 403,
+      "scope": "provider",
+      "scope_id": "paymaster.authorize",
+      "require_attestation": true,
+      "metadata": {
+        "provider_enabled": false,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-02",
+    "input": {
+      "workflow_id": "oracle.query",
+      "provider_enabled": true,
+      "require_attestation": true,
+      "attestation_available": false
+    },
+    "expected": {
+      "workflow_id": "oracle.query",
+      "allow": false,
+      "decision": "review",
+      "reason": "attestation_required",
+      "httpStatus": 409,
+      "scope": "workflow",
+      "scope_id": "oracle.query",
+      "require_attestation": true,
+      "metadata": {
+        "provider_enabled": true,
+        "attestation_available": false
+      }
+    }
+  },
+  {
+    "name": "case-03",
+    "input": {
+      "decision": "deny"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "deny",
+      "reason": "policy_denied",
+      "httpStatus": 403,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-04",
+    "input": {
+      "decision": "review"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "review",
+      "reason": "review_required",
+      "httpStatus": 409,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-05",
+    "input": {
+      "decision": "review",
+      "reason": "needs a human"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "review",
+      "reason": "needs a human",
+      "httpStatus": 409,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-06",
+    "input": {
+      "allow": false
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "deny",
+      "reason": "policy_denied",
+      "httpStatus": 403,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-07",
+    "input": {
+      "allow": true,
+      "decision": "deny"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "deny",
+      "reason": "policy_denied",
+      "httpStatus": 403,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-08",
+    "input": {
+      "allow": false,
+      "decision": "review"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "review",
+      "reason": "review_required",
+      "httpStatus": 409,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-09",
+    "input": {
+      "decision": "DENY"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "deny",
+      "reason": "policy_denied",
+      "httpStatus": 403,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-10",
+    "input": {
+      "decision": "bogus"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": true,
+      "decision": "allow",
+      "reason": "allowed",
+      "httpStatus": 200,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-11",
+    "input": {
+      "decision": "  review  "
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "review",
+      "reason": "review_required",
+      "httpStatus": 409,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-12",
+    "input": {
+      "scope_paused": true
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "deny",
+      "reason": "scope_paused",
+      "httpStatus": 403,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-13",
+    "input": {
+      "scopePaused": "1"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "deny",
+      "reason": "scope_paused",
+      "httpStatus": 403,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-14",
+    "input": {
+      "paused_action": "pause_scope"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "deny",
+      "reason": "scope_paused",
+      "httpStatus": 403,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-15",
+    "input": {
+      "action": "deny"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "deny",
+      "reason": "scope_paused",
+      "httpStatus": 403,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-16",
+    "input": {
+      "action": "pause_scope"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "deny",
+      "reason": "scope_paused",
+      "httpStatus": 403,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-17",
+    "input": {
+      "require_attestation": "true",
+      "attestation_available": "0"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "review",
+      "reason": "attestation_required",
+      "httpStatus": 409,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": true,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": false
+      }
+    }
+  },
+  {
+    "name": "case-18",
+    "input": {
+      "requireAttestation": true,
+      "attestationAvailable": false
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "review",
+      "reason": "attestation_required",
+      "httpStatus": 409,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": true,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": false
+      }
+    }
+  },
+  {
+    "name": "case-19",
+    "input": {
+      "require_attestation": true
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": true,
+      "decision": "allow",
+      "reason": "allowed",
+      "httpStatus": 200,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": true,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-20",
+    "input": {
+      "require_human_approval": "yes"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "review",
+      "reason": "human_approval_required",
+      "httpStatus": 409,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-21",
+    "input": {
+      "requireHumanApproval": true
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": false,
+      "decision": "review",
+      "reason": "human_approval_required",
+      "httpStatus": 409,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-22",
+    "input": {
+      "provider": "acme",
+      "workflowId": "w-1",
+      "scope": "tenant"
+    },
+    "expected": {
+      "workflow_id": "w-1",
+      "allow": true,
+      "decision": "allow",
+      "reason": "allowed",
+      "httpStatus": 200,
+      "scope": "provider",
+      "scope_id": "acme",
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-23",
+    "input": {
+      "scopeId": "s-9",
+      "workflow_id": "w-2"
+    },
+    "expected": {
+      "workflow_id": "w-2",
+      "allow": true,
+      "decision": "allow",
+      "reason": "allowed",
+      "httpStatus": 200,
+      "scope": "provider",
+      "scope_id": "s-9",
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-24",
+    "input": {
+      "provider_enabled": "1"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": true,
+      "decision": "allow",
+      "reason": "allowed",
+      "httpStatus": 200,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": true,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-25",
+    "input": {
+      "provider_enabled": "bogus"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": true,
+      "decision": "allow",
+      "reason": "allowed",
+      "httpStatus": 200,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-26",
+    "input": {
+      "provider_enabled": true,
+      "require_attestation": true,
+      "attestation_available": true
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": true,
+      "decision": "allow",
+      "reason": "allowed",
+      "httpStatus": 200,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": true,
+      "metadata": {
+        "provider_enabled": true,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-27",
+    "input": {
+      "workflow_id": "   "
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": true,
+      "decision": "allow",
+      "reason": "allowed",
+      "httpStatus": 200,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-28",
+    "input": {
+      "workflow_id": 0,
+      "workflowId": "from-camel"
+    },
+    "expected": {
+      "workflow_id": "from-camel",
+      "allow": true,
+      "decision": "allow",
+      "reason": "allowed",
+      "httpStatus": 200,
+      "scope": "workflow",
+      "scope_id": "from-camel",
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-29",
+    "input": {
+      "scope": 0,
+      "workflow_id": "w-3"
+    },
+    "expected": {
+      "workflow_id": "w-3",
+      "allow": true,
+      "decision": "allow",
+      "reason": "allowed",
+      "httpStatus": 200,
+      "scope": "workflow",
+      "scope_id": "w-3",
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-30",
+    "input": {
+      "provider": "   ",
+      "scope_id": "fallback-id"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": true,
+      "decision": "allow",
+      "reason": "allowed",
+      "httpStatus": 200,
+      "scope": "workflow",
+      "scope_id": "fallback-id",
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-31",
+    "input": {
+      "provider": "  ",
+      "scopeId": "fallback-id"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": true,
+      "decision": "allow",
+      "reason": "allowed",
+      "httpStatus": 200,
+      "scope": "workflow",
+      "scope_id": "fallback-id",
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-32",
+    "input": {
+      "failure_probe": true,
+      "attestation_available": "maybe",
+      "require_attestation": "true"
+    },
+    "expected": {
+      "workflow_id": null,
+      "allow": true,
+      "decision": "allow",
+      "reason": "allowed",
+      "httpStatus": 200,
+      "scope": "workflow",
+      "scope_id": null,
+      "require_attestation": true,
+      "metadata": {
+        "provider_enabled": null,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-33",
+    "input": {
+      "workflow_id": "w-4",
+      "provider_enabled": 0
+    },
+    "expected": {
+      "workflow_id": "w-4",
+      "allow": false,
+      "decision": "deny",
+      "reason": "provider_disabled",
+      "httpStatus": 403,
+      "scope": "provider",
+      "scope_id": "w-4",
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": false,
+        "attestation_available": true
+      }
+    }
+  },
+  {
+    "name": "case-34",
+    "input": {
+      "workflow_id": "w-5",
+      "provider_enabled": 1
+    },
+    "expected": {
+      "workflow_id": "w-5",
+      "allow": true,
+      "decision": "allow",
+      "reason": "allowed",
+      "httpStatus": 200,
+      "scope": "workflow",
+      "scope_id": "w-5",
+      "require_attestation": false,
+      "metadata": {
+        "provider_enabled": true,
+        "attestation_available": true
+      }
+    }
+  }
+]

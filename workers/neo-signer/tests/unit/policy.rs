@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 
 use super::*;
-use crate::model::WindowLimit;
+use crate::model::{AssetLimit, ContractMethod, WindowLimit};
 use crate::tx::{Scope, Signer};
 
 const GAS: u8 = 0xa1;
@@ -208,6 +208,60 @@ fn a_blacklist_wins_over_the_whitelist() {
     let tx = transaction(KEY);
     let (reason, _) = denied(check(&policy, KEY, &[call(FORBIDDEN, "swap")], &tx));
     assert_eq!(reason, DenyReason::ContractBlacklisted);
+}
+
+#[test]
+fn method_lists_bind_the_exact_contract_and_method_pair() {
+    let allowed = ContractMethod {
+        contract: account(TOKEN),
+        method: "swap".to_string(),
+    };
+    let tx = transaction(KEY);
+    let policy = SignerPolicy {
+        allow_contract_call: true,
+        contract_method_whitelist: vec![allowed.clone()],
+        ..Default::default()
+    };
+    assert!(check(&policy, KEY, &[call(TOKEN, "swap")], &tx).is_allowed());
+    let (reason, _) = denied(check(&policy, KEY, &[call(TOKEN, "mint")], &tx));
+    assert_eq!(reason, DenyReason::ContractMethodNotWhitelisted);
+    let (reason, _) = denied(check(&policy, KEY, &[call(FORBIDDEN, "swap")], &tx));
+    assert_eq!(reason, DenyReason::ContractMethodNotWhitelisted);
+
+    let denied_pair = SignerPolicy {
+        contract_method_blacklist: vec![allowed],
+        ..policy
+    };
+    let (reason, _) = denied(check(&denied_pair, KEY, &[call(TOKEN, "swap")], &tx));
+    assert_eq!(reason, DenyReason::ContractMethodBlacklisted);
+}
+
+#[test]
+fn signer_count_and_fee_ceilings_are_enforced_before_calls() {
+    let policy = SignerPolicy {
+        allow_contract_call: true,
+        max_signers: Some(1),
+        max_system_fee: Some(10),
+        max_network_fee: Some(20),
+        ..Default::default()
+    };
+    let intents = [call(TOKEN, "swap")];
+    let too_many = transaction_with(vec![
+        signer(KEY, Scope::CALLED_BY_ENTRY, &[]),
+        signer(VICTIM, Scope::CALLED_BY_ENTRY, &[]),
+    ]);
+    let (reason, _) = denied(check(&policy, KEY, &intents, &too_many));
+    assert_eq!(reason, DenyReason::TooManySigners);
+
+    let mut expensive_system = transaction(KEY);
+    expensive_system.system_fee = 11;
+    let (reason, _) = denied(check(&policy, KEY, &intents, &expensive_system));
+    assert_eq!(reason, DenyReason::SystemFeeExceeded);
+
+    let mut expensive_network = transaction(KEY);
+    expensive_network.network_fee = 21;
+    let (reason, _) = denied(check(&policy, KEY, &intents, &expensive_network));
+    assert_eq!(reason, DenyReason::NetworkFeeExceeded);
 }
 
 #[test]
@@ -502,6 +556,32 @@ fn consensus_is_gated_on_permission_category_and_sender() {
 }
 
 #[test]
+fn raw_signing_is_refused_until_its_own_switch_is_opened() {
+    // Raw bytes commit to nothing the lists can describe — no transfer, no
+    // contract, no sender — so no other switch can open this lane and none of
+    // them should: it has its own, and it starts closed.
+    let policy = policy_allowing(true, true, true);
+    let (reason, detail) = denied(evaluate(
+        &policy,
+        account(KEY),
+        &SigningRequest::Raw,
+        &WindowSpend::new(),
+    ));
+    assert_eq!(reason, DenyReason::RawForbidden);
+    assert!(detail.contains("raw"), "{detail}");
+
+    let mut open = policy;
+    open.allow_raw = true;
+    assert!(evaluate(
+        &open,
+        account(KEY),
+        &SigningRequest::Raw,
+        &WindowSpend::new()
+    )
+    .is_allowed());
+}
+
+#[test]
 fn one_refusal_in_a_request_refuses_the_whole_request() {
     // Partial approval is not a thing: a signature covers the transaction, so
     // the one benign call cannot be signed while the forbidden one rides with
@@ -528,6 +608,7 @@ fn every_reason_has_a_unique_code() {
         DenyReason::ConsensusSenderMismatch,
         DenyReason::TransferForbidden,
         DenyReason::ContractCallForbidden,
+        DenyReason::RawForbidden,
         DenyReason::NotASigner,
         DenyReason::GlobalScopeForbidden,
         DenyReason::DelegationMissing,
@@ -541,6 +622,12 @@ fn every_reason_has_a_unique_code() {
         DenyReason::NegativeAmount,
         DenyReason::SingleAmountExceeded,
         DenyReason::WindowAmountExceeded,
+        DenyReason::TooManySigners,
+        DenyReason::SystemFeeExceeded,
+        DenyReason::NetworkFeeExceeded,
+        DenyReason::SignatureRateExceeded,
+        DenyReason::AssetSingleAmountExceeded,
+        DenyReason::AssetWindowAmountExceeded,
     ];
     let codes: HashSet<&str> = reasons.iter().map(|reason| reason.code()).collect();
     assert_eq!(
@@ -554,4 +641,77 @@ fn every_reason_has_a_unique_code() {
             "{reason:?} needs an operator-facing message"
         );
     }
+}
+
+#[test]
+fn asset_specific_single_and_multiple_window_ceilings_all_apply() {
+    let policy = SignerPolicy {
+        asset_limits: vec![
+            AssetLimit {
+                asset: account(NEO),
+                max_single_amount: Some(5),
+                window_limit: Some(WindowLimit {
+                    seconds: 60,
+                    max_amount: 10,
+                }),
+            },
+            AssetLimit {
+                asset: account(NEO),
+                max_single_amount: None,
+                window_limit: Some(WindowLimit {
+                    seconds: 3_600,
+                    max_amount: 100,
+                }),
+            },
+        ],
+        ..Default::default()
+    };
+    let mut spent = AssetWindowSpend::new();
+    spent.record(account(NEO), 60, 7);
+    spent.record(account(NEO), 3_600, 90);
+
+    assert_eq!(
+        denied(evaluate_asset_limits(
+            &policy,
+            &[transfer(NEO, KEY, RECEIVER, 6)],
+            &spent,
+        ))
+        .0,
+        DenyReason::AssetSingleAmountExceeded
+    );
+    assert_eq!(
+        denied(evaluate_asset_limits(
+            &policy,
+            &[
+                transfer(NEO, KEY, RECEIVER, 2),
+                transfer(NEO, KEY, RECEIVER, 2),
+            ],
+            &spent,
+        ))
+        .0,
+        DenyReason::AssetWindowAmountExceeded,
+        "the batch must accumulate against the shorter matching window"
+    );
+    assert!(
+        evaluate_asset_limits(&policy, &[transfer(GAS, KEY, RECEIVER, i128::MAX)], &spent,)
+            .is_allowed(),
+        "a limit for one token must not change another token"
+    );
+}
+
+#[test]
+fn signature_rate_counts_prior_successes_and_closes_at_the_ceiling() {
+    let policy = SignerPolicy {
+        max_signatures: Some(crate::model::SignatureRateLimit {
+            seconds: 60,
+            count: 2,
+        }),
+        ..Default::default()
+    };
+    assert_eq!(evaluate_signature_rate(&policy, 0), Verdict::Allow);
+    assert_eq!(evaluate_signature_rate(&policy, 1), Verdict::Allow);
+    assert_eq!(
+        denied(evaluate_signature_rate(&policy, 2)).0,
+        DenyReason::SignatureRateExceeded
+    );
 }

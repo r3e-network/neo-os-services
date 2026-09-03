@@ -22,17 +22,22 @@ type FeedSyncOptions = {
   provider?: string | null;
   providers?: string[] | null;
   symbols?: string[] | null;
-  private_key?: string | null;
-  wif?: string | null;
 };
 
 export async function runFeedSyncJob(options: FeedSyncOptions = {}) {
-  const candidateUrls =
+  const configuredCandidateUrls =
     Array.isArray(appConfig.nitroApiUrls) && appConfig.nitroApiUrls.length > 0
       ? appConfig.nitroApiUrls
       : appConfig.nitroApiUrl
         ? [appConfig.nitroApiUrl]
         : [];
+  // Feed publication is mutating/signing work. A production retry against
+  // another host would silently move the trust boundary, so only the primary
+  // explicit endpoint is eligible.
+  const candidateUrls =
+    process.env.NODE_ENV === 'production'
+      ? configuredCandidateUrls.slice(0, 1)
+      : configuredCandidateUrls;
   if (candidateUrls.length === 0) {
     throw new Error('MORPHEUS_RUNTIME_URL is not configured');
   }
@@ -68,8 +73,6 @@ export async function runFeedSyncJob(options: FeedSyncOptions = {}) {
           target_chain: targetChain,
           wait: false,
           project_slug: configuredProjectSlug || undefined,
-          private_key: trimString(options.private_key || '') || undefined,
-          wif: trimString(options.wif || '') || undefined,
         };
         if (configuredProvider) {
           payload.provider = configuredProvider;

@@ -48,6 +48,8 @@ const runtimeToken = crypto.randomBytes(32).toString('base64url');
 
 const content =
   [
+    '# Bootstrap-only: this file seeds first-boot provisioning; it is never runtime env.',
+    '# A runtime env file carrying MORPHEUS_ALLOW_UNPINNED_SIGNERS=true fails scripts/check-nitro-env.mjs.',
     envLine('MORPHEUS_NETWORK', network),
     envLine('PORT', '8080'),
     envLine('NITRO_SIGNER_VSOCK_PORT', '8787'),
@@ -68,7 +70,9 @@ console.log(
       ok: true,
       network,
       output,
+      bootstrap_only: true,
       warning:
+        'bootstrap-only: this file seeds first-boot provisioning and is never runtime env; ' +
         'new signer secrets were written locally but are not active until the Neo N3 contracts are explicitly rotated',
       updater: {
         address: updater.address,

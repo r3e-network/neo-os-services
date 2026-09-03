@@ -1,0 +1,6 @@
+{
+  "public_key_raw": "X+mfM9Lg+Tm9GBzniOC0vwDcZE857Za9AbdJCD7IsWM=",
+  "private_key_pkcs8": "MC4CAQAwBQYDK2VuBCIEIPBjP3AKvOssGMkua0kFSHbkLd7KkMfh1/8GqVrfajFy",
+  "plaintext": "{\"kind\":\"morpheus.confidential.golden.v1\",\"message\":\"morpheus envelope golden vector\",\"nonce\":\"0x0123456789abcdef\"}",
+  "envelope": "eyJ2IjoyLCJhbGciOiJYMjU1MTktSEtERi1TSEEyNTYtQUVTLTI1Ni1HQ00iLCJlcGsiOiJMcnU0NTdSOWNOVUNWNXlZNG85dit4TlVwVm4yNTdUcFJNVDAyUWhlTmhFPSIsIml2IjoiL1MvUTAvWG83MlAydmQ3ciIsImN0IjoiWjllbFNUc0ZNK2crbzYzMWtFdmFMMXkralFIZnh0MldseDdJSkNpYldoL2RYaTFVaFpOY0VzaEk3d1JEMEg3QTIvTWF4TEYyNDBQaGF1M3VUVlZDUWpMOGFtMU94aGFpODNzQTBwc3IyVkpROE1EYVpsZ3RxdjVjS3hlZTNzbmMyR2s0Mm4rZ2NIYVJyVkhnc21Md3U0NjhGZz09IiwidGFnIjoiWE14UDhuQll1MkxrMWF0bEFhNzduUT09In0="
+}

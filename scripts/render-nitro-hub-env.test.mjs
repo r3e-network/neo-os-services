@@ -30,7 +30,7 @@ function parseEnv(raw) {
   );
 }
 
-test('render-nitro-hub-env propagates heartbeat URLs and network-scoped signer material', () => {
+test('render-nitro-hub-env propagates heartbeat URLs and verifier public keys without signer material', () => {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'render-nitro-hub-env-'));
   const deployDir = path.join(workDir, 'deploy/nitro');
   const outputPath = path.join(deployDir, 'morpheus.hub.env');
@@ -49,24 +49,22 @@ test('render-nitro-hub-env propagates heartbeat URLs and network-scoped signer m
     MORPHEUS_BETTERSTACK_RELAYER_FAILURE_URL: 'https://heartbeat.example/failure',
     MORPHEUS_RUNTIME_CONFIG_JSON: JSON.stringify({
       MORPHEUS_NETWORK: 'mainnet',
+      MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY: 'mainnet-verifier-public-key',
+      // Leftover signing material in the packed runtime config must NOT leak
+      // into the hub env: signing is custody-side (docs/SIGNER_SERVICE.md §5).
       MORPHEUS_WORKER_NEO_N3_WIF: 'mainnet-feed-wif',
-      MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY: 'mainnet-feed-private-key',
-      MORPHEUS_RELAYER_NEO_N3_WIF: 'mainnet-request-wif',
       MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY: 'mainnet-request-private-key',
       MORPHEUS_UPDATER_NEO_N3_WIF: 'mainnet-updater-wif',
-      MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY: 'mainnet-updater-private-key',
     }),
   });
   writeEnvFile(path.join(deployDir, 'morpheus.testnet.env'), {
     ...shared,
     MORPHEUS_RUNTIME_CONFIG_JSON: JSON.stringify({
       MORPHEUS_NETWORK: 'testnet',
+      MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY: 'testnet-verifier-public-key',
       MORPHEUS_WORKER_NEO_N3_WIF: 'testnet-feed-wif',
-      MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY: 'testnet-feed-private-key',
-      MORPHEUS_RELAYER_NEO_N3_WIF: 'testnet-request-wif',
       MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY: 'testnet-request-private-key',
       MORPHEUS_UPDATER_NEO_N3_WIF: 'testnet-updater-wif',
-      MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY: 'testnet-updater-private-key',
     }),
   });
 
@@ -102,21 +100,29 @@ test('render-nitro-hub-env propagates heartbeat URLs and network-scoped signer m
     rendered.MORPHEUS_BETTERSTACK_RELAYER_FAILURE_URL,
     'https://heartbeat.example/failure'
   );
-  assert.equal(rendered.MORPHEUS_WORKER_NEO_N3_WIF_MAINNET, 'mainnet-feed-wif');
-  assert.equal(rendered.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET, 'mainnet-feed-private-key');
-  assert.equal(rendered.MORPHEUS_WORKER_NEO_N3_WIF_TESTNET, 'testnet-feed-wif');
-  assert.equal(rendered.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_TESTNET, 'testnet-feed-private-key');
-  assert.equal(rendered.MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET, 'mainnet-request-wif');
-  assert.equal(rendered.MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_MAINNET, 'mainnet-request-private-key');
-  assert.equal(rendered.MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET, 'mainnet-updater-wif');
-  assert.equal(rendered.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET, 'mainnet-updater-private-key');
-  assert.equal(rendered.MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET, 'testnet-request-wif');
-  assert.equal(rendered.MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_TESTNET, 'testnet-request-private-key');
-  assert.equal(rendered.MORPHEUS_UPDATER_NEO_N3_WIF_TESTNET, 'testnet-updater-wif');
-  assert.equal(rendered.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_TESTNET, 'testnet-updater-private-key');
+  assert.equal(rendered.MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_MAINNET, 'mainnet-verifier-public-key');
+  assert.equal(rendered.MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_TESTNET, 'testnet-verifier-public-key');
+  for (const key of Object.keys(rendered)) {
+    assert.equal(
+      /WIF|PRIVATE_KEY/.test(key),
+      false,
+      `hub env must not carry signing key material: ${key}`
+    );
+  }
+  // The *_RUNTIME_CONFIG_JSON lines are verbatim passthroughs of the rendered
+  // per-network env files, which are already WIF-free by their own tests. Every
+  // other rendered value must embed no signing material.
+  for (const [key, value] of Object.entries(rendered)) {
+    if (key.endsWith('_RUNTIME_CONFIG_JSON')) continue;
+    assert.equal(
+      /wif|private-key/.test(value),
+      false,
+      `hub env value must not embed signing key material: ${key}`
+    );
+  }
 });
 
-test('render-nitro-hub-env lets secure local signer injection override packed runtime gaps', () => {
+test('render-nitro-hub-env lets secure local verifier public key override packed runtime gaps', () => {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'render-nitro-hub-env-local-'));
   const deployDir = path.join(workDir, 'deploy/nitro');
   const outputPath = path.join(deployDir, 'morpheus.hub.env');
@@ -129,15 +135,13 @@ test('render-nitro-hub-env lets secure local signer injection override packed ru
   };
 
   writeEnvFile(path.join(workDir, '.env.local'), {
-    MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET: 'local-mainnet-request-wif',
-    MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET: 'local-mainnet-updater-wif',
+    MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_MAINNET: 'local-mainnet-verifier-public-key',
   });
   writeEnvFile(path.join(deployDir, 'morpheus.mainnet.env'), {
     ...shared,
     MORPHEUS_RUNTIME_CONFIG_JSON: JSON.stringify({
       MORPHEUS_NETWORK: 'mainnet',
-      MORPHEUS_RELAYER_NEO_N3_WIF: '',
-      MORPHEUS_UPDATER_NEO_N3_WIF: '',
+      MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY: '',
     }),
   });
   writeEnvFile(path.join(deployDir, 'morpheus.testnet.env'), {
@@ -160,8 +164,10 @@ test('render-nitro-hub-env lets secure local signer injection override packed ru
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const rendered = parseEnv(fs.readFileSync(outputPath, 'utf8'));
 
-  assert.equal(rendered.MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET, 'local-mainnet-request-wif');
-  assert.equal(rendered.MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET, 'local-mainnet-updater-wif');
+  assert.equal(
+    rendered.MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_MAINNET,
+    'local-mainnet-verifier-public-key'
+  );
 });
 
 test('render-nitro-hub-env never promotes unscoped local signer material into scoped hub keys', () => {
@@ -210,10 +216,13 @@ test('render-nitro-hub-env never promotes unscoped local signer material into sc
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const rendered = parseEnv(fs.readFileSync(outputPath, 'utf8'));
 
-  assert.equal(rendered.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET, 'mainnet-worker-private-key');
-  assert.equal(rendered.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_TESTNET, 'testnet-worker-private-key');
+  // The verifier public key still promotes per network (public, safe).
   assert.equal(rendered.MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_MAINNET, 'mainnet-verifier-public-key');
   assert.equal(rendered.MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_TESTNET, 'testnet-verifier-public-key');
+  // Signing material is not rendered at all — scoped or otherwise.
+  for (const key of Object.keys(rendered)) {
+    assert.equal(/WIF|PRIVATE_KEY/.test(key), false, `hub env must not carry key material: ${key}`);
+  }
 });
 
 test('render-nitro-hub-env derives MORPHEUS_RUNTIME_TOKEN from a NITRO_API_TOKEN-only env', () => {

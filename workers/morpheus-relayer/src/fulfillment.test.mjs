@@ -14,12 +14,10 @@ import {
   isTerminalConfigurationError,
   isTransientWorkerStatus,
   processEvent,
-  resetLocalVerifierCacheForTests,
   resolveCallbackRetryCeiling,
   resolveEventFulfillmentContext,
   resolveExpectedPcr0,
   resolveFulfillmentSigningContext,
-  resolveLocalVerifierAccountForTests,
   resolveNitroRootCertPem,
   trimOnchainErrorMessage,
   verifyEnclaveAttestation,
@@ -33,6 +31,32 @@ import {
 import { buildFulfillmentDigestBytes, encodeFulfillmentResult } from './router.js';
 import { buildNeoXDigest, resolveResultBytesHex } from './neox.js';
 import { ErrorCode } from '@r3e-network/neo-os-services-shared/error-codes';
+
+// ===================================================================
+// Custody signer service stubs
+// ===================================================================
+
+// The testnet oracle_verifier public key pinned in config/signer-identities.json.
+// signFulfillmentPayload cross-checks the custody signer's returned public key
+// against this pinned identity, so every /sign/raw stub must sign for it.
+const PINNED_TESTNET_VERIFIER_PK =
+  '02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4';
+
+function custodySignRawResponse(signatureHex) {
+  return new Response(
+    JSON.stringify({
+      key_id: 'key-oracle-verifier',
+      script_hash: '0x' + 'e'.repeat(40),
+      address: 'N' + 'e'.repeat(33),
+      digest: 'ab'.repeat(32),
+      signature: signatureHex,
+      public_key: PINNED_TESTNET_VERIFIER_PK,
+      invocation_script: `0c40${signatureHex}`,
+      verification_script: `0c21${PINNED_TESTNET_VERIFIER_PK}4156e7b327`,
+    }),
+    { status: 200, headers: { 'content-type': 'application/json' } }
+  );
+}
 
 // ===================================================================
 // trimOnchainErrorMessage
@@ -1159,8 +1183,14 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
         enclaveFulfill: true,
         enclaveFulfillUrl: 'https://enclave.test',
         timeoutMs: 1000,
+        custodyUrl: 'https://custody.test',
+        custodyToken: 'custody-token',
       },
-      neo_n3: { oracleContract: N3_ORACLE, networkMagic: N3_MAGIC },
+      neo_n3: {
+        oracleContract: N3_ORACLE,
+        networkMagic: N3_MAGIC,
+        custodyKeyIds: { oracle_verifier: 'key-oracle-verifier' },
+      },
       neox: { chainId: NEOX_CHAIN_ID, oracleContract: NEOX_ORACLE, updaterPrivateKey: TEST_EVM_PK },
       ...extra,
     };
@@ -1264,7 +1294,7 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
   }
 
   // Mock fetch that records every call and routes /oracle/fulfill to the supplied
-  // enclave body. Any OTHER nitro endpoint (worker compute / /sign/payload) is a
+  // enclave body. Any OTHER endpoint (worker compute / custody /sign/raw) is a
   // FAILURE in flag-on mode for the attested lane — the single /oracle/fulfill call
   // must be the only nitro hit (proving the two-step path is replaced).
   function installEnclaveFetch(enclaveBody) {
@@ -1327,7 +1357,7 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
         );
 
         // EXACTLY one nitro endpoint hit, and it was /oracle/fulfill (not a worker
-        // compute call followed by a separate /sign/payload).
+        // compute call followed by a separate custody /sign/raw).
         assert.equal(calls.length, 1, `expected a single nitro call, got ${calls.length}`);
         assert.ok(calls[0].url.endsWith('/oracle/fulfill'));
         assert.ok(calls[0].url.startsWith('https://enclave.test'));
@@ -1470,15 +1500,9 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
           headers: { 'content-type': 'application/json' },
         });
       }
-      // The host /sign/payload call (no relayer-local verifier configured).
-      if (u.endsWith('/sign/payload')) {
-        return new Response(
-          JSON.stringify({ status: 'ok', signature: 'd'.repeat(128), public_key: '02ff' }),
-          {
-            status: 200,
-            headers: { 'content-type': 'application/json' },
-          }
-        );
+      // The custody signer /sign/raw call (oracle_verifier key).
+      if (u.endsWith('/sign/raw')) {
+        return custodySignRawResponse('d'.repeat(128));
       }
       return new Response(JSON.stringify({ error: `unexpected ${u}` }), { status: 500 });
     };
@@ -1506,9 +1530,9 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
 
       // The arbitrary-URL lane never hits /oracle/fulfill.
       assert.ok(!calls.some((c) => c.url.endsWith('/oracle/fulfill')), 'must not call the enclave');
-      // It used the host worker compute + the host /sign/payload (two-step).
+      // It used the host worker compute + the custody signer /sign/raw (two-step).
       assert.ok(calls.some((c) => c.url.startsWith('https://worker.test')));
-      assert.ok(calls.some((c) => c.url.endsWith('/sign/payload')));
+      assert.ok(calls.some((c) => c.url.endsWith('/sign/raw')));
       assert.equal(submitted.length, 1);
       assert.equal(result.result.success, true);
       // Tagged host-unattested.
@@ -1518,7 +1542,7 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
     }
   });
 
-  it('flag-OFF (default) keeps the two-step host path: worker compute + /sign/payload, NO /oracle/fulfill', async () => {
+  it('flag-OFF (default) keeps the two-step host path: worker compute + custody /sign/raw, NO /oracle/fulfill', async () => {
     const event = {
       chain: 'neo_n3',
       requestId: '999',
@@ -1541,14 +1565,8 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
           }
         );
       }
-      if (u.endsWith('/sign/payload')) {
-        return new Response(
-          JSON.stringify({ status: 'ok', signature: 'e'.repeat(128), public_key: '02ff' }),
-          {
-            status: 200,
-            headers: { 'content-type': 'application/json' },
-          }
-        );
+      if (u.endsWith('/sign/raw')) {
+        return custodySignRawResponse('e'.repeat(128));
       }
       return new Response(JSON.stringify({ error: `unexpected ${u}` }), { status: 500 });
     };
@@ -1560,6 +1578,8 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
         enclaveFulfill: false, // explicit flag-OFF
         enclaveFulfillUrl: 'https://enclave.test',
         timeoutMs: 1000,
+        custodyUrl: 'https://custody.test',
+        custodyToken: 'custody-token',
       },
       hooks: {
         fulfillNeoRequest: async (call) => {
@@ -1591,8 +1611,8 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
         'flag-off uses the host worker compute'
       );
       assert.ok(
-        calls.some((c) => c.url.endsWith('/sign/payload')),
-        'flag-off uses the separate enclave /sign/payload'
+        calls.some((c) => c.url.endsWith('/sign/raw')),
+        'flag-off uses the custody signer /sign/raw'
       );
       assert.equal(submitted.length, 1);
       assert.equal(submitted[0].verification.signature, 'e'.repeat(128));
@@ -1628,14 +1648,8 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
           }
         );
       }
-      if (u.endsWith('/sign/payload')) {
-        return new Response(
-          JSON.stringify({ status: 'ok', signature: 'e'.repeat(128), public_key: '02ff' }),
-          {
-            status: 200,
-            headers: { 'content-type': 'application/json' },
-          }
-        );
+      if (u.endsWith('/sign/raw')) {
+        return custodySignRawResponse('e'.repeat(128));
       }
       return new Response(JSON.stringify({ error: `unexpected ${u}` }), { status: 500 });
     };
@@ -1647,6 +1661,8 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
         enclaveFulfill: false, // explicit flag-OFF
         enclaveFulfillUrl: 'https://enclave.test',
         timeoutMs: 1000,
+        custodyUrl: 'https://custody.test',
+        custodyToken: 'custody-token',
       },
       hooks: {
         fulfillNeoRequest: async (call) => {
@@ -1697,15 +1713,9 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
     global.fetch = async (url) => {
       const u = String(url);
       calls.push({ url: u });
-      // Local VRF performs no worker compute; it only signs via the host /sign/payload.
-      if (u.endsWith('/sign/payload')) {
-        return new Response(
-          JSON.stringify({ status: 'ok', signature: 'f'.repeat(128), public_key: '02ff' }),
-          {
-            status: 200,
-            headers: { 'content-type': 'application/json' },
-          }
-        );
+      // Local VRF performs no worker compute; it only signs via the custody /sign/raw.
+      if (u.endsWith('/sign/raw')) {
+        return custodySignRawResponse('f'.repeat(128));
       }
       return new Response(JSON.stringify({ error: `unexpected ${u}` }), { status: 500 });
     };
@@ -1717,6 +1727,8 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
         enclaveFulfill: false, // explicit flag-OFF
         enclaveFulfillUrl: 'https://enclave.test',
         timeoutMs: 1000,
+        custodyUrl: 'https://custody.test',
+        custodyToken: 'custody-token',
       },
       hooks: {
         fulfillNeoRequest: async (call) => {
@@ -1771,14 +1783,8 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
     const original = global.fetch;
     global.fetch = async (url) => {
       const u = String(url);
-      if (u.endsWith('/sign/payload')) {
-        return new Response(
-          JSON.stringify({ status: 'ok', signature: 'd'.repeat(128), public_key: '02ff' }),
-          {
-            status: 200,
-            headers: { 'content-type': 'application/json' },
-          }
-        );
+      if (u.endsWith('/sign/raw')) {
+        return custodySignRawResponse('d'.repeat(128));
       }
       return new Response(JSON.stringify({ error: `unexpected ${u}` }), { status: 500 });
     };
@@ -1790,6 +1796,8 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
         enclaveFulfill: false, // explicit flag-OFF
         enclaveFulfillUrl: 'https://enclave.test',
         timeoutMs: 1000,
+        custodyUrl: 'https://custody.test',
+        custodyToken: 'custody-token',
       },
       hooks: {
         fulfillNeoRequest: async (call) => {
@@ -2116,8 +2124,6 @@ describe('verifyEnclaveAttestation (C1)', () => {
 
 describe('confidential decrypt lane endpoint isolation', () => {
   const silentLogger = { info() {}, warn() {}, error() {} };
-  // Local oracle_verifier key so signFulfillmentPayload signs locally (no /sign call).
-  const VERIFIER_PK = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
 
   function decryptConfig(extra = {}) {
     return {
@@ -2137,12 +2143,13 @@ describe('confidential decrypt lane endpoint isolation', () => {
         decryptUrl: 'https://enclave.test',
         enclaveFulfill: false,
         timeoutMs: 1000,
+        custodyUrl: 'https://custody.test',
+        custodyToken: 'custody-token',
       },
       neo_n3: {
         oracleContract: '0x1212121212121212121212121212121212121212',
         networkMagic: 894710606,
-        updaterPrivateKey: VERIFIER_PK,
-        verifierPrivateKey: VERIFIER_PK,
+        custodyKeyIds: { oracle_verifier: 'key-oracle-verifier' },
       },
       hooks: {
         fulfillNeoRequest: async () => ({ tx_hash: '0xfeed', vm_state: 'HALT' }),
@@ -2162,6 +2169,9 @@ describe('confidential decrypt lane endpoint isolation', () => {
           status: 200,
           headers: { 'content-type': 'application/json' },
         });
+      }
+      if (u.endsWith('/sign/raw')) {
+        return custodySignRawResponse('c'.repeat(128));
       }
       return new Response(JSON.stringify({ error: `unexpected endpoint ${u}` }), {
         status: 500,
@@ -2504,102 +2514,6 @@ describe('verifyEnclaveSignatureAgainstPinnedVerifier (digest-sig)', () => {
       else process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = saved.allow;
       if (saved.key === undefined) delete process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_TESTNET;
       else process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_TESTNET = saved.key;
-    }
-  });
-});
-
-// ===================================================================
-// resolveLocalVerifierAccount memoization (R2-1.1 — locks in the Round-1 perf win)
-// ===================================================================
-// The memo (fulfillment.js:328) skips the NEO_N3_SIGNER_ENV_KEYS scan + secp256r1
-// derivation on every signed callback. These tests pin the three properties a wrong
-// cache would silently break: (a) a second call returns the SAME (cached) account
-// object — reference-equal, proving no re-derivation; (b) after the test-only reset,
-// the next call re-derives a FRESH object (different identity); (c) a different
-// network resolves independently (cache isolation by network+key).
-
-describe('resolveLocalVerifierAccount memoization', () => {
-  // A valid Neo N3 test WIF + its derived public key (generated via neon-js, not a live key).
-  const VERIFIER_WIF = 'KxKbVtgf3iENAickUsBBMd374A4juokbFgFbD6ynJWNUtCjHWttj';
-  const ENV_KEY = 'MORPHEUS_ORACLE_VERIFIER_WIF_TESTNET';
-
-  function withVerifierEnv(fn) {
-    return async () => {
-      resetLocalVerifierCacheForTests();
-      const savedKey = process.env[ENV_KEY];
-      const savedAllow = process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS;
-      process.env[ENV_KEY] = VERIFIER_WIF;
-      // Bypass the pinned-identity match (config/signer-identities.json) so any valid WIF
-      // is accepted as the oracle_verifier — this test is about the CACHE, not key identity.
-      process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = 'true';
-      try {
-        await fn();
-      } finally {
-        if (savedKey === undefined) delete process.env[ENV_KEY];
-        else process.env[ENV_KEY] = savedKey;
-        if (savedAllow === undefined) delete process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS;
-        else process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = savedAllow;
-        resetLocalVerifierCacheForTests();
-      }
-    };
-  }
-
-  // Minimal config: the verifier env var both (a) pins the expected public key via
-  // resolvePinnedNeoN3VerifierPublicKey and (b) is a candidate itself (the explicit
-  // oracle_verifier WIF). So { network: 'testnet' } alone resolves the account.
-  const config = () => ({ network: 'testnet' });
-
-  it(
-    'returns a reference-equal account across two calls (cache hit, no re-derivation)',
-    withVerifierEnv(() => {
-      const first = resolveLocalVerifierAccountForTests(config());
-      assert.ok(first, 'expected a resolved verifier account for the pinned WIF');
-      const second = resolveLocalVerifierAccountForTests(config());
-      // Reference equality proves the second call hit the cache rather than re-running
-      // reportPinnedNeoN3Role + buildLocalNeoN3Account.
-      assert.equal(second, first, 'second call must return the cached account object');
-    })
-  );
-
-  it(
-    're-derives a fresh account object after resetLocalVerifierCacheForTests',
-    withVerifierEnv(() => {
-      const first = resolveLocalVerifierAccountForTests(config());
-      resetLocalVerifierCacheForTests();
-      const second = resolveLocalVerifierAccountForTests(config());
-      assert.notEqual(
-        second,
-        first,
-        'after reset, a NEW account object must be derived (different identity)'
-      );
-      // Same key material, just a different object — the publicKey must still match.
-      assert.equal(second.publicKey, first.publicKey);
-    })
-  );
-
-  it('isolates the cache by network (mainnet slot is independent of testnet)', () => {
-    resetLocalVerifierCacheForTests();
-    const savedKey = process.env[ENV_KEY];
-    const savedAllow = process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS;
-    process.env[ENV_KEY] = VERIFIER_WIF;
-    process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = 'true';
-    try {
-      const testnetAccount = resolveLocalVerifierAccountForTests({ network: 'testnet' });
-      assert.ok(testnetAccount, 'testnet account resolved from the pinned verifier WIF');
-      // The mainnet slot has no pinned verifier key here, so resolvePinnedNeoN3VerifierPublicKey
-      // throws — that throw itself proves the network-keyed cache did not leak the testnet
-      // account into the mainnet slot.
-      assert.throws(
-        () => resolveLocalVerifierAccountForTests({ network: 'mainnet' }),
-        /oracle_verifier signer drift|no pinned verifier public key/i,
-        'mainnet must not resolve to the testnet-cached account (cache isolation)'
-      );
-    } finally {
-      if (savedKey === undefined) delete process.env[ENV_KEY];
-      else process.env[ENV_KEY] = savedKey;
-      if (savedAllow === undefined) delete process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS;
-      else process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = savedAllow;
-      resetLocalVerifierCacheForTests();
     }
   });
 });

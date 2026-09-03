@@ -3,38 +3,17 @@
 //! orchestrator polls `ready`, ops read `key_source` to detect any plaintext
 //! reliance, and `kms_diag` reports whether the attestation-gated KMS path
 //! has been proven — without ever carrying a secret.
+//!
+//! `key_source` comes from the signing plane's own report, not from env
+//! inference: the merged server guessed by looking for KMS ciphertext env
+//! names, but the split's host holds no keys at all — how a role's key is
+//! held (`custody`, `kms_attested`, `none`) is exactly what the plane knows.
+//! `/provision` already renders the plane's report; /health disagreeing with
+//! it about the same role would make one of the two wrong, and an operator
+//! watching for plaintext reliance must read the same answer twice.
 
 use crate::state::AppState;
 use crate::RUNTIME_NAME;
-
-/// `roleHasKmsCiphertext`: whether a KMS ciphertext is provisioned for the
-/// role — the marker that a materialized key arrived through the
-/// attestation-gated path rather than as plaintext.
-fn role_has_kms_ciphertext(state: &AppState, role: &str) -> bool {
-    let name = match role {
-        "oracle_verifier" => "MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64",
-        "updater" => "MORPHEUS_UPDATER_NEO_N3_KMS_CIPHERTEXT_BASE64",
-        _ => return false,
-    };
-    state
-        .overlay
-        .read()
-        .expect("overlay lock")
-        .get_trimmed(name)
-        .is_some()
-}
-
-/// `roleKeySource`: how a materialized role key reached the trust boundary.
-fn role_key_source(state: &AppState, role: &str, materialized: bool) -> &'static str {
-    if !materialized {
-        return "none";
-    }
-    if role_has_kms_ciphertext(state, role) {
-        "kms_attested"
-    } else {
-        "host_plaintext"
-    }
-}
 
 pub fn handle_health(state: &AppState) -> serde_json::Value {
     let network = state.resolve_network();
@@ -42,7 +21,10 @@ pub fn handle_health(state: &AppState) -> serde_json::Value {
     let signer_ok = verifier.ok && verifier.materialized;
     let updater = state.signer.role_report(&network, "updater");
 
-    let compute_ready = state.bridge.ready();
+    // The measured runtime has no optional compute child. Implemented lanes
+    // execute in-process and unmigrated fulfillment types refuse
+    // deterministically, so host liveness is the compute readiness signal.
+    let compute_ready = true;
     let ready = compute_ready && signer_ok;
 
     let mut checks = serde_json::json!({
@@ -59,10 +41,11 @@ pub fn handle_health(state: &AppState) -> serde_json::Value {
         "ready": ready,
         "runtime": RUNTIME_NAME,
         "network": network,
+        "provisioned": state.runtime_token_kms_version.load(std::sync::atomic::Ordering::SeqCst) > 0,
         "checks": checks,
         "key_source": {
-            "oracle_verifier": role_key_source(state, "oracle_verifier", verifier.materialized),
-            "updater": role_key_source(state, "updater", updater.materialized),
+            "oracle_verifier": verifier.key_source,
+            "updater": updater.key_source,
         },
         "plaintext_key_provision_allowed": false,
         "kms_diag": state.kms_diag.lock().expect("kms diag lock").value.clone(),

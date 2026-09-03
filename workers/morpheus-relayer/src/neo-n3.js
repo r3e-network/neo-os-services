@@ -1,13 +1,11 @@
 import { randomInt, randomUUID } from 'node:crypto';
-import { relayNeoN3Invocation } from '@r3e-network/neo-os-nitro-worker/src/chain/index.js';
-import { experimental, sc, tx, u, wallet as neonWallet } from '@cityofzion/neon-js';
+import { sc, tx, u, wallet as neonWallet } from '@cityofzion/neon-js';
 import {
   mapWithConcurrency,
   resolveScanConcurrency,
 } from '@r3e-network/neo-os-services-shared/utils';
 import { LEGACY_CALLBACK_METHOD } from '@r3e-network/neo-os-services-shared/callback-methods';
-import { deriveUpdaterNeoN3PrivateKeyHex, shouldUseDerivedKeys } from './nitro-signer.js';
-import { callNitro } from './nitro.js';
+import { custodyKeyId, custodyKeyInfo, custodySignTransaction } from './custody.js';
 import { strip0x as stripHexPrefix, trimString } from './lib/strings.js';
 
 // Identifier hygiene: event identifier fields must carry the on-chain bytes
@@ -205,7 +203,7 @@ export function hasNeoN3RelayerConfig(config) {
   return Boolean(
     getNeoN3RpcUrls(config).length > 0 &&
     config.neo_n3.oracleContract &&
-    (config.neo_n3.updaterWif || config.neo_n3.updaterPrivateKey || shouldUseDerivedKeys(config))
+    trimString(config?.neo_n3?.custodyKeyIds?.updater || '')
   );
 }
 
@@ -589,14 +587,6 @@ function normalizePublicKey(value) {
   return publicKey;
 }
 
-function normalizeSignature(value) {
-  const signature = strip0x(value);
-  if (!/^[0-9a-f]{128}$/i.test(signature)) {
-    throw new Error('runtime derived updater returned an invalid signature');
-  }
-  return signature;
-}
-
 function normalizeHash160(value) {
   const raw = trimString(value);
   if (/^0x[0-9a-f]{40}$/i.test(raw)) return raw.toLowerCase();
@@ -622,15 +612,7 @@ function getNeoN3FeeTopUpSettings(config) {
     minBalance: parseNonNegativeBigInt(raw.minBalance, DEFAULT_FEE_TOP_UP_MIN_BALANCE),
     topUpAmount: parseNonNegativeBigInt(raw.topUpAmount, DEFAULT_FEE_TOP_UP_AMOUNT),
     maxTopUpAmount: parseNonNegativeBigInt(raw.maxTopUpAmount, DEFAULT_FEE_TOP_UP_MAX_AMOUNT),
-    funderWif: trimString(raw.funderWif || ''),
-    funderPrivateKey: trimString(raw.funderPrivateKey || ''),
   };
-}
-
-function buildLocalNeoN3AccountFromSecret(wif, privateKey) {
-  const secret = trimString(wif) || trimString(privateKey);
-  if (!secret) return null;
-  return new neonWallet.Account(secret);
 }
 
 async function readNeoN3GasBalance(config, scriptHash) {
@@ -770,7 +752,7 @@ async function sendNeoN3GasTransfer(config, funder, toScriptHash, amount) {
     scriptHash: strip0x(GAS_CONTRACT_HASH),
     operation: 'transfer',
     args: [
-      sc.ContractParam.hash160(`0x${funder.scriptHash}`),
+      sc.ContractParam.hash160(`0x${strip0x(funder.scriptHash)}`),
       sc.ContractParam.hash160(to),
       sc.ContractParam.integer(String(amount)),
       sc.ContractParam.any(null),
@@ -779,10 +761,7 @@ async function sendNeoN3GasTransfer(config, funder, toScriptHash, amount) {
   const { txHash } = await buildSignAndBroadcastNeoN3Tx(
     config,
     script,
-    {
-      scriptHash: funder.scriptHash,
-      sign: (transfer) => transfer.sign(funder, config.neo_n3.networkMagic),
-    },
+    buildCustodySignerAdapter(config, funder),
     { label: 'Neo N3 updater fee top-up' }
   );
   await waitForNeoN3TransactionHalt(config, txHash, 'Neo N3 updater fee top-up');
@@ -799,13 +778,14 @@ async function ensureNeoN3FeeBalance(config, target, requiredFee = 0n) {
   if (currentBalance >= requiredBalance) {
     return { skipped: true, reason: 'sufficient', balance: currentBalance.toString() };
   }
-  const funder = buildLocalNeoN3AccountFromSecret(settings.funderWif, settings.funderPrivateKey);
-  if (!funder) {
+  const funderKeyId = trimString(config?.neo_n3?.custodyKeyIds?.fee_funder || '');
+  if (!funderKeyId) {
     throw new Error(
-      `Neo N3 updater fee balance is below reserve; configure MORPHEUS_RELAYER_NEO_N3_FEE_FUNDER_WIF for auto top-up`
+      'Neo N3 updater fee balance is below reserve; provision a fee-funder custody key (SIGNER_ROLE_FEE_FUNDER_KEY_ID) for auto top-up'
     );
   }
-  const funderHash = normalizeHash160(`0x${funder.scriptHash}`);
+  const funder = await resolveCustodyKeyById(config, funderKeyId);
+  const funderHash = normalizeHash160(funder.scriptHash);
   if (funderHash === targetHash) {
     throw new Error('Neo N3 updater fee top-up funder cannot be the same account as the updater');
   }
@@ -830,13 +810,68 @@ async function ensureNeoN3FeeBalance(config, target, requiredFee = 0n) {
   };
 }
 
-function buildSignatureWitness(signature, publicKey) {
-  return new tx.Witness({
-    invocationScript: u.HexString.fromHex(`0c40${normalizeSignature(signature)}`),
-    verificationScript: u.HexString.fromHex(
-      neonWallet.getVerificationScriptFromPublicKey(normalizePublicKey(publicKey))
-    ),
-  });
+// Custody key identity lookup (docs/SIGNER_SERVICE.md §5): the relayer names a
+// key id and receives the public identity — never the secret. No cache on
+// purpose: a rotated key must never keep signing under a stale identity.
+async function resolveCustodyKeyById(config, keyId) {
+  const key = await custodyKeyInfo(config, keyId);
+  const publicKey = normalizePublicKey(key.public_key || '');
+  const scriptHash =
+    normalizeHash160(key.script_hash || '') ||
+    `0x${neonWallet.getScriptHashFromPublicKey(publicKey)}`.toLowerCase();
+  return {
+    key_id: keyId,
+    publicKey,
+    scriptHash,
+    address: trimString(key.address || ''),
+  };
+}
+
+async function resolveCustodyUpdater(config) {
+  return resolveCustodyKeyById(config, custodyKeyId(config, 'updater'));
+}
+
+// The witness's verification script is `0c21 <33B pubkey> 4156e7b327`. §5's
+// /sign/transaction reply carries the pinned scripts but no bare public_key
+// (only /sign/raw widens it), so recover the key exactly the way the service
+// itself does for /sign/raw — sliced out of the verification script.
+function publicKeyFromSignedWitness(signed) {
+  const verification = trimString(signed.verification_script || '');
+  if (/^0c21/i.test(verification) && verification.length >= 70) {
+    return normalizePublicKey(verification.slice(4, 70));
+  }
+  return normalizePublicKey(signed.public_key || '');
+}
+
+// Witness strategy for custody-signed transactions: the unsigned serialization
+// goes to the enclave, which policy-checks the calls inside and returns the
+// complete witness scripts. The recovered public key is re-checked against the
+// identity resolved at lookup time so a custody-side key swap cannot pass.
+function buildCustodySignerAdapter(config, key) {
+  return {
+    scriptHash: key.scriptHash,
+    sign: async (transaction) => {
+      const signed = await custodySignTransaction(config, key.key_id, transaction.serialize(false));
+      const publicKey = publicKeyFromSignedWitness(signed);
+      if (publicKey.toLowerCase() !== key.publicKey.toLowerCase()) {
+        throw new Error('custody signing key changed between lookup and signing');
+      }
+      transaction.witnesses = [
+        new tx.Witness({
+          invocationScript: u.HexString.fromHex(signed.invocation_script || ''),
+          verificationScript: u.HexString.fromHex(signed.verification_script || ''),
+        }),
+      ];
+    },
+    verifyWitness: (transaction) => {
+      const witnessHash = normalizeHash160(`0x${transaction.witnesses[0].scriptHash}`);
+      if (witnessHash !== key.scriptHash) {
+        throw new Error(
+          `custody signer witness mismatch: expected ${key.scriptHash}, got ${witnessHash}`
+        );
+      }
+    },
+  };
 }
 
 function buildFulfillRequestParams(requestId, success, resultHex, error, verificationSignature) {
@@ -851,125 +886,12 @@ function buildFulfillRequestParams(requestId, success, resultHex, error, verific
   ];
 }
 
-async function resolveRuntimeDerivedUpdater(config) {
-  const response = await callNitro(
-    config,
-    '/keys/derived',
-    {
-      role: 'updater',
-      key_role: 'updater',
-      dstack_key_role: 'updater',
-      target_chain: 'neo_n3',
-      use_derived_keys: true,
-    },
-    { baseUrl: config.nitro.signerUrl }
-  );
-  if (!response.ok) {
-    throw new Error(`runtime derived updater lookup failed with status ${response.status}`);
-  }
-  const neo = response.body?.derived?.neo_n3 || response.body?.neo_n3 || {};
-  const publicKey = normalizePublicKey(neo.public_key || neo.publicKey || '');
-  const scriptHash =
-    normalizeHash160(neo.script_hash || '') ||
-    normalizeHash160(neo.address || '') ||
-    `0x${neonWallet.getScriptHashFromPublicKey(publicKey)}`.toLowerCase();
-  return {
-    publicKey,
-    scriptHash,
-    address: trimString(neo.address || ''),
-  };
-}
-
-async function signNeoN3TransactionWithRuntimeUpdater(config, messageHex, expectedPublicKey) {
-  const response = await callNitro(
-    config,
-    '/sign/payload',
-    {
-      target_chain: 'neo_n3',
-      key_role: 'updater',
-      dstack_key_role: 'updater',
-      data_hex: trimString(messageHex).replace(/^0x/i, ''),
-      use_derived_keys: true,
-    },
-    { baseUrl: config.nitro.signerUrl }
-  );
-  if (!response.ok) {
-    throw new Error(`runtime derived updater signing failed with status ${response.status}`);
-  }
-  const signature = normalizeSignature(
-    response.body?.signature || response.body?.signature_hex || ''
-  );
-  const publicKey = normalizePublicKey(response.body?.public_key || response.body?.publicKey || '');
-  if (publicKey.toLowerCase() !== normalizePublicKey(expectedPublicKey).toLowerCase()) {
-    throw new Error('runtime derived updater signing key changed between lookup and signing');
-  }
-  return { signature, publicKey };
-}
-
-// Witness strategy for transactions signed by the runtime-derived updater:
-// each sign pass requests a fresh enclave signature over the current message
-// (replacing any prior witness), and the final witness must hash back to the
-// updater account the transaction names as its signer.
-function buildRuntimeDerivedUpdaterSignerAdapter(config, updater) {
-  return {
-    scriptHash: updater.scriptHash,
-    sign: async (transaction) => {
-      const signature = await signNeoN3TransactionWithRuntimeUpdater(
-        config,
-        transaction.getMessageForSigning(config.neo_n3.networkMagic),
-        updater.publicKey
-      );
-      transaction.witnesses = [buildSignatureWitness(signature.signature, signature.publicKey)];
-    },
-    verifyWitness: (transaction) => {
-      const witnessHash = normalizeHash160(`0x${transaction.witnesses[0].scriptHash}`);
-      if (witnessHash !== updater.scriptHash) {
-        throw new Error(
-          `runtime derived updater witness mismatch: expected ${updater.scriptHash}, got ${witnessHash}`
-        );
-      }
-    },
-  };
-}
-
-async function fulfillNeoN3RequestWithRuntimeDerivedUpdater(
-  config,
-  requestId,
-  success,
-  resultHex,
-  error,
-  verificationSignature
-) {
-  const updater = await resolveRuntimeDerivedUpdater(config);
-  const script = sc.createScript({
-    scriptHash: strip0x(config.neo_n3.oracleContract),
-    operation: 'fulfillRequest',
-    args: buildFulfillRequestParams(requestId, success, resultHex, error, verificationSignature),
-  });
-  const { txHash } = await buildSignAndBroadcastNeoN3Tx(
-    config,
-    script,
-    buildRuntimeDerivedUpdaterSignerAdapter(config, updater),
-    {
-      systemFeeHeadroom: true,
-      ensureFeeBalance: (requiredFee) => ensureNeoN3FeeBalance(config, updater, requiredFee),
-      buildTestInvokeFaultError: (exception) =>
-        `Neo N3 fulfillRequest test invoke faulted for request ${requestId}: ${
-          exception || 'unknown error'
-        }`,
-    }
-  );
-  return txHash;
-}
-
-export function assertNeoN3HaltExecution(requestId, txHash, execution) {
+export function assertNeoN3HaltExecution(requestId, txHash, execution, label = 'fulfillRequest') {
   const vmState = trimString(execution?.vmstate || 'HALT').toUpperCase() || 'HALT';
   const exception = trimString(execution?.exception || '');
   if (vmState !== 'HALT') {
     const detail = exception || `VM state ${vmState}`;
-    throw new Error(
-      `Neo N3 fulfillRequest faulted for request ${requestId} (${txHash}): ${detail}`
-    );
+    throw new Error(`Neo N3 ${label} faulted for request ${requestId} (${txHash}): ${detail}`);
   }
   return { vm_state: vmState, exception: exception || undefined };
 }
@@ -1016,7 +938,12 @@ function shouldThrowOnNeoN3FulfillConfirmTimeout(config) {
  * Operators can restore the prior best-effort behavior with
  * MORPHEUS_RELAYER_NEO_N3_FULFILL_CONFIRM_THROW_ON_TIMEOUT=false.
  */
-export async function confirmNeoN3FulfillExecution(config, requestId, txHash) {
+export async function confirmNeoN3FulfillExecution(
+  config,
+  requestId,
+  txHash,
+  label = 'fulfillRequest'
+) {
   const deadline = Date.now() + getNeoN3FulfillConfirmTimeoutMs(config);
   let lastError = null;
   for (;;) {
@@ -1026,22 +953,21 @@ export async function confirmNeoN3FulfillExecution(config, requestId, txHash) {
       const vmState = trimString(execution?.vmstate || '').toUpperCase();
       if (vmState) {
         // A concrete VM state is present: validate it (throws on FAULT).
-        return assertNeoN3HaltExecution(requestId, txHash, execution);
+        return assertNeoN3HaltExecution(requestId, txHash, execution, label);
       }
       // Log exists but has no execution result yet; keep polling.
     } catch (error) {
-      if (error instanceof Error && error.message.includes('Neo N3 fulfillRequest faulted')) {
+      if (error instanceof Error && error.message.includes(`Neo N3 ${label} faulted`)) {
         throw error;
       }
       lastError = error instanceof Error ? error : new Error(String(error));
     }
     if (Date.now() >= deadline) {
-      const detail =
-        lastError?.message || 'fulfillRequest application log unavailable before timeout';
+      const detail = lastError?.message || `${label} application log unavailable before timeout`;
       if (shouldThrowOnNeoN3FulfillConfirmTimeout(config)) {
         // Transient: re-broadcast on a later tick (idempotent via already-fulfilled).
         throw new Error(
-          `Neo N3 fulfillRequest confirmation timed out for request ${requestId} (${txHash}): ${detail}`
+          `Neo N3 ${label} confirmation timed out for request ${requestId} (${txHash}): ${detail}`
         );
       }
       return {
@@ -1053,19 +979,6 @@ export async function confirmNeoN3FulfillExecution(config, requestId, txHash) {
   }
 }
 
-async function resolveNeoN3UpdaterPayload(config) {
-  if (config.neo_n3.updaterWif) {
-    return { wif: config.neo_n3.updaterWif };
-  }
-  if (config.neo_n3.updaterPrivateKey) {
-    return { private_key: config.neo_n3.updaterPrivateKey };
-  }
-  if (shouldUseDerivedKeys(config)) {
-    return { private_key: await deriveUpdaterNeoN3PrivateKeyHex() };
-  }
-  throw new Error('Neo N3 updater signing material is not configured');
-}
-
 export async function fulfillNeoN3Request(
   config,
   requestId,
@@ -1075,57 +988,44 @@ export async function fulfillNeoN3Request(
   verificationSignature,
   resultBytesBase64 = ''
 ) {
-  // No standalone health probe here: buildSignAndBroadcastNeoN3Tx / contract.invoke
-  // each issue their own getblockcount + invokescript RPCs, and neoRpcCall promotes a
-  // known-good RPC URL on every successful call (neo-n3.js:114), so a pre-flight probe
-  // was a redundant getblockcount round-trip (up to the 30s RPC timeout) per submit.
-  // Fail-fast is preserved: a fully-dead RPC set surfaces at the first submit RPC and
-  // retries all configured URLs via neoRpcCall's loop, identical to the probe's behavior.
+  // No standalone health probe here: buildSignAndBroadcastNeoN3Tx issues its own
+  // getblockcount + invokescript RPCs, and neoRpcCall promotes a known-good RPC
+  // URL on every successful call (neo-n3.js:114), so a pre-flight probe would be
+  // a redundant getblockcount round-trip (up to the 30s RPC timeout) per submit.
+  // Fail-fast is preserved: a fully-dead RPC set surfaces at the first submit RPC
+  // and retries all configured URLs via neoRpcCall's loop.
   const resultHex = trimString(resultBytesBase64)
     ? base64ToHex(resultBytesBase64)
     : Buffer.from(String(result || ''), 'utf8').toString('hex');
-  let txHash;
+  const updater = await resolveCustodyUpdater(config);
+  // Best-effort fee top-up before submission. Fail-soft on purpose: a
+  // manually-funded deployment provisions no fee-funder key, and
+  // ensureNeoN3FeeBalance throws in that case — which, if it propagated, would
+  // block EVERY fulfill. A healthy account (balance >= reserve) skips without a
+  // transfer; a genuine underfunding still surfaces at the test invoke or
+  // broadcast below.
   try {
-    const signerPayload = await resolveNeoN3UpdaterPayload(config);
-    const signerAccount = signerPayload.wif
-      ? new neonWallet.Account(signerPayload.wif)
-      : new neonWallet.Account(signerPayload.private_key);
-    // Best-effort fee top-up before the primary (WIF/private-key) submission. The
-    // runtime-derived path already does this; the default local-signer path did not, so
-    // feeTopUp (default-enabled) was inert for the default deployment. Fail-soft on
-    // purpose: a manually-funded deployment configures no funder, and
-    // ensureNeoN3FeeBalance throws in that case — which, if it propagated, would block
-    // EVERY fulfill on the default path (and would wrongly trigger the derived-key
-    // fallback in the outer catch). A healthy account (balance >= reserve) skips without
-    // a transfer; a genuine underfunding still surfaces at contract.invoke below.
-    try {
-      await ensureNeoN3FeeBalance(config, signerAccount);
-    } catch {
-      // intentionally best-effort — never block an otherwise-fundable fulfill on a top-up problem
-    }
-    const contract = new experimental.SmartContract(config.neo_n3.oracleContract, {
-      rpcAddress: config.neo_n3.rpcUrl,
-      networkMagic: config.neo_n3.networkMagic,
-      account: signerAccount,
-    });
-    const txHashRaw = await contract.invoke(
-      'fulfillRequest',
-      buildFulfillRequestParams(requestId, success, resultHex, error, verificationSignature)
-    );
-    txHash = trimString(txHashRaw).startsWith('0x')
-      ? trimString(txHashRaw)
-      : `0x${trimString(txHashRaw)}`;
-  } catch (localError) {
-    if (!shouldUseDerivedKeys(config)) throw localError;
-    txHash = await fulfillNeoN3RequestWithRuntimeDerivedUpdater(
-      config,
-      requestId,
-      success,
-      resultHex,
-      error,
-      verificationSignature
-    );
+    await ensureNeoN3FeeBalance(config, updater);
+  } catch {
+    // intentionally best-effort — never block an otherwise-fundable fulfill on a top-up problem
   }
+  const script = sc.createScript({
+    scriptHash: strip0x(config.neo_n3.oracleContract),
+    operation: 'fulfillRequest',
+    args: buildFulfillRequestParams(requestId, success, resultHex, error, verificationSignature),
+  });
+  const { txHash } = await buildSignAndBroadcastNeoN3Tx(
+    config,
+    script,
+    buildCustodySignerAdapter(config, updater),
+    {
+      systemFeeHeadroom: true,
+      buildTestInvokeFaultError: (exception) =>
+        `Neo N3 fulfillRequest test invoke faulted for request ${requestId}: ${
+          exception || 'unknown error'
+        }`,
+    }
+  );
   // Wait for the broadcast to be applied and confirm the VM result. A confirmed
   // FAULT throws here so it is never recorded as a successful fulfillment.
   const outcome = await confirmNeoN3FulfillExecution(config, requestId, txHash);
@@ -1135,47 +1035,6 @@ export async function fulfillNeoN3Request(
     vm_state: outcome.vm_state,
     exception: outcome.exception,
     target_chain: 'neo_n3',
-  };
-}
-
-async function queueNeoN3AutomationRequestWithRuntimeDerivedUpdater(
-  config,
-  requester,
-  requestType,
-  payloadText,
-  callbackContract,
-  callbackMethod,
-  requestId
-) {
-  const updater = await resolveRuntimeDerivedUpdater(config);
-  const script = sc.createScript({
-    scriptHash: strip0x(config.neo_n3.oracleContract),
-    operation: 'queueAutomationRequest',
-    args: [
-      sc.ContractParam.hash160(requester),
-      sc.ContractParam.string(requestType),
-      sc.ContractParam.byteArray(Buffer.from(payloadText || '', 'utf8').toString('base64')),
-      sc.ContractParam.hash160(callbackContract),
-      sc.ContractParam.string(callbackMethod),
-    ],
-  });
-  const { txHash } = await buildSignAndBroadcastNeoN3Tx(
-    config,
-    script,
-    buildRuntimeDerivedUpdaterSignerAdapter(config, updater),
-    {
-      systemFeeHeadroom: true,
-      ensureFeeBalance: (requiredFee) => ensureNeoN3FeeBalance(config, updater, requiredFee),
-      buildTestInvokeFaultError: (exception) =>
-        exception || `Neo N3 automation queue test invoke faulted for ${requester}`,
-    }
-  );
-  return {
-    tx_hash: txHash,
-    request_id: requestId,
-    vm_state: 'UNKNOWN',
-    target_chain: 'neo_n3',
-    signer_source: 'runtime_derived_updater',
   };
 }
 
@@ -1189,75 +1048,62 @@ export async function queueNeoN3AutomationRequest(
   requestIdOverride = ''
 ) {
   const requestId = trimString(requestIdOverride) || `automation:n3:${Date.now()}`;
-  let invoke;
+  const updater = await resolveCustodyUpdater(config);
+  // Best-effort fee top-up before submission, mirroring fulfillNeoN3Request.
+  // Fail-soft for the same reason: a manually-funded deployment provisions no
+  // fee-funder key, and a genuine underfunding still surfaces at the test
+  // invoke or broadcast below.
   try {
-    const signerPayload = await resolveNeoN3UpdaterPayload(config);
-    // Best-effort fee top-up on the primary path, mirroring fulfillNeoN3Request and the
-    // derived-key automation path. Fail-soft for the same reason (default deployment is
-    // enabled-but-funderless and ensureNeoN3FeeBalance throws there).
-    try {
-      const signerAccount = signerPayload.wif
-        ? new neonWallet.Account(signerPayload.wif)
-        : new neonWallet.Account(signerPayload.private_key);
-      await ensureNeoN3FeeBalance(config, signerAccount);
-    } catch {
-      // intentionally best-effort — never block an otherwise-fundable queue on a top-up problem
-    }
-    invoke = await relayNeoN3Invocation({
-      request_id: requestId,
-      contract_hash: config.neo_n3.oracleContract,
-      method: 'queueAutomationRequest',
-      params: [
-        { type: 'Hash160', value: requester },
-        { type: 'String', value: requestType },
-        { type: 'ByteArray', value: encodeUtf8ByteArrayParamValue(payloadText || '') },
-        { type: 'Hash160', value: callbackContract },
-        { type: 'String', value: callbackMethod },
-      ],
-      wait: true,
-      rpc_url: config.neo_n3.rpcUrl,
-      network_magic: config.neo_n3.networkMagic,
-      ...signerPayload,
-    });
-  } catch (localError) {
-    if (!shouldUseDerivedKeys(config)) throw localError;
-    try {
-      const runtimeInvoke = await queueNeoN3AutomationRequestWithRuntimeDerivedUpdater(
-        config,
-        requester,
-        requestType,
-        payloadText,
-        callbackContract,
-        callbackMethod,
-        requestId
-      );
-      return runtimeInvoke;
-    } catch (runtimeError) {
-      if (/request_id already used/i.test(String(runtimeError?.message || ''))) {
-        return { duplicate: true, request_id: requestId, target_chain: 'neo_n3' };
-      }
-      throw runtimeError;
-    }
+    await ensureNeoN3FeeBalance(config, updater);
+  } catch {
+    // intentionally best-effort — never block an otherwise-fundable queue on a top-up problem
   }
-
-  if (invoke.status >= 400) {
-    if (/request_id already used/i.test(String(invoke.body?.error || ''))) {
+  const script = sc.createScript({
+    scriptHash: strip0x(config.neo_n3.oracleContract),
+    operation: 'queueAutomationRequest',
+    args: [
+      sc.ContractParam.hash160(requester),
+      sc.ContractParam.string(requestType),
+      sc.ContractParam.byteArray(Buffer.from(payloadText || '', 'utf8').toString('base64')),
+      sc.ContractParam.hash160(callbackContract),
+      sc.ContractParam.string(callbackMethod),
+    ],
+  });
+  try {
+    const { txHash } = await buildSignAndBroadcastNeoN3Tx(
+      config,
+      script,
+      buildCustodySignerAdapter(config, updater),
+      {
+        systemFeeHeadroom: true,
+        buildTestInvokeFaultError: (exception) =>
+          `Neo N3 automation queue test invoke faulted for ${requester}: ${
+            exception || 'unknown error'
+          }`,
+      }
+    );
+    // The queue is only durable once the invoke lands on-chain: wait for the app
+    // log and fail-closed on a non-HALT execution (the kernel never received the
+    // request otherwise, so the scheduler must retry instead of trusting a tick).
+    const outcome = await confirmNeoN3FulfillExecution(
+      config,
+      requestId,
+      txHash,
+      'automation queue'
+    );
+    return {
+      tx_hash: txHash,
+      request_id: requestId,
+      vm_state: outcome.vm_state,
+      target_chain: 'neo_n3',
+      signer_source: 'custody_updater',
+    };
+  } catch (error) {
+    if (/request_id already used/i.test(String(error?.message || ''))) {
       return { duplicate: true, request_id: requestId, target_chain: 'neo_n3' };
     }
-    throw new Error(invoke.body?.error || `Neo N3 automation queue failed for ${requester}`);
+    throw error;
   }
-  if (String(invoke.body?.vm_state || '').toUpperCase() === 'FAULT') {
-    throw new Error(
-      invoke.body?.exception ||
-        invoke.body?.error ||
-        `Neo N3 automation queue faulted for ${requester}`
-    );
-  }
-  return {
-    ...invoke.body,
-    request_id: invoke.body?.request_id || requestId,
-    target_chain: 'neo_n3',
-  };
 }
 
 export async function fetchNeoN3FeedRecord(config, pair) {

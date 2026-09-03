@@ -1,14 +1,12 @@
 /**
  * Canonical Morpheus confidential-payload envelope (v2).
  *
- * This file is the single reference implementation of the
- * X25519-HKDF-SHA256-AES-256-GCM envelope that clients use to encrypt
- * confidential payloads for the oracle. The deployed decryptor lives in
- * `workers/nitro-worker/src/oracle/crypto.js` (`parseX25519Envelope` /
- * `deriveAesKey` / `decryptX25519Envelope`) and MUST NOT change without a
- * coordinated key/format rotation; `confidential-envelope.test.mjs` proves
- * byte-level parity between this module and the worker via golden vectors
- * and a read-only worker roundtrip.
+ * This is the canonical client-side encoder for the
+ * X25519-HKDF-SHA256-AES-256-GCM envelope. The measured-runtime decryptor is
+ * `crates/morpheus-compute/src/oracle/crypto.rs`; the JavaScript worker
+ * decryptor is a compatibility/parity implementation. The wire format MUST
+ * NOT change without a coordinated key/format rotation.
+ * `confidential-envelope.test.mjs` and the Rust golden vectors pin both sides.
  *
  * Wire format (all base64 of the JSON envelope, itself base64 again):
  *   { v: 2, alg: 'X25519-HKDF-SHA256-AES-256-GCM',

@@ -18,6 +18,7 @@ fn caller(id: &str, capabilities: &[CallerCapability], grant: KeyGrant) -> Signe
         id: id.to_string(),
         label: id.to_string(),
         token_digest: [id.len() as u8; 32],
+        workload_identity: None,
         key_grant: grant,
         capabilities: capabilities.to_vec(),
         allowed_origins: vec![],
@@ -174,6 +175,131 @@ fn reopening_a_migrated_database_changes_nothing() -> Result<()> {
     assert_eq!(
         second.get_signer_caller("console")?.capabilities,
         vec![CallerCapability::Admin]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_database_predating_network_magic_opens_with_the_magic_each_key_signed_under() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("signer.db");
+    // The key table as it was before the magic was bound to the row, holding a
+    // testnet key. What that key signed under was derived from `network` at
+    // signing time, so the backfill has to reproduce exactly that value — a
+    // default that did not would quietly invalidate every signature the key
+    // ever produced.
+    let old = Connection::open(&path)?;
+    old.execute_batch(
+        "CREATE TABLE signer_keys (
+            id TEXT PRIMARY KEY,
+            label TEXT NOT NULL,
+            network TEXT NOT NULL,
+            public_key BLOB NOT NULL,
+            nonce BLOB NOT NULL,
+            ciphertext BLOB NOT NULL,
+            created_at_unix INTEGER NOT NULL,
+            disabled INTEGER NOT NULL DEFAULT 0
+         );
+         INSERT INTO signer_keys (id, label, network, public_key, nonce, ciphertext, created_at_unix)
+         VALUES ('key-old', 'treasury', 'testnet', randomblob(33), randomblob(12), randomblob(96),
+                 1700000000);",
+    )?;
+    drop(old);
+
+    let store = Store::open(&path)?;
+    assert_eq!(store.get_signer_key("key-old")?.network_magic, 894_710_606);
+    // Visible to a plain read of the schema, not only to this crate — an
+    // operator inspecting the file should see the column.
+    let raw = Connection::open(&path)?;
+    let stored: i64 = raw.query_row(
+        "SELECT network_magic FROM signer_keys WHERE id = 'key-old'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(stored, 894_710_606);
+    Ok(())
+}
+
+#[test]
+fn legacy_consensus_slots_migrate_to_immutable_fail_closed_keys() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("signer.db");
+    let old = Connection::open(&path)?;
+    old.execute_batch(
+        "CREATE TABLE signer_keys (
+             id TEXT PRIMARY KEY, label TEXT NOT NULL, network TEXT NOT NULL,
+             public_key BLOB NOT NULL, nonce BLOB NOT NULL, ciphertext BLOB NOT NULL,
+             created_at_unix INTEGER NOT NULL, disabled INTEGER NOT NULL DEFAULT 0,
+             network_magic INTEGER NOT NULL
+         );
+         CREATE TABLE signer_consensus_reservations (
+             key_id TEXT NOT NULL, network_magic INTEGER NOT NULL,
+             block_index INTEGER NOT NULL, message_type INTEGER NOT NULL,
+             validator_index INTEGER NOT NULL, view_number INTEGER NOT NULL,
+             payload_digest BLOB NOT NULL, recorded_at_unix INTEGER NOT NULL,
+             audit_id INTEGER,
+             PRIMARY KEY (
+                 key_id, network_magic, block_index, message_type,
+                 validator_index, view_number
+             )
+         );",
+    )?;
+    old.execute(
+        "INSERT INTO signer_keys
+         (id, label, network, public_key, nonce, ciphertext, created_at_unix, network_magic)
+         VALUES ('known', 'known', 'testnet', ?1, zeroblob(12), zeroblob(48), 1, 894710606)",
+        params![vec![0x02u8; 33]],
+    )?;
+    old.execute(
+        "INSERT INTO signer_consensus_reservations
+         VALUES ('known', 894710606, 500, 48, 2, 9, ?1, 1, NULL)",
+        params![vec![0x11u8; 32]],
+    )?;
+    old.execute(
+        "INSERT INTO signer_consensus_reservations
+         VALUES ('deleted', 894710606, 600, 33, 3, 4, ?1, 1, NULL)",
+        params![vec![0x22u8; 32]],
+    )?;
+    drop(old);
+
+    let store = Store::open(&path)?;
+    let known = SignerConsensusReservation {
+        public_key: [0x02; 33],
+        network_magic: 894_710_606,
+        block_index: 500,
+        phase: 48,
+        validator_index: 2,
+        view_number: 0,
+        checkpoint: [0x11; 32],
+        recorded_at_unix: 1,
+        audit_id: None,
+    };
+    assert_eq!(
+        store
+            .find_signer_consensus_reservation(&known)?
+            .expect("known slot")
+            .public_key,
+        known.public_key
+    );
+
+    let deleted = SignerConsensusReservation {
+        public_key: [0x03; 33],
+        network_magic: 894_710_606,
+        block_index: 600,
+        phase: 32,
+        validator_index: 3,
+        view_number: 4,
+        checkpoint: [0x22; 32],
+        recorded_at_unix: 1,
+        audit_id: None,
+    };
+    assert_eq!(
+        store
+            .find_signer_consensus_reservation(&deleted)?
+            .expect("deleted-key tombstone")
+            .public_key,
+        [0u8; 33],
+        "a deleted mutable key id becomes an all-keys tombstone for its slot"
     );
     Ok(())
 }

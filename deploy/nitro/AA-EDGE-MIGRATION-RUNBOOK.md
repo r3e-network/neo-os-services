@@ -86,19 +86,26 @@ Covered (the control plane's `EXECUTION_PLANE_ROUTES` /
 - DNS control for a runtime hostname (recommended: `runtime.meshmini.app`).
 - A TLS cert for that hostname on the box.
 - SSM access to the box (`i-0c52851f134db20ee`).
-- **Decision:** this exposes the enclave's 6 execution-plane routes publicly (auth-gated).
+- **Decision:** this exposes the enclave's 8 Rust execution-plane routes publicly (auth-gated).
   The nginx gateway (`runtime-gateway.nginx.conf`) refuses everything else.
 
 ## Steps (ordered — each gates the next)
 
 ### 1. Build + deploy the execution-plane-capable enclave (maintenance window)
 
-The passthrough (`EXECUTION_PLANE_PASSTHROUGH` in `enclave-server.mjs`) is a **new
-EIF** → new PCRs. Build it on the box:
+The native Rust execution route set is a **new EIF** → new PCRs. The measured
+host has no passthrough target or Node child. Build it on the box:
 
 ```
 cd /opt/neoos/services && git pull
-MORPHEUS_RELEASE=oracle-enclave-exec-<date> bash deploy/nitro/build-enclave-eif.sh --verify-reproducible
+MORPHEUS_RELEASE=oracle-enclave-exec-<date> \
+MORPHEUS_NETWORK=mainnet \
+SIGNER_SERVICE_URL=<custody-url> \
+SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=<raw-verifier-key-id> \
+SIGNER_ROLE_UPDATER_KEY_ID=<raw-updater-key-id> \
+SIGNER_ROLE_RELAYER_KEY_ID=<raw-relayer-key-id> \
+SIGNER_ROLE_WORKER_KEY_ID=<raw-worker-key-id> \
+  bash deploy/nitro/build-enclave-eif.sh --verify-reproducible
 ```
 
 Record PCR0/1/2 → commit a new `deploy/nitro/measurements/<release>.json` (the
@@ -118,13 +125,13 @@ certbot certonly --nginx -d runtime.meshmini.app   # or install your cert at the
 nginx -t && systemctl reload nginx
 ```
 
-The gateway proxies ONLY the 6 execution routes (+ /health, /attestation) to the
-existing host bridge `127.0.0.1:8787` → vsock → enclave. (No new box port is exposed
-beyond 443.)
+The gateway proxies ONLY the 8 execution routes (+ /health, /attestation) to
+the existing vsock ingress `127.0.0.1:8787` → enclave. (No new box port is
+exposed beyond 443.)
 
 ### 3. Execution token
 
-The enclave auth-gates the passthrough with its provisioned trusted tokens
+The enclave auth-gates the native execution routes with its provisioned trusted tokens
 (`MORPHEUS_RUNTIME_TOKEN` / `NITRO_API_TOKEN`, already provisioned). Set the control
 plane's `MORPHEUS_EXECUTION_TOKEN` (wrangler secret) to that same token so its
 `Authorization: Bearer` is accepted:

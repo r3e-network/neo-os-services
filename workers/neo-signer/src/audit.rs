@@ -35,6 +35,8 @@ pub const DETAIL_LIMIT: usize = 512;
 /// makes it the only `400` the management API produces; every other refusal
 /// there is an access decision and answers `403`.
 pub const ADMIN_REQUEST_INVALID: &str = "signer-admin-request-invalid";
+pub const REQUEST_ID_INVALID: &str = "request-id-invalid";
+pub const REQUEST_ID_CONFLICT: &str = "request-id-conflict";
 
 /// The service said no before the policy was consulted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +50,8 @@ pub enum GuardRejection {
     /// The stored public key is not a usable point, so the key has no account
     /// and no policy can mean anything.
     PublicKeyUnusable,
+    /// This key already signed another digest for the same dBFT slot.
+    ConsensusEquivocation,
 }
 
 impl GuardRejection {
@@ -57,6 +61,7 @@ impl GuardRejection {
             GuardRejection::KeyDisabled => "signer-key-disabled",
             GuardRejection::CustodyMismatch => "signer-custody-mismatch",
             GuardRejection::PublicKeyUnusable => "signer-public-key-unusable",
+            GuardRejection::ConsensusEquivocation => "consensus-equivocation",
         }
     }
 
@@ -65,7 +70,9 @@ impl GuardRejection {
     /// difference decides whether the vault or the caller needs attention.
     pub fn outcome(self) -> SignerAuditOutcome {
         match self {
-            GuardRejection::KeyDisabled => SignerAuditOutcome::Denied,
+            GuardRejection::KeyDisabled | GuardRejection::ConsensusEquivocation => {
+                SignerAuditOutcome::Denied
+            }
             GuardRejection::CustodyMismatch | GuardRejection::PublicKeyUnusable => {
                 SignerAuditOutcome::Failed
             }
@@ -82,6 +89,9 @@ impl fmt::Display for GuardRejection {
             }
             GuardRejection::PublicKeyUnusable => {
                 "the stored public key cannot be used to derive an account"
+            }
+            GuardRejection::ConsensusEquivocation => {
+                "this key already signed another payload for the same consensus slot"
             }
         };
         formatter.write_str(message)
@@ -133,6 +143,16 @@ impl Refusal {
     pub fn invalid(message: &str, detail: impl Into<String>) -> Self {
         Refusal {
             code: ADMIN_REQUEST_INVALID,
+            message: message.to_string(),
+            detail: bounded(&detail.into()),
+            outcome: SignerAuditOutcome::Denied,
+        }
+    }
+
+    /// An idempotency id that is malformed or already binds another request.
+    pub fn request_id(code: &'static str, message: &str, detail: impl Into<String>) -> Self {
+        Refusal {
+            code,
             message: message.to_string(),
             detail: bounded(&detail.into()),
             outcome: SignerAuditOutcome::Denied,

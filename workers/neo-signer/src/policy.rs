@@ -28,7 +28,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::model::{ScriptHash, SignerPolicy};
+use crate::model::{ContractMethod, ScriptHash, SignerPolicy};
 use crate::tx::{ConsensusPayload, Intent, Scope, UnsignedTransaction, HASH160_LEN};
 
 /// The dBFT consensus payload category. Anything else is a generic
@@ -54,6 +54,11 @@ pub enum SigningRequest<'a> {
         /// The decoded, unsigned payload.
         payload: &'a ConsensusPayload,
     },
+    /// Unstructured caller bytes. There is nothing to decode, which is
+    /// exactly why the boundary switch governing it is a separate one: the
+    /// lists below describe transactions, and a raw signature lets none of
+    /// them speak.
+    Raw,
 }
 
 /// Value that has already left the key inside the policy window.
@@ -63,6 +68,31 @@ pub enum SigningRequest<'a> {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WindowSpend {
     per_asset: BTreeMap<[u8; HASH160_LEN], i128>,
+}
+
+/// Prior value charged to each asset-specific rolling period.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AssetWindowSpend {
+    per_window: BTreeMap<(ScriptHash, u64), i128>,
+}
+
+impl AssetWindowSpend {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record(&mut self, asset: ScriptHash, seconds: u64, amount: i128) {
+        let entry = self.per_window.entry((asset, seconds)).or_insert(0);
+        *entry = entry.saturating_add(amount);
+    }
+
+    pub fn amount(&self, asset: ScriptHash, seconds: u64) -> i128 {
+        self.per_window.get(&(asset, seconds)).copied().unwrap_or(0)
+    }
+
+    pub fn contains(&self, asset: ScriptHash, seconds: u64) -> bool {
+        self.per_window.contains_key(&(asset, seconds))
+    }
 }
 
 impl WindowSpend {
@@ -111,6 +141,9 @@ impl Verdict {
 pub enum DenyReason {
     /// `allow_consensus` is off.
     ConsensusForbidden,
+    /// `allow_raw` is off — the default, so an unconfigured key refuses raw
+    /// signing without any policy row existing.
+    RawForbidden,
     /// The payload is not a dBFT round.
     ConsensusCategoryForbidden,
     /// The payload is from a different committee member than this key.
@@ -131,6 +164,10 @@ pub enum DenyReason {
     ContractBlacklisted,
     /// A whitelist exists and the called contract is not in it.
     ContractNotWhitelisted,
+    /// The exact contract and method pair is blacklisted.
+    ContractMethodBlacklisted,
+    /// A method whitelist exists and the exact pair is not in it.
+    ContractMethodNotWhitelisted,
     /// The token contract is blacklisted.
     AssetBlacklisted,
     /// An asset whitelist exists and the token is not in it.
@@ -147,6 +184,19 @@ pub enum DenyReason {
     SingleAmountExceeded,
     /// This transfer, on top of the window so far, passes `window_limit`.
     WindowAmountExceeded,
+    /// The transaction carries more signer entries than this key permits.
+    TooManySigners,
+    /// The transaction's system fee is above the configured ceiling.
+    SystemFeeExceeded,
+    /// The transaction's network fee is above the configured ceiling.
+    NetworkFeeExceeded,
+    /// The key already produced its allowed signatures inside the rolling
+    /// period.
+    SignatureRateExceeded,
+    /// One transfer exceeds a ceiling scoped to its token contract.
+    AssetSingleAmountExceeded,
+    /// The token contract has exhausted one of its rolling value periods.
+    AssetWindowAmountExceeded,
 }
 
 impl DenyReason {
@@ -154,6 +204,7 @@ impl DenyReason {
     pub fn code(self) -> &'static str {
         match self {
             DenyReason::ConsensusForbidden => "consensus-forbidden",
+            DenyReason::RawForbidden => "raw-forbidden",
             DenyReason::ConsensusCategoryForbidden => "consensus-category-forbidden",
             DenyReason::ConsensusSenderMismatch => "consensus-sender-mismatch",
             DenyReason::TransferForbidden => "transfer-forbidden",
@@ -163,6 +214,8 @@ impl DenyReason {
             DenyReason::DelegationMissing => "delegation-missing",
             DenyReason::ContractBlacklisted => "contract-blacklisted",
             DenyReason::ContractNotWhitelisted => "contract-not-whitelisted",
+            DenyReason::ContractMethodBlacklisted => "contract-method-blacklisted",
+            DenyReason::ContractMethodNotWhitelisted => "contract-method-not-whitelisted",
             DenyReason::AssetBlacklisted => "asset-blacklisted",
             DenyReason::AssetNotWhitelisted => "asset-not-whitelisted",
             DenyReason::RecipientBlacklisted => "recipient-blacklisted",
@@ -171,6 +224,12 @@ impl DenyReason {
             DenyReason::NegativeAmount => "negative-amount",
             DenyReason::SingleAmountExceeded => "single-amount-exceeded",
             DenyReason::WindowAmountExceeded => "window-amount-exceeded",
+            DenyReason::TooManySigners => "too-many-signers",
+            DenyReason::SystemFeeExceeded => "system-fee-exceeded",
+            DenyReason::NetworkFeeExceeded => "network-fee-exceeded",
+            DenyReason::SignatureRateExceeded => "signature-rate-exceeded",
+            DenyReason::AssetSingleAmountExceeded => "asset-single-amount-exceeded",
+            DenyReason::AssetWindowAmountExceeded => "asset-window-amount-exceeded",
         }
     }
 }
@@ -179,6 +238,7 @@ impl fmt::Display for DenyReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = match self {
             DenyReason::ConsensusForbidden => "consensus signatures are not allowed for this key",
+            DenyReason::RawForbidden => "raw signatures are not allowed for this key",
             DenyReason::ConsensusCategoryForbidden => {
                 "only dBFT consensus payloads can be signed as consensus"
             }
@@ -196,6 +256,8 @@ impl fmt::Display for DenyReason {
             }
             DenyReason::ContractBlacklisted => "the contract is blacklisted",
             DenyReason::ContractNotWhitelisted => "the contract is not whitelisted",
+            DenyReason::ContractMethodBlacklisted => "the contract method is blacklisted",
+            DenyReason::ContractMethodNotWhitelisted => "the contract method is not whitelisted",
             DenyReason::AssetBlacklisted => "the token contract is blacklisted",
             DenyReason::AssetNotWhitelisted => "the token contract is not whitelisted",
             DenyReason::RecipientBlacklisted => "the recipient is blacklisted",
@@ -204,9 +266,90 @@ impl fmt::Display for DenyReason {
             DenyReason::NegativeAmount => "the transfer moves a negative amount",
             DenyReason::SingleAmountExceeded => "the transfer exceeds the per-transfer ceiling",
             DenyReason::WindowAmountExceeded => "the transfer exceeds the window ceiling",
+            DenyReason::TooManySigners => "the transaction has more signers than this key permits",
+            DenyReason::SystemFeeExceeded => "the transaction exceeds the system-fee ceiling",
+            DenyReason::NetworkFeeExceeded => "the transaction exceeds the network-fee ceiling",
+            DenyReason::SignatureRateExceeded => {
+                "the key has reached its rolling signature-rate ceiling"
+            }
+            DenyReason::AssetSingleAmountExceeded => {
+                "the transfer exceeds its asset-specific per-transfer ceiling"
+            }
+            DenyReason::AssetWindowAmountExceeded => {
+                "the transfer exceeds an asset-specific rolling ceiling"
+            }
         };
         f.write_str(message)
     }
+}
+
+/// Apply the key-wide signature-rate gate after the request's operation policy
+/// has passed and before private key material is opened.
+pub fn evaluate_signature_rate(policy: &SignerPolicy, signatures_in_window: u64) -> Verdict {
+    let Some(limit) = policy.max_signatures else {
+        return Verdict::Allow;
+    };
+    if signatures_in_window >= limit.count {
+        return deny(
+            DenyReason::SignatureRateExceeded,
+            format!(
+                "key produced {signatures_in_window} signature(s) in the last {} second(s), reaching the ceiling of {}",
+                limit.seconds, limit.count
+            ),
+        );
+    }
+    Verdict::Allow
+}
+
+/// Apply every ceiling scoped to the token contract after the shared transfer
+/// rules have accepted the complete request.
+pub fn evaluate_asset_limits(
+    policy: &SignerPolicy,
+    intents: &[Intent],
+    spent: &AssetWindowSpend,
+) -> Verdict {
+    let mut accepted = BTreeMap::<ScriptHash, i128>::new();
+    for intent in intents {
+        let Intent::Transfer { asset, amount, .. } = intent else {
+            continue;
+        };
+        let asset = ScriptHash(*asset);
+        for limit in policy
+            .asset_limits
+            .iter()
+            .filter(|limit| limit.asset == asset)
+        {
+            if let Some(ceiling) = limit.max_single_amount {
+                if *amount > ceiling {
+                    return deny(
+                        DenyReason::AssetSingleAmountExceeded,
+                        format!(
+                            "transfer of {amount} {asset} exceeds its asset-specific per-transfer ceiling of {ceiling}"
+                        ),
+                    );
+                }
+            }
+            if let Some(window) = limit.window_limit {
+                let before_request = spent.amount(asset, window.seconds);
+                let inside_request = accepted.get(&asset).copied().unwrap_or(0);
+                let after = before_request
+                    .saturating_add(inside_request)
+                    .saturating_add(*amount);
+                if after > window.max_amount {
+                    return deny(
+                        DenyReason::AssetWindowAmountExceeded,
+                        format!(
+                            "transfer would bring {asset} to {after} in {} seconds, above its asset-specific ceiling of {}",
+                            window.seconds, window.max_amount
+                        ),
+                    );
+                }
+            }
+        }
+        let entry = accepted.entry(asset).or_insert(0);
+        *entry = entry.saturating_add(*amount);
+    }
+    Verdict::Allow
 }
 
 /// Decide whether `policy` lets `key_account` sign `request`.
@@ -222,6 +365,16 @@ pub fn evaluate(
 ) -> Verdict {
     match request {
         SigningRequest::Consensus { payload } => evaluate_consensus(policy, key_account, payload),
+        SigningRequest::Raw => {
+            if policy.allow_raw {
+                Verdict::Allow
+            } else {
+                deny(
+                    DenyReason::RawForbidden,
+                    format!("{key_account} asked to sign raw bytes"),
+                )
+            }
+        }
         SigningRequest::Transaction {
             transaction,
             intents,
@@ -316,6 +469,40 @@ fn evaluate_transaction(
                     ),
                 );
             }
+        }
+    }
+
+    if let Some(max_signers) = policy.max_signers {
+        if transaction.signers.len() > usize::from(max_signers) {
+            return deny(
+                DenyReason::TooManySigners,
+                format!(
+                    "transaction has {} signer(s), over the ceiling of {max_signers}",
+                    transaction.signers.len()
+                ),
+            );
+        }
+    }
+    if let Some(ceiling) = policy.max_system_fee {
+        if transaction.system_fee > ceiling {
+            return deny(
+                DenyReason::SystemFeeExceeded,
+                format!(
+                    "system fee {} exceeds the ceiling of {ceiling}",
+                    transaction.system_fee
+                ),
+            );
+        }
+    }
+    if let Some(ceiling) = policy.max_network_fee {
+        if transaction.network_fee > ceiling {
+            return deny(
+                DenyReason::NetworkFeeExceeded,
+                format!(
+                    "network fee {} exceeds the ceiling of {ceiling}",
+                    transaction.network_fee
+                ),
+            );
         }
     }
 
@@ -467,6 +654,24 @@ fn check_contract(policy: &SignerPolicy, contract: ScriptHash, method: &str) -> 
         return Some(deny(
             DenyReason::ContractNotWhitelisted,
             format!("contract {contract} ({method}) is not in the contract whitelist"),
+        ));
+    }
+    let exact = ContractMethod {
+        contract,
+        method: method.to_string(),
+    };
+    if policy.contract_method_blacklist.contains(&exact) {
+        return Some(deny(
+            DenyReason::ContractMethodBlacklisted,
+            format!("contract method {contract}.{method} is blacklisted"),
+        ));
+    }
+    if !policy.contract_method_whitelist.is_empty()
+        && !policy.contract_method_whitelist.contains(&exact)
+    {
+        return Some(deny(
+            DenyReason::ContractMethodNotWhitelisted,
+            format!("contract method {contract}.{method} is not in the method whitelist"),
         ));
     }
     None

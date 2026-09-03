@@ -1,11 +1,13 @@
-# The custody enclave image: the Rust signer_service binary and nothing else.
+# The custody enclave image: the Rust signer_service binary, its Rust boot
+# supervisor, and nothing else.
 #
 # This is the file build-custody-eif.sh measures, and nitro-cli measures the
 # FINAL stage — so Node, the Go nsm-attest helper, and every other runtime the
 # legacy signer image carried are gone. What the enclave's rootfs contains is
-# two binaries (custody + attestation helper), one shell script, socat and
-# iproute2. The retired Node image lives on as Dockerfile.signer-legacy, kept
-# only so build-nitro-signer-eif.sh still resolves.
+# three binaries (custody, attestation helper, and the PID 1 boot supervisor),
+# plus socat, iproute2 and libcap2-bin — no /bin/sh entrypoint script. The
+# retired Node image lives on as Dockerfile.signer-legacy, kept only so
+# build-nitro-signer-eif.sh still resolves.
 #
 # `SIGNER_SERVICE_ATTESTED_BOOT=require` is baked in rather than left to the
 # deployment: attested boot is this image's identity, not an option. The boot
@@ -13,37 +15,67 @@
 # anywhere but inside a Nitro enclave — and starts with the vault sealed; the
 # master key arrives over /provision through the attested KMS path (RC2).
 
-# Stage 1: compile the two Rust binaries from the repository-root workspace.
-# `rusqlite` is built with its `bundled` feature, so this needs a C toolchain —
-# the full `rust` image has one, the `-slim` variant does not. The build runs
-# from the workspace root, so the manifests that matter are the root
-# Cargo.toml + Cargo.lock plus every member's manifest (cargo resolves the
-# whole workspace graph even when building two bins).
-FROM rust:1.98.0-bookworm AS custodybuild
+# Manifests first, with stub sources, so the dependency graph and the compiled
+# SQLite land in a cached layer that a source edit does not invalidate. EVERY
+# member's manifest must be present: the root Cargo.toml lists the workspace,
+# and cargo refuses to resolve a graph with a member it cannot load — even for
+# members this image never compiles. The same rule covers the root manifest's
+# [patch.crates-io] entries: they point at vendor/boa_engine, boa_parser and
+# boa_gc (tilde-pinned icu deps loosened — see Cargo.toml), and a patch whose
+# path is missing fails the workspace load, so vendor must land before fetch
+# even though nothing in this image compiles Boa.
+#
+# Pinned to the base's resolved digest (sha256:82150a52…, taken 2026-09-02 from
+# the Docker Hub registry API — the tag digest, i.e. exactly what
+# `docker inspect --format '{{index .RepoDigests 0}}'` reports). A floating tag
+# would flip PCR0 on an upstream rebuild, and this image's PCR0 is the one the
+# custody KMS key policy admits. BUMP deliberately:
+#   docker pull rust:1.98.0-bookworm &&
+#     docker inspect --format '{{index .RepoDigests 0}}' rust:1.98.0-bookworm
+# — every base change IS a re-measurement, so it belongs in a commit that says so.
+FROM rust:1.98.0-bookworm@sha256:82150a52ec202c1b14d7817e14516c392bb7f5cfebd88f1ed531cb37ebd39922 AS custodybuild
 WORKDIR /build
 
-# Manifests first, with stub sources, so the dependency graph and the compiled
-# SQLite land in a cached layer that a source edit does not invalidate.
 COPY Cargo.toml Cargo.lock ./
+COPY vendor ./vendor
 COPY workers/neo-signer/Cargo.toml workers/neo-signer/Cargo.toml
+COPY workers/nitro-enclave-host/Cargo.toml workers/nitro-enclave-host/Cargo.toml
 COPY crates/morpheus-core/Cargo.toml crates/morpheus-core/Cargo.toml
 COPY crates/nitro-attest/Cargo.toml crates/nitro-attest/Cargo.toml
-RUN mkdir -p workers/neo-signer/src/bin crates/morpheus-core/src crates/nitro-attest/src/bin \
+COPY crates/nitro-init/Cargo.toml crates/nitro-init/Cargo.toml
+COPY crates/morpheus-compute/Cargo.toml crates/morpheus-compute/Cargo.toml
+RUN mkdir -p workers/neo-signer/src/bin workers/nitro-enclave-host/src \
+      crates/morpheus-core/src crates/nitro-attest/src/bin crates/nitro-init/src \
+      crates/morpheus-compute/src \
   && printf '' > workers/neo-signer/src/lib.rs \
   && printf 'fn main() {}\n' > workers/neo-signer/src/bin/signer_service.rs \
+  && printf 'fn main() {}\n' > workers/nitro-enclave-host/src/main.rs \
   && printf '' > crates/morpheus-core/src/lib.rs \
   && printf '' > crates/nitro-attest/src/lib.rs \
   && printf 'fn main() {}\n' > crates/nitro-attest/src/bin/nsm-attest-rs.rs \
+  && printf '' > crates/nitro-init/src/lib.rs \
+  && printf 'fn main() {}\n' > crates/nitro-init/src/main.rs \
+  && printf '' > crates/morpheus-compute/src/lib.rs \
   && cargo fetch --locked
 
+# Real sources for the members this image compiles: custody, its attestation
+# helper, the morpheus-core library they share, and the PID 1 supervisor that
+# starts it. The other members keep their stubs — they resolve the graph and
+# are never built.
 COPY workers/neo-signer ./workers/neo-signer
 COPY crates/morpheus-core ./crates/morpheus-core
 COPY crates/nitro-attest ./crates/nitro-attest
-RUN cargo build --locked --release --bin signer_service --bin nsm-attest-rs
+COPY crates/nitro-init ./crates/nitro-init
+RUN cargo build --locked --release \
+      --bin signer_service --bin nsm-attest-rs --bin nitro_init
 
-# Stage 2: the custody runtime. No package manager above this line ever runs
-# in the enclave.
-FROM debian:bookworm-slim
+# Stage 2: the custody runtime. Everything above it — cargo, rustup and the C
+# toolchain that compiles rusqlite's bundled SQLite — is build-only and never
+# reaches the enclave; only the binaries are copied across.
+# Pinned to the same debian:bookworm-slim digest Dockerfile.enclave runs on
+# (resolved 2026-09-02 from the registry API) — if the two images drifted onto
+# different bases they would still look identical in these manifests.
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 
 # A custody process has no business running as root, and the data directory is
 # where the vault database and (on the enclave-born fallback) the master key
@@ -51,22 +83,78 @@ FROM debian:bookworm-slim
 # service needs.
 RUN useradd --system --uid 8021 --create-home --home-dir /var/lib/morpheus-signer signer
 
-# socat: the vsock <-> loopback bridges of entrypoint-custody.sh.
-# iproute2: a Nitro enclave boots with the loopback interface DOWN, and every
-#   localhost connection — the readiness probe, the vsock bridge's target —
-#   needs `ip link set dev lo up` first.
+# socat: the two bridges nitro_init supervises (vsock <-> loopback inbound,
+#   loopback proxy port -> parent egress port outbound).
+# iproute2: nitro_init runs `ip link set dev lo up` before anything touches
+#   127.0.0.1 — the readiness probe and both bridges speak loopback, and the
+#   slim base ships no `ip`.
+# libcap2-bin: only for the setcap below.
+#
 # Deliberately NO ca-certificates: the only outbound TLS is nitro-attest's KMS
 # Decrypt through the egress proxy, and reqwest is built with rustls using
 # webpki roots bundled into the binary — the trust store ships inside the
 # measured image on purpose, so a host cannot weaken it from the filesystem.
+#
+# Why `ip` alone gets a capability. A non-root process CANNOT bring an interface
+# up — that is not a maybe, it is what CAP_NET_ADMIN exists for — so as uid 8021
+# the supervisor's `ip link set dev lo up` fails every time, and the boot hinges
+# entirely on whether the enclave kernel happened to leave `lo` up already.
+# Granting the one capability makes the boot correct under either answer: the
+# call either works, or is a harmless no-op on an interface already up. Nothing
+# else in the image gains a privilege, and the custody process itself still runs
+# with none.
+#
+# Resolved through PATH on purpose: the iproute2 deb ships ./bin/ip and this base
+# is merged-usr, while nitro_init execs the bare program name `ip` — so this caps
+# exactly the file that gets executed, whichever path that turns out to be.
+#
+# Residual unknown this box cannot settle (no docker, no Nitro host): the caps
+# live in a security.capable xattr, so they help only if nitro-cli's EIF
+# conversion preserves xattrs when it flattens the rootfs AND the enclave mounts
+# that rootfs without nosuid (a nosuid mount ignores file capabilities outright).
+# If either fails, `ip` runs unprivileged exactly as it does today — the fix
+# degrades to the status quo rather than introducing a new failure mode. Verify
+# with `getcap "$(command -v ip)"` inside a booted enclave.
+#
+# Versions are pinned, to the same values Dockerfile.enclave uses from the same
+# base, because apt drift changes the installed package set: an unpinned layer
+# is a different rootfs next month. These are what the frozen bookworm main
+# pocket served when this was written (checked 2026-09-02 against
+# deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages.gz); REFRESH
+# from https://sources.debian.org/api/src/<pkg>/ when a pin stops resolving.
+#
+# The logs and caches go in the SAME layer: /var/log/dpkg.log and
+# /var/log/apt/history.log carry wall-clock timestamps IN THEIR CONTENT, so an
+# image that keeps them is a different measurement on every build — and PCR0 is
+# exactly what the custody KMS key policy pins. Pinning and purging are two
+# halves of one requirement: versions make the layer the same over time, the
+# purge makes it the same over rebuilds.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends socat iproute2 \
-  && rm -rf /var/lib/apt/lists/*
+  && apt-get install -y --no-install-recommends \
+       socat=1.7.4.4-2 \
+       iproute2=6.1.0-3 \
+       libcap2-bin=1:2.66-4+deb12u3+b1 \
+  && setcap cap_net_admin+ep "$(command -v ip)" \
+  && rm -rf /var/lib/apt/lists/* /var/log/* /var/cache/* /var/lib/dpkg/*-old
 
 COPY --from=custodybuild /build/target/release/signer_service /app/bin/signer_service
 COPY --from=custodybuild /build/target/release/nsm-attest-rs /app/bin/nsm-attest-rs
-COPY deploy/nitro/entrypoint-custody.sh /app/deploy/nitro/entrypoint-custody.sh
-RUN chmod +x /app/deploy/nitro/entrypoint-custody.sh /app/bin/signer_service /app/bin/nsm-attest-rs
+COPY --from=custodybuild /build/target/release/nitro_init /app/bin/nitro_init
+RUN chmod +x /app/bin/signer_service /app/bin/nsm-attest-rs /app/bin/nitro_init
+
+# --- Reproducibility: strip build-time timestamps across the WHOLE rootfs. ---
+# The same final pass deploy/nitro/Dockerfile.enclave runs (read its comment for
+# the long rationale): nitro-cli derives PCR0/PCR2 from the FLATTENED image
+# filesystem, so mtimes must be fixed everywhere, not just under /app. The
+# `build-custody-eif.sh --verify-reproducible` gate rebuilds the image FROM
+# SCRATCH (--no-cache, so BuildKit cannot replay build #1's layers) and compares
+# the two PCRs — a comparison that only means something because both bases above
+# are digest-pinned. This image's PCR0 is what the custody KMS key policy
+# admits — an unreproducible build means the enclave that boots is not the
+# enclave the policy lets decrypt the master key. -xdev skips the runtime-only
+# /proc,/sys,/dev mounts; --no-dereference touches symlinks themselves.
+ENV SOURCE_DATE_EPOCH=1749859200
+RUN find / -xdev -exec touch --no-dereference --date=@1749859200 {} + 2>/dev/null || true
 
 ENV SIGNER_SERVICE_DATA_DIR=/var/lib/morpheus-signer
 # Loopback, always: the enclave's only ingress is the vsock bridge that
@@ -76,9 +164,17 @@ ENV SIGNER_SERVICE_PORT=8081
 # The image's identity, not a deployment option: without an NSM device this
 # process refuses to start at all.
 ENV SIGNER_SERVICE_ATTESTED_BOOT=require
-# Public vsock port the host's socat TCP-LISTEN -> VSOCK-CONNECT bridges to.
+# Public vsock port the host's socat TCP-LISTEN -> VSOCK-CONNECT bridges to,
+# and the port nitro_init opens on the enclave side.
 ENV NITRO_SIGNER_VSOCK_PORT=8787
+# Outbound egress: nitro_init forwards 127.0.0.1:ENCLAVE_PROXY_PORT to the
+# parent instance (vsock CID 3), where an allow-listed HTTP-CONNECT proxy dials
+# out. The only call custody makes is nitro-attest's KMS Decrypt during
+# /provision, end-to-end TLS through the tunnel.
+ENV ENCLAVE_HOST_CID=3
+ENV ENCLAVE_EGRESS_VSOCK_PORT=8788
+ENV ENCLAVE_PROXY_PORT=3128
 
 EXPOSE 8081
 USER signer
-ENTRYPOINT ["/app/deploy/nitro/entrypoint-custody.sh"]
+ENTRYPOINT ["/app/bin/nitro_init", "custody"]

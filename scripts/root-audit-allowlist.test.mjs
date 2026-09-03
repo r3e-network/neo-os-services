@@ -22,6 +22,8 @@ test('root audit allowlist script documents only the excluded CityOfZion chain',
   assert.match(source, /@cityofzion\/neon-api/);
   assert.match(source, /elliptic/);
   assert.match(source, /lodash/);
+  assert.match(source, /process\.env\.npm_execpath/);
+  assert.match(source, /shell: !npmCli && process\.platform === 'win32'/);
   assert.doesNotMatch(source, /@web3auth\/modal/);
 });
 

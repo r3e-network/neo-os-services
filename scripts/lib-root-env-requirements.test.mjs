@@ -27,7 +27,6 @@ function satisfiedWebEnv(overrides = {}) {
     MORPHEUS_FEED_PROJECT_SLUG: 'morpheus',
     MORPHEUS_CRON_SECRET: 'cron-secret',
     MORPHEUS_FEED_SYMBOLS: 'TWELVEDATA:NEO-USD',
-    NEO_N3_WIF: 'KwYg...',
     ...overrides,
   };
 }
@@ -77,10 +76,9 @@ test('missing groups are reported as pipe-joined alias lists', () => {
   const missing = evaluateRootEnvRequirements({}, ROOT_ENV_REQUIRED_GROUPS);
   assert.ok(missing.web_public.includes('NEXT_PUBLIC_APP_NAME'));
   assert.ok(missing.feed_ops.includes('MORPHEUS_CRON_SECRET'));
-  assert.ok(
-    missing.n3_scripts.some((entry) => entry.includes('NEO_N3_WIF | NEO_TESTNET_WIF')),
-    'n3_scripts group label keeps its alias list'
-  );
+  // The former n3_scripts group is gone from required groups entirely: runtime
+  // lanes are custody-side, so a root-env relayer WIF is not required.
+  assert.equal(missing.n3_scripts, undefined);
 });
 
 test('optional groups evaluate independently of required groups', () => {
@@ -88,6 +86,7 @@ test('optional groups evaluate independently of required groups', () => {
   assert.equal(missing.admin_api.length, 1);
   assert.equal(missing.feed_sync.length, 3);
   assert.equal(missing.oracle_verifier.length, 1);
+  assert.equal(missing.smoke_signing.length, 1);
 
   const satisfied = evaluateRootEnvRequirements(
     {
@@ -96,12 +95,14 @@ test('optional groups evaluate independently of required groups', () => {
       MORPHEUS_FEED_CHANGE_THRESHOLD_BPS: '50',
       MORPHEUS_FEED_MIN_UPDATE_INTERVAL_MS: '60000',
       MORPHEUS_ORACLE_VERIFIER_WIF: 'KwYg...',
+      NEO_N3_WIF: 'KwYg...',
     },
     ROOT_ENV_OPTIONAL_GROUPS
   );
   assert.deepEqual(satisfied.admin_api, []);
   assert.deepEqual(satisfied.feed_sync, []);
   assert.deepEqual(satisfied.oracle_verifier, []);
+  assert.deepEqual(satisfied.smoke_signing, []);
 });
 
 test('getGroupValue trims whitespace-only values', () => {

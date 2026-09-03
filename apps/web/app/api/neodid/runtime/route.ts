@@ -11,6 +11,7 @@ const handleGet = createRateLimitedHandler(
       {
         route: '/api/neodid/runtime',
         category: 'system',
+        confidential: false,
       }
     );
   },

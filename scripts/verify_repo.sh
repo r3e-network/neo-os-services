@@ -16,6 +16,9 @@ cleanup() {
 trap cleanup EXIT
 
 kill_web_builders() {
+  if ! command -v pgrep >/dev/null 2>&1; then
+    return 0
+  fi
   local pids
   pids="$(
     {

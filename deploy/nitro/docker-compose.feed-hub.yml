@@ -135,6 +135,7 @@ services:
       mainnet-feed-worker:
         condition: service_healthy
     environment:
+      NODE_ENV: production
       NITRO_API_URL: http://mainnet-feed-worker:8080
       NITRO_SHARED_SECRET: ${NITRO_SHARED_SECRET}
       NITRO_API_TOKEN: ${NITRO_API_TOKEN}
@@ -146,18 +147,14 @@ services:
       MORPHEUS_BETTERSTACK_RELAYER_HEARTBEAT_URL: ${MORPHEUS_BETTERSTACK_RELAYER_HEARTBEAT_URL:-}
       MORPHEUS_BETTERSTACK_RELAYER_FEED_HEARTBEAT_URL: ${MORPHEUS_BETTERSTACK_RELAYER_FEED_HEARTBEAT_URL:-}
       MORPHEUS_BETTERSTACK_RELAYER_FAILURE_URL: ${MORPHEUS_BETTERSTACK_RELAYER_FAILURE_URL:-}
-      # The mainnet DataFeed contract currently authorizes the worker key as
-      # its on-chain updater, while request fulfillment uses the oracle updater
-      # identity. Pin the feed-only relayer to the DataFeed updater identity so a
-      # shared hub env cannot accidentally select the request updater signer.
-      MORPHEUS_UPDATER_NEO_N3_WIF: ${MORPHEUS_WORKER_NEO_N3_WIF_MAINNET:-}
-      MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY: ${MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET:-}
-      MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET: ${MORPHEUS_WORKER_NEO_N3_WIF_MAINNET:-}
-      MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET: ${MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET:-}
-      MORPHEUS_RELAYER_NEO_N3_WIF: ${MORPHEUS_WORKER_NEO_N3_WIF_MAINNET:-}
-      MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY: ${MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET:-}
-      MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET: ${MORPHEUS_WORKER_NEO_N3_WIF_MAINNET:-}
-      MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_MAINNET: ${MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET:-}
+      # Feed relayer Neo N3 signing is custody-only under the updater role.
+      # Provision SIGNER_ROLE_UPDATER_KEY_ID to the identity the mainnet
+      # DataFeed contract authorizes (the worker identity until per-role keys
+      # are split out), so a shared hub env cannot select the request updater.
+      SIGNER_SERVICE_URL: ${SIGNER_SERVICE_URL:-}
+      SIGNER_SERVICE_TOKEN: ${SIGNER_SERVICE_TOKEN:-}
+      SIGNER_ROLE_UPDATER_KEY_ID: ${SIGNER_ROLE_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID: ${SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID:-}
       MORPHEUS_RELAYER_MODE: feed_only
       MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.feed_only.mainnet.json
       MORPHEUS_NETWORK: mainnet
@@ -178,6 +175,7 @@ services:
       testnet-feed-worker:
         condition: service_healthy
     environment:
+      NODE_ENV: production
       NITRO_API_URL: http://testnet-feed-worker:8080
       NITRO_SHARED_SECRET: ${NITRO_SHARED_SECRET}
       NITRO_API_TOKEN: ${NITRO_API_TOKEN}
@@ -189,6 +187,11 @@ services:
       MORPHEUS_BETTERSTACK_RELAYER_HEARTBEAT_URL: ${MORPHEUS_BETTERSTACK_RELAYER_HEARTBEAT_URL:-}
       MORPHEUS_BETTERSTACK_RELAYER_FEED_HEARTBEAT_URL: ${MORPHEUS_BETTERSTACK_RELAYER_FEED_HEARTBEAT_URL:-}
       MORPHEUS_BETTERSTACK_RELAYER_FAILURE_URL: ${MORPHEUS_BETTERSTACK_RELAYER_FAILURE_URL:-}
+      # Feed relayer Neo N3 signing is custody-only under the updater role.
+      SIGNER_SERVICE_URL: ${SIGNER_SERVICE_URL:-}
+      SIGNER_SERVICE_TOKEN: ${SIGNER_SERVICE_TOKEN:-}
+      SIGNER_ROLE_UPDATER_KEY_ID: ${SIGNER_ROLE_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID: ${SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID:-}
       MORPHEUS_RELAYER_MODE: feed_only
       MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.feed_only.testnet.json
       MORPHEUS_NETWORK: testnet

@@ -57,7 +57,7 @@ npm --prefix workers/morpheus-relayer run metrics
 - `MORPHEUS_NETWORK` (`testnet` or `mainnet`)
 - `NEO_RPC_URL`
 - `CONTRACT_MORPHEUS_ORACLE_HASH`
-- `MORPHEUS_RELAYER_NEO_N3_WIF` or `MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY`
+- `SIGNER_SERVICE_URL` / `SIGNER_SERVICE_TOKEN` with `SIGNER_ROLE_UPDATER_KEY_ID` and `SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID` — all relayer Neo N3 signing goes through the custody signer service; the relayer holds no signing key material
 
 If direct worker-side provider default resolution is needed during relayer processing, also set:
 
@@ -157,7 +157,13 @@ sudo systemctl start morpheus-relayer
 
 A simple production pattern is:
 
-- deploy `workers/nitro-worker` to the AWS Nitro enclave
+- deploy the Rust `workers/nitro-enclave-host` EIF and its paired
+  `workers/neo-signer` custody boundary
 - run `workers/morpheus-relayer` as a sidecar process on a small VM or container
-- point `MORPHEUS_RUNTIME_URL` at the public Morpheus runtime endpoint
-- keep chain updater keys and Supabase service credentials only in the sidecar env
+- point enclave-fulfillment traffic at the authenticated vsock gateway
+- keep Neo private keys in `neo-signer`; the sidecar holds only its scoped
+  workload credential and non-custody provider configuration
+
+`workers/nitro-worker` is a separately published compatibility/CVM runtime and
+parity oracle. It is not the process measured by `Dockerfile.enclave` and must
+not be described or deployed as the Rust Nitro EIF.

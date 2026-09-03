@@ -20,11 +20,13 @@
 
 use std::{
     env,
+    fs::{File, OpenOptions},
     net::{IpAddr, SocketAddr},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use anyhow::{bail, Context, Result};
+use fs2::FileExt;
 use neo_signer::{
     api::{self, ApiState, DEFAULT_BODY_LIMIT},
     attestation::BootGuard,
@@ -50,6 +52,8 @@ const BODY_LIMIT_ENV: &str = "SIGNER_SERVICE_MAX_BODY_BYTES";
 /// configurable: a deployment that points two signer processes at two names in
 /// one directory has two vaults and no error to tell it so.
 const DATABASE_FILE: &str = "signer.db";
+/// Advisory OS lock held for the whole process lifetime.
+const PROCESS_LOCK_FILE: &str = "signer.lock";
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 8081;
@@ -96,6 +100,7 @@ async fn main() -> Result<()> {
 /// that, so a rerun is a visible error rather than a second superuser.
 fn provision_admin(label: &str) -> Result<()> {
     let config = Config::from_env()?;
+    let _lease = VaultProcessLease::acquire(&config.data_dir)?;
     let repository = Store::open(config.database_path())?;
     let (caller, token) = provision_admin_caller(&repository, label)
         .with_context(|| format!("failed to provision the first admin caller labelled {label}"))?;
@@ -123,6 +128,7 @@ fn provision_admin(label: &str) -> Result<()> {
 /// reports the measured value for the operator to check against the manifest.
 async fn serve() -> Result<()> {
     let config = Config::from_env()?;
+    let _lease = VaultProcessLease::acquire(&config.data_dir)?;
     let guard = BootGuard::from_env().context("invalid attested-boot configuration")?;
     let repository = Store::open(config.database_path())
         .with_context(|| "failed to open the signer database")?;
@@ -163,6 +169,44 @@ async fn serve() -> Result<()> {
         .await
         .context("the signer service stopped serving")?;
     Ok(())
+}
+
+/// Exclusive operating-system lease for one signer data directory.
+///
+/// SQLite protects individual transactions, but the rolling-window decision
+/// spans policy evaluation, signing and the final transaction. Refusing a
+/// second process is therefore part of the policy boundary, not deployment
+/// advice. The file remains on disk for diagnostics; the OS releases its lock
+/// when the process exits or crashes.
+#[derive(Debug)]
+struct VaultProcessLease {
+    _file: File,
+}
+
+impl VaultProcessLease {
+    fn acquire(data_dir: &Path) -> Result<Self> {
+        std::fs::create_dir_all(data_dir).with_context(|| {
+            format!(
+                "failed to create signer data directory {}",
+                data_dir.display()
+            )
+        })?;
+        let path = data_dir.join(PROCESS_LOCK_FILE);
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .with_context(|| format!("failed to open signer process lock {}", path.display()))?;
+        file.try_lock_exclusive().with_context(|| {
+            format!(
+                "signer data directory {} is already in use by another signer process",
+                data_dir.display()
+            )
+        })?;
+        Ok(Self { _file: file })
+    }
 }
 
 /// RC2 at the process boundary: a plaintext master key that made it into an
@@ -340,7 +384,8 @@ Usage:
   signer_service help                   this text
 
 Environment:
-  {DATA_DIR_ENV:<31}required: holds {DATABASE_FILE} and the master key
+  {DATA_DIR_ENV:<31}required: holds {DATABASE_FILE}, {PROCESS_LOCK_FILE}
+                                 and the master key
   {HOST_ENV:<31}bind address, default {DEFAULT_HOST}
   {PORT_ENV:<31}bind port, default {DEFAULT_PORT}
   {BODY_LIMIT_ENV:<31}request body ceiling, default {DEFAULT_BODY_LIMIT}
@@ -378,7 +423,7 @@ mod tests {
         ] {
             assert!(help.contains(name), "{name} is missing from the help text");
         }
-        for file in [DATABASE_FILE, MASTER_KEY_FILE] {
+        for file in [DATABASE_FILE, MASTER_KEY_FILE, PROCESS_LOCK_FILE] {
             assert!(help.contains(file), "{file} is missing from the help text");
         }
         assert!(help.contains("provision-admin"));
@@ -390,5 +435,19 @@ mod tests {
         assert_eq!(configured_or(Some(String::new()), "8081"), "8081");
         assert_eq!(configured_or(Some("  ".to_string()), "8081"), "8081");
         assert_eq!(configured_or(Some(" 9000 ".to_string()), "8081"), "9000");
+    }
+
+    #[test]
+    fn one_data_directory_can_have_only_one_live_process() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let first = VaultProcessLease::acquire(directory.path())?;
+        let second = VaultProcessLease::acquire(directory.path());
+        assert!(second
+            .expect_err("a second lease must be refused")
+            .to_string()
+            .contains("already in use"));
+        drop(first);
+        VaultProcessLease::acquire(directory.path())?;
+        Ok(())
     }
 }

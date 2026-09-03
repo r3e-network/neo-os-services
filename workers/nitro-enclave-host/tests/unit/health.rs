@@ -34,25 +34,30 @@ fn a_ready_host_is_ok_with_the_full_contract() {
 }
 
 #[test]
-fn key_source_distinguishes_the_kms_path_from_plaintext() {
-    // No ciphertext provisioned yet → a materialized key reads host_plaintext.
+fn key_source_is_the_plane_s_report_not_an_env_guess() {
+    // The plane owns the truth about how its keys are held. A custody-backed
+    // plane reports `custody`; the fake planes here stand in for whatever the
+    // real one says. The env-derived inference the merged server used is gone
+    // on purpose: a ciphertext env name says nothing about a key the host
+    // cannot even reach.
     let harness = test_state(
         &healthy_overlay(),
         FakeAttest::with_document(b"doc"),
-        FakeSigner::healthy(),
+        FakeSigner::new(SignerConfig {
+            key_source: "custody".to_string(),
+            ..SignerConfig::default()
+        }),
         FakeBridge::new(),
         FakeKms::default(),
     );
     let body = handle_health(&harness.state);
-    assert_eq!(body["key_source"]["oracle_verifier"], "host_plaintext");
-    assert_eq!(body["key_source"]["updater"], "host_plaintext");
+    assert_eq!(body["key_source"]["oracle_verifier"], "custody");
+    assert_eq!(body["key_source"]["updater"], "custody");
 
-    // The role ciphertexts arrive → kms_attested.
+    // A kms-materialized plane (the pre-custody shape) reports its own word,
+    // and health renders it verbatim rather than second-guessing.
     let harness = test_state(
-        &[
-            ("MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64", "ct1"),
-            ("MORPHEUS_UPDATER_NEO_N3_KMS_CIPHERTEXT_BASE64", "ct2"),
-        ],
+        &healthy_overlay(),
         FakeAttest::with_document(b"doc"),
         FakeSigner::healthy(),
         FakeBridge::new(),
@@ -82,21 +87,6 @@ fn a_degraded_signer_degrades_health_and_names_the_issues() {
     assert_eq!(body["checks"]["signer"], false);
     assert_eq!(body["signer_error"], "key missing; identity mismatch");
     assert_eq!(body["key_source"]["oracle_verifier"], "none");
-}
-
-#[test]
-fn a_down_compute_child_degrades_health_even_with_a_healthy_signer() {
-    let harness = test_state(
-        &healthy_overlay(),
-        FakeAttest::with_document(b"doc"),
-        FakeSigner::healthy(),
-        FakeBridge::unreachable(),
-        FakeKms::default(),
-    );
-    let body = handle_health(&harness.state);
-    assert_eq!(body["status"], "degraded");
-    assert_eq!(body["checks"]["compute"], false);
-    assert_eq!(body["checks"]["signer"], true);
 }
 
 #[test]

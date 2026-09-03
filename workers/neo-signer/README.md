@@ -22,10 +22,10 @@ directory, and npm skips it only because there is no manifest to read.
 | `auth`    | Caller tokens, origin binding, constant-time digest comparison                        |
 | `audit`   | Refusal vocabulary: what a caller may see vs. what the log keeps                      |
 | `vault`   | Where the master key comes from (env credential or data-dir file)                     |
-| `store`   | The five `signer_*` tables, their indexes, and the row mappers                        |
+| `store`   | The eight `signer_*` tables, their indexes, and the row mappers                       |
 | `model`   | The stored types: keys, boundaries, callers, audit rows, and the `ScriptHash`         |
 | `service` | `SignerService`: the signing path, the management surface, and the rows both write    |
-| `network` | Chain identity and the network magic a key signs under                                |
+| `network` | Chain identity: the network enum and the canonical magic table a key defaults to      |
 | `api`     | The axum router: §5's caller routes, §5.1's management routes, and the refusal shapes |
 
 `src/bin/signer_service.rs` is the process. Its configuration is environment-only
@@ -35,9 +35,13 @@ credential against a data directory. That mode writes the token to stdout and ev
 else to stderr, precisely so it can be piped into a secret manager — §5.1 keeps it off the
 HTTP surface, where it would be a route that mints admins forever.
 
-What is not done is the other side of the migration: `neo-nexus` still holds its own copy of
-the engine until step 2 of §7 turns it into a client, and the `/sign/payload` consumers of
-`nitro-signer-server.mjs` move to these routes one caller at a time.
+The first consumer migration is implemented in the sibling `neo-nexus`
+repository: it now contains a client and operator surface only, with a
+real-process contract test against this binary. The in-repository
+`/sign/payload` consumers have likewise moved to these routes; the remaining
+work is durable rollback-detectable Nitro state, attested direct import,
+per-asset/signature-rate limits, and retirement of compatibility engines after
+parity gates pass.
 
 ## Build and test
 

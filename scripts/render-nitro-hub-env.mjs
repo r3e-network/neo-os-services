@@ -2,7 +2,7 @@ import { trimString } from './lib-strings.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseDotEnv } from './lib-env.mjs';
-import { NEO_N3_SIGNER_ENV_KEYS } from './lib-neo-signers.mjs';
+import { NEO_N3_SIGNER_PUBLIC_ENV_KEYS } from './lib-neo-signers.mjs';
 
 const repoRoot = process.cwd();
 
@@ -127,13 +127,7 @@ function resolveSharedHubSignerValue(
       pick(overrideEnvs, key)
     );
   }
-  if (key === 'NEO_N3_WIF') {
-    return pick(overrideEnvs, key) || resolveRuntimeValue(key, mainnetEnv, mainnetRuntimeConfig);
-  }
-  if (key === 'NEO_TESTNET_WIF') {
-    return pick(overrideEnvs, key) || resolveRuntimeValue(key, testnetEnv, testnetRuntimeConfig);
-  }
-  return '';
+  return pick(overrideEnvs, key) || resolveRuntimeValue(key, mainnetEnv, mainnetRuntimeConfig);
 }
 
 const args = parseArgs();
@@ -201,7 +195,12 @@ const lines = [
   line('TESTNET_RUNTIME_CONFIG_JSON', trimString(testnetEnv.MORPHEUS_RUNTIME_CONFIG_JSON)),
   line('SHARED_RUNTIME_CONFIG_JSON', JSON.stringify(sharedRuntimeConfig)),
   '',
-  ...NEO_N3_SIGNER_ENV_KEYS.map((key) =>
+  // Custody migration: the hub env carries only the oracle verifier PUBLIC key
+  // (used by compose to verify on-chain results). Signing key material never
+  // lands in the hub env; relayer/worker signing resolves through the custody
+  // signer service (docs/SIGNER_SERVICE.md §5) whose URL/token/role ids are
+  // interpolated from the deployment shell env.
+  ...NEO_N3_SIGNER_PUBLIC_ENV_KEYS.map((key) =>
     line(
       key,
       resolveSharedHubSignerValue(

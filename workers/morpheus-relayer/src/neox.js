@@ -48,6 +48,22 @@ const verifierWalletCache = new Map();
 // reset() it mid-flight. EVM submission is fast + Neo X volume is low.
 const submitQueues = new Map();
 
+function isProductionRuntime(config) {
+  return (
+    String(config?.nodeEnv || process.env.NODE_ENV || '')
+      .trim()
+      .toLowerCase() === 'production'
+  );
+}
+
+export function assertHostNeoXSigningAllowed(config) {
+  if (!isProductionRuntime(config)) return;
+  throw new Error(
+    'Neo X production signing is unavailable: host-side secp256k1 keys are forbidden and the ' +
+      'shipped Rust custody/enclave runtime does not implement the complete EVM signer'
+  );
+}
+
 function signerKey(config) {
   return `${trimString(config?.neox?.updaterPrivateKey || '')}|${trimString(config?.neox?.rpcUrl || '')}`;
 }
@@ -167,6 +183,7 @@ export async function withNeoXReadFailover(config, run) {
 // processes events with config.concurrency) get sequential nonces instead of
 // colliding on the same pending nonce.
 function updaterSigner(config) {
+  assertHostNeoXSigningAllowed(config);
   const pk = trimString(config?.neox?.updaterPrivateKey || '');
   if (!pk) throw new Error('neox updater private key is not configured');
   const provider = getProvider(config);
@@ -180,6 +197,7 @@ function updaterSigner(config) {
 }
 
 function verifierWallet(config) {
+  assertHostNeoXSigningAllowed(config);
   // SECURITY (S20): do NOT silently fall back to the updater private key for
   // verifier duties — that mixes the roles and lets the updater sign arbitrary
   // fulfillment digests if the chain's oracleVerifier points at the updater
@@ -199,6 +217,7 @@ function verifierWallet(config) {
 }
 
 export function hasNeoXRelayerConfig(config) {
+  if (isProductionRuntime(config)) return false;
   return Boolean(
     trimString(config?.neox?.rpcUrl || '') &&
     trimString(config?.neox?.oracleContract || '') &&

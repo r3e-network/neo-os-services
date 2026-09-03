@@ -10,16 +10,32 @@
 
 use std::collections::BTreeMap;
 
-/// `^[A-Z0-9_]{1,96}$` — the only env names a provision body may set. The Node
-/// server silently SKIPS non-matching keys (they are not applied and not
-/// reported); so does [`EnvOverlay::apply`].
+/// The complete `/provision` allowlist. Security mode, network, endpoints,
+/// custody routing, policy toggles, and trust anchors are deliberately absent:
+/// those values belong to the measured image, not to its untrusted parent.
+pub const PROVISIONABLE_NAMES: [&str; 12] = [
+    "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64",
+    "SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64",
+    "MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64",
+    "MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64",
+    "MORPHEUS_ORACLE_KMS_DIAG_CIPHERTEXT",
+    "AWS_REGION",
+    "NITRO_AWS_REGION",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "TWELVEDATA_API_KEY",
+    "TD_KEY",
+];
+
+pub const CREDENTIAL_NAMES: [&str; 3] = [
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+];
+
 pub fn is_provisionable_name(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    !bytes.is_empty()
-        && bytes.len() <= 96
-        && bytes
-            .iter()
-            .all(|b| matches!(b, b'A'..=b'Z' | b'0'..=b'9' | b'_'))
+    PROVISIONABLE_NAMES.contains(&name)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -76,9 +92,7 @@ impl EnvOverlay {
             .map(str::to_string)
     }
 
-    /// The provision write: apply `value` under `name` when the name is
-    /// provisionable and the trimmed value is non-empty, mirroring
-    /// `handleProvision`'s apply loop (which skips rather than errors).
+    /// The provision write: apply a non-empty string under an allowlisted name.
     /// Returns whether the key was applied.
     pub fn apply(&mut self, name: &str, value: &serde_json::Value) -> bool {
         if !is_provisionable_name(name) {
@@ -106,15 +120,50 @@ impl EnvOverlay {
             .insert("MORPHEUS_RUNTIME_TOKEN".to_string(), token.to_string());
     }
 
+    pub(crate) fn set_custody_token(&mut self, token: &str) {
+        self.overlay
+            .insert("SIGNER_SERVICE_TOKEN".to_string(), token.to_string());
+        self.overlay.insert(
+            "SIGNER_SERVICE_TOKEN_SOURCE".to_string(),
+            "nitro-recipient-kms".to_string(),
+        );
+    }
+
+    /// Install KMS-released X25519 key material. This bypass is intentionally
+    /// unavailable to callers: only the provision module can invoke it after
+    /// recipient-attested release and envelope validation.
+    pub(crate) fn set_oracle_key_material(&mut self, material_json: &str) {
+        self.overlay.insert(
+            "MORPHEUS_ORACLE_KEY_MATERIAL_JSON".to_string(),
+            material_json.to_string(),
+        );
+        self.overlay.insert(
+            "MORPHEUS_ORACLE_KEY_SOURCE".to_string(),
+            "nitro-recipient-kms".to_string(),
+        );
+    }
+
+    /// Install a KMS-released NeoDID salt with an unforgeable-in-provision
+    /// source marker. The plaintext remains process memory only.
+    pub(crate) fn set_neodid_salt(&mut self, salt: &str) {
+        self.overlay
+            .insert("NEODID_SECRET_SALT".to_string(), salt.to_string());
+        self.overlay.insert(
+            "NEODID_SECRET_SALT_SOURCE".to_string(),
+            "nitro-recipient-kms".to_string(),
+        );
+    }
+
     /// The env names the provision response reports — the applied keys, the
     /// way `Object.entries` saw them. The caller sorts.
     pub fn applied_keys(&self) -> impl Iterator<Item = &str> {
         self.overlay.keys().map(String::as_str)
     }
 
-    /// The full view (base shadowed by provisioned) as an owned map — the env
-    /// the keyless compute child is spawned with. This is exactly the
-    /// `process.env` the merged server accumulated.
+    /// The full view (base shadowed by provisioned) as an owned map — the
+    /// request-stable environment snapshot consumed by in-process compute.
+    /// It is the Rust equivalent of the `process.env` the merged server
+    /// accumulated.
     pub fn merged_map(&self) -> BTreeMap<String, String> {
         let mut merged = self.base.clone();
         merged.extend(

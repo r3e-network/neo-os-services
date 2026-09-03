@@ -30,8 +30,6 @@ const resolveSupabaseNetwork = vi.fn(() => 'testnet');
 vi.mock('@/lib/server-supabase', () => ({
   getServerSupabaseClient,
   resolveSupabaseNetwork,
-  // isAuthorizedControlPlaneRequest -> isAuthorizedAdminRequest; keep it false so
-  // the shared MORPHEUS_RUNTIME_TOKEN path is what authorizes (or rejects).
   isAuthorizedAdminRequest: vi.fn(() => false),
 }));
 vi.mock('@/lib/workflow-runtime', () => ({
@@ -53,11 +51,13 @@ describe('control-plane job status route auth', () => {
     vi.unstubAllEnvs();
   });
 
-  it('rejects an unauthenticated request without querying the jobs table', async () => {
-    vi.stubEnv('MORPHEUS_RUNTIME_TOKEN', 'cp-token');
+  it('rejects a runtime-token request without querying the jobs table', async () => {
+    vi.stubEnv('MORPHEUS_RUNTIME_TOKEN', 'runtime-token');
     const { GET } = await import('../app/api/control-plane/jobs/[jobId]/route');
     const res = await GET(
-      new Request('https://example.test/api/control-plane/jobs/job-uuid-1?network=testnet'),
+      new Request('https://example.test/api/control-plane/jobs/job-uuid-1?network=testnet', {
+        headers: { authorization: 'Bearer runtime-token' },
+      }),
       { params }
     );
     expect(res.status).toBe(401);
@@ -69,11 +69,11 @@ describe('control-plane job status route auth', () => {
   });
 
   it('returns the decorated job row for an authorized operator request', async () => {
-    vi.stubEnv('MORPHEUS_RUNTIME_TOKEN', 'cp-token');
+    vi.stubEnv('MORPHEUS_OPERATOR_API_KEY', 'operator-token');
     const { GET } = await import('../app/api/control-plane/jobs/[jobId]/route');
     const res = await GET(
       new Request('https://example.test/api/control-plane/jobs/job-uuid-1?network=testnet', {
-        headers: { authorization: 'Bearer cp-token' },
+        headers: { authorization: 'Bearer operator-token' },
       }),
       { params }
     );

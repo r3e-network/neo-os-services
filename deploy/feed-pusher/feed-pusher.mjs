@@ -703,11 +703,56 @@ const NEOX_ABI = [
 
 // Phase D: the feed-updater EOA address (public) for the in-enclave EVM feed-sign
 // path. The host needs it to read the nonce + gas balance and to assert the enclave
-// signed with the expected key. Unset => the enclave neox feed-sign path is OFF and
-// the host-key path is used, so this is the explicit opt-in for moving the EVM feed
-// key into the enclave (alongside MORPHEUS_FEED_PUSHER_ENCLAVE_SIGN).
+// signed with the expected key. This and MORPHEUS_FEED_PUSHER_ENCLAVE_SIGN are
+// the explicit route gate; the currently shipped Rust frontier returns 503
+// until a compatible measured secp256k1 signer is deployed. Unset does not
+// authorize a production host-key fallback.
 const NEOX_FEED_FROM = process.env.NEOX_FEED_FROM;
 const NEOX_FEED_GAS_LIMIT = Number(process.env.NEOX_FEED_GAS_LIMIT || 3_000_000);
+const ENCLAVE_FEED_SIGN = /^(1|true|yes|on)$/i.test(
+  String(process.env.MORPHEUS_FEED_PUSHER_ENCLAVE_SIGN || '').trim()
+);
+
+export function resolveNeoXFeedSignerMode({
+  nodeEnv = process.env.NODE_ENV,
+  enclaveSign = false,
+  enclaveSignerAddress = '',
+  hostPrivateKey = '',
+  allowInsecureHostSigner = false,
+} = {}) {
+  const production =
+    String(nodeEnv || '')
+      .trim()
+      .toLowerCase() === 'production';
+  const hasHostPrivateKey = Boolean(String(hostPrivateKey || '').trim());
+  const hasEnclaveAddress = Boolean(String(enclaveSignerAddress || '').trim());
+  if (production && hasHostPrivateKey) {
+    throw new Error(
+      'Neo X production feed signing refuses NEOX_FEED_PK on the host; configure the ' +
+        'measured enclave signer path instead'
+    );
+  }
+  if (enclaveSign || hasEnclaveAddress) {
+    if (enclaveSign && hasEnclaveAddress) return 'enclave';
+    throw new Error(
+      'Neo X enclave signer configuration is incomplete; both ' +
+        'MORPHEUS_FEED_PUSHER_ENCLAVE_SIGN and NEOX_FEED_FROM are required'
+    );
+  }
+  if (!hasHostPrivateKey) {
+    throw new Error(
+      'Neo X feed signer is not configured; use the explicit enclave signer path ' +
+        '(MORPHEUS_FEED_PUSHER_ENCLAVE_SIGN + NEOX_FEED_FROM)'
+    );
+  }
+  if (!allowInsecureHostSigner) {
+    throw new Error(
+      'Neo X host feed signing is disabled; set MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER=true ' +
+        'only for an explicit non-production test'
+    );
+  }
+  return 'host_dev';
+}
 
 // Provider seam so the flag-on pushNeoX cycle is unit-testable without a live EVM RPC.
 let neoxProviderImpl = null;
@@ -756,6 +801,14 @@ export function assertEnclaveNeoXTxMatches(ethers, resp, expected) {
 }
 
 async function pushNeoX(prices, now) {
+  const signerMode = resolveNeoXFeedSignerMode({
+    enclaveSign: ENCLAVE_FEED_SIGN,
+    enclaveSignerAddress: NEOX_FEED_FROM,
+    hostPrivateKey: NEOX_PK,
+    allowInsecureHostSigner: /^(1|true|yes|on)$/i.test(
+      String(process.env.MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER || '').trim()
+    ),
+  });
   const { ethers } = await import('ethers'); // lazy: only when NeoX enabled
   const provider = neoxProvider(ethers);
   const c = new ethers.Contract(NEOX_FEED, NEOX_ABI, provider);
@@ -793,7 +846,7 @@ async function pushNeoX(prices, now) {
     };
   }
 
-  if (ENCLAVE_FEED_SIGN && NEOX_FEED_FROM) {
+  if (signerMode === 'enclave') {
     // Flag-on: the enclave fetches+plans+scales+signs the updateFeeds tx inside the
     // measured boundary with its KMS-materialized feed key. The host pins the nonce +
     // fees + gas (the tx the enclave signs), forwards the on-chain state it read so
@@ -839,7 +892,8 @@ async function pushNeoX(prices, now) {
     return;
   }
 
-  // Host-key path (unchanged): plan inline + sign+submit with NEOX_PK.
+  // Explicit non-production compatibility path: plan inline + sign+submit
+  // with NEOX_PK. resolveNeoXFeedSignerMode has already rejected production.
   const wallet2 = new ethers.Wallet(NEOX_PK, provider);
   const cw = new ethers.Contract(NEOX_FEED, NEOX_ABI, wallet2);
   const syms = [],
@@ -887,7 +941,12 @@ const FEED_CHAINS = (process.env.FEED_CHAINS || '')
   .filter(Boolean);
 const CHAINS = [
   { name: 'neo-n3', enabled: true, symbols: SYMBOLS, push: pushNeoN3 },
-  { name: 'neox', enabled: !!NEOX_PK, symbols: NEOX_SYMBOLS, push: pushNeoX },
+  {
+    name: 'neox',
+    enabled: Boolean(NEOX_PK || (ENCLAVE_FEED_SIGN && NEOX_FEED_FROM)),
+    symbols: NEOX_SYMBOLS,
+    push: pushNeoX,
+  },
 ].filter((c) => FEED_CHAINS.length === 0 || FEED_CHAINS.includes(c.name));
 
 // FEED_PUSHER_SKIP_MAIN=1 lets tests import planFeedUpdate/parseGetLatestStack
@@ -895,6 +954,23 @@ const CHAINS = [
 // `node feed-pusher.mjs` behaves exactly as before.
 if (process.env.FEED_PUSHER_SKIP_MAIN !== '1') {
   (async () => {
+    const neoxEnabled = CHAINS.some((chain) => chain.name === 'neox' && chain.enabled);
+    const neoxSelected = FEED_CHAINS.includes('neox') || neoxEnabled;
+    if (neoxSelected && !neoxEnabled) {
+      throw new Error(
+        'Neo X feed lane selected without a signer; configure an attested enclave signer path'
+      );
+    }
+    if (NEOX_PK || neoxEnabled) {
+      resolveNeoXFeedSignerMode({
+        enclaveSign: ENCLAVE_FEED_SIGN,
+        enclaveSignerAddress: NEOX_FEED_FROM,
+        hostPrivateKey: NEOX_PK,
+        allowInsecureHostSigner: /^(1|true|yes|on)$/i.test(
+          String(process.env.MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER || '').trim()
+        ),
+      });
+    }
     const now = Math.floor(Date.now() / 1000);
     // Fetch only the prices the enabled chains actually need (each chain pushes its
     // own symbol list). Per-chain timers scope a run to one chain, so the neox unit

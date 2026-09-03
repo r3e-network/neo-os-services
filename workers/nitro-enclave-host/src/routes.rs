@@ -7,24 +7,6 @@
 //! what the control plane dispatches. It is deliberately tighter than
 //! `path.endsWith(route)`, which would also match `/evil/<route>`.
 
-/// The execution-plane passthrough: the exact worker routes the Cloudflare
-/// control plane sends to enclave compute. WHITELISTED — not a blanket
-/// catch-all — so the public surface is exactly this list, and every entry is
-/// auth-gated in `dispatch` like the other sensitive routes. (EGRESS-1: an
-/// arbitrary-URL smart-fetch payload still reaches the worker through
-/// `/oracle/smart-fetch`; its outbound host is gated by the egress allow-list
-/// in the worker, fail-closed.)
-pub const EXECUTION_PLANE_PASSTHROUGH: [&str; 8] = [
-    "/oracle/query",
-    "/oracle/smart-fetch",
-    "/compute/execute",
-    "/oracle/decrypt",
-    "/oracle/message-reveal",
-    "/neodid/bind",
-    "/neodid/action-ticket",
-    "/neodid/recovery-ticket",
-];
-
 /// Accept `route` exactly, or with a single leading path segment before it.
 /// The first occurrence of `route` must sit at the end of the path, and the
 /// prefix must be exactly one segment: `/mainnet` — matching the Node
@@ -61,11 +43,19 @@ pub enum Target {
     Health,
     Attestation,
     Provision,
+    ProvisionCredentials,
     OracleFulfill,
     FeedSign,
     SignPayload,
     KeysDerived,
-    Passthrough(&'static str),
+    ComputeExecute,
+    NeoDidBind,
+    NeoDidActionTicket,
+    NeoDidRecoveryTicket,
+    OracleQuery,
+    OracleSmartFetch,
+    OracleDecrypt,
+    OracleMessageReveal,
     OraclePublicKey,
     NotFound,
 }
@@ -79,6 +69,9 @@ pub fn classify(method: &str, path: &str) -> Target {
         return Target::Attestation;
     }
     if method == "POST" {
+        if matches_route(path, "/provision/credentials") {
+            return Target::ProvisionCredentials;
+        }
         if matches_route(path, "/provision") {
             return Target::Provision;
         }
@@ -94,12 +87,31 @@ pub fn classify(method: &str, path: &str) -> Target {
         if matches_route(path, "/keys/derived") {
             return Target::KeysDerived;
         }
-        if let Some(route) = EXECUTION_PLANE_PASSTHROUGH
-            .iter()
-            .copied()
-            .find(|route| matches_route(path, route))
-        {
-            return Target::Passthrough(route);
+        if matches_route(path, "/compute/execute") {
+            return Target::ComputeExecute;
+        }
+        if matches_route(path, "/neodid/bind") {
+            return Target::NeoDidBind;
+        }
+        if matches_route(path, "/neodid/action-ticket") {
+            return Target::NeoDidActionTicket;
+        }
+        if matches_route(path, "/neodid/recovery-ticket") {
+            return Target::NeoDidRecoveryTicket;
+        }
+        // The Phase 9 folds: the last four child-forwarded lanes, in-process
+        // since the flip ([`crate::oracle_read`]).
+        if matches_route(path, "/oracle/query") {
+            return Target::OracleQuery;
+        }
+        if matches_route(path, "/oracle/smart-fetch") {
+            return Target::OracleSmartFetch;
+        }
+        if matches_route(path, "/oracle/decrypt") {
+            return Target::OracleDecrypt;
+        }
+        if matches_route(path, "/oracle/message-reveal") {
+            return Target::OracleMessageReveal;
         }
     }
     if (method == "GET" || method == "POST") && matches_route(path, "/oracle/public-key") {

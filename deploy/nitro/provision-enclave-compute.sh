@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
-# Provision the merged enclave's COMPUTE configuration (on top of the signer-key
-# provisioning that start-nitro-signer.sh already does). The enclave boots with
-# only the baked image ENV, and start-nitro-signer.sh injects ONLY the signer
-# keys (morpheus-nitro-signer.env). The in-enclave worker compute additionally
-# needs: the price provider keys (TWELVEDATA_API_KEY + the feed-pusher's TD_KEY),
-# the worker auth token, the chain config, and — for the confidential.decrypt /
-# neodid lanes — AWS credentials so it can reach Secrets Manager through the
-# allow-listed vsock egress (the enclave has no IMDS).
+# Rotate temporary AWS credentials after start-nitro-signer.sh completes the
+# one-shot allowlisted provisioning ceremony. Runtime mode/network/endpoints,
+# custody routing, policy switches, and trust anchors are measured image
+# configuration; confidential inputs are KMS ciphertexts installed only on the
+# first provision.
 #
 # This runs:
-#   - after the signer service starts (PartOf + After), so an enclave restart
-#     re-provisions the compute config automatically; and
+#   - after the signer service starts (PartOf + After); and
 #   - on a 4h timer, to ROTATE the short-lived AWS instance-role credentials
 #     (the price/VRF/feed lanes do not need AWS and stay up regardless; only the
 #     decrypt/neodid lanes depend on the rotated creds).
 #
-# It is idempotent: /provision merges keys into the running enclave's process.env.
+# It is idempotent: /provision/credentials replaces exactly three AWS fields.
 set -euo pipefail
 
 host_port="${MORPHEUS_NITRO_HOST_PORT:-8787}"
@@ -61,64 +57,11 @@ function parseEnv(p) {
 }
 
 const signer = parseEnv(process.env.SIGNER_ENV);
-const worker = parseEnv(process.env.WORKER_ENV);
-delete worker.PORT; // never override the server's listening port post-startup
-const feed = parseEnv(process.env.FEED_ENV);
-
-const env = { ...worker };
-for (const key of [
-  'NITRO_SIGNER_TOKEN',
-  'MORPHEUS_RUNTIME_TOKEN',
-  'NITRO_API_TOKEN',
-  'NITRO_SHARED_SECRET',
-]) {
-  delete env[key];
-}
-if (feed.TD_KEY) env.TD_KEY = feed.TD_KEY; // /feed/sign price key (distinct from TWELVEDATA_API_KEY)
-
-// The parent may forward KMS CiphertextBlob files, but it never decrypts or
-// derives X25519, NeoDID, N3 or EVM secret material. KMS releases plaintext only
-// to the measured enclave through nsm-attest kms-decrypt. A missing ciphertext
-// leaves only its owning lane degraded; there is no plaintext rollback path.
-function provisionCiphertext({ target, pathKey, fallbackPath, label }) {
-  const ciphertextPath = (worker[pathKey] || fallbackPath).trim();
-  if (!fs.existsSync(ciphertextPath)) return;
-  try {
-    const ciphertext = fs.readFileSync(ciphertextPath, 'utf8').trim();
-    if (ciphertext) env[target] = ciphertext;
-  } catch (error) {
-    console.error(`provision-enclave-compute: ${label} KMS ciphertext read failed:`, error.message);
-  }
-}
-
-provisionCiphertext({
-  target: 'MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64',
-  pathKey: 'MORPHEUS_ORACLE_KMS_CIPHERTEXT_PATH',
-  fallbackPath: '/var/lib/morpheus/oracle-key-kms.b64',
-  label: 'oracle decrypt key',
-});
-provisionCiphertext({
-  target: 'MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64',
-  pathKey: 'MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_PATH',
-  fallbackPath: '/var/lib/morpheus/neodid-salt-kms.b64',
-  label: 'NeoDID salt',
-});
-provisionCiphertext({
-  target: 'MORPHEUS_NEOX_VERIFIER_KMS_CIPHERTEXT_BASE64',
-  pathKey: 'MORPHEUS_NEOX_VERIFIER_KMS_CIPHERTEXT_PATH',
-  fallbackPath: '/var/lib/morpheus/neox-verifier-kms.b64',
-  label: 'NeoX verifier key',
-});
-provisionCiphertext({
-  target: 'MORPHEUS_NEOX_FEED_KMS_CIPHERTEXT_BASE64',
-  pathKey: 'MORPHEUS_NEOX_FEED_KMS_CIPHERTEXT_PATH',
-  fallbackPath: '/var/lib/morpheus/neox-feed-kms.b64',
-  label: 'NeoX feed key',
-});
+const env = {};
 
 // Fresh instance-role credentials from IMDSv2 so the in-enclave decrypt/neodid
-// lanes can reach Secrets Manager through the allow-listed egress. Best-effort:
-// if IMDS is unavailable the price/VRF/feed lanes still work.
+// lane can submit future recipient-attested KMS requests. No Secrets Manager
+// permission is needed or allowed.
 try {
   const tok = cp
     .execSync('curl -sS -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 600"', { timeout: 5000 })
@@ -140,7 +83,7 @@ try {
 }
 
 const token = signer.MORPHEUS_RUNTIME_TOKEN || signer.NITRO_SIGNER_TOKEN || '';
-const res = await fetch(`http://127.0.0.1:${port}/provision`, {
+const res = await fetch(`http://127.0.0.1:${port}/provision/credentials`, {
   method: 'POST',
   headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
   body: JSON.stringify({ env }),
@@ -150,7 +93,6 @@ console.log(
   JSON.stringify({
     status: body.status,
     n_keys: (body.env_keys || []).length,
-    roles: (body.roles || []).map((r) => r.role + ':' + r.ok).join(','),
     aws: Boolean(env.AWS_ACCESS_KEY_ID),
   })
 );

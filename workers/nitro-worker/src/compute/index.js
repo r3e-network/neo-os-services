@@ -826,7 +826,7 @@ export async function handleComputeExecute(payload) {
     const signed = await buildSignedResultEnvelope(result, resolvedPayload);
     // signed.tee_attestation already binds sha256(stableStringify(result)) (computed once
     // inside buildSignedResultEnvelope via output_hash). Reuse it rather than calling the
-    // 8787 /attest endpoint a second time with the same report_data.
+    // 8787 /attestation endpoint a second time with the same report_data.
     return json(200, {
       mode,
       target_chain: resolvedPayload.target_chain

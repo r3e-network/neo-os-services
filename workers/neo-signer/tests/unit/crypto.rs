@@ -417,3 +417,28 @@ fn derive_master_key_is_deterministic_and_32_bytes() {
     assert_eq!(a.len(), 32);
     assert_ne!(a, [0u8; 32], "a zero master key would seal nothing");
 }
+
+#[test]
+fn sign_raw_covers_sha256_of_the_bytes_with_no_neo_framing() {
+    let private_key = [7u8; 32];
+    let public_key = public_key_from_private(&private_key).expect("derives");
+    let data = b"a fulfillment digest the enclave host wants signed";
+
+    let signature = sign_raw(&private_key, data).expect("signs");
+    // The unframed preimage verifies; the Neo-framed preimage of the same
+    // bytes does not, which is the property that keeps the two lanes'
+    // signatures from being interchangeable.
+    assert!(verify_signature(&public_key, data, &signature));
+    assert!(!verify_signature(
+        &public_key,
+        &sign_data(data, MAINNET),
+        &signature
+    ));
+
+    // RFC6979: the same bytes sign to the same 64-byte witness, and the
+    // witness is low-S because consensus rejects the high form.
+    let again = sign_raw(&private_key, data).expect("signs again");
+    assert_eq!(signature, again);
+    let other = sign_raw(&private_key, b"different bytes").expect("signs other");
+    assert_ne!(signature, other);
+}

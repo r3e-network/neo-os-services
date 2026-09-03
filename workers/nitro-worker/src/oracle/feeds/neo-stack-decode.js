@@ -77,11 +77,14 @@ export async function fetchJsonRpc(url, body) {
 
 function hasContractMethod(contractState, name, parameterCount) {
   const methods = contractState?.manifest?.abi?.methods;
-  return Array.isArray(methods) && methods.some(
-    (method) =>
-      trimString(method?.name) === name &&
-      Array.isArray(method?.parameters) &&
-      method.parameters.length === parameterCount
+  return (
+    Array.isArray(methods) &&
+    methods.some(
+      (method) =>
+        trimString(method?.name) === name &&
+        Array.isArray(method?.parameters) &&
+        method.parameters.length === parameterCount
+    )
   );
 }
 
@@ -95,7 +98,11 @@ function stackItemHasValue(item) {
 
 export async function loadNeoN3FeedSigningMode(rpcUrl, contractHash) {
   if (!trimString(rpcUrl) || !trimString(contractHash)) {
-    return { supportsSignedUpdates: null, requiresSignedUpdates: null, error: 'missing RPC or contract hash' };
+    return {
+      supportsSignedUpdates: null,
+      requiresSignedUpdates: null,
+      error: 'missing RPC or contract hash',
+    };
   }
   try {
     const contractState = await fetchJsonRpc(rpcUrl, {

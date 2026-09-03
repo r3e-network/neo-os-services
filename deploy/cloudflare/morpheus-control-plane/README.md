@@ -108,10 +108,18 @@ ceiling).
 
 - `SUPABASE_URL`
 - `SUPABASE_SECRET_KEY` or `SUPABASE_SERVICE_ROLE_KEY`
+- `MORPHEUS_CONTROL_PLANE_API_KEY` or `MORPHEUS_OPERATOR_API_KEY`
+- `MORPHEUS_WORKFLOW_API_KEY` when callback/automation workflows call the app backend
+
+These credentials must not reuse `MORPHEUS_RUNTIME_TOKEN`,
+`NITRO_API_TOKEN`, or `NITRO_SHARED_SECRET` values.
+
+Production confidential execution accepts exactly one base URL per selected
+lane and network. Comma-separated pools are rejected before dispatch, so an
+execution bearer is never retried against a different origin.
 
 Optional:
 
-- `MORPHEUS_CONTROL_PLANE_API_KEY`
 - `UPSTASH_REDIS_REST_URL`
 - `UPSTASH_REDIS_REST_TOKEN`
 - `MORPHEUS_MAINNET_EXECUTION_BASE_URL` or shared `MORPHEUS_EXECUTION_BASE_URL`
@@ -119,13 +127,12 @@ Optional:
 - `MORPHEUS_MAINNET_FEED_EXECUTION_BASE_URL` / `MORPHEUS_TESTNET_FEED_EXECUTION_BASE_URL`
   when `feed_tick` should execute on the dedicated DataFeed CVM instead of the request CVM
 - `MORPHEUS_EXECUTION_TOKEN`
-- Feed signer material can use dedicated feed, updater, or relayer env names. Preferred mainnet
-  names are `MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET` /
-  `MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET`; testnet uses the `_TESTNET` suffix.
-  Prefix-style names such as `MORPHEUS_MAINNET_UPDATER_NEO_N3_WIF` and shared
-  `MORPHEUS_UPDATER_NEO_N3_WIF` / `MORPHEUS_RELAYER_NEO_N3_WIF` remain supported.
+- No signer material is configured at the edge. The execution plane (Nitro) signs
+  every Neo N3 lane through the custody signer service; the edge only forwards
+  base URLs and the execution token.
 - `MORPHEUS_APP_BACKEND_URL`
-- `MORPHEUS_APP_BACKEND_TOKEN`
+- `MORPHEUS_APP_BACKEND_TOKEN` (workflow-credential migration alias; prefer
+  `MORPHEUS_WORKFLOW_API_KEY`)
 - `MORPHEUS_CONTROL_PLANE_REQUEUE_LIMIT`
 - `MORPHEUS_CONTROL_PLANE_STALE_PROCESSING_MS`
 - `MORPHEUS_CONTROL_PLANE_RETRY_BASE_SECONDS`

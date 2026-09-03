@@ -12,9 +12,9 @@ use std::str::FromStr;
 
 use crate::{
     model::{
-        CallerCapability, KeyGrant, ScriptHash, SealedPrivateKey, SignerAuditAction,
-        SignerAuditOutcome, SignerAuditRecord, SignerCaller, SignerKey, SignerPolicy,
-        SignerValueEvent, WindowLimit,
+        AssetLimit, CallerCapability, ContractMethod, KeyGrant, ScriptHash, SealedPrivateKey,
+        SignatureRateLimit, SignerAuditAction, SignerAuditOutcome, SignerAuditRecord, SignerCaller,
+        SignerKey, SignerPolicy, SignerValueEvent, WindowLimit, WorkloadIdentity,
     },
     network::Network,
     policy::WindowSpend,
@@ -40,20 +40,21 @@ pub(in crate::store) fn signer_key_from_row(
         },
         created_at_unix: row.get(6)?,
         disabled: row.get(7)?,
+        network_magic: row.get(8)?,
     })
 }
 
 pub(in crate::store) fn signer_policy_from_row(
     row: &rusqlite::Row<'_>,
 ) -> rusqlite::Result<SignerPolicy> {
-    let max_single_amount: Option<String> = row.get(10)?;
-    let window_seconds: Option<i64> = row.get(11)?;
-    let window_max_amount: Option<String> = row.get(12)?;
+    let max_single_amount: Option<String> = row.get(13)?;
+    let window_seconds: Option<i64> = row.get(14)?;
+    let window_max_amount: Option<String> = row.get(15)?;
 
     let window_limit = match (window_seconds, window_max_amount) {
         (Some(seconds), Some(max_amount)) => Some(WindowLimit {
-            seconds: u64::try_from(seconds).map_err(|_| length_error(11, "window seconds"))?,
-            max_amount: parse_i128(12, &max_amount)?,
+            seconds: u64::try_from(seconds).map_err(|_| length_error(14, "window seconds"))?,
+            max_amount: parse_i128(15, &max_amount)?,
         }),
         (None, None) => None,
         // One half of a window ceiling cannot mean anything. [`WindowLimit`] is
@@ -61,8 +62,25 @@ pub(in crate::store) fn signer_policy_from_row(
         // a broken row rather than an unconfigured policy.
         _ => {
             return Err(rusqlite::Error::InvalidColumnType(
-                11,
+                14,
                 "window".into(),
+                rusqlite::types::Type::Integer,
+            ))
+        }
+    };
+    let signature_window_seconds: Option<i64> = row.get(19)?;
+    let signature_window_count: Option<i64> = row.get(20)?;
+    let max_signatures = match (signature_window_seconds, signature_window_count) {
+        (Some(seconds), Some(count)) => Some(SignatureRateLimit {
+            seconds: u64::try_from(seconds)
+                .map_err(|_| length_error(19, "signature window seconds"))?,
+            count: u64::try_from(count).map_err(|_| length_error(20, "signature window count"))?,
+        }),
+        (None, None) => None,
+        _ => {
+            return Err(rusqlite::Error::InvalidColumnType(
+                19,
+                "signature window".into(),
                 rusqlite::types::Type::Integer,
             ))
         }
@@ -70,20 +88,31 @@ pub(in crate::store) fn signer_policy_from_row(
 
     Ok(SignerPolicy {
         allow_consensus: row.get(0)?,
-        allow_transfer: row.get(1)?,
-        allow_contract_call: row.get(2)?,
-        allow_global_scope: row.get(3)?,
-        contract_whitelist: hash_list(4, &row.get::<_, String>(4)?)?,
-        contract_blacklist: hash_list(5, &row.get::<_, String>(5)?)?,
-        asset_whitelist: hash_list(6, &row.get::<_, String>(6)?)?,
-        asset_blacklist: hash_list(7, &row.get::<_, String>(7)?)?,
-        transfer_to_whitelist: hash_list(8, &row.get::<_, String>(8)?)?,
-        transfer_to_blacklist: hash_list(9, &row.get::<_, String>(9)?)?,
+        allow_raw: row.get(1)?,
+        allow_transfer: row.get(2)?,
+        allow_contract_call: row.get(3)?,
+        allow_global_scope: row.get(4)?,
+        contract_whitelist: hash_list(5, &row.get::<_, String>(5)?)?,
+        contract_blacklist: hash_list(6, &row.get::<_, String>(6)?)?,
+        contract_method_whitelist: contract_method_list(7, &row.get::<_, String>(7)?)?,
+        contract_method_blacklist: contract_method_list(8, &row.get::<_, String>(8)?)?,
+        asset_whitelist: hash_list(9, &row.get::<_, String>(9)?)?,
+        asset_blacklist: hash_list(10, &row.get::<_, String>(10)?)?,
+        transfer_to_whitelist: hash_list(11, &row.get::<_, String>(11)?)?,
+        transfer_to_blacklist: hash_list(12, &row.get::<_, String>(12)?)?,
         max_single_amount: max_single_amount
             .as_deref()
-            .map(|raw| parse_i128(10, raw))
+            .map(|raw| parse_i128(13, raw))
             .transpose()?,
         window_limit,
+        max_signers: row
+            .get::<_, Option<i64>>(16)?
+            .map(|value| u16::try_from(value).map_err(|_| length_error(16, "max signers")))
+            .transpose()?,
+        max_system_fee: row.get(17)?,
+        max_network_fee: row.get(18)?,
+        max_signatures,
+        asset_limits: asset_limit_list(21, &row.get::<_, String>(21)?)?,
     })
 }
 
@@ -94,10 +123,27 @@ pub(in crate::store) fn signer_caller_from_row(
     let grants_raw: String = row.get(4)?;
     let origins_raw: String = row.get(5)?;
     let capabilities_raw: String = row.get(8)?;
+    let workload_public_key: Option<Vec<u8>> = row.get(9)?;
+    let workload_subject: Option<String> = row.get(10)?;
+    let workload_identity = match (workload_public_key, workload_subject) {
+        (Some(public_key), subject) => Some(WorkloadIdentity {
+            public_key: fixed::<32>(9, public_key)?,
+            subject,
+        }),
+        (None, None) => None,
+        (None, Some(_)) => {
+            return Err(rusqlite::Error::InvalidColumnType(
+                10,
+                "workload_subject".to_string(),
+                rusqlite::types::Type::Text,
+            ))
+        }
+    };
     Ok(SignerCaller {
         id: row.get(0)?,
         label: row.get(1)?,
         token_digest: fixed::<32>(2, row.get(2)?)?,
+        workload_identity,
         key_grant: KeyGrant::from_mode(&mode, decode_args_field(&grants_raw)),
         capabilities: decode_capabilities(8, &capabilities_raw)?,
         allowed_origins: decode_args_field(&origins_raw),
@@ -191,6 +237,92 @@ fn hash_list(index: usize, raw: &str) -> rusqlite::Result<Vec<ScriptHash>> {
                 )
             })
         })
+        .collect()
+}
+
+fn contract_method_list(index: usize, raw: &str) -> rusqlite::Result<Vec<ContractMethod>> {
+    let entries: Vec<(String, String)> = serde_json::from_str(raw).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })?;
+    entries
+        .into_iter()
+        .map(|(contract, method)| {
+            let contract = ScriptHash::from_str(&contract).map_err(|_| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    index,
+                    rusqlite::types::Type::Text,
+                    Box::new(rusqlite::Error::InvalidColumnName(format!(
+                        "malformed contract method hash: {contract}"
+                    ))),
+                )
+            })?;
+            if method.is_empty() {
+                return Err(rusqlite::Error::FromSqlConversionFailure(
+                    index,
+                    rusqlite::types::Type::Text,
+                    Box::new(rusqlite::Error::InvalidColumnName(
+                        "empty contract method".to_string(),
+                    )),
+                ));
+            }
+            Ok(ContractMethod { contract, method })
+        })
+        .collect()
+}
+
+fn asset_limit_list(index: usize, raw: &str) -> rusqlite::Result<Vec<AssetLimit>> {
+    type StoredAssetLimit = (String, Option<String>, Option<u64>, Option<String>);
+    let entries: Vec<StoredAssetLimit> = serde_json::from_str(raw).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })?;
+    entries
+        .into_iter()
+        .map(
+            |(asset, max_single_amount, window_seconds, window_max_amount)| {
+                let asset = ScriptHash::from_str(&asset).map_err(|_| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        index,
+                        rusqlite::types::Type::Text,
+                        Box::new(rusqlite::Error::InvalidColumnName(format!(
+                            "malformed asset limit hash: {asset}"
+                        ))),
+                    )
+                })?;
+                let max_single_amount = max_single_amount
+                    .as_deref()
+                    .map(|amount| parse_i128(index, amount))
+                    .transpose()?;
+                let window_limit = match (window_seconds, window_max_amount) {
+                    (Some(seconds), Some(max_amount)) => Some(WindowLimit {
+                        seconds,
+                        max_amount: parse_i128(index, &max_amount)?,
+                    }),
+                    (None, None) => None,
+                    _ => {
+                        return Err(rusqlite::Error::FromSqlConversionFailure(
+                            index,
+                            rusqlite::types::Type::Text,
+                            Box::new(rusqlite::Error::InvalidColumnName(
+                                "incomplete asset-specific window".to_string(),
+                            )),
+                        ))
+                    }
+                };
+                Ok(AssetLimit {
+                    asset,
+                    max_single_amount,
+                    window_limit,
+                })
+            },
+        )
         .collect()
 }
 

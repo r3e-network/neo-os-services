@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { handleVrf } from './vrf.js';
+import {
+  __resetCustodyTransportForTests,
+  __setCustodyTransportForTests,
+} from '../platform/custody.js';
 
 // D5 — every fulfillment lane must emit the canonical signed-result envelope.
 // The VRF lane previously dropped `output_hash`; this pins it back in and keeps
@@ -15,6 +19,40 @@ const CANONICAL_ENVELOPE_KEYS = [
   'tee_attestation',
   'verification',
 ];
+
+const originalWorkerKeyId = process.env.SIGNER_ROLE_WORKER_KEY_ID;
+
+test.before(() => {
+  process.env.SIGNER_ROLE_WORKER_KEY_ID = 'test-worker-key';
+  __setCustodyTransportForTests(async (method) =>
+    method === 'GET'
+      ? {
+          key_id: 'test-worker-key',
+          network: 'testnet',
+          network_magic: 894710606,
+          public_key: `02${'22'.repeat(32)}`,
+          address: 'NTestWorkerCustodyAddress',
+          script_hash: `0x${'33'.repeat(20)}`,
+          signing_enabled: true,
+        }
+      : {
+          allowed: true,
+          signature: '11'.repeat(64),
+          public_key: `02${'22'.repeat(32)}`,
+          address: 'NTestWorkerCustodyAddress',
+          script_hash: `0x${'33'.repeat(20)}`,
+        }
+  );
+});
+
+test.after(() => {
+  if (originalWorkerKeyId === undefined) {
+    delete process.env.SIGNER_ROLE_WORKER_KEY_ID;
+  } else {
+    process.env.SIGNER_ROLE_WORKER_KEY_ID = originalWorkerKeyId;
+  }
+  __resetCustodyTransportForTests();
+});
 
 test('VRF response carries the canonical signed envelope including output_hash (D5)', async () => {
   const res = await handleVrf({});

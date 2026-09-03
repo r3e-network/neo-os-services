@@ -1,9 +1,10 @@
-import { experimental, rpc as neoRpc, sc, u, wallet as neoWallet } from '@cityofzion/neon-js';
 import {
   getServerSupabaseClient,
   resolveSupabaseNetwork,
   type MorpheusNetwork,
 } from './server-supabase';
+import { appConfig } from './config';
+import { isRetryableStatus } from './nitro';
 import { networkRegistry } from './networks';
 import { trimString } from './strings';
 
@@ -13,6 +14,10 @@ function pickValue(...values: unknown[]) {
     if (trimmed) return trimmed;
   }
   return '';
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 export function resolveControlPlaneNetwork(value?: string | null): MorpheusNetwork {
@@ -46,54 +51,100 @@ export function resolveNeoN3Runtime(network: MorpheusNetwork) {
   };
 }
 
-export function resolveNeoN3UpdaterSigner(network: MorpheusNetwork) {
-  const scope = network === 'mainnet' ? 'MAINNET' : 'TESTNET';
-  const wif = pickValue(
-    process.env[`MORPHEUS_UPDATER_NEO_N3_WIF_${scope}` as keyof NodeJS.ProcessEnv],
-    process.env[`MORPHEUS_RELAYER_NEO_N3_WIF_${scope}` as keyof NodeJS.ProcessEnv],
-    process.env.MORPHEUS_UPDATER_NEO_N3_WIF,
-    process.env.MORPHEUS_RELAYER_NEO_N3_WIF
-  );
-  const privateKey = pickValue(
-    process.env[`MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_${scope}` as keyof NodeJS.ProcessEnv],
-    process.env[`MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_${scope}` as keyof NodeJS.ProcessEnv],
-    process.env.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY,
-    process.env.MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY
-  );
-  return {
-    wif,
-    privateKey,
-  };
-}
+type WorkerRelayResult = {
+  request_id?: string;
+  tx_hash?: string;
+  vm_state?: string | null;
+  exception?: string | null;
+  error?: string;
+};
 
-function resolveInputSignerMaterial(input?: {
-  wif?: string | null;
-  private_key?: string | null;
-  privateKey?: string | null;
-}) {
-  return {
-    wif: pickValue(input?.wif),
-    privateKey: pickValue(input?.privateKey, input?.private_key),
-  };
-}
-
-function createNeoN3Account(
+// Operator intent on the oracle contract (fulfillRequest /
+// queueAutomationRequest) is relayed through the Nitro worker's custody-signed
+// txproxy lane: the worker builds, fee-estimates and custody-signs the
+// invocation as the updater account. No signer material ever leaves this
+// process, so the web tier holds no Neo N3 key.
+async function relayNeoN3InvocationViaWorker(
   network: MorpheusNetwork,
-  inputSigner?: {
-    wif?: string | null;
-    private_key?: string | null;
-    privateKey?: string | null;
+  payload: {
+    request_id: string;
+    method: string;
+    params: { type: string; value: unknown }[];
+    wait: boolean;
   }
-) {
-  const signer = {
-    ...resolveNeoN3UpdaterSigner(network),
-    ...resolveInputSignerMaterial(inputSigner),
-  };
-  const key = signer.wif || signer.privateKey;
-  if (!key) {
-    throw new Error(`Neo N3 updater signer is not configured for ${network}`);
+): Promise<WorkerRelayResult> {
+  const runtime = resolveNeoN3Runtime(network);
+  if (!runtime.rpcUrl || !runtime.oracleHash) {
+    throw new Error(`Neo N3 runtime is not configured for ${network}`);
   }
-  return new neoWallet.Account(key);
+
+  const configuredCandidateUrls =
+    Array.isArray(appConfig.nitroApiUrls) && appConfig.nitroApiUrls.length > 0
+      ? appConfig.nitroApiUrls
+      : appConfig.nitroApiUrl
+        ? [appConfig.nitroApiUrl]
+        : [];
+  // The txproxy request causes a custody signature and an on-chain mutation.
+  // Production must never retry it against a second runtime host.
+  const candidateUrls =
+    process.env.NODE_ENV === 'production'
+      ? configuredCandidateUrls.slice(0, 1)
+      : configuredCandidateUrls;
+  if (candidateUrls.length === 0) {
+    throw new Error('MORPHEUS_RUNTIME_URL is not configured');
+  }
+
+  const headers = new Headers({ 'content-type': 'application/json' });
+  if (appConfig.nitroToken) {
+    headers.set('authorization', `Bearer ${appConfig.nitroToken}`);
+    headers.set('x-nitro-token', appConfig.nitroToken);
+  }
+
+  const body = JSON.stringify({
+    target_chain: 'neo_n3',
+    network,
+    contract_hash: runtime.oracleHash,
+    method: payload.method,
+    params: payload.params,
+    request_id: payload.request_id,
+    wait: payload.wait,
+  });
+
+  let lastStatus = 503;
+  let lastBody: WorkerRelayResult = {};
+  for (const apiBaseUrl of candidateUrls) {
+    try {
+      const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/txproxy/invoke`, {
+        method: 'POST',
+        headers,
+        body,
+        cache: 'no-store',
+        // Long enough to cover the worker's wait-for-application-log window.
+        signal: AbortSignal.timeout(20000),
+      });
+      const text = await response.text();
+      let parsed: unknown = {};
+      try {
+        parsed = text ? JSON.parse(text) : {};
+      } catch {}
+      lastStatus = response.status;
+      lastBody = isPlainObject(parsed) ? (parsed as WorkerRelayResult) : {};
+      if (response.ok || !isRetryableStatus(response.status)) {
+        break;
+      }
+    } catch (error) {
+      lastStatus = 503;
+      lastBody = { error: error instanceof Error ? error.message : 'fetch failed' };
+    }
+  }
+
+  if (lastStatus < 200 || lastStatus >= 300) {
+    throw new Error(trimString(lastBody.error) || `worker relay failed (${lastStatus})`);
+  }
+  if (!trimString(lastBody.tx_hash)) {
+    throw new Error('worker relay returned no transaction hash');
+  }
+  return lastBody;
 }
 
 export async function fulfillNeoN3RequestViaBackend(input: {
@@ -104,45 +155,30 @@ export async function fulfillNeoN3RequestViaBackend(input: {
   error: string;
   verificationSignature: string;
   resultBytesBase64?: string;
-  wif?: string;
-  private_key?: string;
 }) {
-  const runtime = resolveNeoN3Runtime(input.network);
-  if (!runtime.rpcUrl || !runtime.oracleHash) {
-    throw new Error(`Neo N3 runtime is not configured for ${input.network}`);
-  }
-  const account = createNeoN3Account(input.network, input);
-  const contract = new experimental.SmartContract(u.HexString.fromHex(runtime.oracleHash), {
-    rpcAddress: runtime.rpcUrl,
-    networkMagic: runtime.networkMagic,
-    account,
-  });
   const resultHex = trimString(input.resultBytesBase64)
     ? Buffer.from(trimString(input.resultBytesBase64), 'base64').toString('hex')
     : Buffer.from(String(input.result || ''), 'utf8').toString('hex');
-  const txHashRaw = await contract.invoke('fulfillRequest', [
-    sc.ContractParam.integer(String(input.requestId)),
-    sc.ContractParam.boolean(Boolean(input.success)),
-    sc.ContractParam.byteArray(u.HexString.fromHex(resultHex as never, true)),
-    sc.ContractParam.string(input.error || ''),
-    sc.ContractParam.byteArray(
-      u.HexString.fromHex(
-        trimString(input.verificationSignature).replace(/^0x/i, '') as never,
-        true
-      )
-    ),
-  ]);
-  const txHash = trimString(txHashRaw).startsWith('0x')
-    ? trimString(txHashRaw)
-    : `0x${trimString(txHashRaw)}`;
-  const rpcClient = new neoRpc.RPCClient(runtime.rpcUrl);
-  const appLog = await rpcClient.getApplicationLog(txHash).catch(() => null);
-  const execution = appLog?.executions?.[0];
+  const verificationSigHex = trimString(input.verificationSignature).replace(/^0x/i, '');
+
+  const relayed = await relayNeoN3InvocationViaWorker(input.network, {
+    request_id: `web-fulfill-${input.requestId}`,
+    method: 'fulfillRequest',
+    params: [
+      { type: 'integer', value: String(input.requestId) },
+      { type: 'boolean', value: Boolean(input.success) },
+      { type: 'bytearray', value: resultHex },
+      { type: 'string', value: input.error || '' },
+      { type: 'bytearray', value: verificationSigHex },
+    ],
+    wait: true,
+  });
+
   return {
-    tx_hash: txHash,
-    vm_state: execution?.vmstate || null,
-    exception: execution?.exception || null,
-    target_chain: 'neo_n3',
+    tx_hash: String(relayed.tx_hash),
+    vm_state: relayed.vm_state ?? null,
+    exception: relayed.exception ?? null,
+    target_chain: 'neo_n3' as const,
   };
 }
 
@@ -154,33 +190,24 @@ export async function queueNeoN3AutomationViaBackend(input: {
   callbackContract: string;
   callbackMethod: string;
   requestId: string;
-  wif?: string;
-  private_key?: string;
 }) {
-  const runtime = resolveNeoN3Runtime(input.network);
-  if (!runtime.rpcUrl || !runtime.oracleHash) {
-    throw new Error(`Neo N3 runtime is not configured for ${input.network}`);
-  }
-  const account = createNeoN3Account(input.network, input);
-  const contract = new experimental.SmartContract(u.HexString.fromHex(runtime.oracleHash), {
-    rpcAddress: runtime.rpcUrl,
-    networkMagic: runtime.networkMagic,
-    account,
+  const relayed = await relayNeoN3InvocationViaWorker(input.network, {
+    request_id: `web-queue-${input.requestId}`,
+    method: 'queueAutomationRequest',
+    params: [
+      { type: 'hash160', value: input.requester },
+      { type: 'string', value: input.requestType },
+      { type: 'bytearray', value: Buffer.from(input.payloadText, 'utf8').toString('hex') },
+      { type: 'hash160', value: input.callbackContract },
+      { type: 'string', value: input.callbackMethod },
+    ],
+    wait: false,
   });
-  const txHashRaw = await contract.invoke('queueAutomationRequest', [
-    sc.ContractParam.hash160(input.requester),
-    sc.ContractParam.string(input.requestType),
-    sc.ContractParam.byteArray(Buffer.from(input.payloadText, 'utf8').toString('base64') as never),
-    sc.ContractParam.hash160(input.callbackContract),
-    sc.ContractParam.string(input.callbackMethod),
-  ]);
-  const txHash = trimString(txHashRaw).startsWith('0x')
-    ? trimString(txHashRaw)
-    : `0x${trimString(txHashRaw)}`;
+
   return {
-    tx_hash: txHash,
+    tx_hash: String(relayed.tx_hash),
     request_id: input.requestId,
-    target_chain: 'neo_n3',
+    target_chain: 'neo_n3' as const,
   };
 }
 

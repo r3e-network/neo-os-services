@@ -4,7 +4,6 @@ use std::fmt;
 use std::str::FromStr;
 
 use crate::crypto;
-use crate::network;
 use crate::network::Network;
 use crate::tx;
 use crate::tx::HASH160_LEN;
@@ -109,10 +108,23 @@ pub struct SignerPolicy {
     /// and asset lists below only describe the transaction in front of us, not
     /// the use the signature is eventually put to.
     pub allow_global_scope: bool,
+    /// Sign raw caller bytes (`sign/raw`) with no transaction or payload
+    /// structure for the policy to read. Off by default, and off is what
+    /// keeps it safe on a key nobody configured: a raw signature commits to
+    /// nothing the lists below can describe, so enabling it is a decision
+    /// about the whole key — recorded here, where the attested boundary
+    /// digest covers it.
+    pub allow_raw: bool,
     /// Contracts that may be called. Empty means any contract not denied below.
     pub contract_whitelist: Vec<ScriptHash>,
     /// Contracts that may never be called; wins over the whitelist.
     pub contract_blacklist: Vec<ScriptHash>,
+    /// Exact contract methods that may be called. Empty leaves method names
+    /// unrestricted after the contract-level checks.
+    pub contract_method_whitelist: Vec<ContractMethod>,
+    /// Exact contract methods that may never be called; wins over both
+    /// whitelists.
+    pub contract_method_blacklist: Vec<ContractMethod>,
     /// Token contracts this key may move. Empty means any token not denied.
     pub asset_whitelist: Vec<ScriptHash>,
     /// Token contracts this key may never move.
@@ -125,6 +137,29 @@ pub struct SignerPolicy {
     pub max_single_amount: Option<i128>,
     /// Rolling ceiling on the value moved out of this key.
     pub window_limit: Option<WindowLimit>,
+    /// More restrictive ceilings for named token contracts.
+    ///
+    /// More than one entry may name the same asset so independent rolling
+    /// periods (for example hourly and daily) can be enforced together.
+    pub asset_limits: Vec<AssetLimit>,
+    /// Maximum number of transaction signer entries.
+    pub max_signers: Option<u16>,
+    /// Maximum system fee in GAS fixed-8 raw units.
+    pub max_system_fee: Option<i64>,
+    /// Maximum network fee in GAS fixed-8 raw units.
+    pub max_network_fee: Option<i64>,
+    /// Maximum signatures this key may produce during one rolling period.
+    ///
+    /// This applies across transaction, consensus, and raw lanes so splitting
+    /// traffic between routes cannot bypass the ceiling.
+    pub max_signatures: Option<SignatureRateLimit>,
+}
+
+/// One exact contract and method pair in a method-level boundary.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ContractMethod {
+    pub contract: ScriptHash,
+    pub method: String,
 }
 
 /// A rolling window over which transferred value accumulates.
@@ -144,7 +179,37 @@ pub struct WindowLimit {
     pub max_amount: i128,
 }
 
+/// Amount ceilings scoped to one token contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AssetLimit {
+    pub asset: ScriptHash,
+    pub max_single_amount: Option<i128>,
+    pub window_limit: Option<WindowLimit>,
+}
+
+/// Rolling ceiling over every signature produced by one key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SignatureRateLimit {
+    pub seconds: u64,
+    pub count: u64,
+}
+
 impl SignerPolicy {
+    /// Raw signing must live on a key with no parsed semantic authority.
+    ///
+    /// `sign/raw` can sign `networkMagicLE || SHA256(unsignedTransaction)`,
+    /// which is the exact preimage Neo verifies for a transaction witness.
+    /// Keeping the routes on distinct callers is insufficient if they can
+    /// still name the same key, so mixed authority is an invalid stored
+    /// boundary rather than advisory policy advice.
+    pub fn mixes_raw_and_semantic_authority(&self) -> bool {
+        self.allow_raw
+            && (self.allow_consensus
+                || self.allow_transfer
+                || self.allow_contract_call
+                || self.allow_global_scope)
+    }
+
     /// Sort and de-duplicate the lists, so a policy round-tripped through the
     /// database compares equal to the one that was written.
     pub fn normalized(mut self) -> Self {
@@ -159,6 +224,23 @@ impl SignerPolicy {
             list.sort_unstable();
             list.dedup();
         }
+        for list in [
+            &mut self.contract_method_whitelist,
+            &mut self.contract_method_blacklist,
+        ] {
+            list.sort_unstable();
+            list.dedup();
+        }
+        self.asset_limits.sort_unstable_by_key(|entry| {
+            (
+                entry.asset,
+                entry.max_single_amount,
+                entry
+                    .window_limit
+                    .map(|window| (window.seconds, window.max_amount)),
+            )
+        });
+        self.asset_limits.dedup();
         self
     }
 
@@ -173,7 +255,8 @@ impl SignerPolicy {
                 || !self.transfer_to_whitelist.is_empty()
                 || !self.transfer_to_blacklist.is_empty()
                 || self.max_single_amount.is_some()
-                || self.window_limit.is_some())
+                || self.window_limit.is_some()
+                || !self.asset_limits.is_empty())
         {
             problems.push(PolicyProblem::TransferRulesWithoutTransfer);
         }
@@ -191,6 +274,30 @@ impl SignerPolicy {
         }
         if self.window_limit.is_some_and(|limit| limit.max_amount <= 0) {
             problems.push(PolicyProblem::ZeroAmountCeiling);
+        }
+        if self.window_limit.is_some_and(|limit| limit.seconds == 0) {
+            problems.push(PolicyProblem::ZeroAmountWindow);
+        }
+        for limit in &self.asset_limits {
+            if limit.max_single_amount.is_none() && limit.window_limit.is_none() {
+                problems.push(PolicyProblem::UnboundedAssetLimit);
+            }
+            if limit.max_single_amount.is_some_and(|ceiling| ceiling <= 0)
+                || limit
+                    .window_limit
+                    .is_some_and(|window| window.max_amount <= 0)
+            {
+                problems.push(PolicyProblem::ZeroAmountCeiling);
+            }
+            if limit.window_limit.is_some_and(|window| window.seconds == 0) {
+                problems.push(PolicyProblem::ZeroAmountWindow);
+            }
+        }
+        if self
+            .max_signatures
+            .is_some_and(|limit| limit.seconds == 0 || limit.count == 0)
+        {
+            problems.push(PolicyProblem::ZeroSignatureCeiling);
         }
         problems.sort_by_key(|problem| problem.code());
         problems.dedup();
@@ -213,6 +320,12 @@ pub enum PolicyProblem {
     GlobalScopeEnabled,
     /// A ceiling of zero or less, which no positive transfer can satisfy.
     ZeroAmountCeiling,
+    /// A zero-length or zero-count signature window, which permits no call.
+    ZeroSignatureCeiling,
+    /// A transfer window with no elapsed duration.
+    ZeroAmountWindow,
+    /// An asset-specific entry with neither kind of ceiling.
+    UnboundedAssetLimit,
 }
 
 impl PolicyProblem {
@@ -224,6 +337,9 @@ impl PolicyProblem {
             PolicyProblem::TransfersWithoutAssetList => "transfers-without-asset-list",
             PolicyProblem::GlobalScopeEnabled => "global-scope-enabled",
             PolicyProblem::ZeroAmountCeiling => "zero-amount-ceiling",
+            PolicyProblem::ZeroSignatureCeiling => "zero-signature-ceiling",
+            PolicyProblem::ZeroAmountWindow => "zero-amount-window",
+            PolicyProblem::UnboundedAssetLimit => "unbounded-asset-limit",
         }
     }
 }
@@ -246,6 +362,15 @@ impl fmt::Display for PolicyProblem {
             PolicyProblem::ZeroAmountCeiling => {
                 "an amount ceiling of zero or less can never be satisfied by a positive transfer"
             }
+            PolicyProblem::ZeroSignatureCeiling => {
+                "a signature-rate count and window must both be greater than zero"
+            }
+            PolicyProblem::ZeroAmountWindow => {
+                "a rolling amount window must be greater than zero seconds"
+            }
+            PolicyProblem::UnboundedAssetLimit => {
+                "an asset-specific limit without a single or rolling ceiling has no effect"
+            }
         };
         f.write_str(message)
     }
@@ -264,10 +389,18 @@ pub struct SignerKey {
     pub id: String,
     /// Operator-facing name.
     pub label: String,
-    /// Which chain this key signs for. The magic is derived from it at signing
-    /// time, so a caller can never ask for the same bytes to be signed on a
-    /// different network.
+    /// Which chain this key signs for.
+    ///
+    /// The magic is not derived from this at signing time — it is bound to the
+    /// row at custody and read from [`Self::network_magic`] — so a private
+    /// network's real magic survives restarts and a caller can never ask for the
+    /// same bytes to be signed on a different network.
     pub network: Network,
+    /// The network magic this key's signatures commit to, as it was bound when
+    /// the key entered custody. Mainnet and testnet carry their canonical value;
+    /// a private chain names its own, so two private chains that share the
+    /// default magic cannot replay each other's signatures.
+    pub network_magic: u32,
     /// Compressed public key, 33 bytes.
     pub public_key: [u8; 33],
     /// The AES-256-GCM envelope holding the private key.
@@ -302,10 +435,11 @@ impl SignerKey {
         crypto::address_from_script_hash(&crypto::script_hash(&self.public_key))
     }
 
-    /// The chain's network magic, taken from the same table the config
-    /// generators render — not restated here.
+    /// The chain's network magic, as bound at custody time — not restated from
+    /// the table at signing time, which is what keeps a private network's real
+    /// magic with its keys even after a restart.
     pub fn network_magic(&self) -> u32 {
-        network::network_magic(self.network)
+        self.network_magic
     }
 }
 
@@ -380,19 +514,22 @@ impl KeyGrant {
 /// binding and the disabled flag, and differ only in this field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CallerCapability {
-    /// Ask for a signature from a granted key.
+    /// Ask for a parsed transaction or consensus signature from a granted key.
     Sign,
+    /// Ask for an unparsed raw-byte signature from a granted raw-only key.
+    RawSign,
     /// Create, import, disable or delete keys, edit boundaries, and provision
     /// other callers.
     Admin,
 }
 
 impl CallerCapability {
-    pub const ALL: [Self; 2] = [Self::Sign, Self::Admin];
+    pub const ALL: [Self; 3] = [Self::Sign, Self::RawSign, Self::Admin];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Sign => "sign",
+            Self::RawSign => "raw_sign",
             Self::Admin => "admin",
         }
     }
@@ -424,6 +561,10 @@ pub struct SignerCaller {
     /// SHA-256 of the bearer token. The token itself is never stored, so a
     /// database copy does not grant signing.
     pub token_digest: [u8; 32],
+    /// Proof-of-possession identity for a server workload. When present,
+    /// bearer authentication is disabled for this caller and every request
+    /// must carry a short-lived Ed25519 assertion.
+    pub workload_identity: Option<WorkloadIdentity>,
     pub key_grant: KeyGrant,
     /// What this caller may do. **Empty means it can do nothing** — not "every-
     /// thing", and not "whatever the request implies". A default-permissive
@@ -436,6 +577,13 @@ pub struct SignerCaller {
     pub allowed_origins: Vec<String>,
     pub created_at_unix: u64,
     pub disabled: bool,
+}
+
+/// Public material pinned for one workload-authenticated caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkloadIdentity {
+    pub public_key: [u8; 32],
+    pub subject: Option<String>,
 }
 
 impl SignerCaller {
@@ -475,13 +623,14 @@ pub enum SignerAuditAction {
     AuditRead,
     TransactionSigned,
     ConsensusSigned,
+    RawSigned,
     /// A token was presented that matches no caller. Recorded because it is
     /// the one event that shows someone probing the endpoint.
     UnknownToken,
 }
 
 impl SignerAuditAction {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         SignerAuditAction::KeyGenerated,
         SignerAuditAction::KeyImported,
         SignerAuditAction::KeyDisabled,
@@ -498,6 +647,7 @@ impl SignerAuditAction {
         SignerAuditAction::AuditRead,
         SignerAuditAction::TransactionSigned,
         SignerAuditAction::ConsensusSigned,
+        SignerAuditAction::RawSigned,
         SignerAuditAction::UnknownToken,
     ];
 
@@ -519,6 +669,7 @@ impl SignerAuditAction {
             SignerAuditAction::AuditRead => "signer-audit-read",
             SignerAuditAction::TransactionSigned => "signer-transaction-signed",
             SignerAuditAction::ConsensusSigned => "signer-consensus-signed",
+            SignerAuditAction::RawSigned => "signer-raw-signed",
             SignerAuditAction::UnknownToken => "signer-unknown-token",
         }
     }
@@ -606,6 +757,27 @@ pub struct SignerAuditRecord {
     pub origin: Option<String>,
 }
 
+/// A completed idempotent signing request and the public witness it returned.
+///
+/// The request digest binds caller-scoped id, route, key and exact input bytes.
+/// Everything else is public signature material; no custody secret is stored
+/// here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignerRequestCompletion {
+    pub caller_id: String,
+    pub request_id: String,
+    pub key_id: String,
+    pub action: SignerAuditAction,
+    pub request_digest: [u8; 32],
+    pub result_digest: String,
+    pub script_hash: ScriptHash,
+    pub address: String,
+    pub invocation: Vec<u8>,
+    pub verification: Vec<u8>,
+    pub completed_at_unix: u64,
+    pub audit_id: Option<i64>,
+}
+
 /// Value that left a custody key, recorded so the rolling window survives a
 /// restart.
 ///
@@ -623,6 +795,26 @@ pub struct SignerValueEvent {
     pub asset: ScriptHash,
     pub amount: i128,
     /// The audit row that authorised this movement, when there was one.
+    pub audit_id: Option<i64>,
+}
+
+/// A durable dBFT slot reserved by one immutable custody public key.
+///
+/// The primary key in storage excludes `payload_digest`: one slot may contain
+/// one digest. Replaying that digest is idempotent; presenting another digest
+/// for the same slot is equivocation and must never produce a witness.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignerConsensusReservation {
+    pub public_key: [u8; 33],
+    pub network_magic: u32,
+    pub block_index: u32,
+    /// `0x20` for the shared prepare phase or `0x30` for commit.
+    pub phase: u8,
+    pub validator_index: u8,
+    /// Prepare keeps the view; commit normalizes it to zero.
+    pub view_number: u8,
+    pub checkpoint: [u8; 32],
+    pub recorded_at_unix: u64,
     pub audit_id: Option<i64>,
 }
 

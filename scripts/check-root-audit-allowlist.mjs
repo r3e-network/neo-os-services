@@ -16,12 +16,22 @@ function fail(message, detail = '') {
   process.exit(1);
 }
 
-const audit = spawnSync('npm', ['audit', '--omit=dev', '--json'], {
-  cwd: process.cwd(),
-  encoding: 'utf8',
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
+const npmArguments = ['audit', '--omit=dev', '--json'];
+const npmCli = process.env.npm_execpath;
+const audit = spawnSync(
+  npmCli ? process.execPath : 'npm',
+  npmCli ? [npmCli, ...npmArguments] : npmArguments,
+  {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    shell: !npmCli && process.platform === 'win32',
+  }
+);
 
+if (audit.error) {
+  fail('npm audit process could not be started.', audit.error.message);
+}
 if (![0, 1].includes(audit.status ?? 1)) {
   fail('npm audit did not complete successfully.', audit.stderr || audit.stdout || '');
 }

@@ -53,6 +53,7 @@ services:
     env_file:
       - ${MORPHEUS_LOCAL_ENV_FILE:-./morpheus.mainnet.env}
     environment:
+      NODE_ENV: production
       NITRO_API_URL: http://nitro-worker:${NITRO_WORKER_PORT:-8080}
       MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.${MORPHEUS_NETWORK:-mainnet}.${MORPHEUS_RELAYER_NEO_N3_START_BLOCK:-default}.json
     volumes:

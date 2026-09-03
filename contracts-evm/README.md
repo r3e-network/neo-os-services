@@ -1,5 +1,7 @@
 # Morpheus EVM (Neo X) Contracts
 
+## Overview
+
 Solidity mirrors of the Neo N3 kernel for Neo X (EVM, chainId 47763). Compile with
 `node deploy/evm/compile.mjs <Name>` (solc 0.8.35, evmVersion=paris); deploy records
 live in `build/<Name>.neox-mainnet.json`. Operations: `deploy/evm/RUNBOOK.md`.
@@ -43,9 +45,31 @@ deployment + re-registration + consumer repoint.
 
 - Pinned compiler: **solc 0.8.35** (`contracts-evm/foundry.toml`, root `package.json`,
   `deploy/evm/compile.mjs`).
+- CI installs stable **Foundry v1.8.1** through a commit-SHA-pinned setup
+  action. `nightly` is not a release input.
 - EVM target stays `paris` for Neo X compatibility, so default EVM-version changes in
   newer solc releases do not affect bytecode.
 - solc 0.8.35 warns that `error` will become a keyword. The next-deployment source
   renames the `Request` struct field and `RequestFulfilled` event parameter from
   `error` to `errorMessage`. This changes ABI parameter names but **not** event topics
   or function selectors.
+
+## API Reference
+
+Contract ABIs are produced from the Solidity sources under `contracts-evm/`.
+Deployment records under `build/` bind the ABI and bytecode to a network and
+address. `foundry.toml` is the compiler/EVM configuration source of truth.
+
+## Usage Examples
+
+```bash
+cd contracts-evm
+forge build --offline
+forge test --offline
+```
+
+## Test Coverage
+
+Pull-request CI installs Foundry v1.8.1, builds the contracts and runs the
+self-contained offline Solidity suite. Workspace validation separately rejects
+mutable GitHub Action references.

@@ -5,6 +5,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=/opt/morpheus/nitro/feed-pusher.env
+Environment=NODE_ENV=production
 # Neo X lane only - runs on a faster (2 min) cadence than Neo N3 (5 min).
 Environment=FEED_CHAINS=neox
 WorkingDirectory=/opt/neoos/services/deploy/feed-pusher

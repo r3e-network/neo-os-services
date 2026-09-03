@@ -1,4 +1,8 @@
 import {
+  findCredentialDomainCollisions,
+  formatCredentialDomainCollisions,
+} from '@r3e-network/neo-os-services-shared/credential-separation';
+import {
   json,
   timingSafeCompare,
   trimString,
@@ -18,12 +22,28 @@ function resolveAcceptedKeys(env) {
   // keys; no legacy token fallbacks (a leaked stale token must not authenticate).
   // The low-privilege provider-config key is intentionally excluded — it manages
   // provider configuration, not control-plane job ingress (audit finding 37).
+  const runtimeTokens = new Set(
+    [env.MORPHEUS_RUNTIME_TOKEN, env.NITRO_API_TOKEN, env.NITRO_SHARED_SECRET]
+      .map((value) => trimString(value))
+      .filter(Boolean)
+  );
   return [env.MORPHEUS_CONTROL_PLANE_API_KEY, env.MORPHEUS_OPERATOR_API_KEY]
     .map((v) => trimString(v))
-    .filter(Boolean);
+    .filter((value) => value && !runtimeTokens.has(value));
 }
 
 function validateAuth(request, env) {
+  // Pairwise separation across runtime/workflow/operator/relayer/signing/relay/
+  // custody domains. Overlap is a deploy mistake — refuse all ingress rather
+  // than silently promote a shared secret into control-plane authority.
+  const collisions = findCredentialDomainCollisions(env);
+  if (collisions.length > 0) {
+    return json(503, {
+      error: 'auth_credential_collision',
+      message: `credentials must be pairwise distinct across trust domains: ${formatCredentialDomainCollisions(collisions)}`,
+    });
+  }
+
   const keys = resolveAcceptedKeys(env);
   if (keys.length === 0) {
     // Fail closed: an empty accepted-key set means a deploy/secret mistake, not

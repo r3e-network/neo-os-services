@@ -26,10 +26,12 @@ function feedOnlyEnv(overrides = {}) {
   };
 }
 
-test('validate flags a missing required setting (neo_n3 oracle contract)', () => {
-  // combined mode with neo_n3 active, derived keys ON (so no signer needed) but
-  // no oracle contract configured -> the conditional requirement must fire.
-  // An explicit config keeps the test hermetic (no real process.env / registry).
+test('validate flags missing neo_n3 requirements (oracle contract + custody updater key)', () => {
+  // combined mode with neo_n3 active but no oracle contract and no custody
+  // updater key id -> both conditional requirements must fire. Derived keys do
+  // not exempt anything: relayer Neo N3 signing always runs through the custody
+  // signer service. An explicit config keeps the test hermetic (no real
+  // process.env / registry).
   const explicit = validateRelayerConfig({
     env: { MORPHEUS_NETWORK: 'testnet' },
     config: {
@@ -37,7 +39,7 @@ test('validate flags a missing required setting (neo_n3 oracle contract)', () =>
       mode: 'combined',
       activeChains: ['neo_n3'],
       useDerivedKeys: true,
-      neo_n3: { oracleContract: '', updaterWif: '', updaterPrivateKey: '' },
+      neo_n3: { oracleContract: '', custodyKeyIds: { updater: '' } },
       neox: {},
     },
   });
@@ -48,11 +50,13 @@ test('validate flags a missing required setting (neo_n3 oracle contract)', () =>
     keys.includes('neo_n3.oracleContract'),
     `expected neo_n3.oracleContract error, got: ${JSON.stringify(explicit.errors)}`
   );
-  // derived keys on => signer is NOT required
-  assert.ok(!keys.includes('neo_n3.updaterSigner'));
+  assert.ok(
+    keys.includes('neo_n3.custodyKeyIds.updater'),
+    `expected neo_n3.custodyKeyIds.updater error, got: ${JSON.stringify(explicit.errors)}`
+  );
 });
 
-test('validate requires the neo_n3 updater signer when derived keys are off', () => {
+test('validate requires the neo_n3 custody updater key id', () => {
   const result = validateRelayerConfig({
     env: { MORPHEUS_NETWORK: 'testnet' },
     config: {
@@ -60,13 +64,13 @@ test('validate requires the neo_n3 updater signer when derived keys are off', ()
       mode: 'combined',
       activeChains: ['neo_n3'],
       useDerivedKeys: false,
-      neo_n3: { oracleContract: '0xabc', updaterWif: '', updaterPrivateKey: '' },
+      neo_n3: { oracleContract: '0xabc', custodyKeyIds: { updater: '' } },
       neox: {},
     },
   });
   assert.equal(result.ok, false);
   const keys = result.errors.map((error) => error.key);
-  assert.ok(keys.includes('neo_n3.updaterSigner'));
+  assert.ok(keys.includes('neo_n3.custodyKeyIds.updater'));
   // oracle contract IS set here, so it must NOT be flagged
   assert.ok(!keys.includes('neo_n3.oracleContract'));
 });
@@ -79,7 +83,7 @@ test('validate passes for a feed_only neo_n3 relayer with no signer/contract', (
       mode: 'feed_only',
       activeChains: ['neo_n3'],
       useDerivedKeys: false,
-      neo_n3: { oracleContract: '', updaterWif: '', updaterPrivateKey: '' },
+      neo_n3: { oracleContract: '', custodyKeyIds: {} },
       neox: {},
     },
   });

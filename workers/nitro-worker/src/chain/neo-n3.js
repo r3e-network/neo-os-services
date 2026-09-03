@@ -1,9 +1,5 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { experimental, rpc as neoRpc, sc, tx, u, wallet as neoWallet } from '@cityofzion/neon-js';
-import {
-  normalizeMorpheusNetwork,
-  resolvePinnedNeoN3Role,
-} from '../../../../scripts/lib-neo-signers.mjs';
 import {
   DEFAULT_NEO_NETWORK_MAGIC,
   DEFAULT_POLL_INTERVAL_MS,
@@ -13,6 +9,7 @@ import {
   resolveTrustedRpcUrl,
   resolvePayloadNetwork,
   sanitizeErrorMessage,
+  strip0x,
   trimString,
 } from '../platform/core.js';
 import {
@@ -22,11 +19,17 @@ import {
   normalizeContractHash,
   toNeoContractParam,
 } from '../platform/allowlist.js';
-import { forgetRequestId, rememberRequestId } from './signing.js';
+import { custodyKeyId, custodyKeyInfo, custodySignTransaction } from '../platform/custody.js';
+import { forgetRequestId, rememberRequestId, rejectCallerSuppliedSigningKey } from './signing.js';
 import { sleep } from '../platform/core.js';
 import { env } from '../platform/core.js';
 
 const SPONSOR_OPERATION_HASH_PATTERN = /^0x[0-9a-f]{64}$/i;
+
+// Fee shaping for locally-built Neo N3 transactions (raw GAS fractions,
+// 8 decimals), mirroring the relayer's custody-signed flow.
+const NEO_N3_TX_VALID_BLOCKS = 120;
+const NEO_N3_FEE_PADDING = 100000n; // 0.001 GAS pad on system and network fees
 
 function resolveSponsorOperationHash(payload = {}) {
   const value = trimString(payload.operation_hash || payload.operationHash || '');
@@ -107,7 +110,23 @@ export function validateSponsorOperation(transaction, payload = {}) {
   };
 }
 
-function assertSponsorWitnesses(transaction, sponsorScriptHash, userAddress) {
+// Signer scopes arrive as wire bytes for deserialized transactions and as enum
+// names for JSON-built ones. A Global-scoped signer authorizes its witness in
+// every context, so any scope that carries the Global bit — the composite 0x81
+// as much as the bare 0x80, or the string form — must be refused.
+function scopeCarriesGlobal(scope) {
+  const globalBit = Number(tx.WitnessScope.Global);
+  if (typeof scope === 'number') return (scope & globalBit) !== 0;
+  const text = trimString(scope == null ? '' : String(scope));
+  if (!text) return false;
+  if (/^(0x)?[0-9a-f]+$/i.test(text)) return (Number(text) & globalBit) !== 0;
+  return text
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .includes('global');
+}
+
+export function assertSponsorWitnesses(transaction, sponsorScriptHash, userAddress) {
   const sponsor = transaction.signers.find(
     (signer) => String(signer.account) === sponsorScriptHash
   );
@@ -121,20 +140,55 @@ function assertSponsorWitnesses(transaction, sponsorScriptHash, userAddress) {
   const user = transaction.signers.find(
     (signer) => neoWallet.getAddressFromScriptHash(String(signer.account)) === userAddress
   );
-  if (!user || user.scopes === tx.WitnessScope.Global) {
+  if (!user || scopeCarriesGlobal(user.scopes)) {
     throw new Error('user signer must be present with a non-global witness scope');
   }
 }
 
-function resolveNeoN3SigningKey(payload = {}) {
-  const network = resolvePayloadNetwork(
-    payload,
-    normalizeMorpheusNetwork(env('MORPHEUS_NETWORK', 'NEXT_PUBLIC_MORPHEUS_NETWORK') || 'testnet')
-  );
-  const signer = resolvePinnedNeoN3Role(network, 'worker', {
-    env,
+// The tx-relay lane signs through the custody service: the identity comes from
+// GET /keys/{SIGNER_ROLE_UPDATER_KEY_ID} (the on-chain caller for the oracle
+// contract methods it relays) and the witness from POST /sign/transaction. No
+// env-provided WIF participates in Neo N3 signing.
+async function resolveCustodyRelayIdentity(role = 'worker') {
+  const keyId = custodyKeyId(role);
+  const info = await custodyKeyInfo(keyId);
+  const publicKey = trimString(info.public_key || '').toLowerCase();
+  const scriptHash = strip0x(trimString(info.script_hash || '')).toLowerCase();
+  if (!/^[0-9a-f]{66}$/.test(publicKey) || !/^[0-9a-f]{40}$/.test(scriptHash)) {
+    throw new Error('custody signer returned an incomplete relay key identity');
+  }
+  const account = new neoWallet.Account(publicKey);
+  if (strip0x(String(account.scriptHash)).toLowerCase() !== scriptHash) {
+    throw new Error('custody relay key identity mismatch between public key and script hash');
+  }
+  return { keyId, account, scriptHash: `0x${scriptHash}` };
+}
+
+// Returns the custody witness for `transaction` without touching the
+// transaction itself: the relay lane installs it as the only witness, the
+// sponsor lane appends it next to the user's existing witness.
+async function custodySignRelayWitness(identity, transaction) {
+  const signed = await custodySignTransaction(identity.keyId, transaction.serialize(false));
+  const witness = new tx.Witness({
+    invocationScript: u.HexString.fromHex(trimString(signed.invocation_script || '')),
+    verificationScript: u.HexString.fromHex(trimString(signed.verification_script || '')),
   });
-  return signer.materialized?.private_key || signer.materialized?.wif || '';
+  const witnessHash = strip0x(String(witness.scriptHash)).toLowerCase();
+  if (witnessHash !== strip0x(identity.scriptHash).toLowerCase()) {
+    throw new Error('custody signer witness mismatch for the relay key');
+  }
+  return witness;
+}
+
+// The witness shape every signing lane produces: PUSHDATA1-encoded CheckSig
+// script (`0c21 <33B pubkey> 4156e7b327`, 40 bytes) — as emitted by
+// transaction.sign() and the custody service alike. Fee estimation over a
+// placeholder must use this exact shape to land on the real network fee.
+function placeholderWitness(publicKey) {
+  return new tx.Witness({
+    invocationScript: '0c40' + '00'.repeat(64),
+    verificationScript: `0c21${publicKey}4156e7b327`,
+  });
 }
 
 export function getNeoSigners(account, scope = 'CalledByEntry') {
@@ -180,17 +234,6 @@ export async function loadNeoN3Context(
   { required = false, requireRpc = false } = {}
 ) {
   const network = resolvePayloadNetwork(payload);
-  const key =
-    trimString(payload.private_key) ||
-    trimString(payload.signing_key) ||
-    trimString(payload.wif) ||
-    resolveNeoN3SigningKey(payload);
-
-  if (!key) {
-    if (required) throw new Error('Neo N3 signing key is not configured');
-    return null;
-  }
-
   const rpcUrl = await resolveTrustedRpcUrl(network, payload.rpc_url);
   if (requireRpc && !rpcUrl) throw new Error('NEO_RPC_URL is required for Neo N3 relay');
 
@@ -199,11 +242,30 @@ export async function loadNeoN3Context(
       envForNetwork(network, 'NEO_NETWORK_MAGIC') ||
       DEFAULT_NEO_NETWORK_MAGIC
   );
-  return {
-    account: new neoWallet.Account(key),
+
+  // Raw signing material never belongs in this process. Reject it even for
+  // read-only context construction so no caller can probe a latent local lane.
+  rejectCallerSuppliedSigningKey(payload);
+
+  const context = {
+    network,
     rpcUrl,
     networkMagic: Number.isFinite(networkMagic) ? networkMagic : DEFAULT_NEO_NETWORK_MAGIC,
+    account: null,
+    custody: null,
+    // The signing identity resolves lazily: read-only consumers (on-chain
+    // baseline loads, raw broadcasts) never sign and must not require custody
+    // provisioning. `required` forces it eagerly for signing lanes. The relay
+    // lane signs operator intent on the oracle contract (fulfillRequest /
+    // queueAutomationRequest — the txproxy allowlist), so the on-chain caller
+    // is the updater account: the same identity the relayer fulfills under.
+    resolveSigningIdentity: async () => {
+      if (!context.custody) context.custody = await resolveCustodyRelayIdentity('updater');
+      return context.custody;
+    },
   };
+  if (required) await context.resolveSigningIdentity();
+  return context;
 }
 
 export async function relayNeoN3Invocation(payload) {
@@ -227,6 +289,8 @@ export async function relayNeoN3Invocation(payload) {
 
   try {
     const context = await loadNeoN3Context(payload, { required: true, requireRpc: true });
+    const identity = await context.resolveSigningIdentity();
+    const account = identity.account;
     const params = Array.isArray(payload.params)
       ? payload.params.map((param) => toNeoContractParam(param))
       : [];
@@ -234,20 +298,16 @@ export async function relayNeoN3Invocation(payload) {
     const contract = new experimental.SmartContract(contractHash, {
       rpcAddress: context.rpcUrl,
       networkMagic: context.networkMagic,
-      account: context.account,
     });
+    const signerScope = normalizeBoolean(env('MORPHEUS_ALLOW_GLOBAL_SCOPE'), false)
+      ? payload.signer_scope || payload.scope || 'CalledByEntry'
+      : 'CalledByEntry';
     const shouldSkipSimulation =
       payload.skip_simulation === true ||
       trimString(payload.skip_simulation).toLowerCase() === 'true';
     let simulation = null;
     if (!shouldSkipSimulation) {
-      const signers = getNeoSigners(
-        context.account,
-        normalizeBoolean(env('MORPHEUS_ALLOW_GLOBAL_SCOPE'), false)
-          ? payload.signer_scope || payload.scope || 'CalledByEntry'
-          : 'CalledByEntry'
-      );
-      simulation = await contract.testInvoke(method, params, signers);
+      simulation = await contract.testInvoke(method, params, getNeoSigners(account, signerScope));
       if (String(simulation?.state || '') === 'FAULT') {
         forgetRequestId(requestId);
         return {
@@ -261,7 +321,51 @@ export async function relayNeoN3Invocation(payload) {
       }
     }
 
-    const txHashRaw = await contract.invoke(method, params);
+    // Build, fee, sign, broadcast — mirrors the relayer's custody-signed flow:
+    // invokescript for the system fee, calculatenetworkfee over a placeholder
+    // witness, custody witness, sendrawtransaction.
+    const script = sc.createScript({
+      scriptHash: contractHash,
+      operation: method,
+      args: params,
+    });
+    const blockCount = await rpcClient.getBlockCount();
+    const transaction = new tx.Transaction({
+      version: 0,
+      nonce: randomInt(0, 2 ** 32),
+      script: u.HexString.fromHex(script),
+      validUntilBlock: blockCount + NEO_N3_TX_VALID_BLOCKS,
+      signers: getNeoSigners(account, signerScope),
+      attributes: [],
+      witnesses: [],
+    });
+    const gasConsumed = BigInt(simulation?.gasconsumed || '0');
+    transaction.systemFee = u.BigInteger.fromDecimal(String(gasConsumed + NEO_N3_FEE_PADDING), 0);
+    transaction.witnesses = [placeholderWitness(account.publicKey)];
+    const networkFee = await rpcClient.calculateNetworkFee(
+      Buffer.from(transaction.serialize(true), 'hex').toString('base64')
+    );
+    // neon-js parses the RPC result: a JSON number, or the raw node shapes on
+    // mock transports.
+    const networkFeeRaw =
+      typeof networkFee === 'number'
+        ? String(networkFee)
+        : typeof networkFee === 'string'
+          ? networkFee
+          : String(networkFee?.networkfee || '0');
+    transaction.networkFee = u.BigInteger.fromDecimal(
+      String(BigInt(networkFeeRaw || '0') + NEO_N3_FEE_PADDING),
+      0
+    );
+    if (identity.keyId) {
+      transaction.witnesses = [await custodySignRelayWitness(identity, transaction)];
+    } else {
+      transaction.witnesses = [];
+      transaction.sign(account, context.networkMagic);
+    }
+    const txHashRaw = await rpcClient.sendRawTransaction(
+      Buffer.from(transaction.serialize(true), 'hex').toString('base64')
+    );
     const txHash = trimString(txHashRaw).startsWith('0x')
       ? trimString(txHashRaw)
       : `0x${trimString(txHashRaw)}`;
@@ -315,7 +419,8 @@ export async function sponsorNeoN3Transaction(payload) {
     throw new Error('tx_base64 and user_address are required for Neo N3 sponsorship relay');
   }
 
-  const sponsorAccount = context.account;
+  const identity = await context.resolveSigningIdentity();
+  const sponsorAccount = identity.account;
   const transaction = tx.Transaction.deserialize(txBase64);
   const hasUserSigner = transaction.signers.some(
     (signer) => neoWallet.getAddressFromScriptHash(String(signer.account)) === userAddress
@@ -334,12 +439,10 @@ export async function sponsorNeoN3Transaction(payload) {
 
   const feePerByte = Number(payload.fee_per_byte || payload.feePerByte || 1000);
   const priorityFee = Number(payload.priority_fee || payload.priorityFee || 100000);
+  const sponsorPlaceholder = placeholderWitness(sponsorAccount.publicKey);
   const dummySignatures = transaction.signers.map((signer) => {
     if (String(signer.account) === sponsorAccount.scriptHash) {
-      return new tx.Witness({
-        invocationScript: '0c40' + '00'.repeat(64),
-        verificationScript: '21' + sponsorAccount.publicKey + 'ac',
-      });
+      return sponsorPlaceholder;
     }
     return new tx.Witness({ invocationScript: '', verificationScript: '' });
   });
@@ -356,7 +459,11 @@ export async function sponsorNeoN3Transaction(payload) {
   }
   transaction.networkFee = u.BigInteger.fromNumber(Math.floor(calculatedFee));
   validateSponsorOperation(transaction, payload);
-  transaction.sign(sponsorAccount, context.networkMagic);
+  if (identity.keyId) {
+    transaction.witnesses.push(await custodySignRelayWitness(identity, transaction));
+  } else {
+    transaction.sign(sponsorAccount, context.networkMagic);
+  }
 
   const sponsoredTx = transaction.serialize(true);
   const result = {

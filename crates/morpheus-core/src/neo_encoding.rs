@@ -30,56 +30,53 @@ pub struct ParsedBigInt {
     pub be_bytes: Vec<u8>,
 }
 
-/// Parse a JS `BigInt` literal (optional sign, decimal / 0x / 0o / 0b radix
-/// prefixes, underscores between digits, no leading zeros in decimal — those
-/// are SyntaxErrors in JS) into big-endian magnitude bytes. Exact for any
-/// magnitude; no 128-bit ceiling.
+/// Parse a JS `BigInt(string)` value (ECMA-262 StringToBigInt — what
+/// `BigInt("…")` / `encodeUint256Word` accept, NOT the stricter source-literal
+/// grammar `012n` uses): JS-whitespace trimmed, empty → 0n, optional sign,
+/// optional 0x/0X/0o/0O/0b/0B prefix, then plain radix digits — no underscores
+/// (`BigInt("1_0")` throws even though `1_0n` is legal) and no leading-zero
+/// restriction (`BigInt("012")` is 12n). `BigInt("-0")` is 0n, so `negative`
+/// is false for any zero magnitude. Exact for any size; no 128-bit ceiling.
 pub fn parse_bigint(text: &str) -> Result<ParsedBigInt, &'static str> {
     let reject = || "invalid BigInt string";
-    let negative = text.starts_with('-');
+    let trimmed = crate::js_value::js_trim(text);
+    if trimmed.is_empty() {
+        // BigInt("") === 0n.
+        return Ok(ParsedBigInt {
+            negative: false,
+            be_bytes: Vec::new(),
+        });
+    }
+    let negative = trimmed.starts_with('-');
     let magnitude_text = if negative {
-        &text[1..]
+        &trimmed[1..]
     } else {
-        text.strip_prefix('+').unwrap_or(text)
+        trimmed.strip_prefix('+').unwrap_or(trimmed)
     };
 
     let (radix, digits) = detect_radix(magnitude_text).ok_or_else(reject)?;
-
-    let mut limbs: Vec<u32> = Vec::new();
-    let mut last_was_underscore = true;
-    let mut seen_digit = false;
-    for c in digits.chars() {
-        if c == '_' {
-            if last_was_underscore {
-                return Err(reject());
-            }
-            last_was_underscore = true;
-            continue;
-        }
-        let digit = match radix {
-            16 => c.to_digit(16),
-            8 => c.to_digit(8),
-            2 => c.to_digit(2),
-            _ => c.to_digit(10),
-        }
-        .ok_or_else(reject)?;
-        mul_add_small(&mut limbs, radix, digit);
-        last_was_underscore = false;
-        seen_digit = true;
-    }
-    if last_was_underscore || !seen_digit {
+    if digits.is_empty() {
         return Err(reject());
     }
-    // Decimal literals with a leading zero are SyntaxErrors in JS unless the
-    // value is all zeros ("00" parses as 0n, "012" throws).
-    if radix == 10 {
-        let trimmed = digits.trim_matches('_');
-        if trimmed.starts_with('0') && trimmed.bytes().any(|b| b != b'0' && b != b'_') {
-            return Err(reject());
-        }
+    let valid = digits.bytes().all(|byte| match radix {
+        16 => byte.is_ascii_hexdigit(),
+        10 => byte.is_ascii_digit(),
+        8 => (b'0'..=b'7').contains(&byte),
+        _ => byte == b'0' || byte == b'1',
+    });
+    if !valid {
+        return Err(reject());
+    }
+
+    let mut limbs: Vec<u32> = Vec::new();
+    for c in digits.chars() {
+        let digit = c.to_digit(radix).ok_or_else(reject)?;
+        mul_add_small(&mut limbs, radix, digit);
     }
     Ok(ParsedBigInt {
-        negative: text.starts_with('-'),
+        // limbs is empty exactly when the magnitude is zero; BigInt("-0") is
+        // 0n so a zero magnitude is never negative.
+        negative: negative && !limbs.is_empty(),
         be_bytes: limbs_to_be_bytes(&limbs),
     })
 }
@@ -202,11 +199,28 @@ mod tests {
         assert_eq!(parsed.be_bytes, vec![0xff; 8]);
         let parsed = parse_bigint("123456789012345678901234567890").unwrap();
         assert_eq!(parsed.be_bytes.len(), 13);
-        assert!(parse_bigint("012").is_err());
-        assert!(parse_bigint("1_0").is_ok());
+        // StringToBigInt (not the literal grammar): leading decimal zeros are
+        // fine, underscore separators are not.
+        assert_eq!(parse_bigint("012").unwrap().be_bytes, vec![0x0c]);
+        assert!(parse_bigint("1_0").is_err());
         assert!(parse_bigint("_10").is_err());
+        assert!(parse_bigint("1_").is_err());
         assert_eq!(parse_bigint("0x10").unwrap().be_bytes, vec![0x10]);
+        assert_eq!(parse_bigint("0X1F").unwrap().be_bytes, vec![0x1f]);
         assert_eq!(parse_bigint("0").unwrap().be_bytes, Vec::<u8>::new());
+        // Empty/whitespace-only input is 0n, and BigInt("-0") is non-negative.
+        assert_eq!(parse_bigint("").unwrap().be_bytes, Vec::<u8>::new());
+        assert!(!parse_bigint("").unwrap().negative);
+        assert_eq!(parse_bigint("  5  ").unwrap().be_bytes, vec![0x05]);
+        assert_eq!(parse_bigint("+5").unwrap().be_bytes, vec![0x05]);
+        let minus_zero = parse_bigint("-0").unwrap();
+        assert!(!minus_zero.negative);
+        assert!(minus_zero.be_bytes.is_empty());
+        assert!(parse_bigint("0x").is_err());
+        assert!(parse_bigint("1e3").is_err());
+        // js_trim only, so a non-JS whitespace like U+0085 is a syntax error.
+        assert!(parse_bigint("\u{0085}5").is_err());
+        assert!(parse_bigint("- 5").is_err());
     }
 
     #[test]

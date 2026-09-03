@@ -59,6 +59,7 @@ pub mod js_json;
 pub mod js_number;
 pub mod js_value;
 pub mod kernel;
+pub mod n3_tx;
 pub mod neo_encoding;
 pub mod stable_stringify;
 

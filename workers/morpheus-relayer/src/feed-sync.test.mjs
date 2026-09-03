@@ -25,8 +25,7 @@ test('feed sync payload does not inject relayer/updater signer material', () => 
         providers: ['twelvedata'],
       },
       neo_n3: {
-        updaterPrivateKey: '0x'.padEnd(66, '1'),
-        updaterWif: 'L'.padEnd(52, '1'),
+        custodyKeyIds: { updater: 'key-updater', fee_funder: 'key-fee-funder' },
       },
     },
     'neo_n3'

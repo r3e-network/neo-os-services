@@ -3,21 +3,38 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { findCredentialDomainCollisions } from './lib-credential-separation.mjs';
 
 const REQUIRED_GROUPS = [
+  {
+    name: 'confidential_runtime_url',
+    alternatives: [
+      ['MORPHEUS_RUNTIME_URL'],
+      ['MORPHEUS_MAINNET_RUNTIME_URL'],
+      ['MORPHEUS_TESTNET_RUNTIME_URL'],
+      ['MORPHEUS_RUNTIME_URL_MAINNET'],
+      ['MORPHEUS_RUNTIME_URL_TESTNET'],
+    ],
+  },
   {
     name: 'runtime_auth',
     alternatives: [['MORPHEUS_RUNTIME_TOKEN'], ['NITRO_API_TOKEN'], ['NITRO_SHARED_SECRET']],
   },
   {
     name: 'control_plane_auth',
-    alternatives: [
-      ['MORPHEUS_CONTROL_PLANE_API_KEY'],
-      ['MORPHEUS_OPERATOR_API_KEY'],
-      ['ADMIN_CONSOLE_API_KEY'],
-      ['NITRO_API_TOKEN'],
-      ['NITRO_SHARED_SECRET'],
-    ],
+    alternatives: [['MORPHEUS_CONTROL_PLANE_API_KEY'], ['MORPHEUS_OPERATOR_API_KEY']],
+  },
+  {
+    name: 'workflow_auth',
+    alternatives: [['MORPHEUS_WORKFLOW_API_KEY']],
+  },
+  {
+    name: 'signing_admin_auth',
+    alternatives: [['MORPHEUS_SIGNING_ADMIN_API_KEY']],
+  },
+  {
+    name: 'relay_admin_auth',
+    alternatives: [['MORPHEUS_RELAY_ADMIN_API_KEY']],
   },
   {
     name: 'cron_auth',
@@ -87,10 +104,47 @@ export function validateWebProductionEnvironment(environment) {
     name: group.name,
     alternatives: group.alternatives,
   }));
+  const forbiddenSignerEnv = Object.keys(environment)
+    .filter((name) => {
+      if (!hasValue(environment, name)) return false;
+      const normalized = name.toUpperCase();
+      return (
+        /(?:^|_)WIF(?:_|$)/.test(normalized) ||
+        (/(?:^|_)(?:PRIVATE_KEY|PK)(?:_|$)/.test(normalized) &&
+          /(NEO|NEOX|EVM|MORPHEUS|SIGNER)/.test(normalized))
+      );
+    })
+    .sort();
+  const runtimeCredentialValues = new Set(
+    ['MORPHEUS_RUNTIME_TOKEN', 'NITRO_API_TOKEN', 'NITRO_SHARED_SECRET']
+      .map((name) => String(environment[name] || '').trim())
+      .filter(Boolean)
+  );
+  const reusedRuntimeCredentialEnv = [
+    'MORPHEUS_CONTROL_PLANE_API_KEY',
+    'MORPHEUS_OPERATOR_API_KEY',
+    'MORPHEUS_RELAYER_API_KEY',
+    'MORPHEUS_RELAYER_ADMIN_API_KEY',
+    'ADMIN_CONSOLE_API_KEY',
+    'MORPHEUS_WORKFLOW_API_KEY',
+    'MORPHEUS_APP_BACKEND_TOKEN',
+  ]
+    .filter(
+      (name) =>
+        hasValue(environment, name) && runtimeCredentialValues.has(String(environment[name]).trim())
+    )
+    .sort();
+  const credentialDomainCollisions = findCredentialDomainCollisions(environment);
 
   return {
-    ok: missing.length === 0,
+    ok:
+      missing.length === 0 &&
+      forbiddenSignerEnv.length === 0 &&
+      credentialDomainCollisions.length === 0,
     missing,
+    forbiddenSignerEnv,
+    reusedRuntimeCredentialEnv,
+    credentialDomainCollisions,
   };
 }
 
@@ -114,6 +168,17 @@ function main() {
     console.error('Vercel production environment is incomplete:');
     for (const line of formatMissingGroups(validation.missing)) {
       console.error(`- ${line}`);
+    }
+    for (const name of validation.forbiddenSignerEnv) {
+      console.error(`- forbidden host signing key: ${name}`);
+    }
+    for (const name of validation.reusedRuntimeCredentialEnv) {
+      console.error(`- control-plane credential reuses a runtime data-plane token: ${name}`);
+    }
+    for (const collision of validation.credentialDomainCollisions) {
+      console.error(
+        `- credential reused across ${collision.domains.join('/')} trust domains: ${collision.names.join(', ')}`
+      );
     }
     process.exitCode = 1;
     return;

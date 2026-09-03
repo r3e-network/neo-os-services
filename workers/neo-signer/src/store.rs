@@ -1,6 +1,7 @@
-//! Where the signer's state lives: one SQLite file and the five tables that
+//! Where the signer's state lives: one SQLite file and the eight tables that
 //! hold custody keys, boundaries, caller grants, the audit trail and the spend
-//! ledger.
+//! ledger plus the durable dBFT anti-equivocation journal and workload nonce
+//! reservations.
 //!
 //! This is the whole persistence surface of the service. It was a set of
 //! `impl Repository` blocks in `neo-nexus`; here it is its own store so the
@@ -26,19 +27,23 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
     model::{
-        CallerCapability, KeyGrant, ScriptHash, SignerAuditRecord, SignerCaller, SignerKey,
-        SignerPolicy, SignerValueEvent,
+        CallerCapability, ContractMethod, KeyGrant, ScriptHash, SignerAuditRecord, SignerCaller,
+        SignerConsensusReservation, SignerKey, SignerPolicy, SignerRequestCompletion,
+        SignerValueEvent,
     },
     policy::WindowSpend,
 };
 
 mod audit;
 mod callers;
+mod consensus;
 mod keys;
 mod policies;
+mod requests;
 mod rows;
 mod schema;
 mod value_events;
+mod workload_nonces;
 
 use rows::*;
 

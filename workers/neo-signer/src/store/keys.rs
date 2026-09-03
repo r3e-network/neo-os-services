@@ -25,9 +25,10 @@ impl Store {
         let connection = self.connection()?;
         connection.execute(
             "INSERT INTO signer_keys (
-                id, label, network, public_key, nonce, ciphertext, created_at_unix, disabled
+                id, label, network, public_key, nonce, ciphertext, created_at_unix, disabled,
+                network_magic
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 &key.id,
                 &key.label,
@@ -37,6 +38,7 @@ impl Store {
                 &key.sealed.ciphertext,
                 key.created_at_unix,
                 key.disabled,
+                key.network_magic,
             ],
         )?;
         Ok(())
@@ -45,7 +47,8 @@ impl Store {
     pub fn list_signer_keys(&self) -> Result<Vec<SignerKey>> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT id, label, network, public_key, nonce, ciphertext, created_at_unix, disabled
+            "SELECT id, label, network, public_key, nonce, ciphertext, created_at_unix, disabled,
+                    network_magic
              FROM signer_keys
              ORDER BY label COLLATE NOCASE ASC, id ASC",
         )?;
@@ -69,7 +72,8 @@ impl Store {
         let connection = self.connection()?;
         connection
             .query_row(
-                "SELECT id, label, network, public_key, nonce, ciphertext, created_at_unix, disabled
+                "SELECT id, label, network, public_key, nonce, ciphertext, created_at_unix, disabled,
+                        network_magic
                  FROM signer_keys
                  WHERE id = ?1",
                 params![id],

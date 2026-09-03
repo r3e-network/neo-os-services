@@ -1,6 +1,7 @@
 import { isAuthorizedControlPlaneRequest } from '@/lib/control-plane-auth';
 import { appConfig } from '@/lib/config';
 import { badRequest } from '@/lib/api-helpers';
+import { findHostSignerMaterialPaths } from '@/lib/host-key-guard';
 import { trimString } from '@/lib/strings';
 
 export const runtime = 'nodejs';
@@ -28,6 +29,9 @@ export async function POST(request: Request) {
 
   const body = await request.json().catch(() => null);
   if (!isPlainObject(body)) return badRequest('invalid JSON body');
+  if (findHostSignerMaterialPaths(body).length > 0) {
+    return badRequest('raw signer material is not accepted; use custody key ids');
+  }
   const controlPlaneUrl = resolveControlPlaneUrl();
   if (!controlPlaneUrl) return badRequest('MORPHEUS_CONTROL_PLANE_URL is not configured', 500);
 

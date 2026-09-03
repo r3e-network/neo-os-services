@@ -49,6 +49,7 @@ allowlist:
   # --- Supabase (provider config + feed snapshots; durable feed baseline) ---
   - { address: przhhxbovqwopibssjzr.supabase.co, port: 443 } # providers.js:161 + feed-state.js (morpheus project ref)
 
-  # --- AWS (key material + KMS-attested decrypt; us-east-1 default) ---
-  - { address: secretsmanager.us-east-1.amazonaws.com, port: 443 } # platform/nitro-signer.js:86,88 (AWS_REGION default us-east-1)
-  - { address: kms.us-east-1.amazonaws.com, port: 443 } # KMS-attested decrypt of confidential/NeoDID masters
+  # --- AWS KMS Recipient attestation (us-east-1 default) ---
+  # Secrets Manager is intentionally absent: the measured Rust frontier has no
+  # GetSecretValue client and the parent role has no permission for one.
+  - { address: kms.us-east-1.amazonaws.com, port: 443 } # runtime/custody/X25519/NeoDID ciphertext release

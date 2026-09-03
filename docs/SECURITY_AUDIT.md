@@ -2,13 +2,108 @@
 
 This document tracks the current security hardening baseline for NeoOS Services and the checks that must pass before release.
 
+## September 2026 Trust-Boundary Re-audit
+
+The current tree was re-audited rather than treating earlier issue notes as current
+fact. The findings below were live at the start of the remediation wave and are now
+closed in the paired implementation/tests:
+
+- measured production code no longer compiles an ordinary Secrets Manager
+  `GetSecretValue` client for confidential masters; Recipient-attested KMS release
+  is the only unwrap path;
+- `/provision` is one-shot, allowlisted, and refuses plaintext key/token overlays;
+  temporary AWS credentials rotate only through `/provision/credentials`;
+- X25519 and NeoDID KMS ciphertexts materialize in-memory as purpose/network
+  envelopes during provision;
+- signed compute/oracle/NeoDID lanes return 503 unless custody identity matches;
+  HTTP 200 never carries a null signature or public key;
+- raw signing uses dedicated raw-only keys and a distinct `raw_sign` capability;
+- production `privacy.add_noise` draws from `OsRng` (deterministic xorshift remains
+  a test seam only);
+- attested boundary JSON includes numeric `network_magic`;
+- production Cloudflare confidential execution requires exactly one origin;
+- runtime credential domain separation is enforced by deploy checkers, the shared
+  `credential-separation` helper, production `apps/web/lib/config` startup, and the
+  Cloudflare control-plane auth path (`auth_credential_collision`);
+- local/CI/EIF toolchain is Rust 1.98.0 and publish triggers watch `packages/shared`;
+- dBFT reservations checkpoint PrepareRequest/PrepareResponse together, ignore view
+  for Commit, key immutable public key + network magic, and reserve before signing.
+
+The following earlier concerns were stale in the current tree and must not be
+reimplemented:
+
+- fee ceilings already cover both system and network fees;
+- rolling value and signature decisions are serialized across service clones, with
+  audit/value/idempotency writes committed in one SQLite transaction;
+- request-id completion is durable and exact-retry safe;
+- transaction parsing already rejects negative/overflowing fees, trailing bytes,
+  unknown attributes/opcodes, dynamic witness rules, and unaccounted script behavior.
+
+### Required resolved posture
+
+1. Measured production code accepts confidential material only as a KMS
+   CiphertextBlob and unwraps it with a fresh Nitro Recipient attestation inside the
+   enclave. The parent role has no `secretsmanager:GetSecretValue`,
+   `kms:Encrypt`, `kms:GenerateDataKey*`, or plaintext-secret permission.
+2. `/provision` is one-shot, uses an explicit allowlist, and rejects unknown names.
+   `NODE_ENV`, network, endpoints, custody routing, raw key material, feature/policy
+   toggles, and trust anchors are image-owned. A separately authenticated
+   `/provision/credentials` route may rotate only temporary AWS access credentials.
+3. Production X25519 and NeoDID KMS plaintexts are purpose/network/version envelopes.
+   The enclave validates and materializes them only in memory and marks their source
+   internally as Nitro Recipient KMS. Remote confidential references remain explicit
+   503 until their authenticated claim transport is implemented.
+4. All signed response lanes fail 503 unless custody key identity, enabled state,
+   network, and response identity match. HTTP 200 never contains a null signature or
+   public key.
+5. Raw-only keys and `raw_sign` callers are distinct from semantic transaction and
+   consensus authorities.
+6. Security-sensitive random draws use `OsRng`; deterministic closures remain test
+   seams only.
+7. `network_magic` is present in key wire types and the attested boundary digest.
+8. Production images/units set `NODE_ENV=production`; confidential Cloudflare
+   execution has one origin and no cross-origin retry; runtime/workflow/operator/
+   relayer/signing/relay/custody credentials are pairwise distinct via
+   `@r3e-network/neo-os-services-shared/credential-separation`, deploy checkers,
+   production web startup, and control-plane auth.
+9. Rust 1.98.0 is the single local, CI, and EIF toolchain, and publish triggers cover
+   every Docker build input, including `packages/shared`.
+10. dBFT v3.10.1 bodies are fully consumed and checkpointed by immutable public key,
+    network magic, height, and safe phase semantics before signing. The claimed
+    validator index must match an exact retry but cannot create a parallel slot.
+
 ## Current Automated Coverage
 
-- Root dependency audit is guarded by `scripts/check-root-audit-allowlist.mjs` so known CityOfZion baseline findings stay explicit instead of silently expanding.
+- Root dependency audit is guarded by `scripts/check-root-audit-allowlist.mjs` so known CityOfZion baseline findings stay explicit instead of silently expanding. The checker runs the active npm CLI through the current Node executable when `npm_execpath` is available (including Windows), uses a shell-backed npm fallback only for direct Windows invocation, and reports process-launch failures instead of misclassifying them as an empty audit.
 - Repository verification runs script tests, control-plane tests, worker checks/tests, relayer checks/tests, web consistency checks, web unit tests, and web production build.
 - Web security headers are defined in `apps/web/next.config.mjs` and covered by `apps/web/__tests__/security-headers.test.ts`.
 - Documentation navigation is covered by `apps/web/__tests__/docs-navigation.test.ts`, including static docs routes and extended Markdown-backed `/docs/r/*` pages.
 - Contract artifact generation is validated by `scripts/contract-build-regressions.test.mjs` when `dotnet` and the pinned `nccs` compiler are available.
+
+## Rust Advisory Disposition
+
+`cargo audit` currently reports RUSTSEC-2023-0071 for RustCrypto `rsa`; no
+patched release exists. The measured runtime uses RSA private operations only
+for a fresh, per-request RSA-2048 recipient key that unwraps one KMS response
+inside the enclave and is then dropped. The key is never persisted or reused,
+and the authenticated release flow generates a new key before each ciphertext,
+so a remote caller cannot collect the repeated timings for one long-lived key
+that the Marvin attack requires. Other `rsa` call sites perform public-key
+verification only and are outside the advisory's private-key recovery path.
+
+Until RustCrypto publishes a constant-time release, the release check is:
+
+```bash
+cargo audit --ignore RUSTSEC-2023-0071
+```
+
+The exception must be removed when a patched version exists, or earlier if an
+RSA private key is ever reused, persisted, or exposed through a remotely
+repeatable decryption/signing oracle. `paste` is an unmaintained build-time
+macro inherited from Boa and retires with that compatibility engine;
+`serde_cbor` is the unmaintained target-specific dependency of AWS's Nitro NSM
+API. Neither warning currently identifies a vulnerability, but both remain
+migration debt rather than permanent exemptions.
 
 ## Manual Release Checklist
 
@@ -20,6 +115,17 @@ Before a production release, verify:
 4. Production environment variables are scoped by network and deployment target.
 5. Callback, relayer, paymaster, and txproxy allowlists are reviewed against the intended deployment contracts.
 6. Any live smoke tests use dedicated testnet funds/accounts and do not reuse production signer material.
+7. `cargo audit --ignore RUSTSEC-2023-0071` reports no other vulnerability.
+8. `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
+   and `cargo test --workspace --all-targets --locked` pass under Rust 1.98.0.
+9. `npm run check:rust-migration`, documentation coverage, worker/relayer/ops/script
+   suites, custody-plane E2E, the NeoNexus real-process contract, and gitleaks pass.
+10. External-only blockers in `docs/EXTERNAL_RELEASE_BLOCKERS.md` are cleared or
+    explicitly accepted by operators (key rotation, on-chain upgrades, host installs).
+10. Production preflight confirms pairwise-distinct runtime/workflow/operator/
+    relayer/signing/relay credentials and includes both signing and relay admin keys.
+11. The release's PCR measurements are rebuilt, committed, and pinned by the KMS key
+    policy before ciphertext is provisioned.
 
 ## Public API Route Policy
 
@@ -48,9 +154,11 @@ receive `401 { error: 'unauthorized' }`; malformed inputs receive
 
 Local developer machines that do not have `dotnet` and `~/.dotnet/tools/nccs` installed will skip the contract compilation regression test. CI must still enforce contract compilation using the pinned compiler before release.
 
-## TEE Child Process Hardening
+## Compatibility Child Process Hardening
 
-The Nitro worker spawns untrusted scripts and WASM modules in child processes. In production the following settings must be enforced:
+The measured Rust EIF has no Node child or fallback engine. The separately published
+Node compatibility worker still spawns untrusted scripts and WASM modules in child
+processes. In that compatibility deployment the following settings must be enforced:
 
 - The Node.js permission model is ON by default for script/WASM child processes. It can only be disabled by the explicit dev override `MORPHEUS_ALLOW_UNSANDBOXED_CHILDREN=1`, and that override is IGNORED when `NODE_ENV=production` (fail closed). The retired `SCRIPT_CHILD_ENABLE_PERMISSION_MODEL` toggle no longer has any effect.
 - `SCRIPT_CHILD_ALLOW_NET` must contain specific hostnames or IP addresses. Wildcards (`*`), `0.0.0.0/0`, `::/0`, and CIDR blocks are rejected at startup.

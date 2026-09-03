@@ -1,14 +1,9 @@
 import { createHash } from 'node:crypto';
-import { wallet as neoWallet } from '@cityofzion/neon-js';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import {
   neoNetworkMagicLe4,
   encodeUint256Word,
 } from '@r3e-network/neo-os-services-shared/neo-encoding';
-import {
-  normalizeMorpheusNetwork,
-  resolvePinnedNeoN3Role,
-} from '../../../../scripts/lib-neo-signers.mjs';
 import {
   env,
   envForNetwork,
@@ -16,16 +11,17 @@ import {
   requestLog,
   resolvePayloadNetwork,
   sha256Hex,
+  strip0x,
   trimString,
 } from '../platform/core.js';
 import { resolveConfidentialPayload } from '../oracle/crypto.js';
-import { buildVerificationEnvelope, buildSignedResultEnvelope } from '../chain/index.js';
 import {
-  deriveKeyBytes,
-  deriveNeoN3PrivateKeyHex,
-  getDstackInfo,
-  shouldUseDerivedKeys,
-} from '../platform/nitro-signer.js';
+  buildVerificationEnvelope,
+  buildSignedResultEnvelope,
+  custodySignBytes,
+  rejectCallerSuppliedSigningKey,
+} from '../chain/index.js';
+import { deriveKeyBytes, getDstackInfo } from '../platform/nitro-signer.js';
 
 const NEODID_BINDING_DOMAIN = Buffer.from('neodid-binding-v1', 'utf8');
 const NEODID_ACTION_DOMAIN = Buffer.from('neodid-action-v1', 'utf8');
@@ -448,40 +444,20 @@ function buildRecoveryDigestBytes(ticket) {
     .digest();
 }
 
-async function resolveNeoDidSignerPrivateKey(payload = {}) {
-  let privateKey = trimString(
-    payload.private_key || payload.signing_key || env('NEODID_NEO_N3_PRIVATE_KEY') || ''
-  );
-  if (!privateKey && shouldUseDerivedKeys(payload)) {
-    try {
-      privateKey = await deriveNeoN3PrivateKeyHex('neodid');
-    } catch {
-      // fall through
-    }
-  }
-  if (!privateKey) {
-    const signer = resolvePinnedNeoN3Role(
-      resolvePayloadNetwork(
-        payload,
-        normalizeMorpheusNetwork(env('MORPHEUS_NETWORK') || 'testnet')
-      ),
-      'worker',
-      { env }
-    );
-    privateKey = trimString(signer.materialized?.private_key || signer.materialized?.wif || '');
-  }
-  if (!privateKey) throw new Error('NeoDID signing key is not configured');
-  return privateKey;
-}
-
+// Digest signatures are custody-side: the enclave signs sha256(digestBytes)
+// under the worker role's allow_raw key, byte-identical to the neon-js
+// `wallet.sign` path this replaces. There is no local, env-provided, derived,
+// or pinned-registry key fallback — provisioning SIGNER_ROLE_WORKER_KEY_ID is
+// required — and caller-supplied key material is rejected like on every other
+// signing lane.
 async function signDigestBytes(digestBytes, payload = {}) {
-  const privateKey = await resolveNeoDidSignerPrivateKey(payload);
-  const account = new neoWallet.Account(privateKey);
+  rejectCallerSuppliedSigningKey(payload);
+  const signed = await custodySignBytes('worker', Buffer.from(digestBytes));
   return {
-    signature: neoWallet.sign(Buffer.from(digestBytes).toString('hex'), account.privateKey),
-    public_key: account.publicKey,
-    signer_address: account.address,
-    signer_script_hash: `0x${account.scriptHash}`,
+    signature: signed.signature,
+    public_key: signed.public_key,
+    signer_address: signed.address,
+    signer_script_hash: `0x${strip0x(signed.script_hash || '')}`,
   };
 }
 
@@ -593,7 +569,7 @@ function buildZkLoginDigestBytes(ticket) {
 async function buildNeoDidResponse(mode, result, payload) {
   const signed = await buildSignedResultEnvelope(result, payload);
   // signed.tee_attestation already binds signed.output_hash (sha256(stableStringify(result)))
-  // computed once inside buildSignedResultEnvelope; reuse it instead of a second /attest call.
+  // computed once inside buildSignedResultEnvelope; reuse it instead of a second /attestation call.
   const teeAttestation = signed.tee_attestation;
   const callbackEncoding = trimString(payload.callback_encoding || payload.result_encoding || '');
   return json(200, {

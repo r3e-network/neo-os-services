@@ -18,35 +18,37 @@ const archivedEnvKeys = [
   'MORPHEUS_RELAYER_NEO_X_START_BLOCK',
 ];
 
+const signerMaterialWifKeys = [
+  'NEO_TESTNET_WIF',
+  'NEO_N3_WIF',
+  'MORPHEUS_WORKER_NEO_N3_WIF',
+  'MORPHEUS_WORKER_NEO_N3_WIF_MAINNET',
+  'MORPHEUS_RELAYER_NEO_N3_WIF',
+  'MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET',
+  'MORPHEUS_UPDATER_NEO_N3_WIF',
+  'MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET',
+  'MORPHEUS_ORACLE_VERIFIER_WIF',
+  'MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET',
+];
+const signerMaterialPrivateKeyKeys = [
+  'MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY',
+  'MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET',
+  'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
+  'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_MAINNET',
+  'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY',
+  'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET',
+  'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY',
+  'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_MAINNET',
+];
+const signerMaterialKeys = [...signerMaterialWifKeys, ...signerMaterialPrivateKeyKeys];
+
 function buildTestSignerEnv() {
   const account = new wallet.Account(wallet.generatePrivateKey());
-  const wifKeys = [
-    'NEO_TESTNET_WIF',
-    'NEO_N3_WIF',
-    'MORPHEUS_WORKER_NEO_N3_WIF',
-    'MORPHEUS_WORKER_NEO_N3_WIF_MAINNET',
-    'MORPHEUS_RELAYER_NEO_N3_WIF',
-    'MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET',
-    'MORPHEUS_UPDATER_NEO_N3_WIF',
-    'MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET',
-    'MORPHEUS_ORACLE_VERIFIER_WIF',
-    'MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET',
-  ];
-  const privateKeyKeys = [
-    'MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY',
-    'MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET',
-    'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
-    'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_MAINNET',
-    'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY',
-    'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET',
-    'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY',
-    'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_MAINNET',
-  ];
 
   return Object.fromEntries([
     ['MORPHEUS_ALLOW_UNPINNED_SIGNERS', 'true'],
-    ...wifKeys.map((key) => [key, account.WIF]),
-    ...privateKeyKeys.map((key) => [key, account.privateKey]),
+    ...signerMaterialWifKeys.map((key) => [key, account.WIF]),
+    ...signerMaterialPrivateKeyKeys.map((key) => [key, account.privateKey]),
   ]);
 }
 
@@ -99,31 +101,32 @@ test('render-nitro-compose-env omits archived Neo X fields from generated output
     );
   }
 
-  assert.ok(
-    Object.prototype.hasOwnProperty.call(runtimeConfig, 'MORPHEUS_UPDATER_NEO_N3_WIF'),
-    'runtime config must expose the updater WIF to the relayer'
-  );
-  assert.ok(
-    Object.prototype.hasOwnProperty.call(runtimeConfig, 'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY'),
-    'runtime config must expose the updater private key to the relayer'
-  );
-  assert.ok(
-    Object.prototype.hasOwnProperty.call(runtimeConfig, 'MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET'),
-    'runtime config must expose the network-scoped updater WIF to the relayer primary signer path'
-  );
-  assert.ok(
-    Object.prototype.hasOwnProperty.call(
-      runtimeConfig,
-      'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET'
-    ),
-    'runtime config must expose the network-scoped updater private key to the relayer primary signer path'
-  );
+  // Custody migration invariant: signer key material fed in through the root
+  // env must never reach the runtime surface — not as rendered lines and not
+  // inside MORPHEUS_RUNTIME_CONFIG_JSON. Signing is custody-side; the runtime
+  // only ever sees the verifier PUBLIC key.
+  for (const key of signerMaterialKeys) {
+    assert.equal(
+      renderedKeys.has(key),
+      false,
+      `rendered env must not carry signer key material: ${key}`
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(runtimeConfig, key),
+      false,
+      `runtime config must not carry signer key material: ${key}`
+    );
+  }
 
   const lineValue = (key) => {
     const linePrefix = `${key}=`;
     const match = rendered.split(/\r?\n/).find((line) => line.startsWith(linePrefix));
     return match ? match.slice(linePrefix.length) : undefined;
   };
+
+  const verifierPublicKey = lineValue('MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY');
+  assert.ok(verifierPublicKey, 'rendered env must expose the oracle verifier PUBLIC key');
+  assert.match(verifierPublicKey, /^[0-9a-f]{66}$/);
 
   assert.ok(renderedKeys.has('NITRO_USE_DERIVED_KEYS'), 'missing NITRO_USE_DERIVED_KEYS line');
   assert.equal(
@@ -136,17 +139,19 @@ test('render-nitro-compose-env omits archived Neo X fields from generated output
     'runtime config must expose NITRO_USE_DERIVED_KEYS'
   );
 
-  const signerEnv = { ...runtimeConfig, MORPHEUS_ALLOW_UNPINNED_SIGNERS: 'true' };
+  // The rendered runtime config is the WIF-free healthy state, so the pinned
+  // drift check must pass over it as-is: a missing key is allowed, and there is
+  // nothing left to disagree with the registry.
   for (const role of ['worker', 'oracle_verifier']) {
-    const report = resolvePinnedNeoN3Role('mainnet', role, { env: signerEnv });
+    const report = resolvePinnedNeoN3Role('mainnet', role, {
+      env: runtimeConfig,
+      allowMissing: true,
+    });
     assert.equal(
       report.ok,
       true,
-      `${role} signer must resolve from rendered runtime config: ${report.issues.join('; ')}`
+      `${role} drift check must pass on the WIF-free runtime config: ${report.issues.join('; ')}`
     );
-    assert.ok(
-      report.materialized && (report.materialized.wif || report.materialized.private_key),
-      `${role} signer must materialize key material from rendered runtime config`
-    );
+    assert.deepEqual(report.issues, []);
   }
 });

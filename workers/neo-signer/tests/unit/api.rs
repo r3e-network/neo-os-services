@@ -15,11 +15,13 @@ use axum::{
     body::Body,
     http::{Method, StatusCode},
 };
+use ed25519_dalek::{Signer as _, SigningKey};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
 use super::*;
 use crate::{
+    auth::AccessRejection,
     policy::{self, DenyReason},
     service::provision_admin_caller,
     store::Store,
@@ -53,6 +55,12 @@ struct Api {
     account: [u8; tx::HASH160_LEN],
     // Declared last so it outlives everything that reads through it.
     _dir: tempfile::TempDir,
+}
+
+struct WorkloadClient {
+    caller_id: String,
+    subject: Option<String>,
+    signing_key: SigningKey,
 }
 
 impl Api {
@@ -117,6 +125,50 @@ impl Api {
         Ok(api)
     }
 
+    async fn raw_caller_for(&self, key_id: &str) -> (String, String) {
+        let caller = self
+            .post(
+                "/callers",
+                Some(&self.admin),
+                json!({
+                    "label": "raw-lane",
+                    "capabilities": ["raw_sign"],
+                    "key_grant": {"mode": "only", "key_ids": [key_id]},
+                }),
+            )
+            .await;
+        assert_eq!(caller.status, StatusCode::OK, "{caller:?}");
+        (
+            caller.json()["caller"]["id"]
+                .as_str()
+                .expect("caller id")
+                .to_string(),
+            caller.field("token"),
+        )
+    }
+
+    async fn raw_role(&self) -> (String, String) {
+        let key = self
+            .post(
+                "/keys",
+                Some(&self.admin),
+                json!({"label": "raw-role", "network": "testnet"}),
+            )
+            .await;
+        assert_eq!(key.status, StatusCode::OK, "{key:?}");
+        let key_id = key.field("key_id");
+        let policy = self
+            .post(
+                &format!("/keys/{key_id}/policy"),
+                Some(&self.admin),
+                json!({"allow_raw": true}),
+            )
+            .await;
+        assert_eq!(policy.status, StatusCode::OK, "{policy:?}");
+        let (_, token) = self.raw_caller_for(&key_id).await;
+        (key_id, token)
+    }
+
     fn request(
         &self,
         method: Method,
@@ -151,6 +203,42 @@ impl Api {
     async fn post(&self, path: &str, token: Option<&str>, body: Value) -> Reply {
         self.send(self.request(Method::POST, path, token, Some(body)))
             .await
+    }
+
+    async fn workload_post(
+        &self,
+        path: &str,
+        identity: &WorkloadClient,
+        timestamp: u64,
+        nonce: &str,
+        body: Value,
+    ) -> Reply {
+        let route = format!("{API_PREFIX}{path}");
+        let body = body.to_string();
+        let body_digest = crate::auth::body_sha256(body.as_bytes());
+        let message = crate::auth::WorkloadMessage {
+            caller_id: &identity.caller_id,
+            subject: identity.subject.as_deref(),
+            timestamp,
+            nonce,
+            method: "POST",
+            route: &route,
+            body_digest: &body_digest,
+            origin: None,
+        }
+        .to_bytes();
+        let signature = hex::encode(identity.signing_key.sign(&message).to_bytes());
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(&route)
+            .header("content-type", "application/json")
+            .header(WORKLOAD_CALLER_HEADER, &identity.caller_id)
+            .header(WORKLOAD_TIMESTAMP_HEADER, timestamp.to_string())
+            .header(WORKLOAD_NONCE_HEADER, nonce)
+            .header(WORKLOAD_SIGNATURE_HEADER, signature)
+            .body(Body::from(body))
+            .expect("the workload request should build");
+        self.send(request).await
     }
 
     async fn delete(&self, path: &str, token: Option<&str>) -> Reply {
@@ -364,11 +452,18 @@ fn transaction(account: [u8; tx::HASH160_LEN], nonce: u32, script: &[u8]) -> Vec
 fn consensus_payload(category: &str, sender: [u8; tx::HASH160_LEN]) -> Vec<u8> {
     let mut out = vec![category.len() as u8];
     out.extend_from_slice(category.as_bytes());
-    out.extend_from_slice(&100u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
     out.extend_from_slice(&200u32.to_le_bytes());
     out.extend_from_slice(&sender);
-    out.push(1);
-    out.push(0x01);
+    let data = [
+        vec![0x40],
+        200u32.to_le_bytes().to_vec(),
+        vec![0, 0],
+        1u64.to_le_bytes().to_vec(),
+    ]
+    .concat();
+    out.push(data.len() as u8);
+    out.extend(data);
     out
 }
 
@@ -418,6 +513,52 @@ async fn a_signed_transaction_answers_with_a_witness() {
         ScriptHash::from(api.account).to_display(),
         "the witness is for the account the key is for, and the route says so"
     );
+}
+
+#[tokio::test]
+async fn request_id_is_idempotent_and_conflicts_answer_409() {
+    let api = Api::open().await.expect("vault");
+    let path = "/sign/transaction";
+    let body = json!({
+        "key_id": api.key_id.clone(),
+        "unsigned_hex": api.transfer(10, 61),
+        "request_id": "web-job:61",
+    });
+    let first = api
+        .post(path, Some(&api.signer.clone()), body.clone())
+        .await;
+    assert_eq!(first.status, StatusCode::OK, "{first:?}");
+    let repeated = api.post(path, Some(&api.signer.clone()), body).await;
+    assert_eq!(repeated.status, StatusCode::OK, "{repeated:?}");
+    assert_eq!(repeated.json(), first.json());
+
+    let conflict = api
+        .post(
+            path,
+            Some(&api.signer.clone()),
+            json!({
+                "key_id": api.key_id.clone(),
+                "unsigned_hex": api.transfer(10, 62),
+                "request_id": "web-job:61",
+            }),
+        )
+        .await;
+    assert_eq!(conflict.status, StatusCode::CONFLICT, "{conflict:?}");
+    assert_eq!(conflict.code(), audit::REQUEST_ID_CONFLICT);
+
+    let invalid = api
+        .post(
+            path,
+            Some(&api.signer.clone()),
+            json!({
+                "key_id": api.key_id.clone(),
+                "unsigned_hex": api.transfer(10, 63),
+                "request_id": "spaces are not accepted",
+            }),
+        )
+        .await;
+    assert_eq!(invalid.status, StatusCode::BAD_REQUEST, "{invalid:?}");
+    assert_eq!(invalid.code(), audit::REQUEST_ID_INVALID);
 }
 
 #[tokio::test]
@@ -614,6 +755,197 @@ async fn a_consensus_payload_is_refused_by_the_default_boundary() {
         "the route is wired to the consensus decision, not to the transaction one"
     );
     assert_eq!(api.audit_for(SignerAuditAction::ConsensusSigned).len(), 1);
+}
+
+#[tokio::test]
+async fn a_raw_signature_is_refused_until_the_boundary_opens() {
+    let api = Api::open().await.expect("vault");
+    let (raw_caller_id, raw_signer) = api.raw_caller_for(&api.key_id).await;
+    // The harness opens `allow_transfer` and nothing else: the raw lane has its
+    // own switch, and a transfer-capable key must not become raw-signing-capable
+    // by accident.
+    let reply = api
+        .post(
+            "/sign/raw",
+            Some(&raw_signer),
+            json!({"key_id": api.key_id.clone(), "data_hex": hex::encode(b"a digest")}),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::FORBIDDEN, "{reply:?}");
+    assert_eq!(reply.code(), DenyReason::RawForbidden.code());
+    let rows = api.audit_for(SignerAuditAction::RawSigned);
+    assert_eq!(rows.len(), 1, "{rows:#?}");
+    assert_eq!(rows[0].outcome, SignerAuditOutcome::Denied);
+    assert_eq!(rows[0].caller_id.as_deref(), Some(raw_caller_id.as_str()));
+}
+
+#[tokio::test]
+async fn raw_transaction_collision_cannot_bypass_semantic_policy() {
+    let api = Api::open().await.expect("vault");
+    let (_, raw_signer) = api.raw_caller_for(&api.key_id).await;
+    let unsigned = api.transfer(1, 77);
+    let unsigned_bytes = hex::decode(&unsigned).expect("unsigned transaction hex");
+    let mut collision = crate::network::network_magic(crate::network::Network::Testnet)
+        .to_le_bytes()
+        .to_vec();
+    collision.extend_from_slice(&crate::crypto::sha256(&unsigned_bytes));
+
+    let refused = api
+        .post(
+            "/sign/raw",
+            Some(&raw_signer),
+            json!({"key_id": api.key_id, "data_hex": hex::encode(collision)}),
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{refused:?}");
+    assert_eq!(refused.code(), DenyReason::RawForbidden.code());
+
+    let mixed = api
+        .post(
+            &format!("/keys/{}/policy", api.key_id),
+            Some(&api.admin),
+            json!({"allow_transfer": true, "allow_raw": true}),
+        )
+        .await;
+    assert_eq!(mixed.status, StatusCode::BAD_REQUEST, "{mixed:?}");
+    assert!(mixed
+        .text
+        .contains("allow_raw requires a dedicated raw-only key"));
+
+    let transaction = api.sign(Some(&api.signer), &api.key_id, &unsigned).await;
+    assert_eq!(transaction.status, StatusCode::OK, "{transaction:?}");
+}
+
+#[tokio::test]
+async fn raw_and_semantic_routes_require_distinct_caller_capabilities() {
+    let api = Api::open().await.expect("vault");
+    let (raw_key_id, raw_signer) = api.raw_role().await;
+
+    let wrong_raw_caller = api
+        .post(
+            "/sign/raw",
+            Some(&api.signer),
+            json!({"key_id": raw_key_id, "data_hex": "0102"}),
+        )
+        .await;
+    assert_eq!(wrong_raw_caller.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        wrong_raw_caller.code(),
+        AccessRejection::CapabilityMissing.code()
+    );
+
+    let wrong_semantic_caller = api
+        .post(
+            "/sign/transaction",
+            Some(&raw_signer),
+            json!({"key_id": api.key_id, "unsigned_hex": hex::encode(api.transfer(1, 78))}),
+        )
+        .await;
+    assert_eq!(wrong_semantic_caller.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        wrong_semantic_caller.code(),
+        AccessRejection::CapabilityMissing.code()
+    );
+}
+
+#[tokio::test]
+async fn a_raw_signature_answers_with_the_bytes_it_covered() {
+    let api = Api::open().await.expect("vault");
+    let (raw_key_id, raw_signer) = api.raw_role().await;
+
+    let data = b"a fulfillment digest the enclave host wants signed";
+    let reply = api
+        .post(
+            "/sign/raw",
+            Some(&raw_signer),
+            json!({"key_id": raw_key_id.clone(), "data_hex": hex::encode(data)}),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::OK, "{reply:?}");
+    assert_eq!(
+        reply.keys(),
+        [
+            "address",
+            "allowed",
+            "digest",
+            "invocation_script",
+            "key_id",
+            "public_key",
+            "script_hash",
+            "signature",
+            "verification_script"
+        ],
+        "the raw witness beside `allowed`, and nothing else — the same envelope the §5 routes answer with"
+    );
+    assert_eq!(reply.field("key_id"), raw_key_id);
+    // The digest names what was signed: SHA-256 of the bytes, unframed — not
+    // the network-framed hash a transaction signature covers.
+    assert_eq!(
+        reply.field("digest"),
+        format!("0x{}", hex::encode(crate::crypto::sha256(data)))
+    );
+    // And the signature verifies against those bytes and no framed preimage:
+    // the two primitives are not interchangeable (crypto.rs's own test pins
+    // the same property off the wire).
+    let signature: [u8; 64] = hex::decode(reply.field("signature"))
+        .expect("bare hex")
+        .try_into()
+        .expect("64 bytes");
+    let public_key: [u8; 33] = hex::decode(reply.field("public_key"))
+        .expect("bare hex")
+        .try_into()
+        .expect("33 bytes");
+    assert!(crate::crypto::verify_signature(
+        &public_key,
+        data,
+        &signature
+    ));
+    let framed = crate::crypto::sign_data(data, 0);
+    assert!(
+        !crate::crypto::verify_signature(&public_key, &framed, &signature),
+        "a raw signature must not verify against a network-framed preimage"
+    );
+    let rows = api.audit_for(SignerAuditAction::RawSigned);
+    assert_eq!(rows.len(), 1, "{rows:#?}");
+    assert_eq!(rows[0].outcome, SignerAuditOutcome::Allowed);
+    assert_eq!(rows[0].key_id.as_deref(), Some(raw_key_id.as_str()));
+}
+
+#[tokio::test]
+async fn data_hex_that_cannot_be_read_is_a_bad_request_with_no_row() {
+    let api = Api::open().await.expect("vault");
+    let not_hex = api
+        .post(
+            "/sign/raw",
+            Some(&api.signer.clone()),
+            json!({"key_id": api.key_id.clone(), "data_hex": "zz-not-hex"}),
+        )
+        .await;
+    assert_eq!(not_hex.status, StatusCode::BAD_REQUEST, "{not_hex:?}");
+    assert_eq!(not_hex.code(), "signer-request-unreadable");
+    assert!(
+        not_hex.text.contains("data_hex must be hexadecimal"),
+        "the refusal names the caller's own field: {not_hex:?}"
+    );
+
+    let empty = api
+        .post(
+            "/sign/raw",
+            Some(&api.signer.clone()),
+            json!({"key_id": api.key_id.clone(), "data_hex": ""}),
+        )
+        .await;
+    assert_eq!(empty.status, StatusCode::BAD_REQUEST, "{empty:?}");
+    assert_eq!(empty.code(), "signer-request-unreadable");
+    assert!(
+        empty.text.contains("data_hex must not be empty"),
+        "{empty:?}"
+    );
+
+    assert!(
+        api.audit_for(SignerAuditAction::RawSigned).is_empty(),
+        "the sign path wrote no row for a body that never reached a decision"
+    );
 }
 
 // -- the transport's own answers ------------------------------------------
@@ -862,6 +1194,68 @@ async fn a_created_callers_token_appears_exactly_once() {
 }
 
 #[tokio::test]
+async fn a_workload_caller_signs_without_a_bearer_secret_and_cannot_replay() {
+    let api = Api::open().await.expect("vault");
+    let signing_key = SigningKey::from_bytes(&[17u8; 32]);
+    let created = api
+        .post(
+            "/callers/workload",
+            Some(&api.admin.clone()),
+            json!({
+                "label": "neo-nexus",
+                "capabilities": ["sign"],
+                "key_grant": {"mode": "only", "key_ids": [api.key_id.clone()]},
+                "workload_public_key": hex::encode(signing_key.verifying_key().to_bytes()),
+                "workload_subject": "neo-nexus:test",
+            }),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::OK, "{created:?}");
+    assert_eq!(created.keys(), ["allowed", "caller"]);
+    assert!(!created.text.contains("\"token\""));
+    assert_eq!(created.json()["caller"]["auth_mode"], "workload-ed25519");
+
+    let identity = WorkloadClient {
+        caller_id: created.json()["caller"]["id"]
+            .as_str()
+            .expect("caller id")
+            .to_string(),
+        subject: Some("neo-nexus:test".to_string()),
+        signing_key,
+    };
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    let body = json!({
+        "key_id": api.key_id.clone(),
+        "unsigned_hex": api.transfer(1, 91),
+    });
+    let allowed = api
+        .workload_post(
+            "/sign/transaction",
+            &identity,
+            timestamp,
+            "nonce-0000000091",
+            body.clone(),
+        )
+        .await;
+    assert_eq!(allowed.status, StatusCode::OK, "{allowed:?}");
+
+    let replay = api
+        .workload_post(
+            "/sign/transaction",
+            &identity,
+            timestamp,
+            "nonce-0000000091",
+            body,
+        )
+        .await;
+    assert_eq!(replay.status, StatusCode::FORBIDDEN, "{replay:?}");
+    assert_eq!(replay.code(), AccessRejection::WorkloadReplay.code());
+}
+
+#[tokio::test]
 async fn capabilities_must_name_exactly_one() {
     let api = Api::open().await.expect("vault");
     let before = api.audit_for(SignerAuditAction::CallerCreated).len();
@@ -892,7 +1286,7 @@ async fn capabilities_must_name_exactly_one() {
         assert!(
             reply
                 .text
-                .contains("capabilities must name exactly one of sign or admin"),
+                .contains("capabilities must name exactly one of sign, raw_sign or admin"),
             "an admin is told what to fix: {}",
             reply.text
         );
@@ -1076,17 +1470,32 @@ async fn a_boundary_round_trips_through_the_wire_shape() {
     let api = Api::open().await.expect("vault");
     let body = json!({
         "allow_consensus": false,
+        "allow_raw": false,
         "allow_transfer": true,
         "allow_contract_call": true,
         "allow_global_scope": false,
         "contract_whitelist": [ScriptHash::from_wire(tx::native::NEO).to_display()],
         "contract_blacklist": [],
+        "contract_method_whitelist": [{
+            "contract": ScriptHash::from_wire(tx::native::NEO).to_display(),
+            "method": "transfer",
+        }],
+        "contract_method_blacklist": [],
         "asset_whitelist": [ScriptHash::from_wire(tx::native::NEO).to_display()],
         "asset_blacklist": [],
+        "asset_limits": [{
+            "asset": ScriptHash::from_wire(tx::native::NEO).to_display(),
+            "max_single_amount": "50000000",
+            "window_limit": {"seconds": 300, "max_amount": "75000000"},
+        }],
         "transfer_to_whitelist": [],
         "transfer_to_blacklist": [ScriptHash::from(RECIPIENT).to_display()],
         "max_single_amount": i128::MAX.to_string(),
         "window_limit": {"seconds": 3600, "max_amount": "100000000"},
+        "max_signers": 1,
+        "max_system_fee": "0",
+        "max_network_fee": "0",
+        "max_signatures": {"seconds": 60, "count": 10},
     });
     let path = format!("/keys/{}/policy", api.key_id.clone());
     let saved = api

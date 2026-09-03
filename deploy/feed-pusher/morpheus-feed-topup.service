@@ -6,5 +6,6 @@ OnFailure=morpheus-alert@%n.service
 
 [Service]
 Type=oneshot
+Environment=NODE_ENV=production
 WorkingDirectory=/opt/neoos/services/deploy/feed-pusher
 ExecStart=/usr/bin/node feed-topup.mjs

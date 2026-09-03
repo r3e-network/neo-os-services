@@ -383,7 +383,19 @@ function normalizeSignerRole(value) {
   if (role === 'updater') return 'updater';
   if (role === 'relayer') return 'relayer';
   if (role === 'worker') return 'worker';
-  return 'updater';
+  return null;
+}
+
+// F-9: an absent or unmappable role used to sign as `updater`. It never signs
+// now — the caller names the role it is entitled to, or the request leaves.
+function requireSignerRole(role) {
+  if (!role) {
+    throw httpError(
+      400,
+      'key_role is required and must name a signer role; refusing to act under a defaulted role'
+    );
+  }
+  return role;
 }
 
 // Whether a KMS ciphertext is provisioned for a given signer role. When a key is
@@ -506,7 +518,9 @@ function handleProvision(payload, bootstrapRuntimeToken = null) {
 // working during cutover. Once MORPHEUS_RELAYER_ENCLAVE_FULFILL is on the relayer
 // uses /oracle/fulfill (attested compute+sign) and this path goes unused.
 function handleSignPayload(payload) {
-  const role = normalizeSignerRole(payload.key_role || payload.dstack_key_role || payload.role);
+  const role = requireSignerRole(
+    normalizeSignerRole(payload.key_role || payload.dstack_key_role || payload.role)
+  );
   const dataHex = normalizeHex(payload.data_hex || payload.message_hex || '');
   if (!/^[0-9a-f]+$/.test(dataHex) || dataHex.length % 2 !== 0) {
     throw httpError(400, 'data_hex is required');
@@ -534,7 +548,9 @@ function handleSignPayload(payload) {
 
 // POST /keys/derived — report a pinned role's public Neo identity (no secret).
 function handleKeysDerived(payload) {
-  const role = normalizeSignerRole(payload.role || payload.key_role || payload.dstack_key_role);
+  const role = requireSignerRole(
+    normalizeSignerRole(payload.role || payload.key_role || payload.dstack_key_role)
+  );
   const network = resolveNetwork();
   const report = reportPinnedNeoN3Role(network, role, { env: process.env, allowMissing: false });
   if (!report.ok || !report.materialized) {

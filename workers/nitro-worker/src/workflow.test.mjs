@@ -16,14 +16,17 @@ import assert from 'node:assert/strict';
 const originalFetch = global.fetch;
 
 process.env.MORPHEUS_RUNTIME_TOKEN = 'workflow-test-secret';
-process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY =
-  '1111111111111111111111111111111111111111111111111111111111111111';
+delete process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY;
+process.env.SIGNER_ROLE_WORKER_KEY_ID = 'test-worker-key';
+process.env.SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID = 'test-oracle-verifier-key';
 process.env.NEO_RPC_URL = 'https://neo-rpc.test';
 process.env.EVM_RPC_URL = '';
 process.env.TWELVEDATA_API_KEY = 'test-twelvedata-key';
 process.env.CONTRACT_MORPHEUS_ORACLE_HASH = '0xf54d8584ef82315c1800373272ab08ae0db2d5ef';
 process.env.NEODID_SECRET_SALT = 'workflow-test-salt';
-process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = 'true';
+delete process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS;
+// Workflow tests have no KMS/NSM endpoint. This test-only switch permits an
+// in-memory X25519 identity; Neo N3 signing still uses the custody stub below.
 process.env.MORPHEUS_ALLOW_EPHEMERAL_KEY = 'true';
 process.env.MORPHEUS_ENABLE_UNTRUSTED_SCRIPTS = 'true';
 
@@ -33,6 +36,32 @@ const { __resetDstackClientStateForTests } = await import('./platform/nitro-sign
 const { __resetOracleKeyMaterialForTests } = await import('./oracle/crypto.js');
 const { __resetFeedStateForTests } = await import('./oracle/feeds.js');
 const { __resetNeoDidStateForTests } = await import('./neodid/index.js');
+const { __resetCustodyTransportForTests, __setCustodyTransportForTests } =
+  await import('./platform/custody.js');
+
+__setCustodyTransportForTests(async (method, pathname) => {
+  const keyId = decodeURIComponent(pathname.split('/').at(-1) || 'test-worker-key');
+  if (method === 'GET') {
+    return {
+      allowed: true,
+      key_id: keyId,
+      network: 'testnet',
+      network_magic: 894710606,
+      public_key: `02${'22'.repeat(32)}`,
+      address: 'NTestWorkerCustodyAddress',
+      script_hash: `0x${'33'.repeat(20)}`,
+      signing_enabled: true,
+    };
+  }
+  return {
+    allowed: true,
+    key_id: keyId,
+    signature: '11'.repeat(64),
+    public_key: `02${'22'.repeat(32)}`,
+    address: 'NTestWorkerCustodyAddress',
+    script_hash: `0x${'33'.repeat(20)}`,
+  };
+});
 
 function authHeaders() {
   return {
@@ -57,6 +86,7 @@ function restoreState() {
 
 test.beforeEach(restoreState);
 test.afterEach(restoreState);
+test.after(__resetCustodyTransportForTests);
 
 async function post(path, body = {}) {
   return handler(

@@ -154,6 +154,9 @@ MORPHEUS_NETWORK=testnet npm run verify:n3
 ## Root Audit Baseline
 
 `npm run verify:repo` is the preferred local verification entrypoint for this repository.
+Its stale Next.js builder cleanup uses `pgrep` when available and is a quiet no-op on
+Windows Git Bash installations that do not provide procps; the verification gates
+themselves remain identical.
 
 `npm run check:audit:root` is the canonical root production dependency audit gate.
 

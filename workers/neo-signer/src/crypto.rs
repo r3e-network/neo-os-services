@@ -86,74 +86,14 @@ pub fn sha256(bytes: &[u8]) -> Vec<u8> {
     Sha256::digest(bytes).to_vec()
 }
 
-/// base58 decode with checksum verification (the last 4 bytes are
-/// HASH160-based double-SHA256 checksum). Returns the payload without checksum.
+/// Base58Check decode with double-SHA256 checksum verification. Returns the
+/// payload without the four checksum bytes.
 pub fn base58check_decode(value: &str) -> Option<Vec<u8>> {
-    let bytes = base58_decode(value)?;
-    if bytes.len() < 5 {
-        return None;
-    }
-    let (payload, checksum) = bytes.split_at(bytes.len() - 4);
-    let expected = &sha256(&sha256(payload))[0..4];
-    if checksum != expected {
-        return None;
-    }
-    Some(payload.to_vec())
+    bs58::decode(value).with_check(None).into_vec().ok()
 }
 
 pub fn base58check_encode(payload: &[u8]) -> String {
-    let mut data = payload.to_vec();
-    let checksum = &sha256(&sha256(payload))[0..4];
-    data.extend_from_slice(checksum);
-    base58_encode(&data)
-}
-
-const B58_ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-
-fn base58_decode(value: &str) -> Option<Vec<u8>> {
-    let mut result: Vec<u8> = vec![0];
-    for ch in value.chars() {
-        let digit = B58_ALPHABET.iter().position(|&c| c == ch as u8)?;
-        let mut carry = digit;
-        for byte in result.iter_mut() {
-            let v = (*byte as usize) * 58 + carry;
-            *byte = (v & 0xff) as u8;
-            carry = v >> 8;
-        }
-        while carry > 0 {
-            result.push((carry & 0xff) as u8);
-            carry >>= 8;
-        }
-    }
-    let leading_zeros = value.chars().take_while(|&c| c == '1').count();
-    result.resize(result.len() + leading_zeros, 0);
-    result.reverse();
-    Some(result)
-}
-
-fn base58_encode(bytes: &[u8]) -> String {
-    let mut digits: Vec<u8> = vec![0];
-    for &byte in bytes {
-        let mut carry = byte as usize;
-        for d in digits.iter_mut() {
-            let v = (*d as usize) * 256 + carry;
-            *d = (v % 58) as u8;
-            carry = v / 58;
-        }
-        while carry > 0 {
-            digits.push((carry % 58) as u8);
-            carry /= 58;
-        }
-    }
-    for &b in bytes.iter().take_while(|&&b| b == 0) {
-        let _ = b;
-        digits.push(0);
-    }
-    digits
-        .iter()
-        .rev()
-        .map(|&d| B58_ALPHABET[d as usize] as char)
-        .collect()
+    bs58::encode(payload).with_check().into_string()
 }
 
 /// Derive the compressed public key (33 bytes) from a 32-byte private key.
@@ -240,6 +180,22 @@ pub fn sign_transaction(
     let sk =
         SigningKey::from_slice(private_key).map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
     let signature: Signature = sk.sign(&sign_data(unsigned_tx, network_magic));
+    let signature = signature.normalize_s().unwrap_or(signature);
+    let mut out = [0u8; 64];
+    out.copy_from_slice(&signature.to_bytes());
+    Ok(out)
+}
+
+/// Sign raw caller bytes — the digest/preimage signing the enclave's pinned
+/// role keys need. Unlike [`sign_transaction`] there is no Neo framing: the
+/// message the curve signs is `SHA-256(data)` exactly, which is the byte
+/// contract `neon-js`'s `wallet.sign(dataHex, privateKey)` keeps (`p256`
+/// hashes its input with SHA-256 internally). Low-S is enforced for the same
+/// consensus reason as above.
+pub fn sign_raw(private_key: &[u8; 32], data: &[u8]) -> Result<[u8; 64], SignerCryptoError> {
+    let sk =
+        SigningKey::from_slice(private_key).map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
+    let signature: Signature = sk.sign(data);
     let signature = signature.normalize_s().unwrap_or(signature);
     let mut out = [0u8; 64];
     out.copy_from_slice(&signature.to_bytes());

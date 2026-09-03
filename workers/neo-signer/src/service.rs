@@ -38,7 +38,7 @@
 
 use std::{
     path::Path,
-    sync::Arc,
+    sync::{Arc, Mutex, MutexGuard},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -52,12 +52,13 @@ use crate::{
     crypto,
     model::{
         CallerCapability, KeyGrant, ScriptHash, SignerAuditAction, SignerAuditOutcome,
-        SignerAuditRecord, SignerCaller, SignerKey, SignerPolicy, SignerValueEvent,
+        SignerAuditRecord, SignerCaller, SignerConsensusReservation, SignerKey, SignerPolicy,
+        SignerRequestCompletion, SignerValueEvent, WorkloadIdentity,
     },
-    network::Network,
-    policy::{self, SigningRequest, WindowSpend},
+    network::{self, Network},
+    policy::{self, AssetWindowSpend, SigningRequest, WindowSpend},
     store::Store,
-    tx::{self, ConsensusPayload, Intent, UnsignedTransaction},
+    tx::{self, ConsensusPayload, DbftCommitment, Intent, UnsignedTransaction},
     vault::MasterKey,
 };
 
@@ -103,6 +104,10 @@ pub struct KeyPublicInfo {
     pub key_id: String,
     pub label: String,
     pub network: Network,
+    /// The magic the key's signatures commit to, as bound at custody time.
+    /// Surfaced so an operator can confirm a private-network key carries its
+    /// chain's real identity rather than the default.
+    pub network_magic: u32,
     pub public_key: [u8; 33],
     pub script_hash: ScriptHash,
     pub address: String,
@@ -144,6 +149,9 @@ impl<T> Outcome<T> {
 pub struct CallerInfo {
     pub id: String,
     pub label: String,
+    pub auth_mode: String,
+    pub workload_public_key: Option<String>,
+    pub workload_subject: Option<String>,
     pub key_grant: KeyGrant,
     pub capabilities: Vec<CallerCapability>,
     pub allowed_origins: Vec<String>,
@@ -156,6 +164,19 @@ impl From<&SignerCaller> for CallerInfo {
         CallerInfo {
             id: caller.id.clone(),
             label: caller.label.clone(),
+            auth_mode: if caller.workload_identity.is_some() {
+                "workload-ed25519".to_string()
+            } else {
+                "bearer".to_string()
+            },
+            workload_public_key: caller
+                .workload_identity
+                .as_ref()
+                .map(|identity| hex::encode(identity.public_key)),
+            workload_subject: caller
+                .workload_identity
+                .as_ref()
+                .and_then(|identity| identity.subject.clone()),
             key_grant: caller.key_grant.clone(),
             capabilities: caller.capabilities.clone(),
             allowed_origins: caller.allowed_origins.clone(),
@@ -163,6 +184,16 @@ impl From<&SignerCaller> for CallerInfo {
             disabled: caller.disabled,
         }
     }
+}
+
+/// Provisioning input for an Ed25519 workload caller.
+pub struct WorkloadCallerSpec<'a> {
+    pub label: &'a str,
+    pub key_grant: KeyGrant,
+    pub capabilities: &'a [CallerCapability],
+    pub allowed_origins: &'a [String],
+    pub public_key: [u8; 32],
+    pub subject: Option<&'a str>,
 }
 
 /// The custody service. `Clone` like the other workspace handles — the master
@@ -176,6 +207,14 @@ impl From<&SignerCaller> for CallerInfo {
 pub struct SignerService {
     repository: Store,
     master_key: Arc<MasterKey>,
+    /// Serializes every decision that can change what a key may do.
+    ///
+    /// The store opens a fresh SQLite connection per operation. Without one
+    /// shared lock, two signing threads can both read the same rolling-window
+    /// total, both pass, and only then append their spends. Keeping the lock on
+    /// the cloned service also orders policy edits, caller revocation and key
+    /// kill-switch changes against signing.
+    decision_lock: Arc<Mutex<()>>,
 }
 
 /// Which bytes a signing request covers, and whether value moved afterwards.
@@ -183,6 +222,7 @@ pub struct SignerService {
 enum RequestKind {
     Transaction,
     Consensus,
+    Raw,
 }
 
 /// Whether a caller got past identification and authorization.
@@ -211,6 +251,9 @@ enum Parsed {
     Consensus {
         payload: ConsensusPayload,
     },
+    /// Raw bytes: nothing to decode, so the policy decides on the switch
+    /// alone.
+    Raw,
 }
 
 impl Parsed {
@@ -225,6 +268,7 @@ impl Parsed {
                 intents,
             },
             Parsed::Consensus { payload } => SigningRequest::Consensus { payload },
+            Parsed::Raw => SigningRequest::Raw,
         }
     }
 }
@@ -234,6 +278,7 @@ struct Approved {
     witness: SignedWitness,
     kind: RequestKind,
     intents: Vec<Intent>,
+    consensus: Option<SignerConsensusReservation>,
 }
 
 impl SignerService {
@@ -242,6 +287,7 @@ impl SignerService {
         Self {
             repository,
             master_key: Arc::new(master_key),
+            decision_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -262,15 +308,33 @@ impl SignerService {
         self.master_key.fingerprint()
     }
 
+    /// Enter the process-wide decision critical section.
+    ///
+    /// A poisoned lock means a previous decision panicked while it held the
+    /// boundary. Continuing would make the next request guess which writes
+    /// completed, so the only safe answer is a service failure.
+    fn lock_decision(&self) -> Result<MutexGuard<'_, ()>> {
+        self.decision_lock.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "the signer decision lock is poisoned; restart before signing or changing policy"
+            )
+        })
+    }
+
     // -- custody: keys ------------------------------------------------------
 
     /// Create a fresh key and store it sealed.
+    ///
+    /// `network_magic` names the chain identity for a private network whose real
+    /// magic is not the default; `None` takes the canonical value for `network`.
     pub fn generate_key(
         &self,
         credentials: &CallerCredentials,
         label: &str,
         network: Network,
+        network_magic: Option<u32>,
     ) -> Result<Outcome<KeyPublicInfo>> {
+        let _decision = self.lock_decision()?;
         let caller = match self.admin_caller(credentials, SignerAuditAction::KeyGenerated, None)? {
             Ok(caller) => caller,
             Err(refusal) => return Ok(Outcome::Refused(refusal)),
@@ -279,10 +343,13 @@ impl SignerService {
         self.store_key(
             credentials,
             &caller,
-            label,
-            network,
+            KeyRequest {
+                label,
+                network,
+                requested_magic: network_magic,
+                action: SignerAuditAction::KeyGenerated,
+            },
             &private_key,
-            SignerAuditAction::KeyGenerated,
         )
     }
 
@@ -292,8 +359,10 @@ impl SignerService {
         credentials: &CallerCredentials,
         label: &str,
         network: Network,
+        network_magic: Option<u32>,
         private_key: &str,
     ) -> Result<Outcome<KeyPublicInfo>> {
+        let _decision = self.lock_decision()?;
         let caller = match self.admin_caller(credentials, SignerAuditAction::KeyImported, None)? {
             Ok(caller) => caller,
             Err(refusal) => return Ok(Outcome::Refused(refusal)),
@@ -313,10 +382,13 @@ impl SignerService {
         self.store_key(
             credentials,
             &caller,
-            label,
-            network,
+            KeyRequest {
+                label,
+                network,
+                requested_magic: network_magic,
+                action: SignerAuditAction::KeyImported,
+            },
             &parsed,
-            SignerAuditAction::KeyImported,
         )
     }
 
@@ -330,9 +402,11 @@ impl SignerService {
         credentials: &CallerCredentials,
         label: &str,
         network: Network,
+        network_magic: Option<u32>,
         nep2: &str,
         passphrase: &str,
     ) -> Result<Outcome<KeyPublicInfo>> {
+        let _decision = self.lock_decision()?;
         let caller = match self.admin_caller(credentials, SignerAuditAction::KeyImported, None)? {
             Ok(caller) => caller,
             Err(refusal) => return Ok(Outcome::Refused(refusal)),
@@ -357,10 +431,13 @@ impl SignerService {
         self.store_key(
             credentials,
             &caller,
-            label,
-            network,
+            KeyRequest {
+                label,
+                network,
+                requested_magic: network_magic,
+                action: SignerAuditAction::KeyImported,
+            },
             &parsed,
-            SignerAuditAction::KeyImported,
         )
     }
 
@@ -371,6 +448,7 @@ impl SignerService {
         id: &str,
         disabled: bool,
     ) -> Result<Outcome<KeyPublicInfo>> {
+        let _decision = self.lock_decision()?;
         let action = if disabled {
             SignerAuditAction::KeyDisabled
         } else {
@@ -410,6 +488,7 @@ impl SignerService {
     /// Drop a key. Its audit rows and ledger rows survive deliberately — see
     /// [`Store::delete_signer_key`].
     pub fn delete_key(&self, credentials: &CallerCredentials, id: &str) -> Result<Outcome<()>> {
+        let _decision = self.lock_decision()?;
         let caller =
             match self.admin_caller(credentials, SignerAuditAction::KeyDeleted, Some(id))? {
                 Ok(caller) => caller,
@@ -449,6 +528,7 @@ impl SignerService {
         id: &str,
         policy: &SignerPolicy,
     ) -> Result<Outcome<SignerPolicy>> {
+        let _decision = self.lock_decision()?;
         let caller =
             match self.admin_caller(credentials, SignerAuditAction::PolicySaved, Some(id))? {
                 Ok(caller) => caller,
@@ -461,6 +541,15 @@ impl SignerService {
                 SignerAuditAction::PolicySaved,
                 Some(id),
                 &unknown_key(id),
+            );
+        }
+        if policy.mixes_raw_and_semantic_authority() {
+            return self.reject_invalid(
+                credentials,
+                &caller,
+                SignerAuditAction::PolicySaved,
+                Some(id),
+                "allow_raw requires a dedicated raw-only key and cannot be combined with consensus, transfer, contract-call, or global authority",
             );
         }
         let stored = policy.clone().normalized();
@@ -494,6 +583,7 @@ impl SignerService {
         capabilities: &[CallerCapability],
         origins: &[String],
     ) -> Result<Outcome<(CallerInfo, String)>> {
+        let _decision = self.lock_decision()?;
         let caller = match self.admin_caller(credentials, SignerAuditAction::CallerCreated, None)? {
             Ok(caller) => caller,
             Err(refusal) => return Ok(Outcome::Refused(refusal)),
@@ -516,7 +606,7 @@ impl SignerService {
                     &caller,
                     SignerAuditAction::CallerCreated,
                     None,
-                    "capabilities must name exactly one of sign or admin",
+                    "capabilities must name exactly one of sign, raw_sign or admin",
                 )
             }
         };
@@ -536,6 +626,7 @@ impl SignerService {
                 }
             },
             token_digest: auth::token_digest(&token),
+            workload_identity: None,
             key_grant: grant,
             capabilities,
             allowed_origins: match normalize_origins(origins) {
@@ -563,6 +654,100 @@ impl SignerService {
         Ok(Outcome::Allowed((CallerInfo::from(&created), token)))
     }
 
+    /// Add an Ed25519 proof-of-possession caller without minting a bearer
+    /// secret.
+    pub fn create_workload_caller(
+        &self,
+        credentials: &CallerCredentials,
+        spec: WorkloadCallerSpec<'_>,
+    ) -> Result<Outcome<CallerInfo>> {
+        let _decision = self.lock_decision()?;
+        let caller = match self.admin_caller(credentials, SignerAuditAction::CallerCreated, None)? {
+            Ok(caller) => caller,
+            Err(refusal) => return Ok(Outcome::Refused(refusal)),
+        };
+        let capabilities = match single_capability(spec.capabilities) {
+            Some(capabilities) => capabilities,
+            None => {
+                return self.reject_invalid(
+                    credentials,
+                    &caller,
+                    SignerAuditAction::CallerCreated,
+                    None,
+                    "capabilities must name exactly one of sign or admin",
+                )
+            }
+        };
+        if !auth::workload_public_key_is_valid(&spec.public_key) {
+            return self.reject_invalid(
+                credentials,
+                &caller,
+                SignerAuditAction::CallerCreated,
+                None,
+                "workload_public_key must be a valid Ed25519 public key",
+            );
+        }
+        let subject = match normalize_subject(spec.subject) {
+            Ok(subject) => subject,
+            Err(error) => {
+                return self.reject_invalid(
+                    credentials,
+                    &caller,
+                    SignerAuditAction::CallerCreated,
+                    None,
+                    &error.to_string(),
+                )
+            }
+        };
+        // A random digest with no corresponding token keeps the legacy
+        // NOT-NULL column inert for workload rows migrated from v1.
+        let unreachable_token = auth::generate_token();
+        let created = SignerCaller {
+            id: format!("caller-{}", Uuid::new_v4()),
+            label: match operator_label(spec.label) {
+                Ok(label) => label,
+                Err(error) => {
+                    return self.reject_invalid(
+                        credentials,
+                        &caller,
+                        SignerAuditAction::CallerCreated,
+                        None,
+                        &error.to_string(),
+                    )
+                }
+            },
+            token_digest: auth::token_digest(&unreachable_token),
+            workload_identity: Some(WorkloadIdentity {
+                public_key: spec.public_key,
+                subject,
+            }),
+            key_grant: spec.key_grant,
+            capabilities,
+            allowed_origins: match normalize_origins(spec.allowed_origins) {
+                Ok(origins) => origins,
+                Err(error) => {
+                    return self.reject_invalid(
+                        credentials,
+                        &caller,
+                        SignerAuditAction::CallerCreated,
+                        None,
+                        &error.to_string(),
+                    )
+                }
+            },
+            created_at_unix: now_unix()?,
+            disabled: false,
+        }
+        .normalized();
+        self.repository.create_signer_caller(&created)?;
+        self.record_entry(SignerAuditRecord {
+            origin: credentials.origin_label(),
+            caller_id: Some(caller.id),
+            ..entry(SignerAuditAction::CallerCreated, caller_summary(&created))?
+        })?;
+        Ok(Outcome::Allowed(CallerInfo::from(&created)))
+    }
+
     /// Issue a new token for an existing caller, invalidating the old one.
     ///
     /// A rotation changes the credential and nothing else: the new holder gets
@@ -573,6 +758,7 @@ impl SignerService {
         credentials: &CallerCredentials,
         id: &str,
     ) -> Result<Outcome<String>> {
+        let _decision = self.lock_decision()?;
         let caller = match self.admin_caller(credentials, SignerAuditAction::CallerRotated, None)? {
             Ok(caller) => caller,
             Err(refusal) => return Ok(Outcome::Refused(refusal)),
@@ -589,6 +775,15 @@ impl SignerService {
                 )
             }
         };
+        if rotated.workload_identity.is_some() {
+            return self.reject_invalid(
+                credentials,
+                &caller,
+                SignerAuditAction::CallerRotated,
+                None,
+                "workload callers use a pinned Ed25519 key and cannot rotate a bearer token",
+            );
+        }
         let token = auth::generate_token();
         self.repository
             .set_signer_caller_digest(id, &auth::token_digest(&token))?;
@@ -607,6 +802,7 @@ impl SignerService {
         id: &str,
         disabled: bool,
     ) -> Result<Outcome<CallerInfo>> {
+        let _decision = self.lock_decision()?;
         let action = if disabled {
             SignerAuditAction::CallerDisabled
         } else {
@@ -638,6 +834,7 @@ impl SignerService {
 
     /// Retire a caller. Its audit rows survive — see [`Store::delete_signer_caller`].
     pub fn delete_caller(&self, credentials: &CallerCredentials, id: &str) -> Result<Outcome<()>> {
+        let _decision = self.lock_decision()?;
         let caller = match self.admin_caller(credentials, SignerAuditAction::CallerDeleted, None)? {
             Ok(caller) => caller,
             Err(refusal) => return Ok(Outcome::Refused(refusal)),
@@ -795,7 +992,29 @@ impl SignerService {
         key_id: &str,
         unsigned: &[u8],
     ) -> Result<SignResponse> {
-        self.sign(credentials, key_id, unsigned, RequestKind::Transaction)
+        self.sign(
+            credentials,
+            key_id,
+            unsigned,
+            RequestKind::Transaction,
+            None,
+        )
+    }
+
+    pub fn sign_transaction_with_request_id(
+        &self,
+        credentials: &CallerCredentials,
+        key_id: &str,
+        unsigned: &[u8],
+        request_id: Option<&str>,
+    ) -> Result<SignResponse> {
+        self.sign(
+            credentials,
+            key_id,
+            unsigned,
+            RequestKind::Transaction,
+            request_id,
+        )
     }
 
     /// Sign the `SerializeUnsigned` bytes of an extensible (dBFT) payload.
@@ -805,7 +1024,47 @@ impl SignerService {
         key_id: &str,
         unsigned: &[u8],
     ) -> Result<SignResponse> {
-        self.sign(credentials, key_id, unsigned, RequestKind::Consensus)
+        self.sign(credentials, key_id, unsigned, RequestKind::Consensus, None)
+    }
+
+    pub fn sign_consensus_with_request_id(
+        &self,
+        credentials: &CallerCredentials,
+        key_id: &str,
+        unsigned: &[u8],
+        request_id: Option<&str>,
+    ) -> Result<SignResponse> {
+        self.sign(
+            credentials,
+            key_id,
+            unsigned,
+            RequestKind::Consensus,
+            request_id,
+        )
+    }
+
+    /// Sign raw caller bytes under `key_id` — the digest/preimage signing the
+    /// enclave's pinned role keys need. The bytes are deliberately not parsed:
+    /// the boundary's `allow_raw` switch is the only thing standing between a
+    /// raw request and a witness, which is why it defaults to closed and why
+    /// enabling it is a whole-key decision the attested boundary digest covers.
+    pub fn sign_raw(
+        &self,
+        credentials: &CallerCredentials,
+        key_id: &str,
+        data: &[u8],
+    ) -> Result<SignResponse> {
+        self.sign(credentials, key_id, data, RequestKind::Raw, None)
+    }
+
+    pub fn sign_raw_with_request_id(
+        &self,
+        credentials: &CallerCredentials,
+        key_id: &str,
+        data: &[u8],
+        request_id: Option<&str>,
+    ) -> Result<SignResponse> {
+        self.sign(credentials, key_id, data, RequestKind::Raw, request_id)
     }
 
     /// The account details a caller needs in order to build a transaction for
@@ -817,7 +1076,11 @@ impl SignerService {
     /// says so — a caller that cannot tell "off" from "gone" restarts nothing.
     pub fn key_info(&self, credentials: &CallerCredentials, key_id: &str) -> Result<InfoResponse> {
         let action = SignerAuditAction::KeyViewed;
-        let access = self.guard(credentials, key_id);
+        let access = self.access_any(
+            credentials,
+            &[CallerCapability::Sign, CallerCapability::RawSign],
+            Some(key_id),
+        );
         let caller = match self.resolved(access, credentials, action, Some(key_id))? {
             Ok(caller) => caller,
             Err(refusal) => return Ok(Outcome::Refused(refusal)),
@@ -863,16 +1126,80 @@ impl SignerService {
         key_id: &str,
         unsigned: &[u8],
         kind: RequestKind,
+        request_id: Option<&str>,
     ) -> Result<SignResponse> {
-        let access = self.guard(credentials, key_id);
-        let caller =
-            match self.resolved(access, credentials, RequestKind::action(kind), Some(key_id))? {
-                Ok(caller) => caller,
-                Err(refusal) => return Ok(Outcome::Refused(refusal)),
-            };
+        let _decision = self.lock_decision()?;
+        let action = RequestKind::action(kind);
+        let access = self.guard_signing(credentials, key_id, kind);
+        let caller = match self.resolved(access, credentials, action, Some(key_id))? {
+            Ok(caller) => caller,
+            Err(refusal) => return Ok(Outcome::Refused(refusal)),
+        };
+        let idempotency = if let Some(request_id) = request_id {
+            if !valid_request_id(request_id) {
+                let refusal = Refusal::request_id(
+                    audit::REQUEST_ID_INVALID,
+                    "request_id must be 1-128 safe ASCII characters",
+                    format!("invalid request id presented: {request_id:?}"),
+                );
+                return Ok(Outcome::Refused(self.refuse(
+                    action,
+                    credentials,
+                    Some(&caller),
+                    Some(key_id),
+                    &refusal,
+                )?));
+            }
+            if let Err(refusal) = self.custody(key_id) {
+                return Ok(Outcome::Refused(self.refuse(
+                    action,
+                    credentials,
+                    Some(&caller),
+                    Some(key_id),
+                    &refusal,
+                )?));
+            }
+            let request_digest = idempotency_digest(action, key_id, unsigned);
+            if let Some(completed) = self
+                .repository
+                .find_signer_request(&caller.id, request_id)?
+            {
+                if completed.request_digest != request_digest
+                    || completed.key_id != key_id
+                    || completed.action != action
+                {
+                    let refusal = Refusal::request_id(
+                        audit::REQUEST_ID_CONFLICT,
+                        "request_id was already used for a different signing request",
+                        format!(
+                            "request id {request_id:?} for caller {} is already bound",
+                            caller.id
+                        ),
+                    );
+                    return Ok(Outcome::Refused(self.refuse(
+                        action,
+                        credentials,
+                        Some(&caller),
+                        Some(key_id),
+                        &refusal,
+                    )?));
+                }
+                return Ok(Outcome::Allowed(SignedWitness {
+                    key_id: completed.key_id,
+                    script_hash: completed.script_hash,
+                    address: completed.address,
+                    digest: completed.result_digest,
+                    invocation: completed.invocation,
+                    verification: completed.verification,
+                }));
+            }
+            Some((request_id.to_string(), request_digest))
+        } else {
+            None
+        };
         match self.attempt(key_id, unsigned, kind) {
             Err(refusal) => Ok(Outcome::Refused(self.refuse(
-                RequestKind::action(kind),
+                action,
                 credentials,
                 Some(&caller),
                 Some(key_id),
@@ -882,23 +1209,45 @@ impl SignerService {
                 // The decision is written down before the witness leaves the
                 // service, and the spend ledger names the row that authorised it.
                 let record = SignerAuditRecord {
-                    caller_id: Some(caller.id),
+                    caller_id: Some(caller.id.clone()),
                     key_id: Some(key_id.to_string()),
                     origin: credentials.origin_label(),
                     tx_id: Some(approved.witness.digest.clone()),
-                    ..entry(RequestKind::action(kind), intent_summary(&approved.intents))?
+                    ..entry(action, intent_summary(&approved.intents))?
                 };
                 let recorded_at_unix = record.recorded_at_unix;
-                let audit_id = self.record_entry(record)?;
-                if approved.kind == RequestKind::Transaction {
-                    self.repository.record_signer_value_events(&value_events(
+                let events = if approved.kind == RequestKind::Transaction {
+                    value_events(
                         key_id,
                         recorded_at_unix,
                         &approved.intents,
                         approved.witness.script_hash,
-                        audit_id,
-                    ))?;
-                }
+                        None,
+                    )
+                } else {
+                    Vec::new()
+                };
+                let request =
+                    idempotency.map(|(request_id, request_digest)| SignerRequestCompletion {
+                        caller_id: caller.id,
+                        request_id,
+                        key_id: key_id.to_string(),
+                        action,
+                        request_digest,
+                        result_digest: approved.witness.digest.clone(),
+                        script_hash: approved.witness.script_hash,
+                        address: approved.witness.address.clone(),
+                        invocation: approved.witness.invocation.clone(),
+                        verification: approved.witness.verification.clone(),
+                        completed_at_unix: recorded_at_unix,
+                        audit_id: None,
+                    });
+                self.repository.record_signer_decision(
+                    &record,
+                    &events,
+                    approved.consensus.as_ref(),
+                    request.as_ref(),
+                )?;
                 Ok(Outcome::Allowed(approved.witness))
             }
         }
@@ -919,7 +1268,6 @@ impl SignerService {
                 format!("{key_id} has no usable public key on record"),
             )
         })?;
-        let private_key = self.open_key(&key)?;
         let parsed = self.parse(unsigned, kind)?;
 
         let boundary = self
@@ -934,36 +1282,177 @@ impl SignerService {
             })?;
         let spent = self.window_spend(key_id, &boundary)?;
         let request = parsed.request();
+        let intents = match request {
+            SigningRequest::Transaction { intents, .. } => intents,
+            SigningRequest::Consensus { .. } | SigningRequest::Raw => &[],
+        };
         match policy::evaluate(&boundary, account, &request, &spent) {
             policy::Verdict::Allow => {}
             policy::Verdict::Deny { reason, detail } => {
                 return Err(Refusal::policy(reason, detail));
             }
         }
+        let asset_spent = self.asset_window_spend(key_id, &boundary)?;
+        match policy::evaluate_asset_limits(&boundary, intents, &asset_spent) {
+            policy::Verdict::Allow => {}
+            policy::Verdict::Deny { reason, detail } => {
+                return Err(Refusal::policy(reason, detail));
+            }
+        }
+        let signatures = self.signature_count(key_id, &boundary)?;
+        match policy::evaluate_signature_rate(&boundary, signatures) {
+            policy::Verdict::Allow => {}
+            policy::Verdict::Deny { reason, detail } => {
+                return Err(Refusal::policy(reason, detail));
+            }
+        }
+        let consensus = self.consensus_reservation(&key, &parsed, unsigned)?;
+        // Key material enters memory only after every structural, policy and
+        // anti-equivocation check has passed.
+        let private_key = self.open_key(&key)?;
 
-        let signature = crypto::sign_transaction(&private_key, unsigned, key.network_magic())
-            .map_err(|error| {
-                Refusal::failed(
-                    "signer-signature-failed",
-                    "the signature could not be produced",
-                    error.to_string(),
-                )
-            })?;
+        // The framed Neo preimage and the unframed raw bytes are two
+        // different signature primitives with two different replay domains —
+        // a magic-framed signature is worthless for a digest lane and a raw
+        // signature would be replayable across networks — so the kind picks
+        // the primitive, and the witness digest records what was signed.
+        let (signature, digest) = match kind {
+            RequestKind::Transaction | RequestKind::Consensus => (
+                crypto::sign_transaction(&private_key, unsigned, key.network_magic()).map_err(
+                    |error| {
+                        Refusal::failed(
+                            "signer-signature-failed",
+                            "the signature could not be produced",
+                            error.to_string(),
+                        )
+                    },
+                )?,
+                // A transaction id is displayed byte-reversed — the explorer
+                // order the digest exists to be found under.
+                tx::script_hash_to_display(&crypto::transaction_hash(unsigned)),
+            ),
+            RequestKind::Raw => (
+                crypto::sign_raw(&private_key, unsigned).map_err(|error| {
+                    Refusal::failed(
+                        "signer-signature-failed",
+                        "the signature could not be produced",
+                        error.to_string(),
+                    )
+                })?,
+                // A raw digest is not an on-chain id, so it takes the order a
+                // verifier computes: plain SHA-256, un-reversed.
+                format!("0x{}", hex::encode(crypto::sha256(unsigned))),
+            ),
+        };
         Ok(Approved {
             witness: SignedWitness {
                 key_id: key.id.clone(),
                 script_hash: account,
                 address: key.address(),
-                digest: tx::script_hash_to_display(&crypto::transaction_hash(unsigned)),
+                digest,
                 invocation: crypto::invocation_script(&signature),
                 verification: key.verification_script(),
             },
             kind,
             intents: match parsed {
                 Parsed::Transaction { intents, .. } => intents,
-                Parsed::Consensus { .. } => Vec::new(),
+                Parsed::Consensus { .. } | Parsed::Raw => Vec::new(),
             },
+            consensus,
         })
+    }
+
+    /// Build and preflight the durable dBFT slot this request would occupy.
+    fn consensus_reservation(
+        &self,
+        key: &SignerKey,
+        parsed: &Parsed,
+        unsigned: &[u8],
+    ) -> Result<Option<SignerConsensusReservation>, Refusal> {
+        let Parsed::Consensus { payload } = parsed else {
+            return Ok(None);
+        };
+        let message = payload.dbft_message().map_err(|error| {
+            Refusal::failed(
+                "signer-payload-unparsable",
+                "the consensus payload could not be read",
+                error.to_string(),
+            )
+        })?;
+        let checkpoint_digest = |bytes: &[u8]| {
+            <[u8; 32]>::try_from(crypto::sha256(bytes)).map_err(|_| {
+                Refusal::failed(
+                    "signer-digest-failed",
+                    "the consensus checkpoint could not be produced",
+                    "SHA-256 did not return 32 bytes",
+                )
+            })
+        };
+        let (phase, view_number, checkpoint) = match message.commitment {
+            DbftCommitment::None => return Ok(None),
+            DbftCommitment::PrepareRequest => (
+                tx::DbftMessageType::PrepareRequest as u8,
+                message.header.view_number,
+                checkpoint_digest(unsigned)?,
+            ),
+            DbftCommitment::PrepareResponse(preparation_hash) => (
+                tx::DbftMessageType::PrepareRequest as u8,
+                message.header.view_number,
+                preparation_hash,
+            ),
+            DbftCommitment::Commit(signature) => (
+                tx::DbftMessageType::Commit as u8,
+                0,
+                checkpoint_digest(&signature)?,
+            ),
+        };
+        let candidate = SignerConsensusReservation {
+            public_key: key.public_key,
+            network_magic: key.network_magic(),
+            block_index: message.header.block_index,
+            phase,
+            validator_index: message.header.validator_index,
+            view_number,
+            checkpoint,
+            recorded_at_unix: now_unix().map_err(|error| {
+                Refusal::failed(
+                    "signer-clock-unavailable",
+                    "the signing decision could not be timestamped",
+                    error.to_string(),
+                )
+            })?,
+            audit_id: None,
+        };
+        if let Some(existing) = self
+            .repository
+            .reserve_signer_consensus(&candidate)
+            .map_err(|error| {
+                Refusal::failed(
+                    "signer-store-unreadable",
+                    "the consensus journal could not be read",
+                    error.to_string(),
+                )
+            })?
+        {
+            if existing.public_key != candidate.public_key
+                || existing.checkpoint != candidate.checkpoint
+            {
+                return Err(Refusal::guard(
+                    GuardRejection::ConsensusEquivocation,
+                    format!(
+                        "public key {} already reserved dBFT phase 0x{:02x} at height {}, validator {}, view {} with checkpoint 0x{}; refused 0x{}",
+                        hex::encode(key.public_key),
+                        candidate.phase,
+                        candidate.block_index,
+                        candidate.validator_index,
+                        candidate.view_number,
+                        hex::encode(existing.checkpoint),
+                        hex::encode(candidate.checkpoint),
+                    ),
+                ));
+            }
+        }
+        Ok(Some(candidate))
     }
 
     /// Read and decode the bytes a signature is about to cover.
@@ -999,6 +1488,7 @@ impl SignerService {
                 })?;
                 Ok(Parsed::Consensus { payload })
             }
+            RequestKind::Raw => Ok(Parsed::Raw),
         }
     }
 
@@ -1043,6 +1533,15 @@ impl SignerService {
         required: CallerCapability,
         key_id: Option<&str>,
     ) -> Access {
+        self.access_any(credentials, &[required], key_id)
+    }
+
+    fn access_any(
+        &self,
+        credentials: &CallerCredentials,
+        required: &[CallerCapability],
+        key_id: Option<&str>,
+    ) -> Access {
         let callers = match self.repository.list_signer_callers() {
             Ok(callers) => callers,
             Err(error) => {
@@ -1056,8 +1555,53 @@ impl SignerService {
                 )
             }
         };
-        match auth::authenticate(&callers, credentials, required, key_id) {
-            Ok(caller) => Access::Granted(caller.clone()),
+        match auth::authenticate_any(&callers, credentials, required, key_id) {
+            Ok(caller) => {
+                if let Some(nonce) = credentials.workload_nonce() {
+                    let Some(expires_at) = credentials.workload_expires_at() else {
+                        return Access::Refused(
+                            Some(caller.clone()),
+                            Refusal::access(AccessRejection::WorkloadMalformed),
+                        );
+                    };
+                    let now = match now_unix() {
+                        Ok(now) => now,
+                        Err(error) => {
+                            return Access::Refused(
+                                Some(caller.clone()),
+                                Refusal::failed(
+                                    "signer-clock-unavailable",
+                                    "the workload assertion could not be timestamped",
+                                    error.to_string(),
+                                ),
+                            )
+                        }
+                    };
+                    match self
+                        .repository
+                        .reserve_workload_nonce(&caller.id, nonce, expires_at, now)
+                    {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            return Access::Refused(
+                                Some(caller.clone()),
+                                Refusal::access(AccessRejection::WorkloadReplay),
+                            )
+                        }
+                        Err(error) => {
+                            return Access::Refused(
+                                Some(caller.clone()),
+                                Refusal::failed(
+                                    "signer-store-unreadable",
+                                    "the workload replay journal could not be written",
+                                    error.to_string(),
+                                ),
+                            )
+                        }
+                    }
+                }
+                Access::Granted(caller.clone())
+            }
             Err(rejection @ AccessRejection::UnknownToken) => {
                 Access::Unknown(Refusal::access(rejection))
             }
@@ -1068,9 +1612,20 @@ impl SignerService {
         }
     }
 
-    /// Identify the caller and check that it may ask for this key to sign.
-    fn guard(&self, credentials: &CallerCredentials, key_id: &str) -> Access {
-        self.access(credentials, CallerCapability::Sign, Some(key_id))
+    /// Route-specific signing authorization. Raw bytes are deliberately a
+    /// distinct capability because they can encode Neo transaction preimages
+    /// without traversing the transaction parser or semantic policy.
+    fn guard_signing(
+        &self,
+        credentials: &CallerCredentials,
+        key_id: &str,
+        kind: RequestKind,
+    ) -> Access {
+        let required = match kind {
+            RequestKind::Raw => CallerCapability::RawSign,
+            RequestKind::Transaction | RequestKind::Consensus => CallerCapability::Sign,
+        };
+        self.access(credentials, required, Some(key_id))
     }
 
     /// The management path's guard, and the reason no route has to remember to
@@ -1188,6 +1743,86 @@ impl SignerService {
             })
     }
 
+    /// Successful signatures already produced inside this key's configured
+    /// rolling window.
+    fn signature_count(&self, key_id: &str, boundary: &SignerPolicy) -> Result<u64, Refusal> {
+        let Some(limit) = boundary.max_signatures else {
+            return Ok(0);
+        };
+        let since = now_unix()
+            .map_err(|error| {
+                Refusal::failed(
+                    "signer-clock-unusable",
+                    "the service clock could not be read",
+                    format!("{error:?}"),
+                )
+            })?
+            .saturating_sub(limit.seconds);
+        self.repository
+            .signer_signature_count(key_id, since)
+            .map_err(|error| {
+                Refusal::failed(
+                    "signer-store-unreadable",
+                    "the signature audit could not be read",
+                    format!("{key_id}: {error:?}"),
+                )
+            })
+    }
+
+    /// Prior spend for every distinct asset-specific rolling period. One
+    /// ledger read covers the longest period, then shorter periods are folded
+    /// from the same immutable event list.
+    fn asset_window_spend(
+        &self,
+        key_id: &str,
+        boundary: &SignerPolicy,
+    ) -> Result<AssetWindowSpend, Refusal> {
+        let Some(longest) = boundary
+            .asset_limits
+            .iter()
+            .filter_map(|limit| limit.window_limit)
+            .map(|window| window.seconds)
+            .max()
+        else {
+            return Ok(AssetWindowSpend::new());
+        };
+        let now = now_unix().map_err(|error| {
+            Refusal::failed(
+                "signer-clock-unusable",
+                "the service clock could not be read",
+                format!("{error:?}"),
+            )
+        })?;
+        let events = self
+            .repository
+            .signer_value_events_since(key_id, now.saturating_sub(longest))
+            .map_err(|error| {
+                Refusal::failed(
+                    "signer-store-unreadable",
+                    "the spend ledger could not be read",
+                    format!("{key_id}: {error:?}"),
+                )
+            })?;
+        let mut spent = AssetWindowSpend::new();
+        for limit in &boundary.asset_limits {
+            let Some(window) = limit.window_limit else {
+                continue;
+            };
+            if spent.contains(limit.asset, window.seconds) {
+                continue;
+            }
+            let since = now.saturating_sub(window.seconds);
+            spent.record(limit.asset, window.seconds, 0);
+            for event in events
+                .iter()
+                .filter(|event| event.asset == limit.asset && event.recorded_at_unix >= since)
+            {
+                spent.record(limit.asset, window.seconds, event.amount);
+            }
+        }
+        Ok(spent)
+    }
+
     /// Log a refusal and hand it back for the response.
     fn refuse(
         &self,
@@ -1260,15 +1895,54 @@ impl SignerService {
         &self,
         credentials: &CallerCredentials,
         caller: &SignerCaller,
-        label: &str,
-        network: Network,
+        request: KeyRequest<'_>,
         private_key: &Zeroizing<[u8; 32]>,
-        action: SignerAuditAction,
     ) -> Result<Outcome<KeyPublicInfo>> {
+        let KeyRequest {
+            label,
+            network,
+            requested_magic,
+            action,
+        } = request;
         let label = match operator_label(label) {
             Ok(label) => label,
             Err(error) => {
                 return self.reject_invalid(credentials, caller, action, None, &error.to_string())
+            }
+        };
+        // The magic is resolved once, here, and then bound to the row. `None`
+        // means the canonical table — what every pre-existing consumer sends. A
+        // private network may name its real deployment magic, because two
+        // private chains that share the default can replay each other's
+        // signatures and the only cure is a key that carries its chain's actual
+        // identity. Mainnet and testnet have exactly one magic each: accepting
+        // another would seal a key whose signatures no node verifies, which is
+        // discovered only after real value is on the line.
+        let network_magic = match requested_magic {
+            None => network::network_magic(network),
+            Some(magic) if magic == network::network_magic(network) => magic,
+            Some(0) => {
+                return self.reject_invalid(
+                    credentials,
+                    caller,
+                    action,
+                    None,
+                    "network magic 0 is not a usable chain identity",
+                )
+            }
+            Some(magic) if network == Network::Private => magic,
+            Some(magic) => {
+                return self.reject_invalid(
+                    credentials,
+                    caller,
+                    action,
+                    None,
+                    &format!(
+                        "{network} signs under magic {} only; a key bound to {magic} would \
+                         produce signatures no node of that chain accepts",
+                        network::network_magic(network)
+                    ),
+                )
             }
         };
         let public_key = match crypto::public_key_from_private(private_key) {
@@ -1302,6 +1976,7 @@ impl SignerService {
             id: format!("key-{}", Uuid::new_v4()),
             label,
             network,
+            network_magic,
             public_key,
             sealed,
             created_at_unix: now_unix()?,
@@ -1326,12 +2001,23 @@ impl SignerService {
     }
 }
 
+/// What a custody request carries into [`SignerService::store_key`]: the label
+/// the operator chose, the chain it binds to, the magic that binds it, and the
+/// audit row it files under.
+struct KeyRequest<'a> {
+    label: &'a str,
+    network: Network,
+    requested_magic: Option<u32>,
+    action: SignerAuditAction,
+}
+
 impl RequestKind {
     /// Which audit action this request's row is filed under.
     fn action(kind: Self) -> SignerAuditAction {
         match kind {
             RequestKind::Transaction => SignerAuditAction::TransactionSigned,
             RequestKind::Consensus => SignerAuditAction::ConsensusSigned,
+            RequestKind::Raw => SignerAuditAction::RawSigned,
         }
     }
 }
@@ -1386,7 +2072,7 @@ fn value_events(
     recorded_at_unix: u64,
     intents: &[Intent],
     account: ScriptHash,
-    audit_id: i64,
+    audit_id: Option<i64>,
 ) -> Vec<SignerValueEvent> {
     intents
         .iter()
@@ -1402,7 +2088,7 @@ fn value_events(
                 recorded_at_unix,
                 asset: ScriptHash(*asset),
                 amount: *amount,
-                audit_id: Some(audit_id),
+                audit_id,
             }),
             _ => None,
         })
@@ -1440,6 +2126,7 @@ pub fn provision_admin_caller(repository: &Store, label: &str) -> Result<(Caller
         id: format!("caller-{}", Uuid::new_v4()),
         label: operator_label(label)?,
         token_digest: auth::token_digest(&token),
+        workload_identity: None,
         // Whole-vault, and only `admin`: the token that opens a service for the
         // first time should not also be the one that signs with what it creates.
         key_grant: KeyGrant::Any,
@@ -1477,6 +2164,7 @@ fn identity(key: &SignerKey) -> Result<KeyPublicInfo, Refusal> {
         key_id: key.id.clone(),
         label: key.label.clone(),
         network: key.network,
+        network_magic: key.network_magic,
         public_key: key.public_key,
         script_hash,
         address: key.address(),
@@ -1560,6 +2248,20 @@ fn normalize_origins(origins: &[String]) -> Result<Vec<String>> {
         .collect()
 }
 
+fn normalize_subject(subject: Option<&str>) -> Result<Option<String>> {
+    let Some(subject) = subject else {
+        return Ok(None);
+    };
+    let subject = subject.trim();
+    if subject.is_empty() {
+        anyhow::bail!("workload_subject must be omitted or non-empty");
+    }
+    if subject.len() > 200 || subject.chars().any(char::is_control) {
+        anyhow::bail!("workload_subject must be at most 200 printable characters");
+    }
+    Ok(Some(subject.to_string()))
+}
+
 /// What a stored boundary commits to, in one line an operator can re-read.
 fn policy_summary(policy: &SignerPolicy) -> String {
     let mut allowed: Vec<&str> = Vec::new();
@@ -1575,6 +2277,9 @@ fn policy_summary(policy: &SignerPolicy) -> String {
     if policy.allow_global_scope {
         allowed.push("global-scope");
     }
+    if policy.allow_raw {
+        allowed.push("raw");
+    }
     let mut summary = if allowed.is_empty() {
         String::from("nothing allowed")
     } else {
@@ -1589,10 +2294,21 @@ fn policy_summary(policy: &SignerPolicy) -> String {
             limit.seconds, limit.max_amount
         ));
     }
+    if let Some(max_signers) = policy.max_signers {
+        summary.push_str(&format!(", signers <= {max_signers}"));
+    }
+    if let Some(max_system_fee) = policy.max_system_fee {
+        summary.push_str(&format!(", system-fee <= {max_system_fee}"));
+    }
+    if let Some(max_network_fee) = policy.max_network_fee {
+        summary.push_str(&format!(", network-fee <= {max_network_fee}"));
+    }
     summary.push_str(&format!(
-        "; lists contracts {}/{} assets {}/{} recipients {}/{}",
+        "; lists contracts {}/{} methods {}/{} assets {}/{} recipients {}/{}",
         policy.contract_whitelist.len(),
         policy.contract_blacklist.len(),
+        policy.contract_method_whitelist.len(),
+        policy.contract_method_blacklist.len(),
         policy.asset_whitelist.len(),
         policy.asset_blacklist.len(),
         policy.transfer_to_whitelist.len(),
@@ -1603,8 +2319,13 @@ fn policy_summary(policy: &SignerPolicy) -> String {
 
 fn caller_summary(caller: &SignerCaller) -> String {
     format!(
-        "{} granting {} to {}; {} origin(s)",
+        "{} [{}] granting {} to {}; {} origin(s)",
         caller.label,
+        if caller.workload_identity.is_some() {
+            "workload-ed25519"
+        } else {
+            "bearer"
+        },
         match &caller.key_grant {
             KeyGrant::Any => "every key".to_string(),
             KeyGrant::Only(ids) => format!("{} key(s)", ids.len()),
@@ -1644,6 +2365,27 @@ fn intent_summary(intents: &[Intent]) -> String {
         return String::from("no contract calls");
     }
     format!("{transfers} transfer(s) totalling {moved}, {calls} other call(s)")
+}
+
+fn valid_request_id(request_id: &str) -> bool {
+    !request_id.is_empty()
+        && request_id.len() <= 128
+        && request_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
+}
+
+fn idempotency_digest(action: SignerAuditAction, key_id: &str, unsigned: &[u8]) -> [u8; 32] {
+    let mut framed = Vec::with_capacity(32 + key_id.len() + unsigned.len());
+    framed.extend_from_slice(b"neoos-signer-request-v1\0");
+    framed.extend_from_slice(action.label().as_bytes());
+    framed.push(0);
+    framed.extend_from_slice(key_id.as_bytes());
+    framed.push(0);
+    framed.extend_from_slice(unsigned);
+    crypto::sha256(&framed)
+        .try_into()
+        .expect("SHA-256 always returns 32 bytes")
 }
 
 fn now_unix() -> Result<u64> {

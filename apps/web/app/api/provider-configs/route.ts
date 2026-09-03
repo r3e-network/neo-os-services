@@ -97,16 +97,13 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   if (!isPlainObject(body)) {
+    // Body is not a plain object (JSON parse failed or non-object root), so
+    // there is no config/provider_id to summarize here.
     await recordOperationLog({
       route: '/api/provider-configs',
       method: 'POST',
       category: 'provider_config',
-      requestPayload: {
-        ...body,
-        config: isPlainObject(config)
-          ? summarizeConfigsForLog([{ provider_id: providerId, enabled, config }])
-          : body.config,
-      },
+      requestPayload: {},
       responsePayload: { error: 'invalid JSON body' },
       httpStatus: 400,
       error: 'invalid JSON body',

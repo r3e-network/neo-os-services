@@ -88,6 +88,12 @@ impl BootGuard {
     /// configured — compare PCR0 against it. Returns the measured PCR0, hex,
     /// which is the value an operator pins in the KMS key policy.
     ///
+    /// An all-zero measurement is refused before the pin comparison: PCR0 is
+    /// the SHA-384 of the enclave image, so zeros mean the register was never
+    /// extended — an emulated or broken NSM, not a booted enclave. It fires
+    /// with or without a pin (KMS-ATTESTATION-DESIGN.md: an all-zero PCR0 is
+    /// the "nothing can decrypt yet" state, never a passing one).
+    ///
     /// The nonce is fresh per boot so a recorded document from an earlier,
     /// different image cannot be replayed as this boot's answer.
     pub fn verify(&self, source: &dyn AttestationSource) -> Result<String, String> {
@@ -96,6 +102,13 @@ impl BootGuard {
         OsRng.fill_bytes(&mut nonce);
         let document = source.attest(Some(&nonce), None, None)?;
         let measured = extract_pcr0(&document)?;
+        if measured == [0u8; PCR0_LEN] {
+            return Err(
+                "attestation PCR0 is all zeros — the NSM reports an unmeasured \
+                 environment, not a booted enclave"
+                    .to_string(),
+            );
+        }
         if let Some(expected) = &self.expected_pcr0 {
             let diff = measured
                 .iter()

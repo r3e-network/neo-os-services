@@ -185,7 +185,7 @@ function cborFamily() {
     const { value } = cborRead(bytes, 0);
     return { name, hex, decoded: tagCbor(value), note: note || null };
   };
-  const err = (name, bytes, error) => {
+  const err = (name, bytes, _error) => {
     const hex = bytes.toString('hex');
     try {
       cborRead(bytes, 0);
@@ -194,7 +194,7 @@ function cborFamily() {
     }
     throw new Error(`cbor case ${name} was expected to fail`);
   };
-  const errCose = (name, bytes, error) => {
+  const errCose = (name, bytes, _error) => {
     const hex = bytes.toString('hex');
     try {
       decodeCoseSign1(bytes);

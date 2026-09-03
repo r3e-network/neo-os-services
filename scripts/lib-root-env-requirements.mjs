@@ -55,14 +55,6 @@ export const ROOT_ENV_REQUIRED_GROUPS = {
     ['MORPHEUS_CRON_SECRET'],
     ['MORPHEUS_FEED_SYMBOLS'],
   ],
-  n3_scripts: [
-    [
-      'NEO_N3_WIF',
-      'NEO_TESTNET_WIF',
-      'MORPHEUS_RELAYER_NEO_N3_WIF',
-      'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
-    ],
-  ],
 };
 
 export const ROOT_ENV_OPTIONAL_GROUPS = {
@@ -73,6 +65,17 @@ export const ROOT_ENV_OPTIONAL_GROUPS = {
     ['MORPHEUS_FEED_MIN_UPDATE_INTERVAL_MS'],
   ],
   oracle_verifier: [['MORPHEUS_ORACLE_VERIFIER_WIF', 'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY']],
+  // Local smoke tooling (scripts/smoke-oracle-n3.mjs, run-testnet-rng-local.sh)
+  // still signs with a root-env relayer WIF on operator machines. Production
+  // lanes are custody-side, so this is convenience, not a requirement.
+  smoke_signing: [
+    [
+      'NEO_N3_WIF',
+      'NEO_TESTNET_WIF',
+      'MORPHEUS_RELAYER_NEO_N3_WIF',
+      'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
+    ],
+  ],
 };
 
 export function getGroupValue(env, keys) {

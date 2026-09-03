@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { normalizeMorpheusNetwork, resolvePinnedNeoN3Role } from './lib/neo-signers.js';
+import { normalizeMorpheusNetwork } from './lib/neo-signers.js';
 import {
   parseBooleanEnv as parseBoolean,
   trimString,
@@ -55,6 +55,23 @@ function parseList(value) {
 }
 
 const SUPPORTED_CHAINS = ['neo_n3', 'neox'];
+const RELAYER_NEO_N3_HOST_KEY_ENV_NAMES = [
+  'NEO_N3_WIF',
+  'NEO_TESTNET_WIF',
+  ...['WORKER', 'RELAYER', 'UPDATER', 'ORACLE_VERIFIER', 'FEED'].flatMap((role) =>
+    ['', '_MAINNET', '_TESTNET'].flatMap((suffix) => [
+      `MORPHEUS_${role}_NEO_N3_WIF${suffix}`,
+      `MORPHEUS_${role}_NEO_N3_PRIVATE_KEY${suffix}`,
+    ])
+  ),
+];
+const RELAYER_NEOX_HOST_KEY_ENV_NAMES = [
+  'MORPHEUS_RELAYER_NEOX_UPDATER_PK',
+  'MORPHEUS_RELAYER_NEOX_VERIFIER_PK',
+  'NEOX_UPDATER_PK',
+  'NEOX_VERIFIER_PK',
+  'NEOX_FEED_PK',
+];
 
 function parseActiveChains(value) {
   const requested = parseList(value).map((entry) => entry.toLowerCase());
@@ -222,6 +239,26 @@ function env(...names) {
   return '';
 }
 
+function configuredHostSignerEnvNames() {
+  const names = new Set([
+    ...RELAYER_NEO_N3_HOST_KEY_ENV_NAMES,
+    ...RELAYER_NEOX_HOST_KEY_ENV_NAMES,
+    ...Object.keys(process.env),
+    ...Object.keys(getRuntimeConfig()),
+  ]);
+  return [...names]
+    .filter((name) => {
+      const normalized = name.toUpperCase();
+      return (
+        /(?:^|_)WIF(?:_|$)/.test(normalized) ||
+        (/(?:^|_)(?:PRIVATE_KEY|PK)(?:_|$)/.test(normalized) &&
+          /(NEO|NEOX|EVM|MORPHEUS|SIGNER)/.test(normalized))
+      );
+    })
+    .filter((name) => Boolean(env(name)))
+    .sort();
+}
+
 function envNetworkScoped(network, genericKey) {
   const suffix = network === 'mainnet' ? 'MAINNET' : 'TESTNET';
   return env(`${genericKey}_${suffix}`) || env(genericKey);
@@ -258,7 +295,7 @@ function resolvePublicRuntimeCandidates(network, registry) {
   ]);
 }
 
-function resolveNitroApiUrls(network, registry) {
+function resolveNitroApiUrls(network, registry, { allowPublicFallbacks = true } = {}) {
   const explicit = uniqueOrdered(
     parseUrlList(
       env(
@@ -269,7 +306,9 @@ function resolveNitroApiUrls(network, registry) {
       )
     )
   );
-  const publicFallbacks = resolvePublicRuntimeCandidates(network, registry);
+  const publicFallbacks = allowPublicFallbacks
+    ? resolvePublicRuntimeCandidates(network, registry)
+    : [];
   const combined = uniqueOrdered([...explicit, ...publicFallbacks]);
   return combined.join(',');
 }
@@ -289,6 +328,8 @@ export function createRelayerConfig() {
   const registry = loadNetworkRegistry(network);
   const neoN3RpcUrls = resolveNeoN3RpcUrls(network, registry);
   const mode = resolveRelayerMode(env('MORPHEUS_RELAYER_MODE') || 'combined');
+  const nodeEnv = trimString(env('NODE_ENV') || process.env.NODE_ENV);
+  const production = nodeEnv.toLowerCase() === 'production';
   const useDerivedKeys = parseBoolean(env('NITRO_USE_DERIVED_KEYS'), false);
   const hasSupabaseUrl = Boolean(
     env('SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_URL', 'morpheus_SUPABASE_URL')
@@ -315,18 +356,44 @@ export function createRelayerConfig() {
   );
   const activeChains = parseActiveChains(env('MORPHEUS_ACTIVE_CHAINS') || 'neo_n3');
   const maxRetries = Math.max(parseNumericEnv(env('MORPHEUS_RELAYER_MAX_RETRIES'), 5), 0);
-  // Neo N3 updater signer material is only required when Neo N3 is an active
-  // chain — a neox-only (or feed-only / derived-key) relayer must not demand it.
-  const updaterSigner =
-    mode === 'feed_only' || useDerivedKeys || !activeChains.includes('neo_n3')
-      ? { materialized: null }
-      : resolvePinnedNeoN3Role(network, 'updater', {
-          env,
-        });
+  const hostSignerEnvNames = configuredHostSignerEnvNames();
+  const neoXHostKeyEnvNames = hostSignerEnvNames.filter((name) => /NEOX|EVM/i.test(name));
+  const neoN3HostKeyEnvNames = hostSignerEnvNames.filter(
+    (name) => !neoXHostKeyEnvNames.includes(name)
+  );
+  const allowInsecureHostEvmSigner =
+    !production && parseBoolean(env('MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER'), false);
+
+  if (neoN3HostKeyEnvNames.length > 0) {
+    throw new Error(
+      'host Neo N3 signing key configuration is forbidden in the relayer; ' +
+        `use custody key ids instead (configured: ${neoN3HostKeyEnvNames.join(', ')})`
+    );
+  }
+  if (production && neoXHostKeyEnvNames.length > 0) {
+    throw new Error(
+      'host signing key configuration is forbidden in the production relayer; ' +
+        `use custody/enclave signing instead (configured: ${neoXHostKeyEnvNames.join(', ')})`
+    );
+  }
+  if (!production && neoXHostKeyEnvNames.length > 0 && !allowInsecureHostEvmSigner) {
+    throw new Error(
+      'Neo X host signing is development-only and disabled; remove the EVM private key or set ' +
+        'MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER=true for an explicit non-production test'
+    );
+  }
+  if (production && activeChains.includes('neox')) {
+    throw new Error(
+      'Neo X production signing is unavailable: the shipped Rust enclave/custody runtime has no ' +
+        'complete secp256k1 signer. Remove neox from MORPHEUS_ACTIVE_CHAINS until the measured ' +
+        'custody/enclave signer and transaction relay are implemented.'
+    );
+  }
 
   return {
     repoRoot,
     network,
+    nodeEnv,
     mode,
     useDerivedKeys,
     instanceId:
@@ -493,14 +560,27 @@ export function createRelayerConfig() {
     },
     stateFile,
     nitro: {
-      apiUrl: resolveNitroApiUrls(network, registry),
+      apiUrl: resolveNitroApiUrls(network, registry, {
+        allowPublicFallbacks: !production,
+      }),
+      // Every relayer runtime request is confidential or mutating. Production
+      // always forces one endpoint; development retains the old fallback pool
+      // behind an explicit config value.
+      allowFallback:
+        !production && parseBoolean(env('MORPHEUS_RELAYER_ALLOW_RUNTIME_FALLBACKS'), true),
       // Endpoint that holds the signing keys (enclave). Used for /sign/payload +
       // key derivation. Defaults to the worker apiUrl so single-endpoint
       // deployments are unchanged; set NITRO_SIGNER_URL when the worker (compute)
       // and the signer (enclave) run on separate ports.
       signerUrl:
         trimString(env('NITRO_SIGNER_URL', 'MORPHEUS_SIGNER_URL')) ||
-        resolveNitroApiUrls(network, registry),
+        resolveNitroApiUrls(network, registry, {
+          allowPublicFallbacks: !production,
+        }),
+      // Custody signer service (SIGNER_SERVICE.md §5): the relayer holds no keys —
+      // all Neo N3 signing goes through this service's policy-checked endpoints.
+      custodyUrl: trimString(env('SIGNER_SERVICE_URL')),
+      custodyToken: trimString(env('SIGNER_SERVICE_TOKEN')),
       // Compute-in-enclave cutover flag (Phase 4). Default FALSE: the relayer keeps
       // today's split path (host-worker compute via callNitro, then a separate
       // enclave /sign/payload). When TRUE the attested lanes (price/feed query,
@@ -527,7 +607,9 @@ export function createRelayerConfig() {
       enclaveFulfillUrl:
         trimString(env('MORPHEUS_RELAYER_ENCLAVE_FULFILL_URL')) ||
         trimString(env('NITRO_SIGNER_URL', 'MORPHEUS_SIGNER_URL')) ||
-        resolveNitroApiUrls(network, registry),
+        resolveNitroApiUrls(network, registry, {
+          allowPublicFallbacks: !production,
+        }),
       // Enclave-ONLY endpoint for the confidential /oracle/decrypt (and any future
       // key/sign) lane. Confidential decryption MUST happen inside the measured
       // enclave; it must NEVER fail over to a public/edge endpoint (that would
@@ -542,7 +624,9 @@ export function createRelayerConfig() {
         trimString(env('MORPHEUS_RELAYER_ENCLAVE_DECRYPT_URL', 'MORPHEUS_DECRYPT_URL')) ||
         trimString(env('MORPHEUS_RELAYER_ENCLAVE_FULFILL_URL')) ||
         trimString(env('NITRO_SIGNER_URL', 'MORPHEUS_SIGNER_URL')) ||
-        resolveNitroApiUrls(network, registry),
+        resolveNitroApiUrls(network, registry, {
+          allowPublicFallbacks: !production,
+        }),
       // PEM of the pinned AWS Nitro Enclaves attestation ROOT certificate. A result
       // can be labeled enclave-attested only when its COSE_Sign1 signature and chain
       // verify to this root. When unset, fulfillment may continue for compatibility,
@@ -593,8 +677,14 @@ export function createRelayerConfig() {
       datafeedContract:
         envNetworkScoped(network, 'CONTRACT_MORPHEUS_DATAFEED_HASH') ||
         trimString(registry.neo_n3?.contracts?.morpheus_datafeed || ''),
-      updaterWif: updaterSigner.materialized?.wif || '',
-      updaterPrivateKey: updaterSigner.materialized?.private_key || '',
+      // Custody key ids per signer role (docs/SIGNER_SERVICE.md §5). The relayer
+      // names a key id and receives public identity + policy-checked signatures;
+      // the secret never leaves the enclave.
+      custodyKeyIds: {
+        updater: trimString(env('SIGNER_ROLE_UPDATER_KEY_ID')),
+        oracle_verifier: trimString(env('SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID')),
+        fee_funder: trimString(env('SIGNER_ROLE_FEE_FUNDER_KEY_ID')),
+      },
       feeTopUp: {
         enabled: parseBoolean(env('MORPHEUS_RELAYER_NEO_N3_AUTO_TOPUP_ENABLED'), true),
         minBalance: parseIntegerString(
@@ -608,18 +698,6 @@ export function createRelayerConfig() {
         maxTopUpAmount: parseIntegerString(
           env('MORPHEUS_RELAYER_NEO_N3_AUTO_TOPUP_MAX_FIXED8'),
           '500000000'
-        ),
-        funderWif: env(
-          'MORPHEUS_RELAYER_NEO_N3_FEE_FUNDER_WIF',
-          'MORPHEUS_NEO_N3_FEE_FUNDER_WIF',
-          'NITRO_NEO_N3_WIF',
-          'MORPHEUS_RELAYER_NEO_N3_WIF'
-        ),
-        funderPrivateKey: env(
-          'MORPHEUS_RELAYER_NEO_N3_FEE_FUNDER_PRIVATE_KEY',
-          'MORPHEUS_NEO_N3_FEE_FUNDER_PRIVATE_KEY',
-          'NITRO_NEO_N3_PRIVATE_KEY',
-          'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY'
         ),
       },
     },
@@ -661,11 +739,16 @@ export function createRelayerConfig() {
       oracleContract:
         trimString(env('MORPHEUS_RELAYER_NEOX_ORACLE', 'NEOX_ORACLE')) ||
         trimString(registry.neox?.contracts?.morpheus_oracle || ''),
-      // EVM signer is a raw secp256k1 key (the Nitro enclave signs secp256r1 only).
-      updaterPrivateKey: trimString(
-        env('MORPHEUS_RELAYER_NEOX_UPDATER_PK', 'NEOX_UPDATER_PK', 'NEOX_FEED_PK')
-      ),
-      verifierPrivateKey: trimString(env('MORPHEUS_RELAYER_NEOX_VERIFIER_PK', 'NEOX_VERIFIER_PK')),
+      // Legacy host secp256k1 signing is only available for an explicitly
+      // opted-in non-production test. The production Rust EIF has no complete
+      // EVM custody signer, so createRelayerConfig refuses the Neo X lane.
+      allowHostSigner: allowInsecureHostEvmSigner,
+      updaterPrivateKey: allowInsecureHostEvmSigner
+        ? trimString(env('MORPHEUS_RELAYER_NEOX_UPDATER_PK', 'NEOX_UPDATER_PK', 'NEOX_FEED_PK'))
+        : '',
+      verifierPrivateKey: allowInsecureHostEvmSigner
+        ? trimString(env('MORPHEUS_RELAYER_NEOX_VERIFIER_PK', 'NEOX_VERIFIER_PK'))
+        : '',
       // Deadline for the fulfillRequest receipt wait — a never-mined tx must not
       // wedge the per-signer submission queue (mirrors the Neo N3 45s default).
       confirmTimeoutMs: Math.max(

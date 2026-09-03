@@ -1,4 +1,4 @@
-import { isAuthorizedControlPlaneRequest } from '@/lib/control-plane-auth';
+import { isAuthorizedWorkflowRequest } from '@/lib/control-plane-auth';
 import { sendHeartbeat } from '@/lib/heartbeat';
 import {
   fetchAutomationJobForBackend,
@@ -12,6 +12,7 @@ import {
   buildUpkeepExecutionPayload,
 } from '@r3e-network/neo-os-services-shared/automation-supervisor';
 import { badRequest } from '@/lib/api-helpers';
+import { findHostSignerMaterialPaths } from '@/lib/host-key-guard';
 import { trimString } from '@/lib/strings';
 
 export const runtime = 'nodejs';
@@ -25,15 +26,6 @@ function parseTimestamp(value: unknown) {
   if (!text) return null;
   const date = new Date(text);
   return Number.isNaN(date.getTime()) ? null : date;
-}
-
-// Raw signer material must never travel in an API body — signing goes through
-// the server-side enclave/KMS-backed signer (resolveNeoN3UpdaterSigner). Detect
-// any wif/private_key field so the request can be rejected outright.
-function hasRawSignerMaterial(body: Record<string, unknown>) {
-  return Boolean(
-    trimString(body.wif || '') || trimString(body.private_key || body.privateKey || '')
-  );
 }
 
 function buildRouteUpkeepDispatch(
@@ -88,14 +80,14 @@ function isDuplicateQueueError(error: unknown) {
 }
 
 export async function POST(request: Request) {
-  if (!isAuthorizedControlPlaneRequest(request)) {
+  if (!isAuthorizedWorkflowRequest(request)) {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
 
   const body = await request.json().catch(() => null);
   if (!isPlainObject(body)) return badRequest('invalid JSON body');
 
-  if (hasRawSignerMaterial(body)) {
+  if (findHostSignerMaterialPaths(body).length > 0) {
     return badRequest(
       'raw signer material (wif/private_key) is not accepted; signing uses the configured enclave/KMS signer'
     );

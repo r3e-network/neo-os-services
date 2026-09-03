@@ -3,6 +3,7 @@
 //! a trait so the dispatch core stays a pure function of
 //! `(state, method, url, headers, body)` and the tests substitute fakes.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -59,9 +60,8 @@ pub trait SignerPlane: Send + Sync {
     ) -> Result<serde_json::Value, crate::RuntimeError>;
 }
 
-/// `{ok, status, body}` — `computeViaWorker`'s return shape, so the
-/// fulfillment pipeline consumes the bridge exactly as the merged server
-/// consumed the in-process worker.
+/// `{ok, status, body}` — the historical `computeViaWorker` response shape
+/// retained at the fulfillment boundary while the last request types migrate.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BridgeReply {
     pub ok: bool,
@@ -69,23 +69,50 @@ pub struct BridgeReply {
     pub body: serde_json::Value,
 }
 
-/// The compute plane: the keyless Node child on loopback :8090 in production.
+/// Temporary fulfillment-compute seam. Production uses the deterministic
+/// no-IO refusal implementation; tests inject canned compute outcomes so
+/// digest and signature assertions stay independent from lane execution.
 pub trait BridgePlane: Send + Sync {
-    /// POST `payload` to the child's worker handler at `route`. The caller
-    /// resolves the worker-auth token from the overlay exactly as
-    /// `resolveWorkerAuthToken` does (MORPHEUS_RUNTIME_TOKEN, then
-    /// NITRO_API_TOKEN, then NITRO_SHARED_SECRET) and hands it over; the
-    /// bridge attaches it as both `authorization: Bearer` and
-    /// `x-nitro-token` when present.
     fn forward(
         &self,
         route: &str,
         payload: &serde_json::Value,
         auth_token: Option<&str>,
     ) -> BridgeReply;
+}
 
-    /// /health's `checks.compute`: whether the compute lane can serve at all.
-    fn ready(&self) -> bool;
+/// The feed price plane: one batched TwelveData `/price` call over the
+/// enclave egress lane in production, a canned map in tests. The reply is
+/// keyed by the ORIGINAL request symbol — unmapped symbols and dropped
+/// quotes are simply absent (`missing` to the fold).
+pub trait PriceSource: Send + Sync {
+    fn fetch_prices(
+        &self,
+        symbols: &[String],
+    ) -> Result<BTreeMap<String, f64>, crate::RuntimeError>;
+}
+
+/// The oracle IO plane — the three env effects the folded oracle lanes
+/// (`oracle_read.rs`) cannot do themselves: the upstream HTTP transport, the
+/// SSRF-pinned DNS resolution, and the clock/sleep pair
+/// `perform_oracle_fetch` drives timeouts with. Production wires reqwest +
+/// `ToSocketAddrs` + `SystemTime` ([`crate::oracle_read`] docs); tests
+/// substitute canned transports, which is also how the JS fixture tests
+/// inject fetch.
+pub trait OracleIo: Send + Sync {
+    fn fetch(
+        &self,
+        request: &morpheus_compute::transport::HttpRequest,
+    ) -> Result<morpheus_compute::transport::HttpResponse, String>;
+
+    fn dns_lookup(
+        &self,
+        host: &str,
+    ) -> Result<Vec<morpheus_compute::ssrf::ResolvedAddress>, String>;
+
+    fn now_ms(&self) -> u64;
+
+    fn sleep_ms(&self, ms: u64);
 }
 
 /// The attestation-gated KMS release seam: decrypt a base64 ciphertext from
@@ -132,22 +159,31 @@ impl Default for KmsDiag {
 /// Everything the dispatch reads or mutates. Interior mutability only —
 /// dispatch takes `&AppState` and stays a pure function of it.
 pub struct AppState {
-    /// Base = the image ENV snapshot; provisioned values shadow it.
-    pub overlay: RwLock<EnvOverlay>,
+    /// Base = the image ENV snapshot; provisioned values shadow it. Shared
+    /// behind an `Arc` so the custody signing plane reads the SAME live
+    /// environment the routes see — `/provision` can connect custody
+    /// (`SIGNER_SERVICE_URL`) mid-flight, and the plane must observe that on
+    /// its next call without the host holding a second env copy.
+    pub overlay: Arc<RwLock<EnvOverlay>>,
     /// The KMS envelope version currently authorizing /provision. 0 = no
     /// KMS-materialized token yet (first boot). Monotonic increase enforced.
     pub runtime_token_kms_version: AtomicU64,
     pub attest: Box<dyn nitro_attest::release::AttestationSource>,
     pub signer: Box<dyn SignerPlane>,
-    pub bridge: Box<dyn BridgePlane>,
+    /// Canned fulfillment compute for byte-contract unit tests. Production
+    /// has no override and always executes the route match in-process.
+    #[cfg(test)]
+    pub fulfillment_compute_override: Option<Box<dyn BridgePlane>>,
     pub kms: Box<dyn KmsReleaser>,
+    /// The `/feed/sign` price fetcher (`feed_sign.rs`).
+    pub price: Box<dyn PriceSource>,
+    /// The folded oracle lanes' egress/clock plane (`oracle_read.rs`).
+    pub oracle_io: Box<dyn OracleIo>,
+    /// The oracle provider caches (config TTL, response TTL, circuit
+    /// breakers) — module-level Maps in the JS worker, shared across
+    /// requests here.
+    pub oracle_runtime: Mutex<morpheus_compute::oracle::providers::ProviderRuntime>,
     pub kms_diag: Mutex<KmsDiag>,
-    /// The keyless compute child's supervisor, when the bin launched one.
-    /// `/provision` respawns it with the merged overlay (`child.rs`); the
-    /// dispatch core never touches it — the bridge plane forwards over
-    /// loopback regardless. `None` in tests and parity runs that drive the
-    /// child themselves.
-    pub bridge_child: Option<Arc<crate::child::BridgeChild>>,
 }
 
 impl AppState {

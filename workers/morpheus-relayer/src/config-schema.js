@@ -1,4 +1,3 @@
-import { NEO_N3_SIGNER_ENV_KEYS } from './lib/neo-signers.js';
 import { isSecretName } from './lib/secret-redaction.js';
 
 // Declarative manifest of every environment variable createRelayerConfig() reads.
@@ -46,10 +45,10 @@ export function isSecretEnvName(name) {
 //
 // `required` here means "the relayer cannot function without it in a typical
 // deployment". Several settings are conditionally required (e.g. the Neo N3
-// updater signer is only needed when neo_n3 is active and not derived-key /
-// feed-only); those are marked required:false with the condition in the
-// description, and the dynamic validator (validateRelayerConfig) layers the
-// conditional checks on top using the built config object.
+// custody updater key id is only needed when neo_n3 is active / not feed-only);
+// those are marked required:false with the condition in the description, and
+// the dynamic validator (validateRelayerConfig) layers the conditional checks
+// on top using the built config object.
 export const CONFIG_SCHEMA = [
   {
     key: 'network',
@@ -71,7 +70,7 @@ export const CONFIG_SCHEMA = [
     default: 'false',
     required: false,
     description:
-      'When true, signing keys are derived in-enclave (no local updater signer required).',
+      'Relayed to runtime API calls (useDerivedKeys payload flag) for in-enclave derived-key lanes. Relayer Neo N3 signing no longer uses derived keys — it always goes through the custody signer service.',
   },
   {
     key: 'instanceId',
@@ -623,31 +622,12 @@ export const CONFIG_SCHEMA = [
     description: 'Max cumulative top-up amount (fixed8).',
   },
   {
-    key: 'neo_n3.feeTopUp.funderWif',
-    aliases: [
-      'MORPHEUS_RELAYER_NEO_N3_FEE_FUNDER_WIF',
-      'MORPHEUS_NEO_N3_FEE_FUNDER_WIF',
-      'NITRO_NEO_N3_WIF',
-      'MORPHEUS_RELAYER_NEO_N3_WIF',
-    ],
+    key: 'neo_n3.custodyKeyIds.fee_funder',
+    aliases: ['SIGNER_ROLE_FEE_FUNDER_KEY_ID'],
     default: '(unset)',
     required: false,
-    secret: true,
     description:
-      'Fee-funder WIF; required only if auto top-up is enabled and the updater needs funding.',
-  },
-  {
-    key: 'neo_n3.feeTopUp.funderPrivateKey',
-    aliases: [
-      'MORPHEUS_RELAYER_NEO_N3_FEE_FUNDER_PRIVATE_KEY',
-      'MORPHEUS_NEO_N3_FEE_FUNDER_PRIVATE_KEY',
-      'NITRO_NEO_N3_PRIVATE_KEY',
-      'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
-    ],
-    default: '(unset)',
-    required: false,
-    secret: true,
-    description: 'Fee-funder private key (alternative to WIF).',
+      'Custody key id funding updater fee top-ups; required only if auto top-up is enabled and the updater needs funding.',
   },
 
   // --- Nitro / enclave ---
@@ -661,17 +641,42 @@ export const CONFIG_SCHEMA = [
       'MORPHEUS_TESTNET_NITRO_API_URL',
       'NITRO_API_URL',
     ],
-    default: 'public oracle/edge fallbacks (oracle.meshmini.app, edge.meshmini.app)',
+    default: 'development: public oracle/edge fallbacks; production: unset',
     required: false,
     description:
-      'Nitro worker (compute) API URL(s); the network-scoped alias for the active network is read.',
+      'Nitro worker API URL(s); production confidential calls require an explicit URL and use only the first endpoint.',
+  },
+  {
+    key: 'nitro.allowFallback',
+    aliases: ['MORPHEUS_RELAYER_ALLOW_RUNTIME_FALLBACKS'],
+    default: 'true outside production; false in production',
+    required: false,
+    description:
+      'Development migration switch for Nitro endpoint failover; production ignores it and fails closed on the primary endpoint.',
   },
   {
     key: 'nitro.signerUrl',
     aliases: ['NITRO_SIGNER_URL', 'MORPHEUS_SIGNER_URL'],
     default: 'falls back to nitro.apiUrl',
     required: false,
-    description: 'Enclave signer URL (holds keys; /sign/payload + key derivation).',
+    description:
+      'Frontier/legacy signer URL. Neo N3 private keys live in the separate custody service, not this relayer-facing configuration.',
+  },
+  {
+    key: 'nitro.custodyUrl',
+    aliases: ['SIGNER_SERVICE_URL'],
+    default: '(unset)',
+    required: false,
+    description:
+      'Custody signer service base URL; all relayer Neo N3 signing goes through it. Required for the Neo N3 request lane.',
+  },
+  {
+    key: 'nitro.custodyToken',
+    aliases: ['SIGNER_SERVICE_TOKEN'],
+    default: '(unset)',
+    required: false,
+    secret: true,
+    description: 'Bearer token for the custody signer service API.',
   },
   {
     key: 'nitro.enclaveFulfill',
@@ -867,16 +872,23 @@ export const CONFIG_SCHEMA = [
     description: 'BetterStack dead-letter push-alert URL.',
   },
 
-  // --- Neo N3 updater signer (pinned-role material) ---
+  // --- Neo N3 custody signer keys (docs/SIGNER_SERVICE.md §5) ---
   {
-    key: 'neo_n3.updaterSigner',
-    aliases: [...NEO_N3_SIGNER_ENV_KEYS],
-    default: 'pinned signer-identities.json role',
+    key: 'neo_n3.custodyKeyIds.updater',
+    aliases: ['SIGNER_ROLE_UPDATER_KEY_ID'],
+    default: '(unset)',
     required: false,
-    secret: true,
     description:
-      'Neo N3 updater signer material (WIF / private key), resolved from the pinned role registry. ' +
-      'Required when neo_n3 is active AND mode is not feed_only AND derived keys are off.',
+      'Custody key id signing fulfillRequest/queueAutomationRequest transactions. ' +
+      'Required when neo_n3 is active AND mode is not feed_only.',
+  },
+  {
+    key: 'neo_n3.custodyKeyIds.oracle_verifier',
+    aliases: ['SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID'],
+    default: '(unset)',
+    required: false,
+    description:
+      'Custody key id signing fulfillment result payloads; its public key must match the on-chain-pinned oracle_verifier.',
   },
 
   // --- Runtime config packing ---

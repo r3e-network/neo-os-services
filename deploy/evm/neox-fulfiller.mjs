@@ -42,6 +42,24 @@ const ABI_PATH =
 const abi = JSON.parse(readFileSync(ABI_PATH, 'utf8'));
 
 const log = (m) => console.log(`[${new Date().toISOString()}] ${m}`);
+if (
+  String(process.env.NODE_ENV || '')
+    .trim()
+    .toLowerCase() === 'production'
+) {
+  console.error(
+    'Neo X production signing is disabled in this host-side fulfiller: no custody/enclave ' +
+      'secp256k1 signer is wired. Implement, deploy, and attest that signer path before enabling this service.'
+  );
+  process.exit(78);
+}
+if (!/^(1|true|yes|on)$/i.test(String(process.env.MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER || ''))) {
+  console.error(
+    'Neo X host-side fulfiller is development-only; set ' +
+      'MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER=true for an explicit non-production test.'
+  );
+  process.exit(78);
+}
 const provider = new ethers.JsonRpcProvider(RPC, CHAIN_ID);
 const updaterPk = process.env.NEOX_UPDATER_PK || process.env.NEOX_FEED_PK;
 if (!ADDR || !updaterPk) {

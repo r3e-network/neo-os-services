@@ -4,8 +4,10 @@
 enclave; no private key or confidential plaintext ever exists on the host or the edge.
 
 **Source:** adversarial map 2026-06-15 (workflow wg25kfuea, 40 agents) →
-28 confirmed gaps. Status: the confidential _compute_ is in-TEE; several _keys_ and the
-whole _EVM path_ and two control-plane lanes are not.
+28 confirmed gaps, updated by the 2026-09 production fail-closed audit.
+Status: Neo N3 custody is in the current migration; the shipped Rust frontier
+keeps confidential compute in-TEE, but the complete _EVM signing path_ is not
+implemented in that measured runtime.
 
 ## ✅ Already in-TEE (verified clean)
 
@@ -19,15 +21,29 @@ whole _EVM path_ and two control-plane lanes are not.
 
 ## ✗ Gaps, by root cause
 
-### RC1 — No in-TEE EVM (secp256k1) signing → entire Neo X path is host-side (CRITICAL/HIGH)
+### RC1 — No shipped in-TEE EVM (secp256k1) signer (CRITICAL/HIGH)
 
-The enclave `/sign/payload` signs secp256r1 (Neo N3) only. Every EVM key + signature is host-side:
-relayer fulfillment (`neox.js signNeoXFulfillment`, `source:'relayer_local_evm'`), relayer tx
-submission (`updaterSigner`), feed-pusher `pushNeoX` (`NEOX_FEED_PK` raw on host), the standalone
-`deploy/evm/neox-fulfiller.mjs`, and `config.js:567-571` reading both EVM keys from host env. The
-flag-gated in-enclave `/oracle/fulfill` EVM path exists but is OFF in prod and still reads the key
-from host env (not sealed). The on-chain _verifier_ signature (forgeable oracle results) is the
-confidential part and it signs on the host.
+The measured Rust frontier does **not** expose a complete Neo X signer:
+`workers/nitro-enclave-host` returns `503` for Neo X `/oracle/fulfill` and
+`/feed/sign`, and the Rust custody service currently stores Neo N3 P-256 keys
+only. `crates/morpheus-compute` contains secp256k1 verification/recovery for the
+message-reveal lane; that is not a signing or custody implementation.
+
+The older Node `enclave-server.mjs` contains an EVM signing prototype and KMS
+materialization code, but `Dockerfile.enclave` no longer ships Node. Those
+tests are compatibility/golden vectors and must not be cited as evidence that
+the production EIF can sign Neo X.
+
+Without a production gate, the remaining EVM signatures are host-side:
+relayer fulfillment (`neox.js`, `source: 'relayer_local_evm'`), relayer
+transaction submission (`updaterSigner`), feed-pusher `pushNeoX`
+(`NEOX_FEED_PK`), and `deploy/evm/neox-fulfiller.mjs`. Production now treats
+that configuration as unavailable: activating the relayer Neo X lane or
+supplying a host EVM private key fails before signing/broadcast. The feed
+pusher exposes an explicit future enclave-route gate, but the current Rust EIF
+returns `503` until a measured secp256k1 signer is shipped. Development can exercise the
+legacy path only through an explicit unsafe opt-in. This closes the exposure by
+disabling the lane; it does **not** claim Phase D is implemented.
 
 ### RC2 — Keys are host-injected / host-unsealed, not enclave-born (PARTIALLY RESOLVED 2026-06-15)
 
@@ -44,29 +60,46 @@ back to a host keystore. Fixed in `deploy/nitro/nsm-attest/cms.go` (`berToDER` +
 enclave-decrypt-only ciphertext); both host keystores were **shredded** — no host-resident
 confidential plaintext remains. Published on-chain + round-trip validated.
 
-**✗ Neo N3 signer keys — STILL host-injected (the remaining RC2 gap).** `oracle_verifier` +
-`updater` are still plaintext in `morpheus-nitro-signer.env`
-(`MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET`/`_PRIVATE_KEY`, `MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET`/
-`_PRIVATE_KEY`) and injected via `/provision`. Now that in-TEE KMS decrypt works, seal them the same
-way: add a generic `materializeNeoN3RoleKeyFromKms` (decrypt ciphertext → set the role WIF env the
-signer reads), KMS-seal each WIF, provision the ciphertext instead of plaintext, drop the plaintext
-env. The neodid salt + SM masters remain host-derivable.
+**✓ Neo N3 signer keys — CLOSED by the custody migration (supersedes the
+KMS-seal plan).** No runtime lane holds or reads `oracle_verifier`/`updater`
+WIF material any more: relayer fulfillment, worker sign/tx-relay, feed-topup,
+web control-plane relay, and NeoDID digest signatures all sign through the
+custody signer service inside the enclave (`SIGNER_SERVICE_URL` +
+`SIGNER_ROLE_*_KEY_ID`). Rendered runtime env files are WIF-free —
+`check-nitro-env.mjs` treats an absent WIF as the healthy state and a
+registry-mismatched leftover WIF as a hard failure. No
+`materializeNeoN3RoleKeyFromKms` is needed.
 
-### RC3 — CP-01 only partially fixed (CRITICAL)
+### RC3 — CP-01 + custody migration (CLOSED)
 
-The feed-lane leak was retired, but `callback-broadcast` + `automation-execute` workflow lanes
-(`workflows-impl.js`) still resolve the Neo N3 WIF from the edge env and forward it to the Vercel
-backend (`apps/web`), which signs Neo N3 txs host-side with neon-js. The WIF lives as a Cloudflare
-edge secret + a Vercel env + signs on a non-TEE host.
+The feed-lane leak was retired by CP-01; the `callback-broadcast` +
+`automation-execute` workflow lanes were subsequently moved to the
+custody-backed worker relay (no WIF is resolved from the edge env, forwarded
+to the Vercel backend, or signed host-side — `apps/web` reads no signer env).
+
+The authorization boundary is now separate too. `MORPHEUS_RUNTIME_TOKEN` is a
+Nitro data-plane bearer and cannot authorize callback broadcast, feed tick,
+automation execution, or control-plane job reads. Workflow, operator, and
+relayer-operations callers use `MORPHEUS_WORKFLOW_API_KEY`,
+`MORPHEUS_OPERATOR_API_KEY`, and `MORPHEUS_RELAYER_ADMIN_API_KEY`
+respectively. A legacy runtime-token compatibility switch is development-only;
+production ignores it.
 
 ### RC4 — Split / fallback topologies route confidential work off-TEE (HIGH/MEDIUM)
 
 A standalone host `nitro-worker` (`server.js`, `morpheus-nitro-worker.service`, `:8788`) runs the
-SAME decrypt code on the host; if the relayer `apiUrl` points there, decrypt + the X25519 key run
-host-side. `/oracle/message-reveal` isn't in the enclave's route set (only the 6 execution routes +
-sign/keys), so it's served by that host worker. The relayer also appends public-edge fallbacks
-(`oracle.meshmini.app`/`edge`) to `apiUrl` with `allowFallback` default true → confidential compute
-can be sent off-box if the local URL is unset.
+compatibility decrypt code on the host; if the relayer `apiUrl` points there, decrypt + the X25519
+key run host-side. The Rust EIF now serves `/oracle/message-reveal` and the other declared
+execution routes in-process. The remaining exposure is topology selection, not a missing route:
+production confidential traffic must target the vsock-backed Rust endpoint, not the standalone
+worker.
+
+The relayer and web tier previously appended public-edge fallbacks
+(`oracle.meshmini.app` / `edge.meshmini.app`) and attempted them in sequence.
+Production confidential calls now require an explicit endpoint and attempt one
+endpoint only. The public URLs remain valid explicit destinations for
+non-confidential health/status/catalog probes; they are no longer synthesized
+as confidential failover.
 
 ### RC5 — Host-side compute + signing fast-paths (MEDIUM)
 
@@ -77,12 +110,15 @@ derived-keys path derives the Neo N3 key in host memory on the primary path.
 
 ## Remediation roadmap (each enclave-code phase = an EIF rebuild + cutover)
 
-- **Phase A — routing/config (lower risk, mostly flags/topology):** turn on
+- **Phase A — routing/config (production gate complete; deployment validation remains):** turn on
   `MORPHEUS_RELAYER_ENCLAVE_FULFILL` (atomic decrypt+sign in-TEE) and
   `MORPHEUS_FEED_PUSHER_ENCLAVE_SIGN` (feed compute in-TEE); pin relayer
-  `MORPHEUS_RUNTIME_URL/NITRO_API_URL` to the vsock bridge and set `allowFallback:false` for
-  decrypt/compute; decommission `morpheus-nitro-worker.service`; add `/oracle/message-reveal` to the
-  enclave route set + gateway. Validate each.
+  `MORPHEUS_RUNTIME_URL/NITRO_API_URL` to the vsock bridge; production code now forces
+  single-endpoint confidential routing and refuses synthesized public fallbacks. Decommission
+  `morpheus-nitro-worker.service`; `/oracle/message-reveal` is already in the Rust route set and
+  gateway. Before enabling enclave fulfillment for every request type, validate the migrated
+  compute/oracle/NeoDID routes and keep session, VRF, automation, paymaster, feed, and zkLogin
+  request types on the compatibility topology until their Rust adapters land.
 - **Phase B — finish CP-01:** make `callback-broadcast` + `automation-execute` sign in-TEE (call the
   enclave `/sign/payload`), delete `resolveNeoN3*Signer` + the `...signer` spreads, remove the WIF
   from the control-plane + Vercel envs. Rotate that WIF (see RC3).
@@ -104,13 +140,16 @@ derived-keys path derives the Neo N3 key in host memory on the primary path.
     - IAM change (infra access + design decision).
   - **Rotate** the X25519 key after the switch (it was host-exposed) — with old-key retention for
     payloads already encrypted to the old pubkey.
-- **Phase D — in-TEE EVM signing (RC1):** add a secp256k1 signing role to the enclave; generate+seal
+- **Phase D — in-TEE EVM signing (RC1, NOT IMPLEMENTED in the shipped Rust EIF):** add a
+  secp256k1 signing role to the Rust custody service/frontier; generate+seal
   the EVM verifier key in-TEE; route all Neo X feed + fulfillment signing through the enclave; keep
   only a low-privilege gas/submission key on the host (or move it in-TEE too).
 
 ## Honest framing
 
-The user requirement "all computation secure + confidential inside the TEE" is met for the
-**compute**, but NOT for **key custody** (RC1/RC2) or two **signing lanes** (RC3), and is bypassable
-in some **topologies** (RC4/RC5). Closing it fully = Phases A–D; the architectural core is Phase C
-(enclave self-sufficiency so no key is ever host-unsealed) and Phase D (in-TEE EVM signing).
+The user requirement "all computation secure + confidential inside the TEE" is
+met for the current Rust confidential-compute lanes and Neo N3 custody
+migration. It is **not** met for Neo X signing. The production guard makes that
+gap fail closed by disabling host signing; completing Phase D still requires a
+measured Rust secp256k1 custody/signing API, EIF rebuild, attestation/KMS policy
+cutover, key rotation, and live on-chain validation.

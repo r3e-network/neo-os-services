@@ -22,6 +22,10 @@
     "./confidential-envelope": {
       "default": "./src/confidential-envelope.js"
     },
+    "./credential-separation": {
+      "types": "./src/credential-separation.d.ts",
+      "default": "./src/credential-separation.js"
+    },
     "./automation-supervisor": {
       "types": "./src/automation-supervisor.d.ts",
       "default": "./src/automation-supervisor.js"

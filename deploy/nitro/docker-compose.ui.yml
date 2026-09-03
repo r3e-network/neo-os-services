@@ -51,6 +51,7 @@ services:
       nitro-worker:
         condition: service_healthy
     environment:
+      NODE_ENV: production
       NITRO_API_URL: http://nitro-worker:${NITRO_WORKER_PORT}
       NITRO_SHARED_SECRET: ${NITRO_SHARED_SECRET}
       NITRO_API_TOKEN: ${NITRO_API_TOKEN}

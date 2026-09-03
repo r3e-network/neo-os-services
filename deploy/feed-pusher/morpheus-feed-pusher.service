@@ -8,6 +8,7 @@ OnFailure=morpheus-alert@%n.service
 [Service]
 Type=oneshot
 EnvironmentFile=/opt/morpheus/nitro/feed-pusher.env
+Environment=NODE_ENV=production
 # Neo N3 lane only - Neo X runs on its own faster timer (feed-pusher-neox).
 Environment=FEED_CHAINS=neo-n3
 WorkingDirectory=/opt/neoos/services/deploy/feed-pusher

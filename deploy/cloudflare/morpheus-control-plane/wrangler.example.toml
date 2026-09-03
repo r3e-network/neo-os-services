@@ -3,6 +3,7 @@ main = "worker.mjs"
 compatibility_date = "2026-03-20"
 
 [vars]
+MORPHEUS_ENVIRONMENT = "production"
 SUPABASE_URL = ""
 MORPHEUS_CONTROL_PLANE_API_KEY = ""
 UPSTASH_REDIS_REST_URL = ""

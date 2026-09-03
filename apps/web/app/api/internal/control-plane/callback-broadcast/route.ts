@@ -1,22 +1,14 @@
-import { isAuthorizedControlPlaneRequest } from '@/lib/control-plane-auth';
+import { isAuthorizedWorkflowRequest } from '@/lib/control-plane-auth';
 import { sendHeartbeat } from '@/lib/heartbeat';
 import { fulfillNeoN3RequestViaBackend, resolveControlPlaneNetwork } from '@/lib/neo-control-plane';
 import { badRequest } from '@/lib/api-helpers';
+import { findHostSignerMaterialPaths } from '@/lib/host-key-guard';
 import { trimString } from '@/lib/strings';
 
 export const runtime = 'nodejs';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function readSignerMaterial(body: Record<string, unknown>) {
-  const wif = trimString(body.wif || '');
-  const private_key = trimString(body.private_key || body.privateKey || '');
-  return {
-    ...(wif ? { wif } : {}),
-    ...(private_key ? { private_key } : {}),
-  };
 }
 
 function resolveErrorStatus(error: unknown) {
@@ -27,12 +19,18 @@ function resolveErrorStatus(error: unknown) {
 }
 
 export async function POST(request: Request) {
-  if (!isAuthorizedControlPlaneRequest(request)) {
+  if (!isAuthorizedWorkflowRequest(request)) {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
 
   const body = await request.json().catch(() => null);
   if (!isPlainObject(body)) return badRequest('invalid JSON body');
+
+  if (findHostSignerMaterialPaths(body).length > 0) {
+    return badRequest(
+      'raw signer material (wif/private_key) is not accepted; signing is custody-side in the enclave'
+    );
+  }
 
   const network = resolveControlPlaneNetwork(trimString(body.network || 'testnet'));
   const targetChain = trimString(body.target_chain || body.chain || '');
@@ -62,7 +60,6 @@ export async function POST(request: Request) {
       error: errorText,
       verificationSignature,
       resultBytesBase64,
-      ...readSignerMaterial(body),
     });
 
     return Response.json({

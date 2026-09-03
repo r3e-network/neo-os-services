@@ -3,21 +3,20 @@
 //! state machine and `/attestation`'s binding — and nothing else that could
 //! serve a key.
 //!
-//! This is the Phase 4 rewrite of `deploy/nitro/enclave-server.mjs`'s trusted
-//! half. The architecture it implements splits the merged Node server's two
-//! jobs across two processes in one enclave:
+//! This is the Rust replacement for `deploy/nitro/enclave-server.mjs`. The
+//! production image has one execution engine:
 //!
 //! * **This crate** (the host) is the only thing the outside world reaches.
 //!   It authenticates, classifies, provisions, attests, and translates
 //!   signing intents into custody calls over loopback. It holds no private
 //!   key material at all — that is the property that makes the frontier
-//!   auditable, and it is why `/sign/payload` here is a *shim* that refuses
-//!   rather than a signer.
-//! * **The keyless compute child** (`deploy/nitro/bridge-worker.mjs`, port
-//!   8090) serves the worker `handler` — the compute lanes — with a stripped
-//!   environment and no secrets. The host forwards the execution-plane
-//!   passthrough routes and the compute part of `/oracle/fulfill` to it
-//!   (`bridge.rs`), and folds the signature on from the custody service.
+//!   auditable. `/sign/payload` is a policy-enforcing custody client, never a
+//!   local signing fallback.
+//! * **`morpheus-compute`** serves migrated compute, oracle, NeoDID, and
+//!   policy code in-process. Its game engines are parity-complete, but their
+//!   session host has not migrated yet. No Node child or loopback execution
+//!   bridge exists in the measured host. Unmigrated fulfillment request types
+//!   terminate at the deterministic no-IO boundary in [`bridge`].
 //!
 //! The pure core of this crate is [`dispatch`]: `(method, raw_url, headers,
 //! body) -> (status, json body)`, no socket, exactly like the Node server's
@@ -27,11 +26,15 @@
 pub mod attestation;
 pub mod auth;
 pub mod bridge;
-pub mod child;
+pub mod compute_execute;
+pub mod custody;
 pub mod dispatch;
+pub mod feed_sign;
 pub mod fulfill;
 pub mod health;
 pub mod kms_release;
+pub mod neodid;
+pub mod oracle_read;
 pub mod overlay;
 pub mod provision;
 pub mod routes;

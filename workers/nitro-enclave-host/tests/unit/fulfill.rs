@@ -1,9 +1,11 @@
 //! `/oracle/fulfill` fold tests — the fixtures from
 //! `enclave-server.test.mjs` (the golden-vector consensus gate) ported to the
-//! Rust fold. Compute is stubbed at the bridge (`FakeBridge`'s canned reply),
-//! exactly like the mjs suite stubs the worker handler, so the test isolates
-//! the encode -> envelope -> digest -> sign pipeline — the consensus-critical
-//! part — instead of live price data. Byte-exactness is proven the same way:
+//! Rust fold. Most byte-contract tests install a canned fulfillment-compute
+//! override, exactly like the mjs suite stubs the worker handler, so they
+//! isolate the encode -> envelope -> digest -> sign pipeline — the
+//! consensus-critical part — instead of live price data. Dedicated tests
+//! disable that override and exercise production in-process routing.
+//! Byte-exactness is proven the same way:
 //! the SAME `{ok, status, body}` reply is fed into the canonical builders
 //! independently and the fold's `fulfillment_digest_hex` + `verification`
 //! must equal the recomputation.
@@ -44,6 +46,10 @@ fn fixed_price_body() -> serde_json::Value {
 }
 const FIXED_VRF_RANDOMNESS: &str =
     "1111111111111111111111111111111111111111111111111111111111111111";
+const GOLDEN_PUBLIC_KEY_RAW_B64: &str = "vAB/ripK5xzT1PT+KGbSvEEPfGQoxQliNWjSFjDfuhU=";
+const GOLDEN_PRIVATE_KEY_PKCS8_B64: &str =
+    "MC4CAQAwBQYDK2VuBCIEIEgdmKz6RqTG40pP8SVY+7XPGOUXAIbmI4alIH3uMYZ8";
+const GOLDEN_ENVELOPE_JSON: &str = r#"{"v":2,"alg":"X25519-HKDF-SHA256-AES-256-GCM","epk":"1C44axNdzHDw2XVn2U7/uPmX+BfTgq9H4CltjiCRGWQ=","iv":"SOSWOZ3iY82CUNz6","ct":"x4/R3xIpzySVd55wSZFWh1HnCh7nmtYIAEhT","tag":"OUAJuhSWkVm/A0rWJSkFHQ=="}"#;
 
 fn price_reply() -> BridgeReply {
     BridgeReply {
@@ -71,6 +77,16 @@ fn fulfill_harness(reply: BridgeReply) -> TestState {
     );
     harness.bridge.set_reply(reply);
     harness
+}
+
+fn use_production_compute(harness: &mut TestState) {
+    harness.state.fulfillment_compute_override = None;
+}
+
+fn golden_key_env() -> String {
+    format!(
+        r#"{{"algorithm":"X25519-HKDF-SHA256","public_key_raw":"{GOLDEN_PUBLIC_KEY_RAW_B64}","private_key_pkcs8":"{GOLDEN_PRIVATE_KEY_PKCS8_B64}"}}"#
+    )
 }
 
 fn price_body_without_binding() -> serde_json::Value {
@@ -174,6 +190,93 @@ fn neo_n3_with_app_id_digest_envelope_and_signature_byte_exact() {
         response["fulfillment_digest_hex"],
         hex::encode(digest_no_binding)
     );
+}
+
+#[test]
+fn migrated_compute_fulfillment_executes_in_process() {
+    let mut harness = fulfill_harness(price_reply());
+    use_production_compute(&mut harness);
+    let body = json!({
+        "chain": "neo_n3",
+        "request_type": "compute_hash",
+        "request_id": "101",
+        "payload": {
+            "function": "hash.sha256",
+            "input": { "z": 1 },
+        },
+        "fulfillment_context": {},
+    });
+
+    let response = handle_oracle_fulfill(&harness.state, &body).expect("fulfillment");
+    assert_eq!(response["status"], "ok");
+    assert_eq!(response["success"], true);
+    // Successful decryption reaches the canonical compact envelope. The
+    // plaintext itself is deliberately not one of its on-chain fields.
+    assert!(response["result"]
+        .as_str()
+        .expect("encoded compute result")
+        .contains("hash.sha256"));
+    assert!(harness.bridge.forwards().is_empty());
+    // The compute result and the final fulfillment digest both cross custody.
+    assert_eq!(harness.signer.sign_calls().len(), 2);
+}
+
+#[test]
+fn migrated_decrypt_fulfillment_executes_in_process() {
+    let key_env = golden_key_env();
+    let mut harness = test_state(
+        &[
+            ("MORPHEUS_NETWORK", TEST_NETWORK),
+            ("NITRO_API_TOKEN", "s3cret"),
+            ("MORPHEUS_ORACLE_KEY_MATERIAL_JSON", key_env.as_str()),
+            ("MORPHEUS_ORACLE_DECRYPT_REQUIRE_BINDING", "0"),
+        ],
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    use_production_compute(&mut harness);
+    let body = json!({
+        "chain": "neo_n3",
+        "request_type": "decrypt",
+        "request_id": "102",
+        "payload": {
+            "envelope": base64::engine::general_purpose::STANDARD.encode(GOLDEN_ENVELOPE_JSON),
+        },
+        "fulfillment_context": {},
+    });
+
+    let response = handle_oracle_fulfill(&harness.state, &body).expect("fulfillment");
+    assert_eq!(response["status"], "ok");
+    assert_eq!(response["success"], true);
+    assert!(response["result"]
+        .as_str()
+        .expect("encoded decrypt result")
+        .contains(r#""request_type":"decrypt""#));
+    assert!(harness.bridge.forwards().is_empty());
+}
+
+#[test]
+fn an_unmigrated_fulfillment_lane_refuses_without_a_bridge() {
+    let mut harness = fulfill_harness(vrf_reply());
+    use_production_compute(&mut harness);
+    let body = json!({
+        "chain": "neo_n3",
+        "request_type": "random",
+        "request_id": "103",
+        "payload": {},
+        "fulfillment_context": {},
+    });
+
+    let response = handle_oracle_fulfill(&harness.state, &body).expect("signed refusal");
+    assert_eq!(response["status"], "ok");
+    assert_eq!(response["success"], false);
+    assert_eq!(
+        response["error"],
+        "the /vrf/random fulfillment lane has not migrated to Rust"
+    );
+    assert!(harness.bridge.forwards().is_empty());
 }
 
 fn intent_public_key() -> serde_json::Value {

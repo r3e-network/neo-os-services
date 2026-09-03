@@ -9,14 +9,14 @@
 //! allow keeps those copies quiet without weakening any production lint.
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::overlay::EnvOverlay;
 use crate::state::{
-    AppState, BridgePlane, BridgeReply, KmsDiag, KmsReleaseParams, KmsReleaser, RoleReport,
-    SignerPlane,
+    AppState, BridgePlane, BridgeReply, KmsDiag, KmsReleaseParams, KmsReleaser, OracleIo,
+    PriceSource, RoleReport, SignerPlane,
 };
 use crate::RuntimeError;
 
@@ -241,7 +241,6 @@ pub struct FakeBridge {
 }
 
 struct FakeBridgeInner {
-    reachable: Mutex<bool>,
     reply: Mutex<BridgeReply>,
     forwards: Mutex<Vec<(String, serde_json::Value, Option<String>)>>,
 }
@@ -250,7 +249,6 @@ impl FakeBridge {
     pub fn new() -> Self {
         FakeBridge {
             inner: Arc::new(FakeBridgeInner {
-                reachable: Mutex::new(true),
                 reply: Mutex::new(BridgeReply {
                     ok: true,
                     status: 200,
@@ -261,18 +259,8 @@ impl FakeBridge {
         }
     }
 
-    pub fn unreachable() -> Self {
-        let bridge = FakeBridge::new();
-        bridge.set_reachable(false);
-        bridge
-    }
-
     pub fn set_reply(&self, reply: BridgeReply) {
         *self.inner.reply.lock().expect("reply lock") = reply;
-    }
-
-    pub fn set_reachable(&self, reachable: bool) {
-        *self.inner.reachable.lock().expect("reachable lock") = reachable;
     }
 
     pub fn forwards(&self) -> Vec<(String, serde_json::Value, Option<String>)> {
@@ -299,10 +287,6 @@ impl BridgePlane for FakeBridge {
             auth_token.map(String::from),
         ));
         self.inner.reply.lock().expect("reply lock").clone()
-    }
-
-    fn ready(&self) -> bool {
-        *self.inner.reachable.lock().expect("reachable lock")
     }
 }
 
@@ -365,6 +349,184 @@ impl KmsReleaser for FakeKms {
 }
 
 // ---------------------------------------------------------------------------
+// Price source double
+// ---------------------------------------------------------------------------
+
+/// A canned symbol→price map. Unlike the production fetcher it does NOT drop
+/// non-positive quotes — tests use that to exercise the plan's
+/// `invalid_price` guard through the fold.
+#[derive(Clone, Default)]
+pub struct FakePrice {
+    inner: Arc<FakePriceInner>,
+}
+
+#[derive(Default)]
+struct FakePriceInner {
+    prices: Mutex<HashMap<String, f64>>,
+    error: Mutex<Option<String>>,
+    calls: Mutex<Vec<Vec<String>>>,
+}
+
+impl FakePrice {
+    pub fn with_prices(pairs: &[(&str, f64)]) -> Self {
+        let price = FakePrice::default();
+        {
+            let mut prices = price.inner.prices.lock().expect("prices lock");
+            for (symbol, value) in pairs {
+                prices.insert((*symbol).to_string(), *value);
+            }
+        }
+        price
+    }
+
+    pub fn failing(message: &str) -> Self {
+        let price = FakePrice::default();
+        *price.inner.error.lock().expect("error lock") = Some(message.to_string());
+        price
+    }
+
+    pub fn set_error(&self, message: &str) {
+        *self.inner.error.lock().expect("error lock") = Some(message.to_string());
+    }
+
+    pub fn set_price(&self, symbol: &str, price: f64) {
+        self.inner
+            .prices
+            .lock()
+            .expect("prices lock")
+            .insert(symbol.to_string(), price);
+    }
+
+    pub fn calls(&self) -> Vec<Vec<String>> {
+        self.inner.calls.lock().expect("calls lock").clone()
+    }
+}
+
+impl PriceSource for FakePrice {
+    fn fetch_prices(&self, symbols: &[String]) -> Result<BTreeMap<String, f64>, RuntimeError> {
+        self.inner
+            .calls
+            .lock()
+            .expect("calls lock")
+            .push(symbols.to_vec());
+        let error = self.inner.error.lock().expect("error lock").clone();
+        if let Some(message) = error {
+            return Err(crate::http_error(500, message));
+        }
+        let prices = self.inner.prices.lock().expect("prices lock");
+        Ok(symbols
+            .iter()
+            .filter_map(|symbol| prices.get(symbol).map(|value| (symbol.clone(), *value)))
+            .collect())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Oracle IO double
+// ---------------------------------------------------------------------------
+
+/// The oracle lanes' IO: one scriptable HTTP reply (the last `set_reply`
+/// wins), a canned public DNS answer so the SSRF pin passes, a controllable
+/// clock, and a no-op sleep. The production impl lives in
+/// `bin/enclave_host.rs` (real reqwest + `ToSocketAddrs`); the default canned
+/// address `93.184.216.34` is the same public-IP convention the
+/// morpheus-compute fetch fixtures use.
+#[derive(Clone, Default)]
+pub struct FakeOracleIo {
+    inner: Arc<FakeOracleIoInner>,
+}
+
+#[derive(Default)]
+struct FakeOracleIoInner {
+    reply: Mutex<Option<Result<morpheus_compute::transport::HttpResponse, String>>>,
+    fetches: Mutex<Vec<(String, String)>>,
+    addresses: Mutex<Vec<morpheus_compute::ssrf::ResolvedAddress>>,
+    now_ms: AtomicU64,
+}
+
+impl FakeOracleIo {
+    pub fn with_reply(reply: morpheus_compute::transport::HttpResponse) -> Self {
+        let io = FakeOracleIo::default();
+        io.set_reply(Ok(reply));
+        io
+    }
+
+    pub fn failing(message: &str) -> Self {
+        let io = FakeOracleIo::default();
+        io.set_reply(Err(message.to_string()));
+        io
+    }
+
+    pub fn set_reply(&self, reply: Result<morpheus_compute::transport::HttpResponse, String>) {
+        *self.inner.reply.lock().expect("reply lock") = Some(reply);
+    }
+
+    pub fn set_addresses(&self, addresses: &[(&str, u8)]) {
+        *self.inner.addresses.lock().expect("addresses lock") = addresses
+            .iter()
+            .map(
+                |(address, family)| morpheus_compute::ssrf::ResolvedAddress {
+                    address: (*address).to_string(),
+                    family: *family,
+                },
+            )
+            .collect();
+    }
+
+    pub fn set_now_ms(&self, now_ms: u64) {
+        self.inner
+            .now_ms
+            .store(now_ms, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// `(method, url)` of every fetch that went through the plane.
+    pub fn fetches(&self) -> Vec<(String, String)> {
+        self.inner.fetches.lock().expect("fetches lock").clone()
+    }
+}
+
+impl OracleIo for FakeOracleIo {
+    fn fetch(
+        &self,
+        request: &morpheus_compute::transport::HttpRequest,
+    ) -> Result<morpheus_compute::transport::HttpResponse, String> {
+        self.inner
+            .fetches
+            .lock()
+            .expect("fetches lock")
+            .push((request.method.clone(), request.url.clone()));
+        match self.inner.reply.lock().expect("reply lock").clone() {
+            Some(reply) => reply,
+            None => Ok(morpheus_compute::transport::HttpResponse {
+                status: 200,
+                headers: vec![("content-type".to_string(), "application/json".to_string())],
+                body: b"{}".to_vec(),
+            }),
+        }
+    }
+
+    fn dns_lookup(
+        &self,
+        _host: &str,
+    ) -> Result<Vec<morpheus_compute::ssrf::ResolvedAddress>, String> {
+        let addresses = self.inner.addresses.lock().expect("addresses lock").clone();
+        if addresses.is_empty() {
+            return Ok(vec![morpheus_compute::ssrf::ResolvedAddress {
+                address: "93.184.216.34".to_string(),
+                family: 4,
+            }]);
+        }
+        Ok(addresses)
+    }
+
+    fn now_ms(&self) -> u64 {
+        self.inner.now_ms.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn sleep_ms(&self, _ms: u64) {}
+}
+
+// ---------------------------------------------------------------------------
 // State assembly
 // ---------------------------------------------------------------------------
 
@@ -373,6 +535,8 @@ pub struct TestState {
     pub signer: FakeSigner,
     pub bridge: FakeBridge,
     pub kms: FakeKms,
+    pub price: FakePrice,
+    pub oracle_io: FakeOracleIo,
     pub state: AppState,
 }
 
@@ -383,23 +547,29 @@ pub fn test_state(
     bridge: FakeBridge,
     kms: FakeKms,
 ) -> TestState {
+    let price = FakePrice::default();
+    let oracle_io = FakeOracleIo::default();
     let state = AppState {
-        overlay: RwLock::new(EnvOverlay::new(
+        overlay: Arc::new(RwLock::new(EnvOverlay::new(
             overlay_pairs.iter().map(|(key, value)| (*key, *value)),
-        )),
+        ))),
         runtime_token_kms_version: AtomicU64::new(0),
         attest: Box::new(attest.clone()),
         signer: Box::new(signer.clone()),
-        bridge: Box::new(bridge.clone()),
+        fulfillment_compute_override: Some(Box::new(bridge.clone())),
         kms: Box::new(kms.clone()),
+        price: Box::new(price.clone()),
+        oracle_io: Box::new(oracle_io.clone()),
+        oracle_runtime: Mutex::new(morpheus_compute::oracle::providers::ProviderRuntime::default()),
         kms_diag: Mutex::new(KmsDiag::default()),
-        bridge_child: None,
     };
     TestState {
         attest,
         signer,
         bridge,
         kms,
+        price,
+        oracle_io,
         state,
     }
 }
@@ -426,11 +596,7 @@ pub fn body_json(payload: &serde_json::Value) -> String {
     serde_json::to_string(payload).expect("payload serializes")
 }
 
-/// The healthy-state default overlay: a network and a runtime token. The
-/// token rides NITRO_API_TOKEN so BOTH the trusted set and the
-/// worker-auth resolution (`MORPHEUS_RUNTIME_TOKEN || NITRO_API_TOKEN ||
-/// NITRO_SHARED_SECRET`) see it — the passthrough tests assert the forward
-/// carries it.
+/// The healthy-state default overlay: a network and a runtime token.
 pub fn healthy_overlay() -> Vec<(&'static str, &'static str)> {
     vec![
         ("MORPHEUS_NETWORK", TEST_NETWORK),

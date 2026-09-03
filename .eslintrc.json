@@ -29,6 +29,9 @@
     "contracts/neox/cache/",
     "contracts/neox/node_modules/",
     "apps/web/.next/",
+    "vendor/",
+    "target/",
+    "workers/neo-signer/target/",
     "supabase/**",
     "contracts/**",
     "examples/**"

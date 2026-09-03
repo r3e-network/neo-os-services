@@ -21,25 +21,31 @@ import {
 
 /**
  * Golden vector pinning the v2 confidential envelope wire format. The
- * envelope was produced by `encryptConfidentialEnvelope` and verified
- * against the deployed worker decryptor (`decryptEncryptedToken` in
- * workers/nitro-worker/src/oracle/crypto.js) at the time this module was
- * consolidated into packages/shared. The keypair is a TEST FIXTURE — it
- * must never be used outside tests. Any change that breaks this vector
- * breaks decryption of live client traffic; do not regenerate it without
- * a coordinated envelope-format rotation.
+ * envelope was produced by `encryptConfidentialEnvelope` and is consumed from
+ * the SAME fixture by this client suite and
+ * `morpheus_compute::oracle::crypto`. The compatibility worker also decrypts
+ * it below. The keypair is a TEST FIXTURE — it must never be used outside
+ * tests. Any change that breaks this vector breaks decryption of live client
+ * traffic; do not regenerate it without a coordinated format rotation.
  *
  * The same vector is replayed by the consumer-repo drift guards
  * (neo-os-devpack shared/test, neo-abstract-account
  * sdk/js/tests), so all three repos pin identical bytes.
  */
+const sharedVector = JSON.parse(
+  await readFile(
+    new URL(
+      '../../../crates/morpheus-compute/tests/vectors/confidential-envelope-v2-client.json',
+      import.meta.url
+    ),
+    'utf8'
+  )
+);
 export const CONFIDENTIAL_ENVELOPE_GOLDEN_VECTOR = {
-  publicKeyRaw: 'X+mfM9Lg+Tm9GBzniOC0vwDcZE857Za9AbdJCD7IsWM=',
-  privateKeyPkcs8: 'MC4CAQAwBQYDK2VuBCIEIPBjP3AKvOssGMkua0kFSHbkLd7KkMfh1/8GqVrfajFy',
-  plaintext:
-    '{"kind":"morpheus.confidential.golden.v1","message":"morpheus envelope golden vector","nonce":"0x0123456789abcdef"}',
-  envelope:
-    'eyJ2IjoyLCJhbGciOiJYMjU1MTktSEtERi1TSEEyNTYtQUVTLTI1Ni1HQ00iLCJlcGsiOiJMcnU0NTdSOWNOVUNWNXlZNG85dit4TlVwVm4yNTdUcFJNVDAyUWhlTmhFPSIsIml2IjoiL1MvUTAvWG83MlAydmQ3ciIsImN0IjoiWjllbFNUc0ZNK2crbzYzMWtFdmFMMXkralFIZnh0MldseDdJSkNpYldoL2RYaTFVaFpOY0VzaEk3d1JEMEg3QTIvTWF4TEYyNDBQaGF1M3VUVlZDUWpMOGFtMU94aGFpODNzQTBwc3IyVkpROE1EYVpsZ3RxdjVjS3hlZTNzbmMyR2s0Mm4rZ2NIYVJyVkhnc21Md3U0NjhGZz09IiwidGFnIjoiWE14UDhuQll1MkxrMWF0bEFhNzduUT09In0=',
+  publicKeyRaw: sharedVector.public_key_raw,
+  privateKeyPkcs8: sharedVector.private_key_pkcs8,
+  plaintext: sharedVector.plaintext,
+  envelope: sharedVector.envelope,
 };
 
 const GOLDEN = CONFIDENTIAL_ENVELOPE_GOLDEN_VECTOR;

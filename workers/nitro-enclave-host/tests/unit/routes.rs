@@ -19,33 +19,54 @@ fn the_exact_routes_classify() {
     assert_eq!(classify_get("/attestation"), Target::Attestation);
     assert_eq!(classify_post("/attestation"), Target::Attestation);
     assert_eq!(classify_post("/provision"), Target::Provision);
+    assert_eq!(
+        classify_post("/provision/credentials"),
+        Target::ProvisionCredentials
+    );
     assert_eq!(classify_post("/oracle/fulfill"), Target::OracleFulfill);
     assert_eq!(classify_post("/feed/sign"), Target::FeedSign);
     assert_eq!(classify_post("/sign/payload"), Target::SignPayload);
     assert_eq!(classify_post("/keys/derived"), Target::KeysDerived);
+    assert_eq!(classify_post("/neodid/bind"), Target::NeoDidBind);
+    assert_eq!(
+        classify_post("/neodid/action-ticket"),
+        Target::NeoDidActionTicket
+    );
+    assert_eq!(
+        classify_post("/neodid/recovery-ticket"),
+        Target::NeoDidRecoveryTicket
+    );
+    assert_eq!(classify_post("/oracle/query"), Target::OracleQuery);
+    assert_eq!(
+        classify_post("/oracle/smart-fetch"),
+        Target::OracleSmartFetch
+    );
+    assert_eq!(classify_post("/oracle/decrypt"), Target::OracleDecrypt);
+    assert_eq!(
+        classify_post("/oracle/message-reveal"),
+        Target::OracleMessageReveal
+    );
     assert_eq!(classify_get("/oracle/public-key"), Target::OraclePublicKey);
     assert_eq!(classify_post("/oracle/public-key"), Target::OraclePublicKey);
 }
 
 #[test]
-fn every_passthrough_route_classifies_under_post_only() {
-    for route in EXECUTION_PLANE_PASSTHROUGH {
-        let owned = route.to_string();
-        let prefixed = format!("/mainnet{owned}");
+fn the_former_passthrough_routes_classify_in_process() {
+    // Former child-forwarded lanes classify straight to their in-process
+    // targets; there is no passthrough variant or manifest to re-arm.
+    for (path, target) in [
+        ("/oracle/query", Target::OracleQuery),
+        ("/oracle/smart-fetch", Target::OracleSmartFetch),
+        ("/oracle/decrypt", Target::OracleDecrypt),
+        ("/oracle/message-reveal", Target::OracleMessageReveal),
+    ] {
+        let prefixed = format!("/mainnet{path}");
+        assert_eq!(classify_post(path), target, "exact {path}");
+        assert_eq!(classify_post(&prefixed), target, "prefixed {path}");
         assert_eq!(
-            classify_post(&owned),
-            Target::Passthrough(route),
-            "exact {route}"
-        );
-        assert_eq!(
-            classify_post(&prefixed),
-            Target::Passthrough(route),
-            "prefixed {route}"
-        );
-        assert_eq!(
-            classify_get(&owned),
+            classify_get(path),
             Target::NotFound,
-            "GET {route} is not a route"
+            "GET {path} is not a route"
         );
     }
 }

@@ -68,3 +68,56 @@ test('relayNeoN3Invocation applies the allowlist for the request network', async
 
   assert.notEqual(result.status, 403);
 });
+
+test('sponsor guard refuses any user signer scope that carries the Global bit', async () => {
+  const { tx, sc, wallet: neoWallet } = await import('@cityofzion/neon-js');
+  const { assertSponsorWitnesses } = await import(`./neo-n3.js?sponsor-scope=${Date.now()}`);
+  const contract = '0x0123456789abcdef0123456789abcdef01234567';
+  const userScriptHash = '11'.repeat(20);
+  const userAddress = neoWallet.getAddressFromScriptHash(userScriptHash);
+  const sponsorScriptHash = 'cd'.repeat(20);
+
+  const buildTransaction = (userScopes) =>
+    new tx.Transaction({
+      nonce: 1,
+      validUntilBlock: 100,
+      signers: [
+        { account: userScriptHash, scopes: userScopes },
+        { account: sponsorScriptHash, scopes: tx.WitnessScope.None },
+      ],
+      script: new sc.ScriptBuilder().emitAppCall(contract, 'executeUserOp', []).build(),
+    });
+
+  assert.throws(
+    () =>
+      assertSponsorWitnesses(
+        buildTransaction(tx.WitnessScope.Global),
+        sponsorScriptHash,
+        userAddress
+      ),
+    /non-global witness scope/
+  );
+  // The composite 0x81 (Global | CalledByEntry) once slipped past an equality
+  // check against the bare 0x80 enum value.
+  assert.throws(
+    () => assertSponsorWitnesses(buildTransaction(0x81), sponsorScriptHash, userAddress),
+    /non-global witness scope/
+  );
+  assert.throws(
+    () => assertSponsorWitnesses(buildTransaction('Global'), sponsorScriptHash, userAddress),
+    /non-global witness scope/
+  );
+  assert.doesNotThrow(() =>
+    assertSponsorWitnesses(
+      buildTransaction(tx.WitnessScope.CalledByEntry),
+      sponsorScriptHash,
+      userAddress
+    )
+  );
+
+  const deserialized = tx.Transaction.deserialize(buildTransaction(0x81).serialize(true));
+  assert.throws(
+    () => assertSponsorWitnesses(deserialized, sponsorScriptHash, userAddress),
+    /non-global witness scope/
+  );
+});

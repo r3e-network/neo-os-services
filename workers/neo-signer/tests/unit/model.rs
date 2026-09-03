@@ -98,6 +98,23 @@ fn normalizing_sorts_and_deduplicates_every_list() {
         contract_blacklist: vec![account(4), account(4)],
         asset_whitelist: vec![account(7), account(1), account(7)],
         asset_blacklist: vec![account(2), account(2)],
+        asset_limits: vec![
+            AssetLimit {
+                asset: account(7),
+                max_single_amount: Some(9),
+                window_limit: None,
+            },
+            AssetLimit {
+                asset: account(1),
+                max_single_amount: Some(3),
+                window_limit: None,
+            },
+            AssetLimit {
+                asset: account(7),
+                max_single_amount: Some(9),
+                window_limit: None,
+            },
+        ],
         transfer_to_whitelist: vec![account(8), account(8), account(5)],
         transfer_to_blacklist: vec![account(6), account(6)],
         ..Default::default()
@@ -107,6 +124,9 @@ fn normalizing_sorts_and_deduplicates_every_list() {
     assert_eq!(policy.contract_blacklist, vec![account(4)]);
     assert_eq!(policy.asset_whitelist, vec![account(1), account(7)]);
     assert_eq!(policy.asset_blacklist, vec![account(2)]);
+    assert_eq!(policy.asset_limits.len(), 2);
+    assert_eq!(policy.asset_limits[0].asset, account(1));
+    assert_eq!(policy.asset_limits[1].asset, account(7));
     assert_eq!(policy.transfer_to_whitelist, vec![account(5), account(8)]);
     assert_eq!(policy.transfer_to_blacklist, vec![account(6)]);
     // Round-tripping through the database has to compare equal, so a second
@@ -123,6 +143,40 @@ fn a_fresh_policy_allows_nothing() {
     assert!(!policy.allow_global_scope);
     assert!(policy.max_single_amount.is_none());
     assert!(policy.window_limit.is_none());
+}
+
+#[test]
+fn raw_authority_is_valid_only_on_a_semantically_closed_key() {
+    let raw_only = SignerPolicy {
+        allow_raw: true,
+        ..Default::default()
+    };
+    assert!(!raw_only.mixes_raw_and_semantic_authority());
+
+    for mixed in [
+        SignerPolicy {
+            allow_raw: true,
+            allow_consensus: true,
+            ..Default::default()
+        },
+        SignerPolicy {
+            allow_raw: true,
+            allow_transfer: true,
+            ..Default::default()
+        },
+        SignerPolicy {
+            allow_raw: true,
+            allow_contract_call: true,
+            ..Default::default()
+        },
+        SignerPolicy {
+            allow_raw: true,
+            allow_global_scope: true,
+            ..Default::default()
+        },
+    ] {
+        assert!(mixed.mixes_raw_and_semantic_authority());
+    }
 }
 
 #[test]

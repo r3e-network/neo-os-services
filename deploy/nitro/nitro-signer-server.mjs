@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { timingSafeEqual } from 'node:crypto';
-import { wallet as neoWallet } from '@cityofzion/neon-js';
+import { tx as neoTx } from '@cityofzion/neon-js';
 import { normalizeMorpheusNetwork, reportPinnedNeoN3Role } from '../../scripts/lib-neo-signers.mjs';
 
 const port = Math.max(Number(process.env.PORT || process.env.NITRO_SIGNER_PORT || 8080), 1);
@@ -43,13 +43,148 @@ function normalizeHex(value) {
   return trimString(value).replace(/^0x/i, '').toLowerCase();
 }
 
+// F-9: an absent or unmappable role used to sign as `updater`. It never signs
+// now — the caller names the role it is entitled to, or the request leaves.
 function normalizeRole(value) {
   const role = trimString(value).toLowerCase();
   if (role === 'oracle_verifier' || role === 'verifier') return 'oracle_verifier';
   if (role === 'updater') return 'updater';
   if (role === 'relayer') return 'relayer';
   if (role === 'worker') return 'worker';
-  return 'updater';
+  return null;
+}
+
+function requireRole(payload) {
+  const role = normalizeRole(payload.key_role || payload.dstack_key_role || payload.role);
+  if (!role) {
+    const error = new Error(
+      'key_role is required and must name a signer role; refusing to act under a defaulted role'
+    );
+    error.status = 400;
+    throw error;
+  }
+  return role;
+}
+
+const CUSTODY_ROLES = ['updater', 'oracle_verifier'];
+
+function roleKeyIdEnvName(role) {
+  return `SIGNER_ROLE_${role.toUpperCase()}_KEY_ID`;
+}
+
+function resolveRoleKeyId(role) {
+  const name = roleKeyIdEnvName(role);
+  const keyId = trimString(effectiveEnv()[name]);
+  if (!keyId) {
+    const error = new Error(`${role} custody key is not provisioned (${name})`);
+    error.status = 503;
+    throw error;
+  }
+  return keyId;
+}
+
+function custodyConfig() {
+  const env = effectiveEnv();
+  const url = trimString(env.SIGNER_SERVICE_URL || '').replace(/\/+$/, '');
+  const token = trimString(env.SIGNER_SERVICE_TOKEN || '');
+  if (!url || !token) {
+    const error = new Error(
+      'custody signing is not configured; provision SIGNER_SERVICE_URL and SIGNER_SERVICE_TOKEN'
+    );
+    error.status = 503;
+    throw error;
+  }
+  return { url, token };
+}
+
+async function custodyRequest(method, pathname, body) {
+  const { url, token } = custodyConfig();
+  let response;
+  try {
+    response = await fetch(`${url}${pathname}`, {
+      method,
+      headers: {
+        'content-type': 'application/json',
+        'cache-control': 'no-store',
+        authorization: `Bearer ${token}`,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (error) {
+    const wrapped = new Error(`custody signer service unreachable: ${error?.message || error}`);
+    wrapped.status = 503;
+    throw wrapped;
+  }
+  const text = await response.text();
+  let parsed;
+  try {
+    parsed = text ? JSON.parse(text) : {};
+  } catch {
+    parsed = {};
+  }
+  if (!response.ok) {
+    const code = typeof parsed.code === 'string' && parsed.code ? parsed.code : '';
+    const detail = typeof parsed.message === 'string' && parsed.message ? parsed.message : '';
+    const wrapped = new Error(
+      code || detail
+        ? `custody refused: ${[code, detail].filter(Boolean).join(': ')}`
+        : `custody answered ${response.status}`
+    );
+    wrapped.status = response.status;
+    throw wrapped;
+  }
+  // A 2xx that still says no is a refusal envelope (§5), not a success.
+  if (parsed.allowed === false) {
+    const wrapped = new Error(
+      `custody refused: ${parsed.code || 'denied'}${parsed.message ? `: ${parsed.message}` : ''}`
+    );
+    wrapped.status = 403;
+    throw wrapped;
+  }
+  return parsed;
+}
+
+function configuredNetworkMagic() {
+  const magic = Number(trimString(effectiveEnv().NEO_NETWORK_MAGIC || ''));
+  if (!Number.isFinite(magic) || magic <= 0) {
+    const error = new Error(
+      'NEO_NETWORK_MAGIC is not provisioned; a transaction preimage cannot be checked against the chain it claims'
+    );
+    error.status = 503;
+    throw error;
+  }
+  return magic >>> 0;
+}
+
+// The one request kind this shim still translates: a preimage that carries the
+// unsigned transaction itself — the chain's network magic little-endian, then
+// the unsigned serialization. Custody recomputes the digest from those bytes
+// and policy-checks the calls inside. The legacy magic+txid form cannot be
+// policy-checked, so it is refused by name instead of signed blind.
+function transactionPreimageToUnsignedHex(dataHex) {
+  const magic = configuredNetworkMagic();
+  const bytes = Buffer.from(dataHex, 'hex');
+  if (bytes.length < 5) return { failure: 'unparsable' };
+  if (bytes.readUInt32LE(0) !== magic) return { failure: 'magic' };
+  const unsignedHex = bytes.subarray(4).toString('hex');
+  try {
+    neoTx.Transaction.deserialize(unsignedHex);
+  } catch {
+    return { failure: bytes.length === 36 ? 'txid' : 'unparsable' };
+  }
+  return { unsignedHex };
+}
+
+function sliceInvocationSignature(invocationScript) {
+  const hex = normalizeHex(invocationScript || '');
+  return /^0c40[0-9a-f]{128}$/.test(hex) ? hex.slice(4) : '';
+}
+
+function sliceVerificationPublicKey(verificationScript) {
+  // Neo N3 native single-sig verification script: 0c 21 <33B pubkey> 41
+  // 56e7b327 (Neo.Crypto.CheckSig syscall) — 40 bytes, matching custody's crypto.rs.
+  const hex = normalizeHex(verificationScript || '');
+  return /^0c21[0-9a-f]{66}4156e7b327$/.test(hex) ? hex.slice(4, 70) : '';
 }
 
 function timingSafeTokenMatch(candidate, trusted) {
@@ -96,17 +231,6 @@ function assertProvisionAuthorized(req) {
 
 function effectiveEnv() {
   return { ...process.env, ...provisionedEnv };
-}
-
-function resolveRole(role) {
-  const report = reportPinnedNeoN3Role(network, role, {
-    env: effectiveEnv(),
-    allowMissing: false,
-  });
-  if (!report.ok || !report.materialized) {
-    throw new Error(`${role} signer is not configured or does not match pinned identity`);
-  }
-  return report;
 }
 
 function publicNeoIdentity(report) {
@@ -159,25 +283,38 @@ function jsonPayload(status, body) {
 
 function reasonPhrase(status) {
   if (status === 200) return 'OK';
+  if (status === 400) return 'Bad Request';
   if (status === 401) return 'Unauthorized';
   if (status === 403) return 'Forbidden';
   if (status === 404) return 'Not Found';
   if (status === 413) return 'Payload Too Large';
+  if (status === 502) return 'Bad Gateway';
   if (status === 503) return 'Service Unavailable';
   return 'Internal Server Error';
 }
 
+// Health is custody readiness now: a role is up when its custody key id is
+// provisioned. The pinned registry still supplies the public identity the
+// attestation document binds — it never needed a secret to do that.
 function signerHealth() {
-  return ['updater', 'oracle_verifier'].map((role) => {
-    const report = reportPinnedNeoN3Role(network, role, {
-      env: effectiveEnv(),
-      allowMissing: false,
-    });
+  return CUSTODY_ROLES.map((role) => {
+    const name = roleKeyIdEnvName(role);
+    const keyId = trimString(effectiveEnv()[name]);
+    let identity = null;
+    try {
+      const report = reportPinnedNeoN3Role(network, role, {
+        env: effectiveEnv(),
+        allowMissing: true,
+      });
+      identity = report.selected_identity || report.pinned || null;
+    } catch {
+      identity = null;
+    }
     return {
       role,
-      ok: report.ok && Boolean(report.materialized),
-      identity: report.selected_identity || report.pinned || null,
-      issues: report.issues,
+      ok: Boolean(keyId),
+      identity,
+      issues: keyId ? [] : [`${name} is not provisioned`],
     };
   });
 }
@@ -228,40 +365,70 @@ function handleProvision(payload) {
   };
 }
 
-function handleKeysDerived(payload) {
-  const role = normalizeRole(payload.role || payload.key_role || payload.dstack_key_role);
-  const report = resolveRole(role);
-  const neo = publicNeoIdentity(report);
+async function handleKeysDerived(payload) {
+  const role = requireRole(payload);
+  const keyId = resolveRoleKeyId(role);
+  const key = await custodyRequest('GET', `/signer/api/v1/keys/${encodeURIComponent(keyId)}`);
+  const neo = {
+    address: typeof key.address === 'string' ? key.address : null,
+    script_hash: typeof key.script_hash === 'string' ? key.script_hash : null,
+    public_key: typeof key.public_key === 'string' ? key.public_key : null,
+  };
   return {
     status: 'ok',
     network,
     role,
+    key_id: keyId,
     derived: { neo_n3: neo },
     neo_n3: neo,
-    key_source: 'nitro_explicit_pinned',
+    key_source: 'custody',
   };
 }
 
-function handleSignPayload(payload) {
-  const role = normalizeRole(payload.key_role || payload.dstack_key_role || payload.role);
+async function handleSignPayload(payload) {
+  const role = requireRole(payload);
   const dataHex = normalizeHex(payload.data_hex || payload.message_hex || '');
   if (!/^[0-9a-f]+$/.test(dataHex) || dataHex.length % 2 !== 0) {
     throw new Error('data_hex is required');
   }
-  const report = resolveRole(role);
-  const secret = report.materialized.private_key || report.materialized.wif;
-  const account = new neoWallet.Account(secret);
-  const signature = neoWallet.sign(dataHex, account.privateKey);
+  const preimage = transactionPreimageToUnsignedHex(dataHex);
+  if (!preimage.unsignedHex) {
+    const message =
+      preimage.failure === 'magic'
+        ? 'data_hex does not start with this signer\u2019s network magic; refusing to sign bytes framed for another chain'
+        : preimage.failure === 'txid'
+          ? 'data_hex is the legacy magic+txid preimage; a bare transaction id cannot be policy-checked — send the unsigned transaction serialization instead, or sign via the custody signer service /sign/transaction'
+          : 'data_hex is not a translatable request kind; this endpoint signs only a Neo N3 ' +
+            'transaction preimage (network magic little-endian + unsigned transaction ' +
+            'serialization) — other signing belongs to the custody signer service under ' +
+            'the caller\u2019s own credential';
+    const error = new Error(message);
+    error.status = 400;
+    throw error;
+  }
+  const keyId = resolveRoleKeyId(role);
+  const signed = await custodyRequest('POST', '/signer/api/v1/sign/transaction', {
+    key_id: keyId,
+    unsigned_hex: preimage.unsignedHex,
+  });
+  const signature = sliceInvocationSignature(signed.invocation_script);
+  const publicKey = sliceVerificationPublicKey(signed.verification_script);
+  if (!signature || !publicKey) {
+    const wrapped = new Error('custody returned a witness this shim cannot translate');
+    wrapped.status = 502;
+    throw wrapped;
+  }
   return {
     status: 'ok',
     network,
     role,
+    key_id: keyId,
     signature,
     signature_hex: signature,
-    public_key: account.publicKey,
-    address: account.address,
-    script_hash: `0x${account.scriptHash}`,
-    key_source: 'nitro_explicit_pinned',
+    public_key: publicKey,
+    address: typeof signed.address === 'string' ? signed.address : null,
+    script_hash: typeof signed.script_hash === 'string' ? signed.script_hash : null,
+    key_source: 'custody_policy',
   };
 }
 
@@ -278,19 +445,37 @@ function attestationUserDataHex() {
   return Buffer.from(JSON.stringify(userData), 'utf8').toString('hex');
 }
 
+function attestationPublicKeyForRole(role) {
+  try {
+    const report = reportPinnedNeoN3Role(network, role, {
+      env: effectiveEnv(),
+      allowMissing: true,
+    });
+    return normalizeHex(publicNeoIdentity(report).public_key);
+  } catch {
+    // role not in the pinned registry yet — the document simply binds no key
+    return '';
+  }
+}
+
 function selectAttestationPublicKey(payload) {
   const requested = payload && (payload.role || payload.key_role);
-  const order = requested ? [normalizeRole(requested)] : ['oracle_verifier', 'updater'];
-  for (const role of order) {
-    try {
-      const report = resolveRole(role);
-      const pub = normalizeHex(publicNeoIdentity(report).public_key);
-      if (pub) return { role, publicKeyHex: pub };
-    } catch {
-      // role not provisioned yet — try the next one
+  if (requested) {
+    const role = normalizeRole(requested);
+    if (!role) {
+      const error = new Error(
+        `key_role does not name a signer role: ${trimString(String(requested))}`
+      );
+      error.status = 400;
+      throw error;
     }
+    return { role, publicKeyHex: attestationPublicKeyForRole(role) };
   }
-  return { role: order[0], publicKeyHex: '' };
+  for (const role of CUSTODY_ROLES) {
+    const publicKeyHex = attestationPublicKeyForRole(role);
+    if (publicKeyHex) return { role, publicKeyHex };
+  }
+  return { role: CUSTODY_ROLES[0], publicKeyHex: '' };
 }
 
 function handleAttestation(payload) {
@@ -369,8 +554,8 @@ async function dispatchSignerRequest({ method, rawUrl, headers, payloadProvider 
     return jsonPayload(200, handleProvision(payload));
   }
   assertAuthorized({ headers });
-  if (path.endsWith('/keys/derived')) return jsonPayload(200, handleKeysDerived(payload));
-  if (path.endsWith('/sign/payload')) return jsonPayload(200, handleSignPayload(payload));
+  if (path.endsWith('/keys/derived')) return jsonPayload(200, await handleKeysDerived(payload));
+  if (path.endsWith('/sign/payload')) return jsonPayload(200, await handleSignPayload(payload));
   return jsonPayload(404, { error: 'not found' });
 }
 

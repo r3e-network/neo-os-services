@@ -125,6 +125,7 @@ services:
       request-worker:
         condition: service_healthy
     environment:
+      NODE_ENV: production
       NITRO_API_URL: http://request-worker:8080
       NITRO_SHARED_SECRET: ${NITRO_SHARED_SECRET}
       NITRO_API_TOKEN: ${NITRO_API_TOKEN}
@@ -146,6 +147,7 @@ services:
       request-worker:
         condition: service_healthy
     environment:
+      NODE_ENV: production
       NITRO_API_URL: http://request-worker:8080
       NITRO_SHARED_SECRET: ${NITRO_SHARED_SECRET}
       NITRO_API_TOKEN: ${NITRO_API_TOKEN}

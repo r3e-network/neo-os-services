@@ -65,7 +65,7 @@ use std::{
 use anyhow::Result;
 use axum::{
     body::to_bytes,
-    extract::{FromRequest, FromRequestParts, Path, Request, State},
+    extract::{FromRequest, FromRequestParts, OriginalUri, Path, Request, State},
     http::{header, request::Parts, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
@@ -79,14 +79,16 @@ use zeroize::Zeroize;
 use crate::{
     attested_identity::{self, KeyBoundary},
     audit::{self, bounded, Refusal},
-    auth::CallerCredentials,
+    auth::{CallerCredentials, WorkloadRequestHeaders},
     model::{
-        CallerCapability, KeyGrant, ScriptHash, SignerAuditAction, SignerAuditOutcome,
-        SignerAuditRecord, SignerPolicy, WindowLimit,
+        AssetLimit, CallerCapability, ContractMethod, KeyGrant, ScriptHash, SignatureRateLimit,
+        SignerAuditAction, SignerAuditOutcome, SignerAuditRecord, SignerPolicy, WindowLimit,
     },
     network::Network,
     provision::{self, ProvisionBody, ProvisionEnv, ProvisionGate},
-    service::{CallerInfo, KeyPublicInfo, Outcome, SignedWitness, SignerService},
+    service::{
+        CallerInfo, KeyPublicInfo, Outcome, SignedWitness, SignerService, WorkloadCallerSpec,
+    },
 };
 
 use nitro_attest::release::{AttestationSource, NsmAttestation};
@@ -95,6 +97,10 @@ use nitro_attest::release::{AttestationSource, NsmAttestation};
 /// it would be a route the fallback answers, and a caller would get `404` for a
 /// path the documentation says exists.
 const API_PREFIX: &str = "/signer/api/v1";
+const WORKLOAD_CALLER_HEADER: &str = "x-neoos-caller";
+const WORKLOAD_TIMESTAMP_HEADER: &str = "x-neoos-timestamp";
+const WORKLOAD_NONCE_HEADER: &str = "x-neoos-nonce";
+const WORKLOAD_SIGNATURE_HEADER: &str = "x-neoos-signature";
 
 /// Longest request body the transport reads.
 ///
@@ -296,6 +302,7 @@ fn api_routes() -> Router<ApiState> {
     Router::new()
         .route("/sign/transaction", post(sign_transaction_route))
         .route("/sign/consensus", post(sign_consensus_route))
+        .route("/sign/raw", post(sign_raw_route))
         .route("/keys", post(generate_key_route).get(list_keys_route))
         .route("/keys/import", post(import_key_route))
         .route("/keys/import-nep2", post(import_nep2_route))
@@ -309,6 +316,7 @@ fn api_routes() -> Router<ApiState> {
             "/callers",
             post(create_caller_route).get(list_callers_route),
         )
+        .route("/callers/workload", post(create_workload_caller_route))
         .route("/callers/{id}/rotate", post(rotate_caller_route))
         .route("/callers/{id}/state", post(caller_state_route))
         .route("/callers/{id}", delete(delete_caller_route))
@@ -406,7 +414,9 @@ fn status_for(refusal: &Refusal) -> StatusCode {
         | "signer-payload-unparsable"
         | UNSIGNED_HEX_UNREADABLE
         | REQUEST_UNREADABLE
-        | audit::ADMIN_REQUEST_INVALID => StatusCode::BAD_REQUEST,
+        | audit::ADMIN_REQUEST_INVALID
+        | audit::REQUEST_ID_INVALID => StatusCode::BAD_REQUEST,
+        audit::REQUEST_ID_CONFLICT => StatusCode::CONFLICT,
         "signer-key-unknown" | "signer-caller-unknown" => StatusCode::NOT_FOUND,
         _ if refusal.outcome == SignerAuditOutcome::Denied => StatusCode::FORBIDDEN,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -546,10 +556,27 @@ impl<S: Send + Sync> FromRequestParts<S> for Credentials {
         parts: &mut Parts,
         _state: &S,
     ) -> std::result::Result<Self, Self::Rejection> {
-        Ok(Credentials(CallerCredentials::new(
+        let request_uri = parts
+            .extensions
+            .get::<OriginalUri>()
+            .map(|original| &original.0)
+            .unwrap_or(&parts.uri);
+        let route = request_uri
+            .path_and_query()
+            .map(|value| value.as_str())
+            .unwrap_or_else(|| request_uri.path());
+        Ok(Credentials(CallerCredentials::request(
             header_value(parts, header::AUTHORIZATION),
             header_value(parts, header::ORIGIN),
             header_value(parts, header::REFERER),
+            WorkloadRequestHeaders {
+                caller_id: text_header(parts, WORKLOAD_CALLER_HEADER),
+                timestamp: text_header(parts, WORKLOAD_TIMESTAMP_HEADER),
+                nonce: text_header(parts, WORKLOAD_NONCE_HEADER),
+                signature: text_header(parts, WORKLOAD_SIGNATURE_HEADER),
+            },
+            parts.method.as_str(),
+            route,
         )))
     }
 }
@@ -560,13 +587,23 @@ fn header_value(parts: &Parts, name: header::HeaderName) -> Option<&str> {
     parts.headers.get(name)?.to_str().ok()
 }
 
+fn text_header<'a>(parts: &'a Parts, name: &str) -> Option<&'a str> {
+    parts.headers.get(name)?.to_str().ok()
+}
+
 /// A JSON request body, already bounded by `ApiState::max_body_bytes`.
 ///
 /// Its rejection is a complete [`Response`] rather than axum's `JsonRejection`
 /// so that a malformed body cannot be the one thing on this service that answers
 /// with `text/plain`, and so serde's own message — which quotes the input, and
 /// the input can be a private key — never reaches a client.
-pub struct JsonBody<T>(T);
+pub struct JsonBody<T>(T, [u8; 32]);
+
+impl<T> JsonBody<T> {
+    fn bind(self, credentials: Credentials) -> (T, CallerCredentials) {
+        (self.0, credentials.0.with_body_digest(self.1))
+    }
+}
 
 impl<T> FromRequest<ApiState> for JsonBody<T>
 where
@@ -584,8 +621,9 @@ where
             return Err(too_large());
         }
         let bytes = to_bytes(body, limit).await.map_err(|_| unreadable(None))?;
+        let digest = crate::auth::body_sha256(&bytes);
         serde_json::from_slice::<T>(&bytes)
-            .map(JsonBody)
+            .map(|body| JsonBody(body, digest))
             .map_err(|_| unreadable(None))
     }
 }
@@ -666,20 +704,25 @@ async fn sign_transaction_route(
     credentials: Credentials,
     body: JsonBody<SignCall>,
 ) -> Response {
-    let JsonBody(request) = body;
+    let (request, credentials) = body.bind(credentials);
     let unsigned = match decode_unsigned(&request.unsigned_hex) {
         Ok(unsigned) => unsigned,
         Err(refusal) => return *refusal,
     };
-    let Credentials(credentials) = credentials;
     let key_id = request.key_id;
+    let request_id = request.request_id;
     decide(
         &state,
         SignerAuditAction::TransactionSigned,
         Some(key_id.clone()),
         move |service| {
             service
-                .sign_transaction(&credentials, &key_id, &unsigned)
+                .sign_transaction_with_request_id(
+                    &credentials,
+                    &key_id,
+                    &unsigned,
+                    request_id.as_deref(),
+                )
                 .map(|outcome| outcome.map(signature_body))
         },
     )
@@ -691,21 +734,58 @@ async fn sign_consensus_route(
     credentials: Credentials,
     body: JsonBody<SignCall>,
 ) -> Response {
-    let JsonBody(request) = body;
+    let (request, credentials) = body.bind(credentials);
     let unsigned = match decode_unsigned(&request.unsigned_hex) {
         Ok(unsigned) => unsigned,
         Err(refusal) => return *refusal,
     };
-    let Credentials(credentials) = credentials;
     let key_id = request.key_id;
+    let request_id = request.request_id;
     decide(
         &state,
         SignerAuditAction::ConsensusSigned,
         Some(key_id.clone()),
         move |service| {
             service
-                .sign_consensus(&credentials, &key_id, &unsigned)
+                .sign_consensus_with_request_id(
+                    &credentials,
+                    &key_id,
+                    &unsigned,
+                    request_id.as_deref(),
+                )
                 .map(|outcome| outcome.map(signature_body))
+        },
+    )
+    .await
+}
+
+/// `POST /sign/raw` — sign raw caller bytes under `key_id`. The bytes are not
+/// parsed, so the key's `allow_raw` boundary switch is the only gate past the
+/// caller's grant, and it defaults to closed. The reply carries the bare
+/// 64-byte signature and the public key beside the usual witness fields,
+/// because a raw caller (the enclave host's pinned role keys) signs digests
+/// and preimages that never become witnesses of this service's own building.
+async fn sign_raw_route(
+    State(state): State<ApiState>,
+    credentials: Credentials,
+    body: JsonBody<RawSignCall>,
+) -> Response {
+    let (request, credentials) = body.bind(credentials);
+    let data = match hex::decode(request.data_hex.trim()) {
+        Ok(data) if !data.is_empty() => data,
+        Ok(_) => return unreadable(Some("data_hex must not be empty")),
+        Err(_) => return unreadable(Some("data_hex must be hexadecimal")),
+    };
+    let key_id = request.key_id;
+    let request_id = request.request_id;
+    decide(
+        &state,
+        SignerAuditAction::RawSigned,
+        Some(key_id.clone()),
+        move |service| {
+            service
+                .sign_raw_with_request_id(&credentials, &key_id, &data, request_id.as_deref())
+                .map(|outcome| outcome.map(raw_signature_body))
         },
     )
     .await
@@ -749,20 +829,20 @@ async fn generate_key_route(
     credentials: Credentials,
     body: JsonBody<KeyKindCall>,
 ) -> Response {
-    let JsonBody(request) = body;
+    let (request, credentials) = body.bind(credentials);
     let network = match parse_network(&request.network) {
         Ok(network) => network,
         Err(refusal) => return *refusal,
     };
-    let Credentials(credentials) = credentials;
     let label = request.label;
+    let network_magic = request.network_magic;
     decide(
         &state,
         SignerAuditAction::KeyGenerated,
         None,
         move |service| {
             service
-                .generate_key(&credentials, &label, network)
+                .generate_key(&credentials, &label, network, network_magic)
                 .map(|outcome| outcome.map(key_body))
         },
     )
@@ -774,21 +854,27 @@ async fn import_key_route(
     credentials: Credentials,
     body: JsonBody<ImportCall>,
 ) -> Response {
-    let JsonBody(request) = body;
+    let (request, credentials) = body.bind(credentials);
     let network = match parse_network(&request.network) {
         Ok(network) => network,
         Err(refusal) => return *refusal,
     };
-    let Credentials(credentials) = credentials;
     let label = request.label;
     let private_key = request.private_key;
+    let network_magic = request.network_magic;
     decide(
         &state,
         SignerAuditAction::KeyImported,
         None,
         move |service| {
             service
-                .import_key(&credentials, &label, network, private_key.as_str())
+                .import_key(
+                    &credentials,
+                    &label,
+                    network,
+                    network_magic,
+                    private_key.as_str(),
+                )
                 .map(|outcome| outcome.map(key_body))
         },
     )
@@ -800,13 +886,13 @@ async fn import_nep2_route(
     credentials: Credentials,
     body: JsonBody<Nep2Call>,
 ) -> Response {
-    let JsonBody(request) = body;
+    let (request, credentials) = body.bind(credentials);
     let network = match parse_network(&request.network) {
         Ok(network) => network,
         Err(refusal) => return *refusal,
     };
-    let Credentials(credentials) = credentials;
     let label = request.label;
+    let network_magic = request.network_magic;
     let nep2 = request.nep2;
     let passphrase = request.passphrase;
     decide(
@@ -815,7 +901,14 @@ async fn import_nep2_route(
         None,
         move |service| {
             service
-                .import_nep2_key(&credentials, &label, network, &nep2, passphrase.as_str())
+                .import_nep2_key(
+                    &credentials,
+                    &label,
+                    network,
+                    network_magic,
+                    &nep2,
+                    passphrase.as_str(),
+                )
                 .map(|outcome| outcome.map(key_body))
         },
     )
@@ -840,8 +933,7 @@ async fn key_state_route(
     Path(key_id): Path<String>,
     body: JsonBody<StateCall>,
 ) -> Response {
-    let JsonBody(request) = body;
-    let Credentials(credentials) = credentials;
+    let (request, credentials) = body.bind(credentials);
     let action = if request.disabled {
         SignerAuditAction::KeyDisabled
     } else {
@@ -885,12 +977,11 @@ async fn save_policy_route(
     Path(key_id): Path<String>,
     body: JsonBody<PolicyBody>,
 ) -> Response {
-    let JsonBody(request) = body;
+    let (request, credentials) = body.bind(credentials);
     let policy = match request.to_policy() {
         Ok(policy) => policy,
         Err(problem) => return unreadable(Some(problem)),
     };
-    let Credentials(credentials) = credentials;
     decide(
         &state,
         SignerAuditAction::PolicySaved,
@@ -937,7 +1028,7 @@ async fn create_caller_route(
     credentials: Credentials,
     body: JsonBody<CallerCall>,
 ) -> Response {
-    let JsonBody(request) = body;
+    let (request, credentials) = body.bind(credentials);
     let grant = match request.key_grant.to_grant() {
         Ok(grant) => grant,
         Err(problem) => return unreadable(Some(problem)),
@@ -946,7 +1037,6 @@ async fn create_caller_route(
         Ok(capabilities) => capabilities,
         Err(problem) => return unreadable(Some(problem)),
     };
-    let Credentials(credentials) = credentials;
     let label = request.label;
     let origins = request.allowed_origins;
     decide(
@@ -960,6 +1050,61 @@ async fn create_caller_route(
                     outcome.map(|(caller, token)| CreatedCallerBody {
                         caller: caller_body(caller),
                         token,
+                    })
+                })
+        },
+    )
+    .await
+}
+
+async fn create_workload_caller_route(
+    State(state): State<ApiState>,
+    credentials: Credentials,
+    body: JsonBody<WorkloadCallerCall>,
+) -> Response {
+    let (request, credentials) = body.bind(credentials);
+    let grant = match request.caller.key_grant.to_grant() {
+        Ok(grant) => grant,
+        Err(problem) => return unreadable(Some(problem)),
+    };
+    let capabilities = match parse_capabilities(&request.caller.capabilities) {
+        Ok(capabilities) => capabilities,
+        Err(problem) => return unreadable(Some(problem)),
+    };
+    let public_key = match hex::decode(request.workload_public_key.trim())
+        .ok()
+        .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+    {
+        Some(public_key) => public_key,
+        None => {
+            return unreadable(Some(
+                "workload_public_key must be 64 hexadecimal characters",
+            ))
+        }
+    };
+    let label = request.caller.label;
+    let origins = request.caller.allowed_origins;
+    let subject = request.workload_subject;
+    decide(
+        &state,
+        SignerAuditAction::CallerCreated,
+        None,
+        move |service| {
+            service
+                .create_workload_caller(
+                    &credentials,
+                    WorkloadCallerSpec {
+                        label: &label,
+                        key_grant: grant,
+                        capabilities: &capabilities,
+                        allowed_origins: &origins,
+                        public_key,
+                        subject: subject.as_deref(),
+                    },
+                )
+                .map(|outcome| {
+                    outcome.map(|caller| CreatedWorkloadCallerBody {
+                        caller: caller_body(caller),
                     })
                 })
         },
@@ -1014,8 +1159,7 @@ async fn caller_state_route(
     Path(caller_id): Path<String>,
     body: JsonBody<StateCall>,
 ) -> Response {
-    let JsonBody(request) = body;
-    let Credentials(credentials) = credentials;
+    let (request, credentials) = body.bind(credentials);
     let action = if request.disabled {
         SignerAuditAction::CallerDisabled
     } else {
@@ -1112,7 +1256,7 @@ async fn provision_route(
     credentials: Credentials,
     body: JsonBody<ProvisionBody>,
 ) -> Response {
-    let JsonBody(body) = body;
+    let (body, credentials) = body.bind(credentials);
     let env = match ProvisionEnv::from_body(body) {
         Ok(env) => env,
         Err(error) => {
@@ -1128,7 +1272,6 @@ async fn provision_route(
             StatusCode::CONFLICT,
         );
     };
-    let Credentials(credentials) = credentials;
     let presented = credentials.token().map(str::to_owned);
     let attempted =
         tokio::task::spawn_blocking(move || provision::run(&gate, &env, presented.as_deref()))
@@ -1276,6 +1419,19 @@ fn build_attestation(
 pub struct SignCall {
     pub key_id: String,
     pub unsigned_hex: String,
+    #[serde(default)]
+    pub request_id: Option<String>,
+}
+
+/// `{"key_id": …, "data_hex": …}` for `/sign/raw` — the bytes are signed as
+/// they arrive, with no transaction or payload structure around them.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawSignCall {
+    pub key_id: String,
+    pub data_hex: String,
+    #[serde(default)]
+    pub request_id: Option<String>,
 }
 
 /// A label and the chain to hold the key for.
@@ -1284,6 +1440,11 @@ pub struct SignCall {
 pub struct KeyKindCall {
     pub label: String,
     pub network: String,
+    /// The real magic of a private network, when the default does not match the
+    /// deployment. Absent — every pre-existing consumer — means the canonical
+    /// value for `network`.
+    #[serde(default)]
+    pub network_magic: Option<u32>,
 }
 
 /// A key to take custody of.
@@ -1300,6 +1461,11 @@ pub struct KeyKindCall {
 pub struct ImportCall {
     pub label: String,
     pub network: String,
+    /// The real magic of a private network, when the default does not match the
+    /// deployment. Absent — every pre-existing consumer — means the canonical
+    /// value for `network`.
+    #[serde(default)]
+    pub network_magic: Option<u32>,
     pub private_key: SecretString,
 }
 
@@ -1308,6 +1474,11 @@ pub struct ImportCall {
 pub struct Nep2Call {
     pub label: String,
     pub network: String,
+    /// The real magic of a private network, when the default does not match the
+    /// deployment. Absent — every pre-existing consumer — means the canonical
+    /// value for `network`.
+    #[serde(default)]
+    pub network_magic: Option<u32>,
     /// Already encrypted, and useless without the passphrase — so plain text,
     /// and printable in a diagnostic without a second thought.
     pub nep2: String,
@@ -1336,6 +1507,15 @@ pub struct CallerCall {
     pub capabilities: Vec<String>,
     #[serde(default)]
     pub allowed_origins: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkloadCallerCall {
+    #[serde(flatten)]
+    pub caller: CallerCall,
+    pub workload_public_key: String,
+    pub workload_subject: Option<String>,
 }
 
 /// Which keys a caller may name, on the wire: `{"mode": "any"}` or
@@ -1395,10 +1575,14 @@ pub struct PolicyBody {
     pub allow_transfer: bool,
     pub allow_contract_call: bool,
     pub allow_global_scope: bool,
+    pub allow_raw: bool,
     pub contract_whitelist: Vec<String>,
     pub contract_blacklist: Vec<String>,
+    pub contract_method_whitelist: Vec<ContractMethodBody>,
+    pub contract_method_blacklist: Vec<ContractMethodBody>,
     pub asset_whitelist: Vec<String>,
     pub asset_blacklist: Vec<String>,
+    pub asset_limits: Vec<AssetLimitBody>,
     pub transfer_to_whitelist: Vec<String>,
     pub transfer_to_blacklist: Vec<String>,
     /// Raw token units as a decimal string. A JSON number cannot carry an `i128`
@@ -1406,6 +1590,21 @@ pub struct PolicyBody {
     /// operator believed in.
     pub max_single_amount: Option<String>,
     pub window_limit: Option<WindowBody>,
+    pub max_signers: Option<u16>,
+    /// GAS fixed-8 raw units, encoded as text to preserve all `i64` values.
+    pub max_system_fee: Option<String>,
+    /// GAS fixed-8 raw units, encoded as text to preserve all `i64` values.
+    pub max_network_fee: Option<String>,
+    /// Key-wide rolling signature ceiling across all three signing routes.
+    pub max_signatures: Option<SignatureRateBody>,
+}
+
+/// One exact contract/method pair in a method-level allow or deny list.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContractMethodBody {
+    pub contract: String,
+    pub method: String,
 }
 
 /// A rolling window: the ceiling and the span it applies over, always together.
@@ -1416,17 +1615,44 @@ pub struct WindowBody {
     pub max_amount: String,
 }
 
+/// A key-wide rolling signature count and its period.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SignatureRateBody {
+    pub seconds: u64,
+    pub count: u64,
+}
+
+/// Amount ceilings scoped to one token contract.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssetLimitBody {
+    pub asset: String,
+    pub max_single_amount: Option<String>,
+    pub window_limit: Option<WindowBody>,
+}
+
 impl PolicyBody {
     fn to_policy(&self) -> std::result::Result<SignerPolicy, &'static str> {
         Ok(SignerPolicy {
             allow_consensus: self.allow_consensus,
+            allow_raw: self.allow_raw,
             allow_transfer: self.allow_transfer,
             allow_contract_call: self.allow_contract_call,
             allow_global_scope: self.allow_global_scope,
             contract_whitelist: parse_hashes(&self.contract_whitelist, "contract_whitelist")?,
             contract_blacklist: parse_hashes(&self.contract_blacklist, "contract_blacklist")?,
+            contract_method_whitelist: parse_contract_methods(
+                &self.contract_method_whitelist,
+                "contract_method_whitelist",
+            )?,
+            contract_method_blacklist: parse_contract_methods(
+                &self.contract_method_blacklist,
+                "contract_method_blacklist",
+            )?,
             asset_whitelist: parse_hashes(&self.asset_whitelist, "asset_whitelist")?,
             asset_blacklist: parse_hashes(&self.asset_blacklist, "asset_blacklist")?,
+            asset_limits: parse_asset_limits(&self.asset_limits)?,
             transfer_to_whitelist: parse_hashes(
                 &self.transfer_to_whitelist,
                 "transfer_to_whitelist",
@@ -1446,25 +1672,46 @@ impl PolicyBody {
                 }),
                 None => None,
             },
+            max_signers: self.max_signers,
+            max_system_fee: parse_fee(self.max_system_fee.as_deref(), "max_system_fee")?,
+            max_network_fee: parse_fee(self.max_network_fee.as_deref(), "max_network_fee")?,
+            max_signatures: self
+                .max_signatures
+                .as_ref()
+                .map(|limit| SignatureRateLimit {
+                    seconds: limit.seconds,
+                    count: limit.count,
+                }),
         })
     }
 
     fn from_policy(policy: &SignerPolicy) -> Self {
         PolicyBody {
             allow_consensus: policy.allow_consensus,
+            allow_raw: policy.allow_raw,
             allow_transfer: policy.allow_transfer,
             allow_contract_call: policy.allow_contract_call,
             allow_global_scope: policy.allow_global_scope,
             contract_whitelist: display_hashes(&policy.contract_whitelist),
             contract_blacklist: display_hashes(&policy.contract_blacklist),
+            contract_method_whitelist: display_contract_methods(&policy.contract_method_whitelist),
+            contract_method_blacklist: display_contract_methods(&policy.contract_method_blacklist),
             asset_whitelist: display_hashes(&policy.asset_whitelist),
             asset_blacklist: display_hashes(&policy.asset_blacklist),
+            asset_limits: display_asset_limits(&policy.asset_limits),
             transfer_to_whitelist: display_hashes(&policy.transfer_to_whitelist),
             transfer_to_blacklist: display_hashes(&policy.transfer_to_blacklist),
             max_single_amount: policy.max_single_amount.map(|amount| amount.to_string()),
             window_limit: policy.window_limit.map(|limit| WindowBody {
                 seconds: limit.seconds,
                 max_amount: limit.max_amount.to_string(),
+            }),
+            max_signers: policy.max_signers,
+            max_system_fee: policy.max_system_fee.map(|fee| fee.to_string()),
+            max_network_fee: policy.max_network_fee.map(|fee| fee.to_string()),
+            max_signatures: policy.max_signatures.map(|limit| SignatureRateBody {
+                seconds: limit.seconds,
+                count: limit.count,
             }),
         }
     }
@@ -1478,6 +1725,82 @@ fn parse_hashes(
         .iter()
         .map(|value| ScriptHash::from_str(value).map_err(|_| field))
         .collect()
+}
+
+fn parse_contract_methods(
+    values: &[ContractMethodBody],
+    field: &'static str,
+) -> std::result::Result<Vec<ContractMethod>, &'static str> {
+    values
+        .iter()
+        .map(|value| {
+            let method = value.method.trim();
+            if method.is_empty() || method.len() > 128 {
+                return Err(field);
+            }
+            Ok(ContractMethod {
+                contract: ScriptHash::from_str(&value.contract).map_err(|_| field)?,
+                method: method.to_string(),
+            })
+        })
+        .collect()
+}
+
+fn parse_asset_limits(
+    values: &[AssetLimitBody],
+) -> std::result::Result<Vec<AssetLimit>, &'static str> {
+    values
+        .iter()
+        .map(|value| {
+            Ok(AssetLimit {
+                asset: ScriptHash::from_str(&value.asset).map_err(|_| "asset_limits")?,
+                max_single_amount: parse_amount(
+                    value.max_single_amount.as_deref(),
+                    "asset_limits",
+                )?,
+                window_limit: match &value.window_limit {
+                    Some(window) => Some(WindowLimit {
+                        seconds: window.seconds,
+                        max_amount: parse_amount_value(&window.max_amount, "asset_limits")?,
+                    }),
+                    None => None,
+                },
+            })
+        })
+        .collect()
+}
+
+fn display_asset_limits(values: &[AssetLimit]) -> Vec<AssetLimitBody> {
+    values
+        .iter()
+        .map(|value| AssetLimitBody {
+            asset: value.asset.to_display(),
+            max_single_amount: value.max_single_amount.map(|amount| amount.to_string()),
+            window_limit: value.window_limit.map(|window| WindowBody {
+                seconds: window.seconds,
+                max_amount: window.max_amount.to_string(),
+            }),
+        })
+        .collect()
+}
+
+fn display_contract_methods(values: &[ContractMethod]) -> Vec<ContractMethodBody> {
+    values
+        .iter()
+        .map(|value| ContractMethodBody {
+            contract: value.contract.to_display(),
+            method: value.method.clone(),
+        })
+        .collect()
+}
+
+fn parse_fee(
+    value: Option<&str>,
+    field: &'static str,
+) -> std::result::Result<Option<i64>, &'static str> {
+    value
+        .map(|raw| raw.parse::<i64>().ok().filter(|fee| *fee >= 0).ok_or(field))
+        .transpose()
 }
 
 /// Amounts are accepted as decimal text only: no JSON number, no exponent, no
@@ -1541,11 +1864,27 @@ struct SignatureBody {
     verification_script: String,
 }
 
+/// `/sign/raw`'s witness: the §5 fields plus the bare signature and the
+/// public key, the two things a raw caller verifies against without ever
+/// rebuilding a Neo witness.
+#[derive(Serialize)]
+struct RawSignatureBody {
+    key_id: String,
+    script_hash: String,
+    address: String,
+    digest: String,
+    signature: String,
+    public_key: String,
+    invocation_script: String,
+    verification_script: String,
+}
+
 #[derive(Serialize)]
 struct KeyBody {
     key_id: String,
     label: String,
     network: String,
+    network_magic: u32,
     public_key: String,
     script_hash: String,
     address: String,
@@ -1589,6 +1928,9 @@ struct PolicyAdvice {
 struct CallerBody {
     id: String,
     label: String,
+    auth_mode: String,
+    workload_public_key: Option<String>,
+    workload_subject: Option<String>,
     key_grant: GrantBody,
     capabilities: Vec<String>,
     allowed_origins: Vec<String>,
@@ -1607,6 +1949,11 @@ struct CallersBody {
 struct CreatedCallerBody {
     caller: CallerBody,
     token: String,
+}
+
+#[derive(Serialize)]
+struct CreatedWorkloadCallerBody {
+    caller: CallerBody,
 }
 
 #[derive(Serialize)]
@@ -1658,6 +2005,31 @@ fn signature_body(witness: SignedWitness) -> SignatureBody {
     }
 }
 
+fn raw_signature_body(witness: SignedWitness) -> RawSignatureBody {
+    // The bare signature and public key are sliced back out of the two pinned
+    // scripts (`0c40 <64B sig>`, `0c21 <33B pubkey> …`) rather than widening
+    // [`SignedWitness`] with fields that duplicate the script bytes a caller
+    // already receives.
+    RawSignatureBody {
+        key_id: witness.key_id.clone(),
+        script_hash: witness.script_hash.to_string(),
+        address: witness.address.clone(),
+        digest: witness.digest.clone(),
+        signature: witness
+            .invocation
+            .get(2..66)
+            .map(hex::encode)
+            .unwrap_or_default(),
+        public_key: witness
+            .verification
+            .get(2..35)
+            .map(hex::encode)
+            .unwrap_or_default(),
+        invocation_script: hex::encode(&witness.invocation),
+        verification_script: hex::encode(&witness.verification),
+    }
+}
+
 /// The shapes a stored boundary can have that are legal and still weaker than
 /// they look.
 ///
@@ -1683,6 +2055,7 @@ fn key_body(info: KeyPublicInfo) -> KeyBody {
         key_id: info.key_id.clone(),
         label: info.label.clone(),
         network: info.network.to_string(),
+        network_magic: info.network_magic,
         public_key: hex::encode(info.public_key),
         script_hash: info.script_hash.to_string(),
         address: info.address.clone(),
@@ -1695,6 +2068,9 @@ fn caller_body(info: CallerInfo) -> CallerBody {
     CallerBody {
         id: info.id.clone(),
         label: info.label.clone(),
+        auth_mode: info.auth_mode.clone(),
+        workload_public_key: info.workload_public_key.clone(),
+        workload_subject: info.workload_subject.clone(),
         key_grant: GrantBody::from_grant(&info.key_grant),
         capabilities: info
             .capabilities

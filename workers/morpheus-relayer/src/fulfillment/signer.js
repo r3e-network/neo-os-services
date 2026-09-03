@@ -1,14 +1,14 @@
-import { callNitro } from '../nitro.js';
 import { buildFulfillmentDigestBytes } from '../router.js';
 import { signNeoXFulfillment } from '../neox.js';
-import { reportPinnedNeoN3Role, resolvePinnedNeoN3VerifierPublicKey } from '../lib/neo-signers.js';
-import { wallet as neonWallet } from '@cityofzion/neon-js';
+import { resolvePinnedNeoN3VerifierPublicKey } from '../lib/neo-signers.js';
+import { custodyKeyId, custodySignRaw } from '../custody.js';
 import { trimString } from '@r3e-network/neo-os-services-shared/utils';
 import { normalizePublicKey } from '../attestation.js';
 
 /**
- * Fulfillment signing helpers: local Neo N3 verifier derivation, digest context
- * binding, and the top-level signFulfillmentPayload dispatcher.
+ * Fulfillment signing helpers: digest context binding, and the top-level
+ * signFulfillmentPayload dispatcher. The relayer holds no key material — the
+ * Neo N3 verification signature is produced by the custody signer service.
  */
 
 /**
@@ -76,77 +76,11 @@ export function resolveDigestBinding(config, chain, fulfillment) {
   return digestContext;
 }
 
-function buildLocalNeoN3Account(keyMaterial = '') {
-  const raw = trimString(keyMaterial);
-  if (!raw) return null;
-  try {
-    return new neonWallet.Account(raw);
-  } catch {
-    return null;
-  }
-}
-
-const localVerifierAccountCache = new Map();
-
-function resolveLocalVerifierAccount(config) {
-  const expectedPublicKey = normalizePublicKey(
-    resolvePinnedNeoN3VerifierPublicKey(config.network, process.env)
-  );
-  const cacheKey = `${config.network || ''}:${expectedPublicKey}`;
-  const cached = localVerifierAccountCache.get(cacheKey);
-  if (cached !== undefined) return cached;
-
-  const candidates = [];
-
-  const explicitVerifier = reportPinnedNeoN3Role(config.network, 'oracle_verifier', {
-    env: process.env,
-    allowMissing: true,
-  }).materialized;
-  if (explicitVerifier?.private_key)
-    candidates.push(buildLocalNeoN3Account(explicitVerifier.private_key));
-  if (explicitVerifier?.wif) candidates.push(buildLocalNeoN3Account(explicitVerifier.wif));
-  if (config?.neo_n3?.updaterPrivateKey)
-    candidates.push(buildLocalNeoN3Account(config.neo_n3.updaterPrivateKey));
-  if (config?.neo_n3?.updaterWif) candidates.push(buildLocalNeoN3Account(config.neo_n3.updaterWif));
-
-  const workerSigner = reportPinnedNeoN3Role(config.network, 'worker', {
-    env: process.env,
-    allowMissing: true,
-  }).materialized;
-  if (workerSigner?.private_key) candidates.push(buildLocalNeoN3Account(workerSigner.private_key));
-  if (workerSigner?.wif) candidates.push(buildLocalNeoN3Account(workerSigner.wif));
-
-  const resolved =
-    candidates.find(
-      (account) => account && normalizePublicKey(account.publicKey) === expectedPublicKey
-    ) || null;
-  localVerifierAccountCache.set(cacheKey, resolved);
-  return resolved;
-}
-
-/**
- * Test-only: clear the local-verifier memo so tests that vary env/config.network
- * get a fresh resolution.
- */
-export function resetLocalVerifierCacheForTests() {
-  localVerifierAccountCache.clear();
-}
-
-/**
- * Test-only: expose the resolver so the memoization contract can be asserted
- * directly.
- *
- * @param {object} config Relayer configuration.
- * @returns {object|null}
- */
-export function resolveLocalVerifierAccountForTests(config) {
-  return resolveLocalVerifierAccount(config);
-}
-
 /**
  * Sign a fulfillment payload. For Neo X this delegates to the EVM signer; for
- * Neo N3 it first tries a local verifier account and falls back to the Nitro
- * enclave signing endpoint.
+ * Neo N3 the digest is signed by the custody signer service under the
+ * allow_raw oracle_verifier key, and the returned public key is checked
+ * against the pinned verifier identity before the result is trusted.
  *
  * @param {object} config Relayer configuration.
  * @param {string} chain Target chain id.
@@ -157,6 +91,9 @@ export async function signFulfillmentPayload(config, chain, fulfillment) {
   // Neo X (EVM): keccak digest + secp256k1 EIP-191 signature (ecrecover on-chain).
   if (chain === 'neox') {
     return signNeoXFulfillment(config, fulfillment);
+  }
+  if (chain !== 'neo_n3') {
+    throw new Error(`unsupported fulfillment chain for signing: ${chain}`);
   }
   // Bind the digest to the exact deployed contract + network so the signature
   // cannot be replayed across deployments/networks.
@@ -170,36 +107,25 @@ export async function signFulfillmentPayload(config, chain, fulfillment) {
     fulfillment.result_bytes_base64 || '',
     digestContext
   );
-  if (chain === 'neo_n3') {
-    const localVerifier = resolveLocalVerifierAccount(config);
-    if (localVerifier) {
-      return {
-        signature: neonWallet.sign(digestBytes.toString('hex'), localVerifier.privateKey),
-        public_key: localVerifier.publicKey,
-        address: localVerifier.address,
-        script_hash: `0x${localVerifier.scriptHash}`,
-        source: 'relayer_local',
-      };
-    }
-  }
-  const response = await callNitro(
-    config,
-    '/sign/payload',
-    {
-      target_chain: chain,
-      key_role: 'oracle_verifier',
-      data_hex: digestBytes.toString('hex'),
-    },
-    { baseUrl: config.nitro.signerUrl }
+  const keyId = custodyKeyId(config, 'oracle_verifier');
+  const expectedPublicKey = normalizePublicKey(
+    resolvePinnedNeoN3VerifierPublicKey(config.network, process.env)
   );
-  if (!response.ok || typeof response.body?.signature !== 'string' || !response.body.signature) {
+  const signed = await custodySignRaw(config, keyId, digestBytes.toString('hex'));
+  const publicKey = normalizePublicKey(signed.public_key || '');
+  if (publicKey.toLowerCase() !== expectedPublicKey.toLowerCase()) {
     throw new Error(
-      typeof response.body?.error === 'string'
-        ? response.body.error
-        : `worker signing failed with status ${response.status}`
+      'custody signer returned a public key that does not match the pinned oracle_verifier'
     );
   }
-  return response.body;
+  return {
+    signature: signed.signature,
+    public_key: publicKey,
+    address: trimString(signed.address || ''),
+    script_hash: trimString(signed.script_hash || ''),
+    key_id: keyId,
+    source: 'custody_signer',
+  };
 }
 
 // Build + sign the canonical fulfillment envelope for an encoded result.

@@ -46,6 +46,15 @@ export const NEO_N3_SIGNER_ENV_KEYS = [
   'MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_MAINNET',
 ];
 
+// Public (non-secret) signer env keys that are safe to render into shared
+// provisioning outputs; every WIF/private-key entry above is custody-side and
+// must never leave the secure env source.
+export const NEO_N3_SIGNER_PUBLIC_ENV_KEYS = [
+  'MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY',
+  'MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_TESTNET',
+  'MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_MAINNET',
+];
+
 const ROLE_KEY_GROUPS = {
   testnet: {
     worker: {

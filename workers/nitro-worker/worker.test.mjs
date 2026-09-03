@@ -10,7 +10,7 @@ import {
   generateKeyPairSync,
   randomBytes,
 } from 'node:crypto';
-import { rpc as neoRpc, wallet as neoWallet } from '@cityofzion/neon-js';
+import { rpc as neoRpc, tx as neoTx, wallet as neoWallet } from '@cityofzion/neon-js';
 import { exportJWK, SignJWT } from 'jose';
 import {
   neoNetworkMagicLe4,
@@ -53,6 +53,11 @@ process.env.MORPHEUS_ALLOW_EPHEMERAL_KEY = 'true';
 process.env.CONTRACT_MORPHEUS_ORACLE_HASH = '0xf54d8584ef82315c1800373272ab08ae0db2d5ef';
 process.env.NEODID_SECRET_SALT = 'worker-test-neodid-salt';
 process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = 'true';
+process.env.SIGNER_SERVICE_URL = 'https://custody.test';
+process.env.SIGNER_SERVICE_TOKEN = 'custody-worker-test-token';
+process.env.SIGNER_ROLE_WORKER_KEY_ID = 'key-worker';
+process.env.SIGNER_ROLE_UPDATER_KEY_ID = 'key-updater';
+process.env.SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID = 'key-oracle-verifier';
 delete process.env.WEB3AUTH_CLIENT_ID;
 delete process.env.NEXT_PUBLIC_WEB3AUTH_CLIENT_ID;
 delete process.env.WEB3AUTH_JWKS_URL;
@@ -74,6 +79,11 @@ const WORKER_TEST_ENV_KEEP = new Set([
   'CONTRACT_MORPHEUS_ORACLE_HASH',
   'NEODID_SECRET_SALT',
   'MORPHEUS_ALLOW_UNPINNED_SIGNERS',
+  'SIGNER_SERVICE_URL',
+  'SIGNER_SERVICE_TOKEN',
+  'SIGNER_ROLE_WORKER_KEY_ID',
+  'SIGNER_ROLE_UPDATER_KEY_ID',
+  'SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID',
 ]);
 for (const key of Object.keys(process.env)) {
   if (WORKER_TEST_ENV_KEEP.has(key)) continue;
@@ -83,6 +93,9 @@ for (const key of Object.keys(process.env)) {
     key.startsWith('MORPHEUS_WORKER_NEO_N3_') ||
     key.startsWith('MORPHEUS_RELAYER_NEO_N3_') ||
     key.startsWith('MORPHEUS_UPDATER_NEO_N3_') ||
+    key.startsWith('SIGNER_SERVICE_') ||
+    key.startsWith('SIGNER_ROLE_') ||
+    key === 'SIGNER_CUSTODY_TIMEOUT_MS' ||
     key.startsWith('MORPHEUS_ORACLE_VERIFIER_') ||
     key.startsWith('MORPHEUS_ORACLE_VERIFIER_') ||
     key.startsWith('MORPHEUS_FEED_') ||
@@ -97,7 +110,6 @@ const baselineEnv = { ...process.env };
 
 const { default: handler, __resetHealthReadinessCacheForTests } = await import('./src/worker.js');
 const {
-  __setDstackClientFactoryForTests,
   __resetDstackClientStateForTests,
   __setSecretsProviderForTests,
   __resetSecretsProviderStateForTests,
@@ -108,9 +120,11 @@ const { __resetOracleKeyMaterialForTests, decryptEncryptedToken } =
 const { __drainOracleFeedBackgroundTasksForTests, __resetFeedStateForTests } =
   await import('./src/oracle/feeds.js');
 const { allowlistAllows, createByteArrayParam } = await import('./src/platform/allowlist.js');
-const { loadNeoN3Context } = await import('./src/chain/neo-n3.js');
+const { loadNeoN3Context, relayNeoN3Invocation } = await import('./src/chain/neo-n3.js');
 const { __resetNeoDidStateForTests } = await import('./src/neodid/index.js');
 const { __resetSigningCachesForTests } = await import('./src/chain/signing.js');
+const { __setCustodyTransportForTests, __resetCustodyTransportForTests } =
+  await import('./src/platform/custody.js');
 const { __resetOracleFetchDispatchersForTests } = await import('./src/oracle/fetch.js');
 
 function authHeaders() {
@@ -118,6 +132,83 @@ function authHeaders() {
     authorization: 'Bearer worker-test-secret',
     'content-type': 'application/json',
   };
+}
+
+// Custody test transport: the worker sign lanes are custody-only, so the harness
+// swaps the HTTP transport for a deterministic in-process signer service that
+// speaks the §5 shapes. key-worker carries the same identity the legacy
+// local-key tests asserted against, so envelope assertions keep holding.
+const custodyWorkerAccount = new neoWallet.Account(process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY);
+const custodyOracleVerifierAccount = new neoWallet.Account(
+  '68e15083a6fd187b6f5f6136bada4eb00f096e5e21d82c74edf6f086e80539ba'
+);
+// Distinct updater identity: the tx-relay lane signs oracle-contract
+// invocations as the updater account, not the worker's own key.
+const custodyUpdaterAccount = new neoWallet.Account(
+  'c0941cd6a267c0ef4c86b52b1a1b9d0dbb8f9a2c8b6e8ff0d9d16b1a5f6d1a02'
+);
+const custodyKeyAccounts = {
+  'key-worker': custodyWorkerAccount,
+  'key-updater': custodyUpdaterAccount,
+  'key-oracle-verifier': custodyOracleVerifierAccount,
+};
+
+function installCustodyTransportForTests() {
+  __setCustodyTransportForTests(async (method, pathname, body = {}) => {
+    const keyMatch = pathname.match(/^\/keys\/(.+)$/);
+    if (method === 'GET' && keyMatch) {
+      const account = custodyKeyAccounts[decodeURIComponent(keyMatch[1])];
+      if (!account) return { allowed: false, code: 'key_not_found', message: 'unknown key id' };
+      return {
+        key_id: decodeURIComponent(keyMatch[1]),
+        label: 'worker-test',
+        network: 'testnet',
+        network_magic: 894710606,
+        public_key: account.publicKey,
+        script_hash: `0x${account.scriptHash}`,
+        address: account.address,
+        verification_script: `0c21${account.publicKey}4156e7b327`,
+        signing_enabled: true,
+      };
+    }
+    if (method === 'POST' && pathname === '/sign/raw') {
+      const account = custodyKeyAccounts[body.key_id];
+      if (!account) return { allowed: false, code: 'key_not_found', message: 'unknown key id' };
+      const dataHex = String(body.data_hex || '');
+      const signature = neoWallet.sign(dataHex, account.privateKey);
+      return {
+        allowed: true,
+        key_id: body.key_id,
+        script_hash: `0x${account.scriptHash}`,
+        address: account.address,
+        digest: createHash('sha256').update(Buffer.from(dataHex, 'hex')).digest('hex'),
+        signature,
+        public_key: account.publicKey,
+        invocation_script: `0c40${signature}`,
+        verification_script: `0c21${account.publicKey}4156e7b327`,
+      };
+    }
+    if (method === 'POST' && pathname === '/sign/transaction') {
+      const account = custodyKeyAccounts[body.key_id];
+      if (!account) return { allowed: false, code: 'key_not_found', message: 'unknown key id' };
+      const unsignedHex = String(body.unsigned_hex || '');
+      const signature = neoWallet.sign(unsignedHex, account.privateKey);
+      return {
+        allowed: true,
+        key_id: body.key_id,
+        script_hash: `0x${account.scriptHash}`,
+        address: account.address,
+        digest: createHash('sha256').update(Buffer.from(unsignedHex, 'hex')).digest('hex'),
+        invocation_script: `0c40${signature}`,
+        verification_script: `0c21${account.publicKey}4156e7b327`,
+      };
+    }
+    return {
+      allowed: false,
+      code: 'not_found',
+      message: `unexpected custody route ${method} ${pathname}`,
+    };
+  });
 }
 
 function restoreBaselineEnv() {
@@ -147,10 +238,11 @@ async function restorePerTestState() {
   __resetOracleKeyMaterialForTests();
   __resetFeedStateForTests();
   __resetNeoDidStateForTests();
-  // Signer material is resolved from env and memoized per (role, network); clear
-  // it so a test that pins its own worker/verifier keys is not served a stale
-  // Account cached from a prior test's environment.
+  // The sign lanes are custody-only: reset the transport seam and re-install
+  // the deterministic custody stub so no test is served a prior test's override.
   __resetSigningCachesForTests();
+  __resetCustodyTransportForTests();
+  installCustodyTransportForTests();
   // Retire any pooled oracle-fetch dispatchers so a real-undici path in one test
   // cannot leak an open connection pool into the next.
   await __resetOracleFetchDispatchersForTests();
@@ -606,6 +698,44 @@ test('neodid bind returns deterministic master nullifier and ticket signature', 
   assert.equal(secondRes.status, 200);
   const second = await secondRes.json();
   assert.equal(second.master_nullifier, first.master_nullifier);
+});
+
+test('neodid digest signing is custody-side and rejects caller key material', async () => {
+  process.env.MORPHEUS_NEODID_ALLOW_UNVERIFIED_UID = 'true';
+  const payload = {
+    vault_account: '0x6d0656f6dd91469db1c90cc1e574380613f43738',
+    provider: 'twitter',
+    provider_uid: 'twitter_uid_custody_lane',
+    claim_type: 'Twitter_VIP',
+    claim_value: 'followers_gt_1000',
+  };
+
+  // A caller key in the body must not become the signer (key-confusion guard).
+  // The guard's message names key-material literals, so M-06 sanitization masks
+  // it to 'internal error' on the caller-facing surface.
+  const rejected = await handler(
+    new Request('http://local/neodid/bind', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ ...payload, private_key: custodyWorkerAccount.privateKey }),
+    })
+  );
+  assert.equal(rejected.status, 400);
+  const rejectedBody = await rejected.json();
+  assert.equal(rejectedBody.error, 'internal error');
+
+  // The clean request is signed by the custody worker key.
+  const res = await handler(
+    new Request('http://local/neodid/bind', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    })
+  );
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.public_key, custodyWorkerAccount.publicKey);
+  assert.match(body.signature, /^[0-9a-f]{128}$/);
 });
 
 test('neodid bind verifies web3auth id_token and derives provider uid inside the worker', async () => {
@@ -1580,27 +1710,87 @@ test('oracle feed with wait:false returns accepted before provider and chain wor
   assert.equal(providerRequested, true);
 });
 
-test('loadNeoN3Context falls back to MORPHEUS_RELAYER_NEO_N3_WIF', async () => {
-  const previousRelayerWif = process.env.MORPHEUS_RELAYER_NEO_N3_WIF;
-  const previousRelayerPrivateKey = process.env.MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY;
-  const previousWorkerPrivateKey = process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY;
-  const previousWorkerWif = process.env.MORPHEUS_WORKER_NEO_N3_WIF;
-  const previousNeoN3Wif = process.env.NEO_N3_WIF;
-  const generatedAccount = new neoWallet.Account();
-  delete process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY;
-  delete process.env.MORPHEUS_WORKER_NEO_N3_WIF;
-  delete process.env.MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY;
-  delete process.env.NEO_N3_WIF;
-  process.env.MORPHEUS_RELAYER_NEO_N3_WIF = generatedAccount.WIF;
-
+test('loadNeoN3Context resolves the tx-relay signing identity from the custody service', async () => {
   const context = await loadNeoN3Context({}, { required: true, requireRpc: false });
-  assert.equal(context.account.address, generatedAccount.address);
+  assert.equal(context.account, null);
+  const identity = await context.resolveSigningIdentity();
+  assert.equal(identity.keyId, 'key-updater');
+  assert.equal(identity.account.address, custodyUpdaterAccount.address);
+  assert.equal(identity.account.publicKey, custodyUpdaterAccount.publicKey);
+  assert.equal(identity.scriptHash, `0x${custodyUpdaterAccount.scriptHash}`);
+  assert.equal(await context.resolveSigningIdentity(), identity);
+});
 
-  process.env.MORPHEUS_RELAYER_NEO_N3_WIF = previousRelayerWif;
-  process.env.MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY = previousRelayerPrivateKey;
-  process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY = previousWorkerPrivateKey;
-  process.env.MORPHEUS_WORKER_NEO_N3_WIF = previousWorkerWif;
-  process.env.NEO_N3_WIF = previousNeoN3Wif;
+test('loadNeoN3Context keeps read-only contexts free of custody resolution', async () => {
+  const context = await loadNeoN3Context({}, { required: false, requireRpc: false });
+  assert.equal(context.account, null);
+  assert.equal(context.custody, null);
+});
+
+test('relayNeoN3Invocation builds, fees, and custody-signs the relay transaction', async () => {
+  const rpcCalls = [];
+  const originalInvokeFunction = neoRpc.RPCClient.prototype.invokeFunction;
+  const originalGetBlockCount = neoRpc.RPCClient.prototype.getBlockCount;
+  const originalCalculateNetworkFee = neoRpc.RPCClient.prototype.calculateNetworkFee;
+  const originalSendRawTransaction = neoRpc.RPCClient.prototype.sendRawTransaction;
+  neoRpc.RPCClient.prototype.invokeFunction = async function (_hash, operation, _params, _signers) {
+    rpcCalls.push({ method: 'invokeFunction', operation });
+    return { state: 'HALT', gasconsumed: '1000000' };
+  };
+  neoRpc.RPCClient.prototype.getBlockCount = async function () {
+    rpcCalls.push({ method: 'getblockcount' });
+    return 1000;
+  };
+  neoRpc.RPCClient.prototype.calculateNetworkFee = async function (serialized) {
+    rpcCalls.push({ method: 'calculatenetworkfee', serialized });
+    return 100000;
+  };
+  neoRpc.RPCClient.prototype.sendRawTransaction = async function (serialized) {
+    rpcCalls.push({ method: 'sendrawtransaction', serialized });
+    return '0x' + 'ab'.repeat(32);
+  };
+  try {
+    const result = await relayNeoN3Invocation({
+      network: 'mainnet',
+      contract_hash: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+      method: 'fulfillRequest',
+      params: [],
+      request_id: 'relay-custody-e2e',
+    });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.request_id, 'relay-custody-e2e');
+    assert.match(result.body.tx_hash, /^0x[0-9a-f]{64}$/);
+    assert.equal(result.body.vm_state, 'HALT');
+
+    assert.ok(
+      rpcCalls.some(
+        (call) => call.method === 'invokeFunction' && call.operation === 'fulfillRequest'
+      ),
+      'invokescript simulation should run against the allowlisted method'
+    );
+    assert.ok(rpcCalls.some((call) => call.method === 'getblockcount'));
+    const feeCall = rpcCalls.find((call) => call.method === 'calculatenetworkfee');
+    assert.ok(feeCall, 'calculatenetworkfee should be called before signing');
+    const sendCall = rpcCalls.find((call) => call.method === 'sendrawtransaction');
+    assert.ok(sendCall, 'sendrawtransaction should be called');
+    const broadcastTx = neoTx.Transaction.deserialize(
+      Buffer.from(sendCall.serialized, 'base64').toString('hex')
+    );
+    assert.equal(broadcastTx.witnesses.length, 1);
+    assert.equal(
+      String(broadcastTx.witnesses[0].scriptHash).toLowerCase().replace(/^0x/, ''),
+      custodyUpdaterAccount.scriptHash.toLowerCase()
+    );
+    assert.equal(
+      broadcastTx.witnesses[0].verificationScript.toString(),
+      `0c21${custodyUpdaterAccount.publicKey}4156e7b327`
+    );
+  } finally {
+    neoRpc.RPCClient.prototype.invokeFunction = originalInvokeFunction;
+    neoRpc.RPCClient.prototype.getBlockCount = originalGetBlockCount;
+    neoRpc.RPCClient.prototype.calculateNetworkFee = originalCalculateNetworkFee;
+    neoRpc.RPCClient.prototype.sendRawTransaction = originalSendRawTransaction;
+  }
 });
 
 test('feed quote supports twelvedata provider', async () => {
@@ -2532,7 +2722,8 @@ test('paymaster authorize enforces network-specific policy', async () => {
     process.env.MORPHEUS_PAYMASTER_TESTNET_POLICY_ID = snapshot.testnetPolicyId;
     process.env.MORPHEUS_PAYMASTER_TESTNET_MAX_GAS_UNITS = snapshot.testnetMaxGas;
     process.env.MORPHEUS_PAYMASTER_TESTNET_ALLOW_TARGETS = snapshot.testnetAllowTargets;
-    process.env.MORPHEUS_PAYMASTER_TESTNET_ALLOW_USEROP_TARGETS = snapshot.testnetAllowUserOpTargets;
+    process.env.MORPHEUS_PAYMASTER_TESTNET_ALLOW_USEROP_TARGETS =
+      snapshot.testnetAllowUserOpTargets;
     process.env.MORPHEUS_PAYMASTER_TESTNET_ALLOW_METHODS = snapshot.testnetAllowMethods;
     process.env.MORPHEUS_PAYMASTER_TESTNET_ALLOW_ACCOUNTS = snapshot.testnetAllowAccounts;
     process.env.MORPHEUS_PAYMASTER_TESTNET_BLOCK_ACCOUNTS = snapshot.testnetBlockAccounts;
@@ -2692,7 +2883,8 @@ test('paymaster authorize can consult AA hook allowlist state', async () => {
     process.env.MORPHEUS_PAYMASTER_TESTNET_POLICY_ID = snapshot.testnetPolicyId;
     process.env.MORPHEUS_PAYMASTER_TESTNET_MAX_GAS_UNITS = snapshot.testnetMaxGas;
     process.env.MORPHEUS_PAYMASTER_TESTNET_ALLOW_TARGETS = snapshot.testnetAllowTargets;
-    process.env.MORPHEUS_PAYMASTER_TESTNET_ALLOW_USEROP_TARGETS = snapshot.testnetAllowUserOpTargets;
+    process.env.MORPHEUS_PAYMASTER_TESTNET_ALLOW_USEROP_TARGETS =
+      snapshot.testnetAllowUserOpTargets;
     process.env.MORPHEUS_PAYMASTER_TESTNET_ALLOW_METHODS = snapshot.testnetAllowMethods;
     process.env.MORPHEUS_PAYMASTER_TESTNET_ALLOW_ACCOUNTS = snapshot.testnetAllowAccounts;
     process.env.MORPHEUS_PAYMASTER_TESTNET_BLOCK_ACCOUNTS = snapshot.testnetBlockAccounts;
@@ -3304,20 +3496,31 @@ test('sign-payload supports neo_n3', async () => {
   assert.ok(neoN3.address);
 });
 
-test('sign-payload infers the Morpheus network from the request path for Neo N3 signing', async () => {
+test('sign-payload rejects caller key material even when the retired escape hatch is set', async () => {
   global.fetch = originalFetch;
-  const previousGenericKey = process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY;
-  const previousTestnetKey = process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_TESTNET;
-  const previousMainnetKey = process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET;
-  const testnetKey = '11'.repeat(32);
-  const mainnetKey = '22'.repeat(32);
-  const testnetAccount = new neoWallet.Account(testnetKey);
-  const mainnetAccount = new neoWallet.Account(mainnetKey);
+  process.env.MORPHEUS_ALLOW_CALLER_SIGNING_KEY = 'true';
+  const res = await handler(
+    new Request('http://local/sign/payload', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        target_chain: 'neo_n3',
+        message: 'must use custody',
+        private_key: '1'.repeat(64),
+      }),
+    })
+  );
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  // The API error redactor treats private-key terminology as sensitive.
+  assert.equal(body.error, 'internal error');
+});
 
-  delete process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY;
-  process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_TESTNET = testnetKey;
-  process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET = mainnetKey;
-
+test('sign-payload signs every network-scoped path with the provisioned custody key', async () => {
+  global.fetch = originalFetch;
+  // The custody key row binds the network (docs/SIGNER_SERVICE.md §5), so the
+  // request path's network inference no longer selects signing material: both
+  // paths sign under the same provisioned worker key id.
   try {
     const mainnetRes = await handler(
       new Request('http://local/mainnet/sign/payload', {
@@ -3328,8 +3531,8 @@ test('sign-payload infers the Morpheus network from the request path for Neo N3 
     );
     assert.equal(mainnetRes.status, 200);
     const mainnetBody = await mainnetRes.json();
-    assert.equal(mainnetBody.public_key, mainnetAccount.publicKey);
-    assert.equal(mainnetBody.address, mainnetAccount.address);
+    assert.equal(mainnetBody.public_key, custodyWorkerAccount.publicKey);
+    assert.equal(mainnetBody.address, custodyWorkerAccount.address);
 
     const testnetRes = await handler(
       new Request('http://local/testnet/sign/payload', {
@@ -3340,186 +3543,162 @@ test('sign-payload infers the Morpheus network from the request path for Neo N3 
     );
     assert.equal(testnetRes.status, 200);
     const testnetBody = await testnetRes.json();
-    assert.equal(testnetBody.public_key, testnetAccount.publicKey);
-    assert.equal(testnetBody.address, testnetAccount.address);
+    assert.equal(testnetBody.public_key, custodyWorkerAccount.publicKey);
+    assert.equal(testnetBody.address, custodyWorkerAccount.address);
   } finally {
-    if (previousGenericKey === undefined) delete process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY;
-    else process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY = previousGenericKey;
-
-    if (previousTestnetKey === undefined)
-      delete process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_TESTNET;
-    else process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_TESTNET = previousTestnetKey;
-
-    if (previousMainnetKey === undefined)
-      delete process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET;
-    else process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET = previousMainnetKey;
+    installCustodyTransportForTests();
   }
 });
 
-test('sign-payload can use the oracle_verifier signing role when configured', async () => {
+test('sign-payload maps the oracle_verifier key_role to its provisioned custody key', async () => {
   global.fetch = originalFetch;
-  const previous = process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY;
-  process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY =
-    '68e15083a6fd187b6f5f6136bada4eb00f096e5e21d82c74edf6f086e80539ba';
-  try {
-    const res = await handler(
-      new Request('http://local/sign/payload', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({
-          target_chain: 'neo_n3',
-          key_role: 'oracle_verifier',
-          message: 'oracle verifier path',
-        }),
-      })
-    );
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.ok(body.signature);
-    assert.ok(body.public_key);
-    assert.ok(body.address);
-  } finally {
-    if (previous === undefined) delete process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY;
-    else process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY = previous;
-  }
+  const res = await handler(
+    new Request('http://local/sign/payload', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        target_chain: 'neo_n3',
+        key_role: 'oracle_verifier',
+        message: 'oracle verifier path',
+      }),
+    })
+  );
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.public_key, custodyOracleVerifierAccount.publicKey);
+  assert.equal(body.address, custodyOracleVerifierAccount.address);
 });
 
-test('sign-payload signs with the oracle_verifier key derived from Secrets Manager', async () => {
+test('sign-payload ignores derived-key mode and signs through custody', async () => {
   global.fetch = originalFetch;
+  // The Neo N3 sign lane has no local or Secrets-Manager-derived fallback: even
+  // with NITRO_USE_DERIVED_KEYS set and a secrets provider installed, the
+  // signature comes from the provisioned custody worker key.
   const previousUseDerivedKeys = process.env.NITRO_USE_DERIVED_KEYS;
-  const previousWorkerKey = process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY;
-  const previousOracleVerifierKey = process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY;
-
   process.env.NITRO_USE_DERIVED_KEYS = 'true';
-  delete process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY;
-  delete process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY;
-
-  // Nitro: derived signing keys are derived from the Secrets Manager wrap master
-  // (per-role, deterministic). oracle_verifier derivation succeeds directly.
   __setSecretsProviderForTests(() => ({
-    getSecret: async () => Buffer.from('22'.repeat(32), 'hex').toString('base64'),
+    getSecret: async () => Buffer.from('99'.repeat(32), 'hex').toString('base64'),
   }));
-
   try {
     const res = await handler(
       new Request('http://local/sign/payload', {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({
-          target_chain: 'neo_n3',
-          key_role: 'oracle_verifier',
-          message: 'oracle verifier derived path',
-        }),
+        body: JSON.stringify({ target_chain: 'neo_n3', message: 'derived mode is inert' }),
       })
     );
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.ok(body.signature);
-    assert.ok(body.public_key);
-    assert.ok(body.address);
+    assert.equal(body.public_key, custodyWorkerAccount.publicKey);
+    assert.equal(body.address, custodyWorkerAccount.address);
   } finally {
     if (previousUseDerivedKeys === undefined) delete process.env.NITRO_USE_DERIVED_KEYS;
     else process.env.NITRO_USE_DERIVED_KEYS = previousUseDerivedKeys;
-
-    if (previousWorkerKey === undefined) delete process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY;
-    else process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY = previousWorkerKey;
-
-    if (previousOracleVerifierKey === undefined)
-      delete process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY;
-    else process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY = previousOracleVerifierKey;
-
     __resetSecretsProviderStateForTests();
+    installCustodyTransportForTests();
   }
 });
 
-test('sign-payload prefers an explicit oracle_verifier key over derived signing paths', async () => {
+test('sign-payload surfaces a custody refusal envelope as 503', async () => {
   global.fetch = originalFetch;
-  const previousUseDerivedKeys = process.env.NITRO_USE_DERIVED_KEYS;
-  const previousOracleVerifierKey = process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY;
-  const requestedPaths = [];
-  const explicitOracleVerifierKey =
-    '68e15083a6fd187b6f5f6136bada4eb00f096e5e21d82c74edf6f086e80539ba';
-  const explicitAccount = new neoWallet.Account(explicitOracleVerifierKey);
-
-  process.env.NITRO_USE_DERIVED_KEYS = 'true';
-  process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY = explicitOracleVerifierKey;
-
-  __setDstackClientFactoryForTests(async () => ({
-    getKey: async (keyPath) => {
-      requestedPaths.push(String(keyPath));
-      return { key: Uint8Array.from(Buffer.from('33'.repeat(32), 'hex')) };
-    },
-    info: async () => ({
-      app_id: 'app',
-      instance_id: 'inst',
-      compose_hash: 'compose',
-      app_name: 'Morpheus',
-      device_id: 'device',
-      key_provider_info: 'mock',
-      tcb_info: null,
-    }),
-    getQuote: async () => ({ quote: '0x01', event_log: '[]', report_data: '0x02' }),
-  }));
-
+  // A 2xx refusal envelope (§5) is a no from the enclave: the lane fail-closes
+  // instead of returning an unsigned or mis-keyed result.
+  __setCustodyTransportForTests(async (method, pathname) => {
+    if (method === 'GET' && pathname === '/keys/key-worker') {
+      return {
+        key_id: 'key-worker',
+        network: 'testnet',
+        network_magic: 894710606,
+        public_key: custodyWorkerAccount.publicKey,
+        script_hash: `0x${custodyWorkerAccount.scriptHash}`,
+        address: custodyWorkerAccount.address,
+        signing_enabled: true,
+      };
+    }
+    if (pathname === '/sign/raw') {
+      return { allowed: false, code: 'policy_denied', message: 'role boundary exceeded' };
+    }
+    throw new Error(`unexpected custody route ${method} ${pathname}`);
+  });
   try {
     const res = await handler(
       new Request('http://local/sign/payload', {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({
-          target_chain: 'neo_n3',
-          key_role: 'oracle_verifier',
-          message: 'oracle verifier explicit key path',
-        }),
+        body: JSON.stringify({ target_chain: 'neo_n3', message: 'refusal envelope' }),
       })
     );
-    assert.equal(res.status, 200);
+    assert.equal(res.status, 503);
     const body = await res.json();
-    assert.equal(body.public_key, explicitAccount.publicKey);
-    assert.equal(body.address, explicitAccount.address);
-    assert.deepEqual(requestedPaths, []);
+    assert.match(body.error, /custody refused: policy_denied/);
   } finally {
-    if (previousUseDerivedKeys === undefined) delete process.env.NITRO_USE_DERIVED_KEYS;
-    else process.env.NITRO_USE_DERIVED_KEYS = previousUseDerivedKeys;
-
-    if (previousOracleVerifierKey === undefined)
-      delete process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY;
-    else process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY = previousOracleVerifierKey;
-
-    __resetDstackClientStateForTests();
+    installCustodyTransportForTests();
   }
 });
 
-test('signing cache memoizes the worker signer and re-resolves after reset', async () => {
-  const { buildSignedResultEnvelope } = await import('./src/chain/signing.js');
-  const result = { probe: 'signing-cache' };
+test('signed worker responses fail 503 for disabled, wrong-network, unreachable, or incomplete custody', async () => {
+  global.fetch = originalFetch;
+  const ready = {
+    key_id: 'key-worker',
+    network: 'testnet',
+    network_magic: 894710606,
+    public_key: custodyWorkerAccount.publicKey,
+    script_hash: `0x${custodyWorkerAccount.scriptHash}`,
+    address: custodyWorkerAccount.address,
+    signing_enabled: true,
+  };
+  const cases = [
+    { label: 'disabled', key: { ...ready, signing_enabled: false } },
+    { label: 'wrong-network', key: { ...ready, network: 'mainnet', network_magic: 860833102 } },
+    { label: 'incomplete', key: { ...ready, public_key: '' } },
+    { label: 'unreachable', error: new Error('connection refused') },
+  ];
+  try {
+    for (const testCase of cases) {
+      let signCalls = 0;
+      __setCustodyTransportForTests(async (method, pathname) => {
+        if (method === 'GET' && pathname === '/keys/key-worker') {
+          if (testCase.error) throw testCase.error;
+          return testCase.key;
+        }
+        if (pathname === '/sign/raw') signCalls += 1;
+        throw new Error(`unexpected custody route ${method} ${pathname}`);
+      });
+      const res = await handler(
+        new Request('http://local/sign/payload', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ target_chain: 'neo_n3', message: testCase.label }),
+        })
+      );
+      assert.equal(res.status, 503, testCase.label);
+      const body = await res.json();
+      assert.ok(body.error, testCase.label);
+      assert.equal(signCalls, 0, `${testCase.label} must fail before raw signing`);
+    }
+  } finally {
+    installCustodyTransportForTests();
+  }
+});
 
-  process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY =
-    '1111111111111111111111111111111111111111111111111111111111111111';
-  __resetSigningCachesForTests();
+test('the custody sign lane never caches key identity across sign calls', async () => {
+  const { buildSignedResultEnvelope } = await import('./src/chain/signing.js');
+  const result = { probe: 'custody-rotation' };
 
   const first = await buildSignedResultEnvelope(result, {});
-  const second = await buildSignedResultEnvelope(result, {});
-  assert.ok(first.public_key, 'signs with the pinned worker key');
-  assert.equal(second.public_key, first.public_key, 'reuses the memoized signer');
+  assert.equal(first.public_key, custodyWorkerAccount.publicKey);
+  assert.equal(first.key_source, 'custody');
 
-  // Swapping the env key WITHOUT a reset must keep serving the memoized signer:
-  // process env is immutable for a running enclave, so the cache is authoritative.
-  process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY =
-    '2222222222222222222222222222222222222222222222222222222222222222';
-  const stillCached = await buildSignedResultEnvelope(result, {});
-  assert.equal(
-    stillCached.public_key,
-    first.public_key,
-    'env change without a reset stays on the cached signer'
-  );
-
-  // An explicit reset re-resolves the signer from the updated environment.
-  __resetSigningCachesForTests();
-  const afterReset = await buildSignedResultEnvelope(result, {});
-  assert.notEqual(
-    afterReset.public_key,
-    first.public_key,
-    'reset re-resolves the signer from the updated env'
-  );
+  // Rotate the provisioned key id: with no cross-call cache, the very next
+  // envelope is served by the new key (a rotated key can never keep signing
+  // under a stale identity).
+  custodyKeyAccounts['key-rotated'] = new neoWallet.Account('3'.repeat(64));
+  process.env.SIGNER_ROLE_WORKER_KEY_ID = 'key-rotated';
+  try {
+    const afterRotation = await buildSignedResultEnvelope(result, {});
+    assert.equal(afterRotation.public_key, custodyKeyAccounts['key-rotated'].publicKey);
+  } finally {
+    delete custodyKeyAccounts['key-rotated'];
+    process.env.SIGNER_ROLE_WORKER_KEY_ID = 'key-worker';
+  }
 });

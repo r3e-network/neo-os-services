@@ -7,7 +7,7 @@ use serde_json::Value;
 use super::*;
 use crate::crypto;
 use crate::model::{SealedPrivateKey, SignerKey};
-use crate::network::Network;
+use crate::network::{network_magic, Network};
 
 fn key_with(label: &str, disabled: bool) -> SignerKey {
     let private = crypto::generate_private_key();
@@ -17,6 +17,7 @@ fn key_with(label: &str, disabled: bool) -> SignerKey {
         id: format!("key-{label}"),
         label: label.to_string(),
         network: Network::Testnet,
+        network_magic: network_magic(Network::Testnet),
         public_key,
         sealed: SealedPrivateKey {
             nonce: [0u8; 12],
@@ -43,6 +44,7 @@ fn a_boundary_binds_identity_and_the_whole_policy() -> Result<()> {
     let value = boundary("treasury", false, true).to_json();
     assert_eq!(value["key_id"], "key-treasury");
     assert_eq!(value["network"], Network::Testnet.to_string());
+    assert_eq!(value["network_magic"], network_magic(Network::Testnet));
     assert_eq!(value["disabled"], false);
     assert_eq!(value["policy"]["allow_transfer"], true);
     // Closed-by-default shows up as the absence of permission, not as a
@@ -77,6 +79,19 @@ fn the_digest_changes_with_the_boundaries_it_commits_to() {
     // different document, which is what makes the digest worth checking.
     let swapped = vec![boundary("b", false, true), boundary("a", false, false)];
     assert_ne!(boundaries_sha256(&swapped), boundaries_sha256(&open));
+}
+
+#[test]
+fn network_magic_is_part_of_the_attested_boundary_digest() {
+    let first_key = key_with("private", false);
+    let mut second_key = first_key.clone();
+    second_key.network_magic = first_key.network_magic.wrapping_add(1);
+    let policy = SignerPolicy::default();
+    let first = vec![KeyBoundary::new(&first_key, policy.clone()).expect("boundary")];
+    let second = vec![KeyBoundary::new(&second_key, policy).expect("boundary")];
+
+    assert_ne!(boundaries_json(&first), boundaries_json(&second));
+    assert_ne!(boundaries_sha256(&first), boundaries_sha256(&second));
 }
 
 #[test]

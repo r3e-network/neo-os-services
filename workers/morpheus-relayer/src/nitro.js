@@ -37,6 +37,14 @@ function decorateWorkerPayload(config, payload) {
   return nextPayload;
 }
 
+function isProductionRuntime(config) {
+  return (
+    String(config?.nodeEnv || process.env.NODE_ENV || '')
+      .trim()
+      .toLowerCase() === 'production'
+  );
+}
+
 export async function callNitro(config, path, payload, options = {}) {
   // options.baseUrl lets callers target a specific endpoint (e.g. the enclave
   // signer URL for /sign/payload) instead of the worker apiUrl. Falls back to
@@ -66,7 +74,14 @@ export async function callNitro(config, path, payload, options = {}) {
   );
   let lastError = null;
 
-  const allowFallback = options.allowFallback !== false;
+  // Every relayer POST is compute/decrypt/sign/mutation work. In production it
+  // is a trust-boundary violation to retry that payload against another host,
+  // even when a caller accidentally passes allowFallback:true. Development
+  // keeps the old behavior for migration tests; individual callers can still
+  // disable it explicitly.
+  const allowFallback =
+    !isProductionRuntime(config) &&
+    (options.allowFallback ?? config.nitro?.allowFallback ?? true) !== false;
   const apiUrls = allowFallback ? candidateApiUrls : candidateApiUrls.slice(0, 1);
 
   for (const apiBaseUrl of apiUrls) {

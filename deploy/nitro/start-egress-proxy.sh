@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Host egress service for the Nitro enclave: runs the allow-listed HTTP-CONNECT
 # proxy (host-egress-proxy.mjs) and a socat VSOCK-LISTEN bridge that exposes it to
-# the enclave over vsock. The enclave's in-entrypoint socat connects to
+# the enclave over vsock. The enclave's nitro_init egress bridge connects to
 # VSOCK CID3:EGRESS_VSOCK_PORT; this bridge forwards that to the local proxy.
 #
 #   enclave 127.0.0.1:3128 (socat) -> vsock CID3:8788 -> [this] socat VSOCK-LISTEN

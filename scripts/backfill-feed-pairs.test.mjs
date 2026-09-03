@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 
 import {
   assertBackfillNetworkEnv,
@@ -9,16 +10,18 @@ import {
 } from './backfill-feed-pairs.mjs';
 
 test('feed backfill accepts a private external env file', () => {
+  const envFile = path.resolve(path.sep, 'private', 'tmp', 'neoos-feed.env');
+  const workspace = path.resolve(path.sep, 'workspace');
   const args = parseArgs([
     '--network',
     'testnet',
     '--env-file',
-    '/private/tmp/neoos-feed.env',
+    envFile,
     '--symbols',
     'NEO-USD,GAS-USD',
   ]);
   assert.equal(args.network, 'testnet');
-  assert.equal(resolveBackfillEnvPath(args, '/workspace'), '/private/tmp/neoos-feed.env');
+  assert.equal(resolveBackfillEnvPath(args, workspace), envFile);
   assert.deepEqual(args.symbols, ['NEO-USD', 'GAS-USD']);
 });
 

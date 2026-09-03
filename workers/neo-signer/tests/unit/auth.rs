@@ -6,13 +6,15 @@
 //! handed to two callers at once.
 
 use super::*;
-use crate::model::{CallerCapability, KeyGrant, SignerCaller};
+use crate::model::{CallerCapability, KeyGrant, SignerCaller, WorkloadIdentity};
+use ed25519_dalek::{Signer as _, SigningKey};
 
 fn caller(token: &str) -> SignerCaller {
     SignerCaller {
         id: "caller-1".to_string(),
         label: "Test Caller".to_string(),
         token_digest: token_digest(token),
+        workload_identity: None,
         key_grant: KeyGrant::Only(vec!["key-1".to_string()]),
         capabilities: vec![CallerCapability::Sign],
         allowed_origins: Vec::new(),
@@ -30,6 +32,53 @@ fn bound(token: &str, origins: &[&str]) -> SignerCaller {
 
 fn browser(token: &str, origin: &str) -> CallerCredentials {
     CallerCredentials::new(Some(&format!("Bearer {token}")), Some(origin), None)
+}
+
+fn workload_caller(signing_key: &SigningKey) -> SignerCaller {
+    SignerCaller {
+        token_digest: token_digest("unreachable"),
+        workload_identity: Some(WorkloadIdentity {
+            public_key: signing_key.verifying_key().to_bytes(),
+            subject: Some("neo-nexus:test".to_string()),
+        }),
+        ..caller("unreachable")
+    }
+}
+
+fn workload_credentials(
+    signing_key: &SigningKey,
+    timestamp: u64,
+    nonce: &str,
+    route: &str,
+    body: &[u8],
+) -> CallerCredentials {
+    let body_digest = body_sha256(body);
+    let message = WorkloadMessage {
+        caller_id: "caller-1",
+        subject: Some("neo-nexus:test"),
+        timestamp,
+        nonce,
+        method: "POST",
+        route,
+        body_digest: &body_digest,
+        origin: None,
+    }
+    .to_bytes();
+    let signature = hex::encode(signing_key.sign(&message).to_bytes());
+    CallerCredentials::request(
+        None,
+        None,
+        None,
+        WorkloadRequestHeaders {
+            caller_id: Some("caller-1"),
+            timestamp: Some(&timestamp.to_string()),
+            nonce: Some(nonce),
+            signature: Some(&signature),
+        },
+        "POST",
+        route,
+    )
+    .with_body_digest(body_digest)
 }
 
 #[test]
@@ -395,6 +444,12 @@ fn every_rejection_has_a_unique_code() {
         AccessRejection::OriginUnexpected,
         AccessRejection::KeyNotGranted,
         AccessRejection::CapabilityMissing,
+        AccessRejection::AmbiguousCredential,
+        AccessRejection::WorkloadMalformed,
+        AccessRejection::UnknownWorkload,
+        AccessRejection::WorkloadStale,
+        AccessRejection::WorkloadSignatureInvalid,
+        AccessRejection::WorkloadReplay,
     ];
     for (index, reason) in reasons.iter().enumerate() {
         for other in &reasons[index + 1..] {
@@ -402,6 +457,76 @@ fn every_rejection_has_a_unique_code() {
         }
         assert!(!reason.to_string().is_empty());
     }
+}
+
+#[test]
+fn a_workload_assertion_binds_identity_route_body_and_time() {
+    let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+    let callers = [workload_caller(&signing_key)];
+    let timestamp = 1_900_000_000;
+    let credentials = workload_credentials(
+        &signing_key,
+        timestamp,
+        "nonce-0000000001",
+        "/signer/api/v1/sign/transaction",
+        br#"{"key_id":"key-1"}"#,
+    );
+    assert!(authenticate_at(
+        &callers,
+        &credentials,
+        CallerCapability::Sign,
+        Some("key-1"),
+        timestamp,
+    )
+    .is_ok());
+
+    let tampered_body = credentials
+        .clone()
+        .with_body_digest(body_sha256(br#"{"key_id":"key-2"}"#));
+    assert_eq!(
+        authenticate_at(
+            &callers,
+            &tampered_body,
+            CallerCapability::Sign,
+            Some("key-1"),
+            timestamp,
+        ),
+        Err(AccessRejection::WorkloadSignatureInvalid)
+    );
+    assert_eq!(
+        authenticate_at(
+            &callers,
+            &credentials,
+            CallerCapability::Sign,
+            Some("key-1"),
+            timestamp + WORKLOAD_MAX_CLOCK_SKEW_SECONDS + 1,
+        ),
+        Err(AccessRejection::WorkloadStale)
+    );
+
+    let ambiguous = CallerCredentials::request(
+        Some("Bearer also-present"),
+        None,
+        None,
+        WorkloadRequestHeaders {
+            caller_id: Some("caller-1"),
+            timestamp: Some("1900000000"),
+            nonce: Some("nonce-0000000001"),
+            signature: Some("00"),
+        },
+        "POST",
+        "/signer/api/v1/sign/transaction",
+    );
+    assert_eq!(
+        authenticate_at(
+            &callers,
+            &ambiguous,
+            CallerCapability::Sign,
+            Some("key-1"),
+            timestamp,
+        ),
+        Err(AccessRejection::AmbiguousCredential)
+    );
 }
 
 // -- capabilities ------------------------------------------------------------

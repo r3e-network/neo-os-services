@@ -1,7 +1,8 @@
-import { isAuthorizedControlPlaneRequest } from '@/lib/control-plane-auth';
+import { isAuthorizedWorkflowRequest } from '@/lib/control-plane-auth';
 import { runFeedSyncJob } from '@/lib/feed-sync';
 import { sendHeartbeat } from '@/lib/heartbeat';
 import { badRequest } from '@/lib/api-helpers';
+import { findHostSignerMaterialPaths } from '@/lib/host-key-guard';
 import { trimString } from '@/lib/strings';
 
 export const runtime = 'nodejs';
@@ -14,56 +15,24 @@ function resolveNetwork(value: unknown) {
   return trimString(value) === 'mainnet' ? 'mainnet' : 'testnet';
 }
 
-function resolveNeoN3UpdaterMaterial(network: 'mainnet' | 'testnet') {
-  const candidates =
-    network === 'mainnet'
-      ? [
-          ['private_key', process.env.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET],
-          ['wif', process.env.MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET],
-          ['private_key', process.env.MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_MAINNET],
-          ['wif', process.env.MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET],
-          ['private_key', process.env.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY],
-          ['wif', process.env.MORPHEUS_UPDATER_NEO_N3_WIF],
-          ['private_key', process.env.MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY],
-          ['wif', process.env.MORPHEUS_RELAYER_NEO_N3_WIF],
-        ]
-      : [
-          ['private_key', process.env.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_TESTNET],
-          ['wif', process.env.MORPHEUS_UPDATER_NEO_N3_WIF_TESTNET],
-          ['private_key', process.env.MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_TESTNET],
-          ['wif', process.env.MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET],
-          ['private_key', process.env.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY],
-          ['wif', process.env.MORPHEUS_UPDATER_NEO_N3_WIF],
-          ['private_key', process.env.MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY],
-          ['wif', process.env.MORPHEUS_RELAYER_NEO_N3_WIF],
-        ];
-
-  for (const [kind, value] of candidates) {
-    const trimmed = trimString(value);
-    if (trimmed) {
-      return kind === 'wif' ? { wif: trimmed } : { private_key: trimmed };
-    }
-  }
-  return {};
-}
-
 export async function POST(request: Request) {
-  if (!isAuthorizedControlPlaneRequest(request)) {
+  if (!isAuthorizedWorkflowRequest(request)) {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
 
   const body = await request.json().catch(() => ({}));
   if (!isPlainObject(body)) return badRequest('invalid JSON body');
-
-  const network = resolveNetwork(body.network);
-  const signer = resolveNeoN3UpdaterMaterial(network);
-  if (!signer.private_key && !signer.wif) {
-    return Response.json(
-      { error: `Neo N3 updater signer is not configured for ${network}` },
-      { status: 500 }
+  if (findHostSignerMaterialPaths(body).length > 0) {
+    return badRequest(
+      'raw signer material (wif/private_key) is not accepted; signing is custody-side in the enclave'
     );
   }
 
+  const network = resolveNetwork(body.network);
+
+  // No signer material is resolved or forwarded: the worker's oracle feed lane
+  // signs the update transaction through the custody service, so this route
+  // carries only feed parameters.
   const result = await runFeedSyncJob({
     target_chain: trimString(body.target_chain || 'neo_n3'),
     project_slug: trimString(body.project_slug || '') || undefined,
@@ -74,7 +43,6 @@ export async function POST(request: Request) {
     symbols: Array.isArray(body.symbols)
       ? body.symbols.map((entry) => trimString(entry)).filter(Boolean)
       : undefined,
-    ...signer,
   });
 
   if (result.ok) {

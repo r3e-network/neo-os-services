@@ -16,6 +16,10 @@ import {
   deriveNeoN3PrivateKeyHex,
 } from '../platform/nitro-signer.js';
 import {
+  __resetCustodyTransportForTests,
+  __setCustodyTransportForTests,
+} from '../platform/custody.js';
+import {
   GAME_SECRET_KEY_ROLE,
   __resetGameSessionsForTests,
   __setGameClockForTests,
@@ -48,13 +52,40 @@ function idOf(appId, difficulty = 0, overrides = {}) {
 }
 
 let fakeNow = 0;
+const originalWorkerKeyId = process.env.SIGNER_ROLE_WORKER_KEY_ID;
 
 test.before(() => {
+  process.env.SIGNER_ROLE_WORKER_KEY_ID = 'test-worker-key';
   __setSecretsProviderForTests(() => ({
     getSecret: async () => Buffer.alloc(48, 7).toString('base64'),
   }));
+  __setCustodyTransportForTests(async (method) =>
+    method === 'GET'
+      ? {
+          key_id: 'test-worker-key',
+          network: 'testnet',
+          network_magic: 894710606,
+          public_key: `02${'22'.repeat(32)}`,
+          address: 'NTestWorkerCustodyAddress',
+          script_hash: `0x${'33'.repeat(20)}`,
+          signing_enabled: true,
+        }
+      : {
+          allowed: true,
+          signature: '11'.repeat(64),
+          public_key: `02${'22'.repeat(32)}`,
+          address: 'NTestWorkerCustodyAddress',
+          script_hash: `0x${'33'.repeat(20)}`,
+        }
+  );
 });
 test.after(() => {
+  if (originalWorkerKeyId === undefined) {
+    delete process.env.SIGNER_ROLE_WORKER_KEY_ID;
+  } else {
+    process.env.SIGNER_ROLE_WORKER_KEY_ID = originalWorkerKeyId;
+  }
+  __resetCustodyTransportForTests();
   __resetSecretsProviderStateForTests();
 });
 test.beforeEach(() => {

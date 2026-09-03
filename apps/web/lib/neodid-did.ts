@@ -130,6 +130,8 @@ function parseMorpheusDid(rawDid: string): ParsedMorpheusDid | null {
 }
 
 async function fetchNeoDidRuntimeSnapshot(): Promise<NeoDidRuntimeSnapshot | null> {
+  const runtimeUrl = appConfig.publicNitroApiUrls[0] || appConfig.nitroApiUrl;
+  if (!runtimeUrl) return null;
   const headers = new Headers({ accept: 'application/json' });
   if (appConfig.nitroToken) {
     headers.set('authorization', `Bearer ${appConfig.nitroToken}`);
@@ -137,7 +139,7 @@ async function fetchNeoDidRuntimeSnapshot(): Promise<NeoDidRuntimeSnapshot | nul
   }
 
   try {
-    const response = await fetch(`${appConfig.nitroApiUrl.replace(/\/$/, '')}/neodid/runtime`, {
+    const response = await fetch(`${runtimeUrl.replace(/\/$/, '')}/neodid/runtime`, {
       method: 'GET',
       headers,
       cache: 'no-store',
@@ -196,6 +198,7 @@ function buildServiceDidDocument(
   origin: string
 ) {
   const did = parsed.did;
+  const publicRuntimeUrl = appConfig.publicNitroApiUrls[0] || appConfig.nitroApiUrl;
   const resolverUrl = `${origin}/api/neodid/resolve?did=${encodeURIComponent(did)}`;
   const verificationJwk = compressedP256ToJwk(runtime?.verification_public_key || '');
   const verificationMethodId = `${did}#tee-verifier`;
@@ -250,7 +253,9 @@ function buildServiceDidDocument(
         id: `${did}#runtime`,
         type: 'MorpheusNeoDIDRuntime',
         serviceEndpoint: {
-          runtime_url: `${appConfig.nitroApiUrl.replace(/\/$/, '')}/neodid/runtime`,
+          runtime_url: publicRuntimeUrl
+            ? `${publicRuntimeUrl.replace(/\/$/, '')}/neodid/runtime`
+            : '',
           viewer_url: `${origin}/launchpad/neodid-resolver?did=${encodeURIComponent(did)}`,
           documentation_url: `${origin}/docs/neodid`,
           app_id: runtime?.app_id || null,

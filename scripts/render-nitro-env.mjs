@@ -141,6 +141,15 @@ const relayerEnv =
     line('MORPHEUS_RUNTIME_URL', 'http://127.0.0.1:8787'),
     line('NITRO_USE_DERIVED_KEYS', 'true'),
     line('MORPHEUS_RUNTIME_TOKEN', runtimeToken),
+    // Relayer Neo N3 signing is custody-only: the relayer talks to the custody
+    // service directly (its vsock-to-loopback bridge inside the enclave) using
+    // the same SIGNER_SERVICE_URL/TOKEN + SIGNER_ROLE_*_KEY_ID names the legacy
+    // host-side /sign/payload shim also reads for its own translation route.
+    line('SIGNER_SERVICE_URL', pick(env, ['SIGNER_SERVICE_URL'])),
+    line('SIGNER_SERVICE_TOKEN', pick(env, ['SIGNER_SERVICE_TOKEN'])),
+    line('SIGNER_ROLE_UPDATER_KEY_ID', pick(env, ['SIGNER_ROLE_UPDATER_KEY_ID'])),
+    line('SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID', pick(env, ['SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID'])),
+    line('SIGNER_ROLE_FEE_FUNDER_KEY_ID', pick(env, ['SIGNER_ROLE_FEE_FUNDER_KEY_ID'])),
     line(
       'SUPABASE_URL',
       pick(env, ['SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_URL', 'morpheus_SUPABASE_URL'])

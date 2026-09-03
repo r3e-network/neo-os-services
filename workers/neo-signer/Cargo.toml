@@ -35,7 +35,10 @@ aes-gcm = "0.10"
 anyhow = "1"
 axum = "0.8"
 base64 = "0.22"
+bs58 = { version = "0.5.1", features = ["check"] }
 cbc = "0.1"
+ed25519-dalek = { version = "3.0.0", features = ["rand_core"] }
+fs2 = "0.4.3"
 hex = "0.4"
 hkdf = "0.12"
 morpheus-core = { path = "../../crates/morpheus-core" }

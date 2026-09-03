@@ -173,7 +173,9 @@ export async function deriveNeoN3PrivateKeyHex(role = 'worker') {
 }
 
 export async function getNitroInfo({ required = false } = {}) {
-  // The Nitro signer (8787) holds the Neo signing keys; surface a light runtime marker.
+  // The frontier enclave on 8787 answers /health and /attestation; it does NOT
+  // hold the Neo signing keys — those live in the custody enclave, reached
+  // through SIGNER_SERVICE_URL. Surface a light runtime marker.
   const endpoint =
     trimString(env('NITRO_SIGNER_ENDPOINT', 'MORPHEUS_NITRO_SIGNER_ENDPOINT')) ||
     'http://127.0.0.1:8787';
@@ -229,12 +231,16 @@ function normalizeReportData(input) {
 
 // NSM attestation (optional). Routes to the enclave's attestation endpoint if present;
 // returns null otherwise. Attestation is optional metadata, never required for fulfillment.
+// The route is /attestation — the enclave has never served /attest, and because
+// this call is optional a wrong path does not fail loudly: the 404 lands in the
+// catch below, the function returns null, and responses simply stop carrying
+// attestation metadata while every health check stays green.
 export async function buildNitroAttestation(reportInput, { required = false } = {}) {
   const endpoint =
     trimString(env('NITRO_ATTEST_ENDPOINT', 'NITRO_SIGNER_ENDPOINT')) || 'http://127.0.0.1:8787';
   const reportData = normalizeReportData(reportInput);
   try {
-    const res = await fetch(new URL('/attest', endpoint).toString(), {
+    const res = await fetch(new URL('/attestation', endpoint).toString(), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ report_data_hex: reportData.toString('hex') }),

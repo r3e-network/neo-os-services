@@ -33,7 +33,7 @@ fn an_unspellable_network_collapses_to_testnet() {
 }
 
 #[test]
-fn provision_can_change_the_network_mid_flight() {
+fn provisioning_cannot_change_the_image_owned_network() {
     let harness = test_state(
         &[],
         FakeAttest::with_document(b"doc"),
@@ -48,7 +48,7 @@ fn provision_can_change_the_network_mid_flight() {
         .write()
         .expect("overlay lock")
         .apply("MORPHEUS_NETWORK", &serde_json::json!("mainnet"));
-    assert_eq!(harness.state.resolve_network(), "mainnet");
+    assert_eq!(harness.state.resolve_network(), "testnet");
 }
 
 #[test]

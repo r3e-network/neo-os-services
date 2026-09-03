@@ -1,7 +1,7 @@
 //! Provision tests — the whitelist, the plaintext refusal, the KMS bootstrap
-//! state machine and the rotation rail, ported from the mjs provision
-//! fixtures (enclave-server.test.mjs ~1265-1500). The KMS releaser is canned;
-//! the release flow itself is nitro-attest's own test surface.
+//! state machine, direct confidential materialization, and the separately
+//! authorized temporary-credential rotation route. The KMS releaser is
+//! canned; the release flow itself is nitro-attest's own test surface.
 
 use crate::dispatch::dispatch;
 use crate::DispatchOutcome;
@@ -13,7 +13,14 @@ mod support;
 use support::*;
 
 const RUNTIME_CIPHERTEXT: &str = "runtime-token-ciphertext";
+const ORACLE_CIPHERTEXT: &str = "oracle-key-ciphertext";
+const NEODID_CIPHERTEXT: &str = "neodid-salt-ciphertext";
+const CUSTODY_TOKEN_CIPHERTEXT: &str = "custody-token-ciphertext";
 const RELEASED_TOKEN: &str = "released-runtime-token-0123456789abcdef";
+const CUSTODY_TOKEN: &str = "released-custody-token-0123456789abcdef";
+const ORACLE_PUBLIC_KEY: &str = "vAB/ripK5xzT1PT+KGbSvEEPfGQoxQliNWjSFjDfuhU=";
+const ORACLE_PRIVATE_KEY: &str = "MC4CAQAwBQYDK2VuBCIEIEgdmKz6RqTG40pP8SVY+7XPGOUXAIbmI4alIH3uMYZ8";
+const NEODID_SALT: &str = "0123456789abcdef0123456789abcdef";
 // The mjs provision suite authenticates static-token requests with the
 // module-load NITRO_API_TOKEN; this is its Rust stand-in for the tests that do
 // NOT exercise first-boot bootstrap.
@@ -31,6 +38,39 @@ fn released_envelope(version: i64, network: &str) -> Vec<u8> {
         "token": RELEASED_TOKEN,
     }))
     .expect("envelope")
+}
+
+fn oracle_envelope(network: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "purpose": "neoos/oracle-x25519/v1",
+        "network": network,
+        "version": 1,
+        "key_material": {
+            "public_key_raw": ORACLE_PUBLIC_KEY,
+            "private_key_pkcs8": ORACLE_PRIVATE_KEY,
+        },
+    }))
+    .expect("oracle envelope")
+}
+
+fn neodid_envelope(network: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "purpose": "neoos/neodid-salt/v1",
+        "network": network,
+        "version": 1,
+        "salt": NEODID_SALT,
+    }))
+    .expect("NeoDID envelope")
+}
+
+fn custody_token_envelope(network: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "purpose": "neoos/custody-caller-token/v1",
+        "network": network,
+        "version": 1,
+        "token": CUSTODY_TOKEN,
+    }))
+    .expect("custody token envelope")
 }
 
 fn bootstrap(pairs: &[(&str, &str)], kms: FakeKms) -> TestState {
@@ -72,7 +112,7 @@ fn plaintext_signing_keys_are_refused_with_a_sorted_list() {
         &harness,
         &bearer(STATIC_TOKEN),
         json!({
-            "MORPHEUS_UPDATER_NEO_N3_WIF": "KwDiBf89QgGbjEhKnhXJuH7LrciVrZi3qYjgd9M7rFU73sVHnoWn",
+            "MORPHEUS_UPDATER_NEO_N3_WIF": "fixture",
             "NEOX_FEED_PK": "0xdeadbeef",
             "MORPHEUS_ORACLE_KEY_MATERIAL_JSON": "{}",
             "HARMLESS_NAME": "fine",
@@ -223,6 +263,154 @@ fn the_envelope_network_may_differ_in_case_but_not_value() {
 }
 
 #[test]
+fn immutable_security_configuration_and_unknown_names_are_rejected() {
+    for name in [
+        "NODE_ENV",
+        "MORPHEUS_NETWORK",
+        "SIGNER_SERVICE_URL",
+        "SIGNER_SERVICE_TOKEN",
+        "MORPHEUS_ALLOW_EPHEMERAL_KEY",
+        "NITRO_ATTESTATION_PCR0",
+        "NEO_RPC_URL",
+        "HARMLESS_NAME",
+    ] {
+        let harness = bootstrap(AWS_PAIRS, FakeKms::default());
+        let mut env = json!({
+            "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64": RUNTIME_CIPHERTEXT,
+        });
+        env.as_object_mut()
+            .expect("env")
+            .insert(name.to_string(), json!("attacker-controlled"));
+        let outcome = provision_outcome(&harness, &bearer(RELEASED_TOKEN), env);
+        assert_eq!(outcome.status, 400, "{name}: {:?}", outcome.body);
+        assert!(outcome.body["error"]
+            .as_str()
+            .expect("error")
+            .contains("non-allowlisted"));
+        assert!(harness.kms.calls().is_empty(), "{name} reached KMS");
+    }
+}
+
+#[test]
+fn allowlisted_values_are_strict_non_empty_strings() {
+    for value in [json!(null), json!(42), json!({}), json!("   ")] {
+        let harness = bootstrap(AWS_PAIRS, FakeKms::default());
+        let outcome = provision_outcome(
+            &harness,
+            &bearer(RELEASED_TOKEN),
+            json!({ "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64": value }),
+        );
+        assert_eq!(outcome.status, 400, "{:?}", outcome.body);
+        assert!(harness.kms.calls().is_empty());
+    }
+}
+
+#[test]
+fn direct_confidential_ciphertexts_materialize_only_inside_memory() {
+    let kms = FakeKms::releasing(RUNTIME_CIPHERTEXT, released_envelope(1, "testnet"));
+    kms.set_result(ORACLE_CIPHERTEXT, Ok(oracle_envelope("testnet")));
+    kms.set_result(NEODID_CIPHERTEXT, Ok(neodid_envelope("testnet")));
+    kms.set_result(
+        CUSTODY_TOKEN_CIPHERTEXT,
+        Ok(custody_token_envelope("testnet")),
+    );
+    let harness = bootstrap(AWS_PAIRS, kms);
+    let outcome = provision_outcome(
+        &harness,
+        &bearer(RELEASED_TOKEN),
+        json!({
+            "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64": RUNTIME_CIPHERTEXT,
+            "MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64": ORACLE_CIPHERTEXT,
+            "MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64": NEODID_CIPHERTEXT,
+            "SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64": CUSTODY_TOKEN_CIPHERTEXT,
+        }),
+    );
+    assert_eq!(outcome.status, 200, "{:?}", outcome.body);
+    let overlay = harness.state.overlay.read().expect("overlay");
+    assert_eq!(
+        overlay.get_trimmed("MORPHEUS_ORACLE_KEY_SOURCE").as_deref(),
+        Some("nitro-recipient-kms")
+    );
+    assert_eq!(
+        overlay.get_trimmed("NEODID_SECRET_SALT_SOURCE").as_deref(),
+        Some("nitro-recipient-kms")
+    );
+    assert_eq!(
+        overlay.get_trimmed("NEODID_SECRET_SALT").as_deref(),
+        Some(NEODID_SALT)
+    );
+    assert_eq!(
+        overlay.get_trimmed("SIGNER_SERVICE_TOKEN").as_deref(),
+        Some(CUSTODY_TOKEN)
+    );
+    assert_eq!(
+        overlay
+            .get_trimmed("SIGNER_SERVICE_TOKEN_SOURCE")
+            .as_deref(),
+        Some("nitro-recipient-kms")
+    );
+    let oracle: serde_json::Value = serde_json::from_str(
+        &overlay
+            .get_trimmed("MORPHEUS_ORACLE_KEY_MATERIAL_JSON")
+            .expect("materialized key"),
+    )
+    .expect("oracle key JSON");
+    assert_eq!(oracle["public_key_raw"], ORACLE_PUBLIC_KEY);
+    assert!(
+        !serde_json::to_string(&outcome.body)
+            .expect("body")
+            .contains(ORACLE_PRIVATE_KEY),
+        "provision response leaked X25519 private material"
+    );
+    assert!(
+        !serde_json::to_string(&outcome.body)
+            .expect("body")
+            .contains(NEODID_SALT),
+        "provision response leaked the NeoDID salt"
+    );
+    assert!(
+        !serde_json::to_string(&outcome.body)
+            .expect("body")
+            .contains(CUSTODY_TOKEN),
+        "provision response leaked the custody caller token"
+    );
+}
+
+#[test]
+fn confidential_envelopes_are_purpose_and_network_bound() {
+    for (ciphertext, plaintext) in [
+        (ORACLE_CIPHERTEXT, oracle_envelope("mainnet")),
+        (NEODID_CIPHERTEXT, neodid_envelope("mainnet")),
+        (CUSTODY_TOKEN_CIPHERTEXT, custody_token_envelope("mainnet")),
+    ] {
+        let kms = FakeKms::releasing(RUNTIME_CIPHERTEXT, released_envelope(1, "testnet"));
+        kms.set_result(ciphertext, Ok(plaintext));
+        let harness = bootstrap(AWS_PAIRS, kms);
+        let field = match ciphertext {
+            ORACLE_CIPHERTEXT => "MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64",
+            NEODID_CIPHERTEXT => "MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64",
+            _ => "SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64",
+        };
+        let mut env = json!({
+            "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64": RUNTIME_CIPHERTEXT,
+        });
+        env.as_object_mut()
+            .expect("env")
+            .insert(field.to_string(), json!(ciphertext));
+        let outcome = provision_outcome(&harness, &bearer(RELEASED_TOKEN), env);
+        assert_eq!(outcome.status, 400, "{:?}", outcome.body);
+        assert_eq!(
+            harness
+                .state
+                .runtime_token_kms_version
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "failed materialization must remain unprovisioned"
+        );
+    }
+}
+
+#[test]
 fn rotation_requires_the_current_token() {
     let harness = bootstrap(
         AWS_PAIRS,
@@ -247,7 +435,7 @@ fn rotation_requires_the_current_token() {
 }
 
 #[test]
-fn rotation_demands_a_strictly_newer_envelope_version() {
+fn provisioning_is_one_shot_even_with_an_older_envelope() {
     let harness = bootstrap(
         AWS_PAIRS,
         FakeKms::releasing(RUNTIME_CIPHERTEXT, released_envelope(2, "testnet")),
@@ -272,7 +460,7 @@ fn rotation_demands_a_strictly_newer_envelope_version() {
     assert_eq!(second.status, 409);
     assert_eq!(
         second.body["error"],
-        "runtime authorization KMS envelope version must increase monotonically"
+        "provisioning is one-shot per enclave boot"
     );
     // The installed token is still the version-2 one.
     assert!(
@@ -289,7 +477,7 @@ fn rotation_demands_a_strictly_newer_envelope_version() {
 }
 
 #[test]
-fn rotation_with_a_newer_version_succeeds_and_swaps_the_token() {
+fn provisioning_is_one_shot_even_with_a_newer_envelope() {
     let harness = bootstrap(AWS_PAIRS, FakeKms::default());
     harness
         .kms
@@ -317,9 +505,9 @@ fn rotation_with_a_newer_version_succeeds_and_swaps_the_token() {
         &bearer(RELEASED_TOKEN),
         json!({ "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64": RUNTIME_CIPHERTEXT }),
     );
-    assert_eq!(second.status, 200, "{:?}", second.body);
+    assert_eq!(second.status, 409, "{:?}", second.body);
 
-    // The old token is out; the new one is in.
+    // The old token remains installed; the second envelope was never opened.
     assert!(
         dispatch(
             &harness.state,
@@ -329,7 +517,7 @@ fn rotation_with_a_newer_version_succeeds_and_swaps_the_token() {
             &body_json(&json!({ "role": "updater" })),
         )
         .status
-            == 401
+            == 200
     );
     assert!(
         dispatch(
@@ -340,7 +528,7 @@ fn rotation_with_a_newer_version_succeeds_and_swaps_the_token() {
             &body_json(&json!({ "role": "updater" })),
         )
         .status
-            == 200
+            == 401
     );
 }
 
@@ -355,9 +543,8 @@ fn the_response_contract_matches_the_node_server() {
         &bearer(RELEASED_TOKEN),
         json!({
             "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64": RUNTIME_CIPHERTEXT,
-            "B_SECOND": "2",
-            "A_FIRST": "1",
-            "skipped_lowercase": "x",
+            "TWELVEDATA_API_KEY": "provider-one",
+            "TD_KEY": "provider-two",
         }),
     );
     assert_eq!(outcome.status, 200);
@@ -369,9 +556,9 @@ fn the_response_contract_matches_the_node_server() {
     assert_eq!(
         outcome.body["env_keys"],
         json!([
-            "A_FIRST",
-            "B_SECOND",
-            "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64"
+            "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64",
+            "TD_KEY",
+            "TWELVEDATA_API_KEY"
         ])
     );
     let roles = outcome.body["roles"].as_array().expect("roles");
@@ -402,14 +589,16 @@ fn a_degraded_signer_plane_degrades_the_provision_status() {
 
 #[test]
 fn the_diag_probe_reports_the_kms_path_without_secrets() {
-    let harness = bootstrap_authorized(FakeKms::releasing(
-        "diag-ciphertext",
-        b"diag-plaintext".to_vec(),
-    ));
+    let kms = FakeKms::releasing(RUNTIME_CIPHERTEXT, released_envelope(1, "testnet"));
+    kms.set_result("diag-ciphertext", Ok(b"diag-plaintext".to_vec()));
+    let harness = bootstrap(AWS_PAIRS, kms);
     let outcome = provision_outcome(
         &harness,
-        &bearer(STATIC_TOKEN),
-        json!({ "MORPHEUS_ORACLE_KMS_DIAG_CIPHERTEXT": "diag-ciphertext" }),
+        &bearer(RELEASED_TOKEN),
+        json!({
+            "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64": RUNTIME_CIPHERTEXT,
+            "MORPHEUS_ORACLE_KMS_DIAG_CIPHERTEXT": "diag-ciphertext"
+        }),
     );
     assert_eq!(outcome.status, 200, "{:?}", outcome.body);
     // The response carries the outcome, never the plaintext.
@@ -427,10 +616,13 @@ fn the_diag_probe_reports_the_kms_path_without_secrets() {
 }
 
 #[test]
-fn a_diag_without_a_ciphertext_reports_no_diag_ciphertext() {
+fn an_unknown_name_is_rejected_before_bootstrap_or_diag() {
     let harness = bootstrap(AWS_PAIRS, FakeKms::default());
     let outcome = provision_outcome(&harness, &bearer("anything"), json!({ "HARMLESS": "1" }));
-    assert_eq!(outcome.status, 401); // no bootstrap material yet
+    assert_eq!(outcome.status, 400);
+    assert!(outcome.body["error"]
+        .as_str()
+        .is_some_and(|message| message.contains("HARMLESS")));
     let diag = harness
         .state
         .kms_diag
@@ -472,4 +664,75 @@ fn the_region_resolution_prefers_the_payload_then_the_overlay() {
         json!({ "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64": RUNTIME_CIPHERTEXT }),
     );
     assert_eq!(harness.kms.calls()[0].region, "us-east-1");
+}
+
+#[test]
+fn temporary_credentials_rotate_only_on_the_separate_authorized_route() {
+    let harness = bootstrap(
+        AWS_PAIRS,
+        FakeKms::releasing(RUNTIME_CIPHERTEXT, released_envelope(1, "testnet")),
+    );
+    assert_eq!(
+        provision_outcome(
+            &harness,
+            &bearer(RELEASED_TOKEN),
+            json!({ "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64": RUNTIME_CIPHERTEXT }),
+        )
+        .status,
+        200
+    );
+
+    let rotate = |headers: &http::HeaderMap, env: serde_json::Value| {
+        dispatch(
+            &harness.state,
+            "POST",
+            "/provision/credentials",
+            headers,
+            &body_json(&json!({ "env": env })),
+        )
+    };
+    assert_eq!(
+        rotate(
+            &bearer(RELEASED_TOKEN),
+            json!({
+                "AWS_ACCESS_KEY_ID": "AKIDROTATED",
+                "AWS_SECRET_ACCESS_KEY": "rotated-secret",
+                "AWS_SESSION_TOKEN": "rotated-session",
+            }),
+        )
+        .status,
+        200
+    );
+    let overlay = harness.state.overlay.read().expect("overlay");
+    assert_eq!(overlay.get("AWS_ACCESS_KEY_ID"), Some("AKIDROTATED"));
+    assert_eq!(overlay.get("AWS_SECRET_ACCESS_KEY"), Some("rotated-secret"));
+    assert_eq!(overlay.get("AWS_SESSION_TOKEN"), Some("rotated-session"));
+    drop(overlay);
+
+    assert_eq!(
+        rotate(
+            &bearer("wrong-token"),
+            json!({
+                "AWS_ACCESS_KEY_ID": "x",
+                "AWS_SECRET_ACCESS_KEY": "y",
+                "AWS_SESSION_TOKEN": "z",
+            }),
+        )
+        .status,
+        401
+    );
+    let forbidden = rotate(
+        &bearer(RELEASED_TOKEN),
+        json!({
+            "AWS_ACCESS_KEY_ID": "x",
+            "AWS_SECRET_ACCESS_KEY": "y",
+            "AWS_SESSION_TOKEN": "z",
+            "NODE_ENV": "development",
+        }),
+    );
+    assert_eq!(forbidden.status, 400);
+    assert!(forbidden.body["error"]
+        .as_str()
+        .expect("error")
+        .contains("non-credential"));
 }

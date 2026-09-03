@@ -1,0 +1,17 @@
+[package]
+name = "nitro-init"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Nitro enclave boot supervisor (PID 1): loopback up, egress proxy, socat bridges, readiness gate, fail-stop teardown — the Rust replacement for the enclave images' shell entrypoints"
+
+[dependencies]
+
+# SIGTERM/SIGINT delivery to the fail-stop watch. Only the enclave images run
+# this, but the handler compiles for every unix target.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "nitro_init"
+path = "src/main.rs"

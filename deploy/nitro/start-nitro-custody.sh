@@ -11,6 +11,21 @@
 # against a KMS-released envelope) and the two KMS ciphertexts. The AWS
 # credentials come from the instance role over IMDSv2 at start time and are
 # never written to disk or logs.
+#
+# Topology: a host runs TWO enclaves. The frontier (start-nitro-signer.sh,
+# morpheus-oracle.eif, built from Dockerfile.enclave) owns CID 16 and host port
+# 8787 — that is the endpoint every consumer's MORPHEUS_RUNTIME_URL /
+# NITRO_API_URL / SIGNER_URL names, and where provision-enclave-compute.sh
+# pushes the compute config. Custody is the second one, so its defaults are
+# deliberately different (CID 17, host port 8789) and the guard below refuses a
+# configuration that puts them back on top of each other: this script terminates
+# whatever enclave holds its CID before booting, so a shared CID means "kill the
+# frontier", and a shared host port means the socat bind fails with EADDRINUSE
+# against the frontier's still-live bridge. Both scripts source the same
+# morpheus-nitro.env, which is exactly how the two get set to the same value.
+# The vsock port stays 8787: it is per-enclave (CID 17 here), and it must match
+# NITRO_SIGNER_VSOCK_PORT baked into the measured image — changing it changes
+# what nitro_init listens on inside the enclave, i.e. changes PCR0.
 set -euo pipefail
 
 env_file="${MORPHEUS_NITRO_ENV:-/opt/morpheus/nitro/morpheus-nitro.env}"
@@ -23,11 +38,30 @@ fi
 
 eif="${MORPHEUS_CUSTODY_EIF:-/opt/morpheus/nitro/morpheus-custody.eif}"
 signer_env="${MORPHEUS_CUSTODY_SIGNER_ENV:-/opt/morpheus/nitro/morpheus-custody-signer.env}"
-cid="${MORPHEUS_CUSTODY_CID:-16}"
+cid="${MORPHEUS_CUSTODY_CID:-17}"
 cpu_count="${MORPHEUS_CUSTODY_CPU_COUNT:-2}"
 memory_mib="${MORPHEUS_CUSTODY_MEMORY_MIB:-2048}"
-host_port="${MORPHEUS_CUSTODY_HOST_PORT:-8787}"
+host_port="${MORPHEUS_CUSTODY_HOST_PORT:-8789}"
 vsock_port="${MORPHEUS_CUSTODY_VSOCK_PORT:-8787}"
+
+# Only a DECLARED frontier value is a collision: a custody-only host is free to
+# use CID 16 or port 8787, and inventing a frontier that is not configured here
+# would refuse it for no reason.
+collision=""
+if [[ -n "${MORPHEUS_NITRO_CID:-}" && "$cid" == "${MORPHEUS_NITRO_CID}" ]]; then
+  collision="CID $cid"
+fi
+if [[ -n "${MORPHEUS_NITRO_HOST_PORT:-}" && "$host_port" == "${MORPHEUS_NITRO_HOST_PORT}" ]]; then
+  collision="${collision:+$collision and }host port $host_port"
+fi
+if [[ -n "$collision" ]]; then
+  echo "custody enclave collides with the frontier enclave on $collision" >&2
+  echo "  this script terminates the enclave holding its CID before booting, so the" >&2
+  echo "  frontier would be killed and its consumers (MORPHEUS_RUNTIME_URL /" >&2
+  echo "  NITRO_API_URL / provision-enclave-compute.sh) would reach custody instead." >&2
+  echo "  Set MORPHEUS_CUSTODY_CID / MORPHEUS_CUSTODY_HOST_PORT to distinct values." >&2
+  exit 1
+fi
 
 if [[ ! -r "$eif" ]]; then
   echo "missing EIF: $eif" >&2
@@ -82,7 +116,7 @@ if [[ -r "$signer_env" ]]; then
 import fs from 'node:fs';
 
 const envPath = process.env.MORPHEUS_CUSTODY_SIGNER_ENV;
-const port = process.env.MORPHEUS_CUSTODY_HOST_PORT || '8787';
+const port = process.env.MORPHEUS_CUSTODY_HOST_PORT || '8789';
 const env = {};
 for (const line of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
   const trimmed = line.trim();
@@ -189,6 +223,15 @@ console.log(JSON.stringify({
   vault_fingerprint: body.vault_fingerprint,
 }));
 NODE
+else
+  # Not fatal — booting unprovisioned is how you smoke-test a fresh EIF — but it
+  # must not be quiet: the bridge comes up, /health answers, and every custody
+  # route then refuses with 503 forever, which reads as a service bug rather
+  # than a missing file.
+  echo "WARNING: $signer_env is not readable, so /provision was never called." >&2
+  echo "         The enclave stays sealed: /health reports unprovisioned and every" >&2
+  echo "         custody and management route answers 503 signer-not-provisioned." >&2
+  echo "         Provisioning happens once per boot; a restart re-seals the vault." >&2
 fi
 
 wait "$socat_pid"

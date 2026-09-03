@@ -89,33 +89,34 @@ for (const [composePath, services] of [
   });
 }
 
-test('request-hub relayers receive network-scoped signer env from rendered hub env', () => {
+test('request-hub services receive custody signer env and network-scoped public keys', () => {
   const source = readRepoFile('deploy/nitro/docker-compose.request-hub.yml');
   const mainnetWorkerBlock = extractServiceBlock(source, 'mainnet-request-worker');
   const testnetWorkerBlock = extractServiceBlock(source, 'testnet-request-worker');
   const mainnetBlock = extractServiceBlock(source, 'mainnet-request-relayer');
   const testnetBlock = extractServiceBlock(source, 'testnet-request-relayer');
 
-  assert.match(
-    mainnetBlock,
-    /MORPHEUS_RELAYER_NEO_N3_WIF:\s*\$\{MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET:-\}/,
-    'mainnet request relayer should receive the mainnet request signer'
-  );
-  assert.match(
-    mainnetBlock,
-    /MORPHEUS_UPDATER_NEO_N3_WIF:\s*\$\{MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET:-\}/,
-    'mainnet request relayer should receive the mainnet updater signer'
-  );
-  assert.match(
-    testnetBlock,
-    /MORPHEUS_RELAYER_NEO_N3_WIF:\s*\$\{MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET:-\}/,
-    'testnet request relayer should receive the testnet request signer'
-  );
-  assert.match(
-    testnetBlock,
-    /MORPHEUS_UPDATER_NEO_N3_WIF:\s*\$\{MORPHEUS_UPDATER_NEO_N3_WIF_TESTNET:-\}/,
-    'testnet request relayer should receive the testnet updater signer'
-  );
+  // Custody migration invariant (docs/SIGNER_SERVICE.md §5): the relayer holds
+  // no signing key material — every signing lane resolves through the custody
+  // signer service, one role key id per signing role.
+  for (const [name, block] of [
+    ['mainnet request relayer', mainnetBlock],
+    ['testnet request relayer', testnetBlock],
+  ]) {
+    for (const key of [
+      'SIGNER_SERVICE_URL',
+      'SIGNER_SERVICE_TOKEN',
+      'SIGNER_ROLE_UPDATER_KEY_ID',
+      'SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID',
+    ]) {
+      assert.match(
+        block,
+        new RegExp(`${key}:\\s*\\$\\{${key}:-\\}`),
+        `${name} should receive ${key}`
+      );
+    }
+    assert.doesNotMatch(block, /WIF|PRIVATE_KEY/, `${name} must not receive signing key material`);
+  }
 
   assert.match(
     mainnetWorkerBlock,
@@ -125,7 +126,8 @@ test('request-hub relayers receive network-scoped signer env from rendered hub e
   assert.match(mainnetWorkerBlock, /MORPHEUS_NETWORK:\s*mainnet/);
   assert.match(
     mainnetWorkerBlock,
-    /MORPHEUS_WORKER_NEO_N3_WIF:\s*\$\{MORPHEUS_WORKER_NEO_N3_WIF_MAINNET:-\}/
+    /MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_MAINNET:/,
+    'mainnet request worker should receive the verifier PUBLIC key for on-chain result checks'
   );
   assert.doesNotMatch(mainnetWorkerBlock, /TESTNET_RUNTIME_CONFIG_JSON|_TESTNET:-/);
 
@@ -137,10 +139,17 @@ test('request-hub relayers receive network-scoped signer env from rendered hub e
   assert.match(testnetWorkerBlock, /MORPHEUS_NETWORK:\s*testnet/);
   assert.match(
     testnetWorkerBlock,
-    /MORPHEUS_WORKER_NEO_N3_WIF:\s*\$\{MORPHEUS_WORKER_NEO_N3_WIF_TESTNET:-\}/
+    /MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_TESTNET:/,
+    'testnet request worker should receive the verifier PUBLIC key for on-chain result checks'
   );
   assert.doesNotMatch(testnetWorkerBlock, /MAINNET_RUNTIME_CONFIG_JSON/);
   assert.doesNotMatch(testnetWorkerBlock, /_MAINNET:-/);
+
+  assert.doesNotMatch(
+    source,
+    /WIF:\s*\$\{|PRIVATE_KEY:\s*\$\{/,
+    'compose must not pass signing key material to any service'
+  );
 });
 
 test('request-hub relayers and workers keep network-specific dependencies and shared storage', () => {

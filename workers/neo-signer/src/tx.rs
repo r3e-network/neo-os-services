@@ -34,6 +34,8 @@ const MAX_VARBYTES: usize = u16::MAX as usize;
 const MAX_PACK_ITEMS: i128 = 1_024;
 /// Length of a `UInt160` in wire order.
 pub const HASH160_LEN: usize = 20;
+/// The only consensus category whose inner message this signer understands.
+pub const DBFT_CATEGORY: &str = "dBFT";
 /// `ExtensiblePayload` categories are read with `ReadVarString(32)`.
 const MAX_CATEGORY_LEN: usize = 32;
 
@@ -186,6 +188,17 @@ pub enum TxError {
         /// Last block height the payload claimed to be valid for.
         end: u32,
     },
+    /// A dBFT payload did not contain its fixed seven-byte header.
+    DbftHeaderTruncated,
+    /// The dBFT message type is not part of Neo N3's consensus protocol.
+    UnknownDbftMessageType { message_type: u8 },
+    /// dBFT extensible payloads are valid from genesis, not from an arbitrary
+    /// caller-selected height.
+    InvalidDbftStart { start: u32 },
+    /// The extensible envelope and inner consensus message disagree on height.
+    DbftHeightMismatch { envelope_end: u32, block_index: u32 },
+    /// A dBFT body did not match the exact v3.10.1 wire shape.
+    MalformedDbftBody { detail: &'static str },
     /// A UTF-8 string field was not valid UTF-8.
     InvalidUtf8 {
         /// What the string was for.
@@ -243,6 +256,25 @@ impl std::fmt::Display for TxError {
             TxError::NoContractCalls => "script performs no contract call",
             TxError::InvalidValidityRange { start, end } => {
                 return write!(f, "valid block range {start}..{end} is empty")
+            }
+            TxError::DbftHeaderTruncated => "dBFT payload data is shorter than seven bytes",
+            TxError::UnknownDbftMessageType { message_type } => {
+                return write!(f, "unknown dBFT message type 0x{message_type:02x}")
+            }
+            TxError::InvalidDbftStart { start } => {
+                return write!(f, "dBFT valid block start is {start}, expected zero")
+            }
+            TxError::DbftHeightMismatch {
+                envelope_end,
+                block_index,
+            } => {
+                return write!(
+                    f,
+                    "dBFT envelope ends at {envelope_end}, inner message is for block {block_index}"
+                )
+            }
+            TxError::MalformedDbftBody { detail } => {
+                return write!(f, "malformed dBFT body: {detail}")
             }
             TxError::InvalidUtf8 { field } => return write!(f, "{field} is not valid UTF-8"),
         };
@@ -571,6 +603,68 @@ pub struct ConsensusPayload {
     pub data: Vec<u8>,
 }
 
+/// Neo N3 dBFT message kinds as serialized in `ConsensusMessage.Data`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DbftMessageType {
+    ChangeView = 0x00,
+    PrepareRequest = 0x20,
+    PrepareResponse = 0x21,
+    Commit = 0x30,
+    RecoveryRequest = 0x40,
+    RecoveryMessage = 0x41,
+}
+
+impl DbftMessageType {
+    /// Messages that can commit a validator to one proposal or block.
+    pub const fn reserves_equivocation_slot(self) -> bool {
+        matches!(
+            self,
+            Self::PrepareRequest | Self::PrepareResponse | Self::Commit
+        )
+    }
+}
+
+impl TryFrom<u8> for DbftMessageType {
+    type Error = TxError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x00 => Ok(Self::ChangeView),
+            0x20 => Ok(Self::PrepareRequest),
+            0x21 => Ok(Self::PrepareResponse),
+            0x30 => Ok(Self::Commit),
+            0x40 => Ok(Self::RecoveryRequest),
+            0x41 => Ok(Self::RecoveryMessage),
+            message_type => Err(TxError::UnknownDbftMessageType { message_type }),
+        }
+    }
+}
+
+/// The fixed metadata every dBFT consensus message begins with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DbftHeader {
+    pub message_type: DbftMessageType,
+    pub block_index: u32,
+    pub validator_index: u8,
+    pub view_number: u8,
+}
+
+/// The safety checkpoint encoded by a fully parsed dBFT message body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DbftCommitment {
+    None,
+    PrepareRequest,
+    PrepareResponse([u8; 32]),
+    Commit([u8; 64]),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DbftMessage {
+    pub header: DbftHeader,
+    pub commitment: DbftCommitment,
+}
+
 impl ConsensusPayload {
     /// Parse the `SerializeUnsigned` bytes of an extensible payload — again,
     /// exactly the bytes that go into the signing preimage.
@@ -588,14 +682,195 @@ impl ConsensusPayload {
         let sender = reader.hash160()?;
         let data = reader.varbytes("payload data", MAX_VARBYTES)?;
         reader.finish()?;
-        Ok(ConsensusPayload {
+        let payload = ConsensusPayload {
             category,
             valid_block_start,
             valid_block_end,
             sender,
             data,
+        };
+        if payload.category == DBFT_CATEGORY {
+            payload.dbft_message()?;
+        }
+        Ok(payload)
+    }
+
+    /// Parse and cross-check the fixed dBFT header.
+    pub fn dbft_header(&self) -> Result<DbftHeader, TxError> {
+        if self.data.len() < 7 {
+            return Err(TxError::DbftHeaderTruncated);
+        }
+        let message_type = DbftMessageType::try_from(self.data[0])?;
+        let block_index = u32::from_le_bytes(
+            self.data[1..5]
+                .try_into()
+                .map_err(|_| TxError::DbftHeaderTruncated)?,
+        );
+        if self.valid_block_start != 0 {
+            return Err(TxError::InvalidDbftStart {
+                start: self.valid_block_start,
+            });
+        }
+        if self.valid_block_end != block_index {
+            return Err(TxError::DbftHeightMismatch {
+                envelope_end: self.valid_block_end,
+                block_index,
+            });
+        }
+        Ok(DbftHeader {
+            message_type,
+            block_index,
+            validator_index: self.data[5],
+            view_number: self.data[6],
         })
     }
+
+    /// Parse the complete Neo N3 v3.10.1 body, refusing truncation, duplicate
+    /// dictionary/hash entries, and trailing bytes.
+    pub fn dbft_message(&self) -> Result<DbftMessage, TxError> {
+        let header = self.dbft_header()?;
+        let mut reader = Reader::new(&self.data[7..]);
+        let commitment = match header.message_type {
+            DbftMessageType::PrepareRequest => {
+                parse_prepare_request_body(&mut reader)?;
+                DbftCommitment::PrepareRequest
+            }
+            DbftMessageType::PrepareResponse => {
+                DbftCommitment::PrepareResponse(read_fixed::<32>(&mut reader, "preparation hash")?)
+            }
+            DbftMessageType::Commit => {
+                DbftCommitment::Commit(read_fixed::<64>(&mut reader, "commit signature")?)
+            }
+            DbftMessageType::ChangeView => {
+                parse_change_view_body(&mut reader)?;
+                DbftCommitment::None
+            }
+            DbftMessageType::RecoveryRequest => {
+                reader.u64()?;
+                DbftCommitment::None
+            }
+            DbftMessageType::RecoveryMessage => {
+                parse_recovery_message_body(&mut reader)?;
+                DbftCommitment::None
+            }
+        };
+        reader.finish()?;
+        Ok(DbftMessage { header, commitment })
+    }
+}
+
+fn read_fixed<const N: usize>(
+    reader: &mut Reader<'_>,
+    field: &'static str,
+) -> Result<[u8; N], TxError> {
+    let mut out = [0u8; N];
+    out.copy_from_slice(reader.bytes(N, field)?);
+    Ok(out)
+}
+
+fn parse_prepare_request_body(reader: &mut Reader<'_>) -> Result<(), TxError> {
+    reader.u32()?;
+    read_fixed::<32>(reader, "previous block hash")?;
+    reader.u64()?;
+    reader.u64()?;
+    let count = reader.count("transaction hash", u16::MAX as usize)?;
+    let mut hashes = std::collections::HashSet::with_capacity(count);
+    for _ in 0..count {
+        let hash = read_fixed::<32>(reader, "transaction hash")?;
+        if !hashes.insert(hash) {
+            return Err(TxError::MalformedDbftBody {
+                detail: "duplicate transaction hash",
+            });
+        }
+    }
+    Ok(())
+}
+
+fn parse_change_view_body(reader: &mut Reader<'_>) -> Result<(), TxError> {
+    reader.u64()?;
+    let reason = reader.u8()?;
+    if matches!(reason, 0x03 | 0x04) {
+        let count = reader.count("rejected transaction hash", u16::MAX as usize)?;
+        for _ in 0..count {
+            read_fixed::<32>(reader, "rejected transaction hash")?;
+        }
+    }
+    Ok(())
+}
+
+fn parse_recovery_message_body(reader: &mut Reader<'_>) -> Result<(), TxError> {
+    parse_change_view_compacts(reader)?;
+    if reader.u8()? != 0 {
+        let embedded_type = DbftMessageType::try_from(reader.u8()?)?;
+        if embedded_type != DbftMessageType::PrepareRequest {
+            return Err(TxError::MalformedDbftBody {
+                detail: "recovery embedded message is not PrepareRequest",
+            });
+        }
+        reader.u32()?;
+        reader.u8()?;
+        reader.u8()?;
+        parse_prepare_request_body(reader)?;
+    } else {
+        let length = reader.count("recovery preparation hash", 32)?;
+        if !matches!(length, 0 | 32) {
+            return Err(TxError::MalformedDbftBody {
+                detail: "recovery preparation hash must be empty or 32 bytes",
+            });
+        }
+        reader.bytes(length, "recovery preparation hash")?;
+    }
+    parse_preparation_compacts(reader)?;
+    parse_commit_compacts(reader)
+}
+
+fn parse_change_view_compacts(reader: &mut Reader<'_>) -> Result<(), TxError> {
+    let count = reader.count("recovery change-view payload", u8::MAX as usize)?;
+    let mut validators = std::collections::HashSet::with_capacity(count);
+    for _ in 0..count {
+        let validator = reader.u8()?;
+        if !validators.insert(validator) {
+            return Err(TxError::MalformedDbftBody {
+                detail: "duplicate recovery change-view validator",
+            });
+        }
+        reader.u8()?;
+        reader.u64()?;
+        reader.varbytes("change-view invocation script", 1024)?;
+    }
+    Ok(())
+}
+
+fn parse_preparation_compacts(reader: &mut Reader<'_>) -> Result<(), TxError> {
+    let count = reader.count("recovery preparation payload", u8::MAX as usize)?;
+    let mut validators = std::collections::HashSet::with_capacity(count);
+    for _ in 0..count {
+        let validator = reader.u8()?;
+        if !validators.insert(validator) {
+            return Err(TxError::MalformedDbftBody {
+                detail: "duplicate recovery preparation validator",
+            });
+        }
+        reader.varbytes("preparation invocation script", 1024)?;
+    }
+    Ok(())
+}
+
+fn parse_commit_compacts(reader: &mut Reader<'_>) -> Result<(), TxError> {
+    let count = reader.count("recovery commit payload", u8::MAX as usize)?;
+    let mut validators = std::collections::HashSet::with_capacity(count);
+    for _ in 0..count {
+        reader.u8()?;
+        let validator = reader.u8()?;
+        if !validators.insert(validator) {
+            return Err(TxError::MalformedDbftBody {
+                detail: "duplicate recovery commit validator",
+            });
+        }
+        read_fixed::<64>(reader, "recovery commit signature")?;
+        reader.varbytes("commit invocation script", 1024)?;
+    }
+    Ok(())
 }
 
 /// Decode a verification script made only of pushes, `PACK` and
@@ -740,6 +1015,12 @@ impl<'a> Reader<'a> {
         let mut buf = [0u8; 8];
         buf.copy_from_slice(self.take(8)?);
         Ok(i64::from_le_bytes(buf))
+    }
+
+    fn u64(&mut self) -> Result<u64, TxError> {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(self.take(8)?);
+        Ok(u64::from_le_bytes(buf))
     }
 
     fn bytes(&mut self, length: usize, field: &'static str) -> Result<&'a [u8], TxError> {

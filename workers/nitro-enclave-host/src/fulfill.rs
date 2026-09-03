@@ -1,6 +1,6 @@
 //! The `/oracle/fulfill` fold — the Rust shape of `handleOracleFulfill`
-//! (enclave-server.mjs:742-912): compute via the bridge, then encode, digest,
-//! sign, and attest ATOMICALLY inside the measured boundary. The digest and
+//! (enclave-server.mjs:742-912): compute, then encode, digest, sign, and attest
+//! ATOMICALLY inside the measured boundary. The digest and
 //! result envelope are NEVER re-derived here — they come from
 //! `morpheus_core`'s golden-vector-tested canonical builders, fed the same
 //! inputs the relayer feeds them, so the produced signature is identical to
@@ -31,7 +31,7 @@ use crate::RuntimeError;
 
 /// JS `String(value)` over serde JSON — `??` chains never hand us
 /// null/undefined, so `Null` here is unreachable in practice.
-fn js_coerce(value: &serde_json::Value) -> String {
+pub(crate) fn js_coerce(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(text) => text.clone(),
         serde_json::Value::Number(number) => {
@@ -48,7 +48,7 @@ fn js_coerce(value: &serde_json::Value) -> String {
 }
 
 /// JS `trimString(value)`: `String(value ?? '').trim()`.
-fn trim_string(value: Option<&serde_json::Value>) -> String {
+pub(crate) fn trim_string(value: Option<&serde_json::Value>) -> String {
     match value {
         None | Some(serde_json::Value::Null) => String::new(),
         Some(value) => js_trim(&js_coerce(value)).to_string(),
@@ -57,7 +57,7 @@ fn trim_string(value: Option<&serde_json::Value>) -> String {
 
 /// JS truthiness over serde JSON (objects/arrays are truthy, `0`/`''`/null
 /// are not; serde cannot carry NaN).
-fn js_truthy(value: &serde_json::Value) -> bool {
+pub(crate) fn js_truthy(value: &serde_json::Value) -> bool {
     match value {
         serde_json::Value::Null => false,
         serde_json::Value::Bool(b) => *b,
@@ -78,7 +78,7 @@ fn string_coalesce(object: &serde_json::Value, keys: &[&str]) -> String {
 }
 
 /// `a || b || ''` over one object's keys: the first JS-truthy hit, trimmed.
-fn truthy_trimmed(object: &serde_json::Value, keys: &[&str]) -> String {
+pub(crate) fn truthy_trimmed(object: &serde_json::Value, keys: &[&str]) -> String {
     for key in keys {
         if let Some(value) = object.get(key).filter(|value| js_truthy(value)) {
             return js_trim(&js_coerce(value)).to_string();
@@ -397,11 +397,7 @@ fn compute_worker_response(
         };
         let mut decrypted = payload.clone();
         decrypted["envelope"] = serde_json::Value::String(envelope);
-        return state.bridge.forward(
-            "/oracle/decrypt",
-            &decrypted,
-            worker_auth_token(state).as_deref(),
-        );
+        return execute_fulfillment_route(state, "/oracle/decrypt", &decrypted);
     }
 
     let intent = resolve_kernel_intent(request_type);
@@ -415,18 +411,74 @@ fn compute_worker_response(
         &JsValue::from_json(&context),
     );
     let worker_payload_json = js_to_json(&JsValue::Object(worker_payload));
-    state.bridge.forward(
-        intent.worker_route,
-        &worker_payload_json,
-        worker_auth_token(state).as_deref(),
-    )
+    execute_fulfillment_route(state, intent.worker_route, &worker_payload_json)
 }
 
-/// The bridge's caller resolves the worker-auth token from the overlay
-/// (MORPHEUS_RUNTIME_TOKEN || NITRO_API_TOKEN || NITRO_SHARED_SECRET) — the
-/// same resolution `computeViaWorker` did against accumulated `process.env`.
-fn worker_auth_token(state: &AppState) -> Option<String> {
-    crate::bridge::resolve_worker_auth_token(&state.overlay.read().expect("overlay lock"))
+fn execute_fulfillment_route(
+    state: &AppState,
+    route: &str,
+    payload: &serde_json::Value,
+) -> crate::state::BridgeReply {
+    #[cfg(test)]
+    if let Some(compute) = &state.fulfillment_compute_override {
+        return compute.forward(route, payload, None);
+    }
+
+    match route {
+        "/compute/execute" => value_reply(crate::compute_execute::handle_compute_execute(
+            state, payload,
+        )),
+        "/oracle/query" => outcome_reply(crate::oracle_read::handle_oracle_query(state, payload)),
+        "/oracle/smart-fetch" => outcome_reply(crate::oracle_read::handle_oracle_smart_fetch(
+            state, payload,
+        )),
+        "/oracle/decrypt" => {
+            outcome_reply(crate::oracle_read::handle_oracle_decrypt(state, payload))
+        }
+        "/oracle/message-reveal" => outcome_reply(
+            crate::oracle_read::handle_oracle_message_reveal(state, payload),
+        ),
+        "/neodid/bind" => value_reply(crate::neodid::handle_neo_did_bind(state, payload)),
+        "/neodid/action-ticket" => {
+            value_reply(crate::neodid::handle_neo_did_action_ticket(state, payload))
+        }
+        "/neodid/recovery-ticket" => value_reply(crate::neodid::handle_neo_did_recovery_ticket(
+            state, payload,
+        )),
+        _ => crate::bridge::unavailable_reply(route),
+    }
+}
+
+fn value_reply(result: Result<serde_json::Value, RuntimeError>) -> crate::state::BridgeReply {
+    match result {
+        Ok(body) => crate::state::BridgeReply {
+            ok: true,
+            status: 200,
+            body,
+        },
+        Err(error) => crate::state::BridgeReply {
+            ok: false,
+            status: error.status,
+            body: error.body(),
+        },
+    }
+}
+
+fn outcome_reply(
+    result: Result<crate::DispatchOutcome, RuntimeError>,
+) -> crate::state::BridgeReply {
+    match result {
+        Ok(outcome) => crate::state::BridgeReply {
+            ok: (200..300).contains(&outcome.status),
+            status: outcome.status,
+            body: outcome.body,
+        },
+        Err(error) => crate::state::BridgeReply {
+            ok: false,
+            status: error.status,
+            body: error.body(),
+        },
+    }
 }
 
 #[cfg(test)]

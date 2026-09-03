@@ -11,6 +11,7 @@ const handleGet = createRateLimitedHandler(
       {
         route: '/api/compute/functions',
         category: 'compute',
+        confidential: false,
       }
     );
   },

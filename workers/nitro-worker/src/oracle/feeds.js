@@ -409,7 +409,7 @@ async function resolveQuoteForProvider(symbol, options, provider) {
   };
   const signed = await buildSignedResultEnvelope(quote, resolvedPayload);
   // signed.tee_attestation already binds sha256(stableStringify(quote)) via output_hash;
-  // reuse it instead of a second /attest call with the same report_data.
+  // reuse it instead of a second /attestation call with the same report_data.
   const teeAttestation = signed.tee_attestation;
   return {
     ...quote,

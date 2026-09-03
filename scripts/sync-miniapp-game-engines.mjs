@@ -139,9 +139,9 @@ function bannerFor(entry, sourceSha256) {
 // miniappsRoot and a RELATIVE entry so the emitted section comments carry
 // repo-relative paths (deterministic across machines).
 function bundleSource(minigamesRoot, entry) {
-  const esbuild = path.join(minigamesRoot, 'node_modules', '.bin', 'esbuild');
-  if (!fs.existsSync(esbuild)) {
-    throw new Error(`missing esbuild: ${esbuild} (run npm install in the minigames repo)`);
+  const esbuildCli = path.join(minigamesRoot, 'node_modules', 'esbuild', 'bin', 'esbuild');
+  if (!fs.existsSync(esbuildCli)) {
+    throw new Error(`missing esbuild: ${esbuildCli} (run npm install in the minigames repo)`);
   }
   const sourcePath = path.join(minigamesRoot, entry.source);
   if (!fs.existsSync(sourcePath)) {
@@ -153,8 +153,15 @@ function bundleSource(minigamesRoot, entry) {
   try {
     const outFile = path.join(tmpDir, `${entry.name}.js`);
     execFileSync(
-      esbuild,
-      [entry.source, '--format=esm', '--platform=node', '--bundle', `--outfile=${outFile}`],
+      process.execPath,
+      [
+        esbuildCli,
+        entry.source,
+        '--format=esm',
+        '--platform=node',
+        '--bundle',
+        `--outfile=${outFile}`,
+      ],
       { cwd: minigamesRoot, stdio: ['ignore', 'pipe', 'pipe'] }
     );
     const bundle = fs.readFileSync(outFile, 'utf8');

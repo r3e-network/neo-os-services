@@ -165,16 +165,12 @@ function dynamicRequirements(config) {
       present: Boolean(trim(config.neo_n3?.oracleContract)),
       reason: 'neo_n3 is active and mode is not feed_only',
     });
-    if (!config.useDerivedKeys) {
-      const hasSigner = Boolean(
-        trim(config.neo_n3?.updaterWif) || trim(config.neo_n3?.updaterPrivateKey)
-      );
-      requirements.push({
-        key: 'neo_n3.updaterSigner',
-        present: hasSigner,
-        reason: 'neo_n3 is active, mode is not feed_only, and derived keys are off',
-      });
-    }
+    requirements.push({
+      key: 'neo_n3.custodyKeyIds.updater',
+      present: Boolean(trim(config.neo_n3?.custodyKeyIds?.updater)),
+      reason:
+        'neo_n3 is active and mode is not feed_only; Neo N3 signing runs through the custody signer service',
+    });
   }
 
   if (neoxActive && requestsLane) {
@@ -202,10 +198,9 @@ export function validateRelayerConfig({ env = process.env, config } = {}) {
 
   const errors = [];
 
-  // Building the config can itself throw — e.g. when the pinned Neo N3 updater
-  // signer material is required but missing/malformed (strict role resolution).
-  // Surface that as a validation error against the responsible setting instead
-  // of letting the exception escape, so the operator gets an actionable report.
+  // Building the config can itself throw — e.g. when the network registry is
+  // unreadable or malformed. Surface that as a validation error instead of
+  // letting the exception escape, so the operator gets an actionable report.
   let builtConfig = config;
   if (!builtConfig) {
     try {
@@ -213,7 +208,7 @@ export function validateRelayerConfig({ env = process.env, config } = {}) {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       errors.push({
-        key: 'neo_n3.updaterSigner',
+        key: 'config',
         message: `config could not be built: ${message}`,
       });
       // Without a built config we can only report the static + build errors and

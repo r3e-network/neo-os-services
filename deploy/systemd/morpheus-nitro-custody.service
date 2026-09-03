@@ -1,0 +1,37 @@
+[Unit]
+Description=NeoOS Nitro custody enclave (signer_service vault, attested KMS provisioning)
+Documentation=file:/opt/neoos/services/docs/runbooks/custody-enclave-deployment.md
+# The frontier enclave is a peer, not a dependency: morpheus-nitro-signer.service
+# runs morpheus-oracle.eif on CID 16 / host port 8787, this one runs
+# morpheus-custody.eif on CID 17 / host port 8789, and start-nitro-custody.sh
+# refuses to boot if the two are configured onto the same CID or port.
+#
+# The egress proxy IS a dependency. Custody's only outbound call is nitro-attest's
+# KMS Decrypt during /provision, and it reaches KMS through the parent's
+# allow-listed HTTP-CONNECT proxy (vsock CID 3:8788), not through the
+# vsock-proxy that morpheus-nitro-kms-proxy.service runs on 8001 — that one
+# serves the in-enclave kmstool path the frontier image used. Without egress up,
+# /provision fails with 503 signer-provision-failed and the vault stays sealed.
+After=network-online.target docker.service nitro-enclaves-allocator.service morpheus-nitro-egress.service
+Wants=network-online.target docker.service nitro-enclaves-allocator.service morpheus-nitro-egress.service
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/morpheus/nitro/morpheus-nitro.env
+ExecStart=/opt/neoos/services/deploy/nitro/start-nitro-custody.sh
+# Restart matters more here than for the frontier: the enclave rootfs is
+# memory-backed, so every boot starts sealed and the script's provision step is
+# the only thing that unseals it. A crash without supervision leaves a host whose
+# custody routes answer 503 signer-not-provisioned indefinitely — and the
+# consumers that sign through it (relayer, worker, feed-pusher) fail with it.
+Restart=always
+RestartSec=5
+# nitro-cli and the vsock bridge need root; the enclave's own PID 1 does not
+# (Dockerfile.signer runs it as uid 8021 with a single file capability on `ip`).
+User=root
+Group=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

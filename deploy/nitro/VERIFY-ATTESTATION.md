@@ -21,6 +21,16 @@
 > `concatOctetSegments`). The oracle confidential key is now KMS-materialized
 > in-TEE — no host-resident plaintext; the host holds only the enclave-decrypt-only
 > ciphertext at `/var/lib/morpheus/oracle-key-kms.b64`.
+>
+> **Rust rewrite (since 2026-08).** The banner above, the PCR table in §1 and the
+> reproducible-build steps describe the Node/Go image of that release. The frontier
+> is now Rust only (`Dockerfile.enclave`: two Rust binaries, `nitro_init` as PID 1),
+> and custody runs in its own enclave (`Dockerfile.signer`: three Rust binaries, the
+> same supervisor, `build-custody-eif.sh`). The _procedure_ in this document is
+> unchanged — check out the release you are verifying, build it with
+> `--verify-reproducible`, and compare against the manifest that build wrote under
+> `deploy/nitro/measurements/`. The PCRs recorded here will not match a build from
+> `main`, and are not supposed to.
 
 Release **`oracle-enclave-testnet-2026-06-14.1`** — the prior merged compute+sign
 enclave (signer cutover 2026-06-14, now superseded by the exec release above).
@@ -96,7 +106,12 @@ cd neo-morpheus-oracle
 git checkout 9ee3e2d089da64b494d8fd5da666b50207edaf6c   # or the release tag
 
 # Build twice from scratch and assert identical PCRs (the built-in gate):
-bash deploy/nitro/build-enclave-eif.sh --verify-reproducible
+SIGNER_SERVICE_URL=<manifest-custody-url> \
+SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=<manifest-raw-verifier-key-id> \
+SIGNER_ROLE_UPDATER_KEY_ID=<manifest-raw-updater-key-id> \
+SIGNER_ROLE_RELAYER_KEY_ID=<manifest-raw-relayer-key-id> \
+SIGNER_ROLE_WORKER_KEY_ID=<manifest-raw-worker-key-id> \
+  bash deploy/nitro/build-enclave-eif.sh --verify-reproducible
 ```
 
 Expected output ends with:
@@ -104,17 +119,32 @@ Expected output ends with:
 ```
     build #1 PCRs: 4a76e948…|4b4d5b36…|224c4d8a…
     build #2 PCRs: 4a76e948…|4b4d5b36…|224c4d8a…
-    OK: identical PCR0/PCR1/PCR2 across two independent builds -> reproducible enclave
+    OK: identical PCR0/PCR1/PCR2 across two from-scratch builds -> reproducible enclave
+        (bases are digest-pinned, so this covers every layer that varies)
 ```
 
-Confirm those PCRs equal the table in §1. They will.
+Confirm those PCRs equal the table in §1 — they will, at the commit this section
+checks out. Do not skip that `git checkout`: the frontier image has been Rust-only
+since Phase 10/11 (two Rust binaries with `nitro_init` as PID 1, no Node runtime
+and no Go helper), so building from `main` measures a different image and yields
+different PCRs by design. Compare against the manifest your own build wrote, not
+this table.
 
-**Why it is reproducible:** base images are digest-pinned (`@sha256`), node deps
-come from the committed `package-lock.json` via `npm ci`, the Go NSM helper is
-pinned via `go.mod`/`go.sum` and built with `-trimpath -buildvcs=false`, apt
-versions are pinned, and every build-time cache/log/mtime that would otherwise
-flip a layer (npm cache + logs, Node's V8 compile cache, apt/dpkg logs, file
-mtimes) is stripped in `Dockerfile.enclave`.
+**Why it is reproducible (this release):** base images are digest-pinned
+(`@sha256`), node deps come from the committed `package-lock.json` via `npm ci`,
+the Go NSM helper is pinned via `go.mod`/`go.sum` and built with
+`-trimpath -buildvcs=false`, apt versions are pinned, and every build-time
+cache/log/mtime that would otherwise flip a layer (npm cache + logs, Node's V8
+compile cache, apt/dpkg logs, file mtimes) is stripped in `Dockerfile.enclave`.
+
+**Why the current Rust image is reproducible:** both stages pull a digest-pinned
+base, `cargo build --locked` resolves against the committed `Cargo.lock` and the
+vendored Boa patches under `vendor/`, apt packages are pinned to exact bookworm
+versions with their logs and caches deleted in the same layer, and
+`SOURCE_DATE_EPOCH` plus a whole-rootfs mtime pass fixes every final mtime. The
+measured stage carries only the Rust binaries and those pinned distro packages
+(`socat`, `iproute2`, and for the custody image `libcap2-bin`) — no Node runtime,
+no Go binary, and no entrypoint script for a host to swap.
 
 ---
 

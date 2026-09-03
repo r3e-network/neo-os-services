@@ -21,6 +21,9 @@
 //! comparing digests rather than tokens keeps the token's length and any shared
 //! prefix out of the timing channel.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -30,6 +33,10 @@ use crate::model::{CallerCapability, KeyGrant, SignerCaller};
 /// iframe, a `data:` document, a request with `Referrer-Policy` stripping it.
 /// It matches nothing and is never a configured allow-list entry.
 pub const NULL_ORIGIN: &str = "null";
+pub const WORKLOAD_PROTOCOL: &str = "neoos-workload-v1";
+pub const WORKLOAD_MAX_CLOCK_SKEW_SECONDS: u64 = 60;
+pub const WORKLOAD_NONCE_MIN_BYTES: usize = 16;
+pub const WORKLOAD_NONCE_MAX_BYTES: usize = 128;
 
 /// Why a request was refused before the key's policy was consulted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +68,18 @@ pub enum AccessRejection {
     /// different operator actions, and disguising the first as the second costs
     /// an afternoon of guessing per incident.
     CapabilityMissing,
+    /// Bearer and workload credentials were presented together.
+    AmbiguousCredential,
+    /// A workload assertion was partial or malformed.
+    WorkloadMalformed,
+    /// The asserted caller does not name a workload identity.
+    UnknownWorkload,
+    /// The assertion timestamp is outside the accepted skew.
+    WorkloadStale,
+    /// The Ed25519 signature did not verify.
+    WorkloadSignatureInvalid,
+    /// This caller already used the assertion nonce.
+    WorkloadReplay,
 }
 
 impl AccessRejection {
@@ -75,6 +94,12 @@ impl AccessRejection {
             AccessRejection::OriginUnexpected => "origin-unexpected",
             AccessRejection::KeyNotGranted => "key-not-granted",
             AccessRejection::CapabilityMissing => "admin-capability-missing",
+            AccessRejection::AmbiguousCredential => "ambiguous-credential",
+            AccessRejection::WorkloadMalformed => "workload-assertion-malformed",
+            AccessRejection::UnknownWorkload => "unknown-workload",
+            AccessRejection::WorkloadStale => "workload-assertion-stale",
+            AccessRejection::WorkloadSignatureInvalid => "workload-signature-invalid",
+            AccessRejection::WorkloadReplay => "workload-assertion-replayed",
         }
     }
 }
@@ -94,6 +119,20 @@ impl std::fmt::Display for AccessRejection {
             }
             AccessRejection::KeyNotGranted => "this caller is not granted the requested key",
             AccessRejection::CapabilityMissing => "this credential is not valid for this endpoint",
+            AccessRejection::AmbiguousCredential => {
+                "present exactly one of Bearer or workload authentication"
+            }
+            AccessRejection::WorkloadMalformed => "the workload assertion is malformed",
+            AccessRejection::UnknownWorkload => {
+                "the workload assertion does not match a registered caller"
+            }
+            AccessRejection::WorkloadStale => {
+                "the workload assertion timestamp is outside the accepted window"
+            }
+            AccessRejection::WorkloadSignatureInvalid => {
+                "the workload assertion signature is invalid"
+            }
+            AccessRejection::WorkloadReplay => "the workload assertion nonce was already used",
         };
         formatter.write_str(message)
     }
@@ -133,6 +172,26 @@ impl OriginClaim {
 pub struct CallerCredentials {
     token: Option<String>,
     origin: OriginClaim,
+    workload: Option<WorkloadAssertion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkloadAssertion {
+    caller_id: Option<String>,
+    timestamp: Option<String>,
+    nonce: Option<String>,
+    signature: Option<String>,
+    method: String,
+    route: String,
+    body_digest: [u8; 32],
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WorkloadRequestHeaders<'a> {
+    pub caller_id: Option<&'a str>,
+    pub timestamp: Option<&'a str>,
+    pub nonce: Option<&'a str>,
+    pub signature: Option<&'a str>,
 }
 
 impl CallerCredentials {
@@ -153,7 +212,50 @@ impl CallerCredentials {
         CallerCredentials {
             token: bearer_token(authorization).map(str::to_owned),
             origin,
+            workload: None,
         }
+    }
+
+    /// Credentials read from one HTTP request, including an optional signed
+    /// workload assertion. Any one assertion header makes the workload mode
+    /// present so a partial assertion is refused rather than ignored.
+    pub fn request(
+        authorization: Option<&str>,
+        origin: Option<&str>,
+        referer: Option<&str>,
+        workload: WorkloadRequestHeaders<'_>,
+        method: &str,
+        route: &str,
+    ) -> Self {
+        let mut credentials = Self::new(authorization, origin, referer);
+        if [
+            workload.caller_id,
+            workload.timestamp,
+            workload.nonce,
+            workload.signature,
+        ]
+        .iter()
+        .any(|value| value.is_some())
+        {
+            credentials.workload = Some(WorkloadAssertion {
+                caller_id: workload.caller_id.map(str::to_owned),
+                timestamp: workload.timestamp.map(str::to_owned),
+                nonce: workload.nonce.map(str::to_owned),
+                signature: workload.signature.map(str::to_owned),
+                method: method.to_ascii_uppercase(),
+                route: route.to_string(),
+                body_digest: body_sha256(&[]),
+            });
+        }
+        credentials
+    }
+
+    /// Bind the exact bytes received on the wire to a workload assertion.
+    pub fn with_body_digest(mut self, body_digest: [u8; 32]) -> Self {
+        if let Some(assertion) = &mut self.workload {
+            assertion.body_digest = body_digest;
+        }
+        self
     }
 
     /// Credentials with a token and no browser origin — a server-to-server call,
@@ -162,6 +264,7 @@ impl CallerCredentials {
         CallerCredentials {
             token: (!token.is_empty()).then(|| token.to_owned()),
             origin: OriginClaim::Absent,
+            workload: None,
         }
     }
 
@@ -188,6 +291,20 @@ impl CallerCredentials {
     /// every tokenless request would then match.
     pub fn presented_digest(&self) -> Option<[u8; 32]> {
         self.token.as_deref().map(token_digest)
+    }
+
+    pub fn workload_nonce(&self) -> Option<&str> {
+        self.workload.as_ref()?.nonce.as_deref()
+    }
+
+    pub fn workload_expires_at(&self) -> Option<u64> {
+        self.workload
+            .as_ref()?
+            .timestamp
+            .as_deref()?
+            .parse::<u64>()
+            .ok()?
+            .checked_add(WORKLOAD_MAX_CLOCK_SKEW_SECONDS)
     }
 }
 
@@ -228,6 +345,130 @@ pub fn token_digest(token: &str) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(&digest);
     out
+}
+
+/// SHA-256 of the exact HTTP body bytes, used by workload assertions.
+pub fn body_sha256(body: &[u8]) -> [u8; 32] {
+    let digest = Sha256::digest(body);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest);
+    out
+}
+
+/// Whether bytes decode as an Ed25519 verification key.
+pub fn workload_public_key_is_valid(public_key: &[u8; 32]) -> bool {
+    VerifyingKey::from_bytes(public_key).is_ok()
+}
+
+/// Values bound by one Ed25519 workload assertion.
+pub struct WorkloadMessage<'a> {
+    pub caller_id: &'a str,
+    pub subject: Option<&'a str>,
+    pub timestamp: u64,
+    pub nonce: &'a str,
+    pub method: &'a str,
+    pub route: &'a str,
+    pub body_digest: &'a [u8; 32],
+    pub origin: Option<&'a str>,
+}
+
+impl WorkloadMessage<'_> {
+    /// Canonical bytes a workload identity signs.
+    ///
+    /// Every dynamic value is either constrained at provisioning/request
+    /// parsing or represented as lowercase hexadecimal, so newline separation
+    /// is unambiguous across languages.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        format!(
+            "{WORKLOAD_PROTOCOL}\ncaller:{}\nsubject:{}\ntimestamp:{}\nnonce:{}\nmethod:{}\nroute:{}\nbody-sha256:{}\norigin:{}",
+            self.caller_id,
+            self.subject.unwrap_or_default(),
+            self.timestamp,
+            self.nonce,
+            self.method.to_ascii_uppercase(),
+            self.route,
+            hex::encode(self.body_digest),
+            self.origin.unwrap_or_default(),
+        )
+        .into_bytes()
+    }
+}
+
+fn verify_workload(
+    caller: &SignerCaller,
+    credentials: &CallerCredentials,
+    now_unix: u64,
+) -> Result<(), AccessRejection> {
+    let assertion = credentials
+        .workload
+        .as_ref()
+        .ok_or(AccessRejection::WorkloadMalformed)?;
+    let identity = caller
+        .workload_identity
+        .as_ref()
+        .ok_or(AccessRejection::UnknownWorkload)?;
+    let caller_id = assertion
+        .caller_id
+        .as_deref()
+        .ok_or(AccessRejection::WorkloadMalformed)?;
+    let timestamp_raw = assertion
+        .timestamp
+        .as_deref()
+        .ok_or(AccessRejection::WorkloadMalformed)?;
+    let timestamp = timestamp_raw
+        .parse::<u64>()
+        .map_err(|_| AccessRejection::WorkloadMalformed)?;
+    if timestamp.to_string() != timestamp_raw {
+        return Err(AccessRejection::WorkloadMalformed);
+    }
+    if now_unix.abs_diff(timestamp) > WORKLOAD_MAX_CLOCK_SKEW_SECONDS {
+        return Err(AccessRejection::WorkloadStale);
+    }
+    let nonce = assertion
+        .nonce
+        .as_deref()
+        .filter(|nonce| {
+            (WORKLOAD_NONCE_MIN_BYTES..=WORKLOAD_NONCE_MAX_BYTES).contains(&nonce.len())
+                && nonce
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        })
+        .ok_or(AccessRejection::WorkloadMalformed)?;
+    if caller_id != caller.id
+        || caller_id.len() > 128
+        || !caller_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        || assertion.method.is_empty()
+        || assertion.route.is_empty()
+    {
+        return Err(AccessRejection::WorkloadMalformed);
+    }
+    let signature_raw = assertion
+        .signature
+        .as_deref()
+        .ok_or(AccessRejection::WorkloadMalformed)?;
+    let signature_bytes = hex::decode(signature_raw)
+        .ok()
+        .and_then(|bytes| <[u8; 64]>::try_from(bytes).ok())
+        .ok_or(AccessRejection::WorkloadMalformed)?;
+    let verifying_key = VerifyingKey::from_bytes(&identity.public_key)
+        .map_err(|_| AccessRejection::WorkloadSignatureInvalid)?;
+    let signature = Signature::from_bytes(&signature_bytes);
+    let message = WorkloadMessage {
+        caller_id,
+        subject: identity.subject.as_deref(),
+        timestamp,
+        nonce,
+        method: &assertion.method,
+        route: &assertion.route,
+        body_digest: &assertion.body_digest,
+        origin: credentials.origin.value(),
+    }
+    .to_bytes();
+    verifying_key
+        .verify_strict(&message, &signature)
+        .map_err(|_| AccessRejection::WorkloadSignatureInvalid)
 }
 
 /// A new bearer token.
@@ -317,11 +558,60 @@ pub fn authenticate<'a>(
     required: CallerCapability,
     key_id: Option<&str>,
 ) -> Result<&'a SignerCaller, AccessRejection> {
+    authenticate_at(callers, credentials, required, key_id, current_unix_time())
+}
+
+/// Authenticate a route shared by more than one non-admin capability.
+///
+/// Key metadata is the only such surface: both parsed-signing and raw-signing
+/// callers need to verify the public identity of a granted key. Signature
+/// routes always call [`authenticate`] with one exact capability.
+pub fn authenticate_any<'a>(
+    callers: &'a [SignerCaller],
+    credentials: &CallerCredentials,
+    required: &[CallerCapability],
+    key_id: Option<&str>,
+) -> Result<&'a SignerCaller, AccessRejection> {
+    authenticate_any_at(callers, credentials, required, key_id, current_unix_time())
+}
+
+pub fn authenticate_at<'a>(
+    callers: &'a [SignerCaller],
+    credentials: &CallerCredentials,
+    required: CallerCapability,
+    key_id: Option<&str>,
+    now_unix: u64,
+) -> Result<&'a SignerCaller, AccessRejection> {
+    authenticate_any_at(callers, credentials, &[required], key_id, now_unix)
+}
+
+fn authenticate_any_at<'a>(
+    callers: &'a [SignerCaller],
+    credentials: &CallerCredentials,
+    required: &[CallerCapability],
+    key_id: Option<&str>,
+    now_unix: u64,
+) -> Result<&'a SignerCaller, AccessRejection> {
+    if credentials.token().is_some() && credentials.workload.is_some() {
+        return Err(AccessRejection::AmbiguousCredential);
+    }
+    if let Some(assertion) = &credentials.workload {
+        let caller_id = assertion
+            .caller_id
+            .as_deref()
+            .ok_or(AccessRejection::WorkloadMalformed)?;
+        let caller = callers
+            .iter()
+            .find(|caller| caller.id == caller_id && caller.workload_identity.is_some())
+            .ok_or(AccessRejection::UnknownWorkload)?;
+        verify_workload(caller, credentials, now_unix)?;
+        return authorize_any(caller, credentials, required, key_id);
+    }
     if credentials.token().is_none() {
         return Err(AccessRejection::MissingToken);
     }
-    let caller = identify(callers, credentials).ok_or(AccessRejection::UnknownToken)?;
-    authorize(caller, credentials, required, key_id)
+    let caller = identify_bearer(callers, credentials).ok_or(AccessRejection::UnknownToken)?;
+    authorize_any(caller, credentials, required, key_id)
 }
 
 /// The caller whose token matched, whatever it is entitled to.
@@ -339,15 +629,49 @@ pub fn identify<'a>(
     callers: &'a [SignerCaller],
     credentials: &CallerCredentials,
 ) -> Option<&'a SignerCaller> {
+    identify_at(callers, credentials, current_unix_time())
+}
+
+pub fn identify_at<'a>(
+    callers: &'a [SignerCaller],
+    credentials: &CallerCredentials,
+    now_unix: u64,
+) -> Option<&'a SignerCaller> {
+    if credentials.token().is_some() && credentials.workload.is_some() {
+        return None;
+    }
+    if let Some(assertion) = &credentials.workload {
+        let caller_id = assertion.caller_id.as_deref()?;
+        let caller = callers
+            .iter()
+            .find(|caller| caller.id == caller_id && caller.workload_identity.is_some())?;
+        verify_workload(caller, credentials, now_unix).ok()?;
+        return Some(caller);
+    }
+    identify_bearer(callers, credentials)
+}
+
+fn identify_bearer<'a>(
+    callers: &'a [SignerCaller],
+    credentials: &CallerCredentials,
+) -> Option<&'a SignerCaller> {
     let digest = credentials.presented_digest()?;
     let mut matched = callers
         .iter()
+        .filter(|caller| caller.workload_identity.is_none())
         .filter(|caller| digest_matches(&caller.token_digest, &digest));
     let caller = matched.next()?;
     if matched.next().is_some() {
         return None;
     }
     Some(caller)
+}
+
+fn current_unix_time() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }
 
 /// The same decision [`authenticate`] makes once the caller is known, without a
@@ -359,13 +683,25 @@ pub fn authorize<'a>(
     required: CallerCapability,
     key_id: Option<&str>,
 ) -> Result<&'a SignerCaller, AccessRejection> {
+    authorize_any(caller, credentials, &[required], key_id)
+}
+
+fn authorize_any<'a>(
+    caller: &'a SignerCaller,
+    credentials: &CallerCredentials,
+    required: &[CallerCapability],
+    key_id: Option<&str>,
+) -> Result<&'a SignerCaller, AccessRejection> {
     if caller.disabled {
         return Err(AccessRejection::CallerDisabled);
     }
     // Capability is checked before the origin, not after it. A credential of the
     // wrong kind should receive one answer whatever headers it brings, so the
     // endpoint cannot be used to learn anything beyond "this is the wrong kind".
-    if !caller.has_capability(required) {
+    if !required
+        .iter()
+        .any(|capability| caller.has_capability(*capability))
+    {
         return Err(AccessRejection::CapabilityMissing);
     }
     let presented = credentials.origin();
@@ -387,11 +723,10 @@ pub fn authorize<'a>(
         }
     }
     match key_id {
-        Some(key_id) => {
-            if !caller.key_grant.grants(key_id) {
-                return Err(AccessRejection::KeyNotGranted);
-            }
+        Some(key_id) if !caller.key_grant.grants(key_id) => {
+            return Err(AccessRejection::KeyNotGranted);
         }
+        Some(_) => {}
         // An operation naming no key reaches the whole vault — list it, create
         // into it, provision callers. Only a caller granted the whole vault may
         // attempt one: a scoped admin must not be able to read out the keys it

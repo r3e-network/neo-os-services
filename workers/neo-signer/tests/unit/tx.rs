@@ -623,15 +623,38 @@ fn reports_a_from_that_is_not_the_sender_instead_of_silently_fixing_it() {
 #[test]
 fn parses_a_consensus_payload_as_the_node_does() {
     let sender = from_wire(VECTORS[0].sender);
-    let bytes = payload("dBFT", 100, 101, sender, &[0x01, 0x02, 0x03]);
+    let mut body = Vec::new();
+    body.extend_from_slice(&0u32.to_le_bytes());
+    body.extend_from_slice(&[0x11; 32]);
+    body.extend_from_slice(&1_700_000_000u64.to_le_bytes());
+    body.extend_from_slice(&42u64.to_le_bytes());
+    body.push(1);
+    body.extend_from_slice(&[0xaa; 32]);
+    let data = [
+        vec![DbftMessageType::PrepareRequest as u8],
+        101u32.to_le_bytes().to_vec(),
+        vec![2, 3],
+        body,
+    ]
+    .concat();
+    let bytes = payload(DBFT_CATEGORY, 0, 101, sender, &data);
     let decoded = ConsensusPayload::parse(&bytes).expect("well-formed dBFT payload");
     assert_eq!(decoded.category, "dBFT");
     assert_eq!(
         (decoded.valid_block_start, decoded.valid_block_end),
-        (100, 101)
+        (0, 101)
     );
     assert_eq!(decoded.sender, sender);
-    assert_eq!(decoded.data, vec![1, 0x02, 0x03]);
+    assert_eq!(decoded.data, data);
+    assert_eq!(
+        decoded.dbft_header().expect("header"),
+        DbftHeader {
+            message_type: DbftMessageType::PrepareRequest,
+            block_index: 101,
+            validator_index: 2,
+            view_number: 3,
+        }
+    );
 }
 
 #[test]
@@ -665,6 +688,77 @@ fn refuses_consensus_payloads_the_network_would_drop() {
         ConsensusPayload::parse(&[0x01, b'd', 0x00]),
         Err(TxError::Truncated)
     ));
+
+    assert_eq!(
+        ConsensusPayload::parse(&payload(DBFT_CATEGORY, 0, 2, sender, &[0x20])),
+        Err(TxError::DbftHeaderTruncated)
+    );
+    let unknown = [vec![0xff], 2u32.to_le_bytes().to_vec(), vec![0, 0]].concat();
+    assert_eq!(
+        ConsensusPayload::parse(&payload(DBFT_CATEGORY, 0, 2, sender, &unknown)),
+        Err(TxError::UnknownDbftMessageType { message_type: 0xff })
+    );
+    let header = [vec![0x20], 2u32.to_le_bytes().to_vec(), vec![0, 0]].concat();
+    assert_eq!(
+        ConsensusPayload::parse(&payload(DBFT_CATEGORY, 1, 2, sender, &header)),
+        Err(TxError::InvalidDbftStart { start: 1 })
+    );
+    assert_eq!(
+        ConsensusPayload::parse(&payload(DBFT_CATEGORY, 0, 3, sender, &header)),
+        Err(TxError::DbftHeightMismatch {
+            envelope_end: 3,
+            block_index: 2,
+        })
+    );
+
+    let malformed_response = [
+        vec![DbftMessageType::PrepareResponse as u8],
+        2u32.to_le_bytes().to_vec(),
+        vec![0, 0],
+        vec![0x11; 31],
+    ]
+    .concat();
+    assert!(matches!(
+        ConsensusPayload::parse(&payload(DBFT_CATEGORY, 0, 2, sender, &malformed_response)),
+        Err(TxError::LengthOutOfRange {
+            field: "preparation hash"
+        })
+    ));
+
+    let trailing_commit = [
+        vec![DbftMessageType::Commit as u8],
+        2u32.to_le_bytes().to_vec(),
+        vec![0, 0],
+        vec![0x22; 65],
+    ]
+    .concat();
+    assert!(matches!(
+        ConsensusPayload::parse(&payload(DBFT_CATEGORY, 0, 2, sender, &trailing_commit)),
+        Err(TxError::TrailingBytes { .. })
+    ));
+
+    let duplicate_hash = [0x33; 32];
+    let mut duplicate_request_body = Vec::new();
+    duplicate_request_body.extend_from_slice(&0u32.to_le_bytes());
+    duplicate_request_body.extend_from_slice(&[0x11; 32]);
+    duplicate_request_body.extend_from_slice(&1u64.to_le_bytes());
+    duplicate_request_body.extend_from_slice(&2u64.to_le_bytes());
+    duplicate_request_body.push(2);
+    duplicate_request_body.extend_from_slice(&duplicate_hash);
+    duplicate_request_body.extend_from_slice(&duplicate_hash);
+    let duplicate_request = [
+        vec![DbftMessageType::PrepareRequest as u8],
+        2u32.to_le_bytes().to_vec(),
+        vec![0, 0],
+        duplicate_request_body,
+    ]
+    .concat();
+    assert_eq!(
+        ConsensusPayload::parse(&payload(DBFT_CATEGORY, 0, 2, sender, &duplicate_request)),
+        Err(TxError::MalformedDbftBody {
+            detail: "duplicate transaction hash"
+        })
+    );
 }
 
 /// Build `SerializeUnsigned` bytes for an extensible payload.

@@ -79,14 +79,22 @@ Use explicit relayer mode per CVM:
 - Oracle CVM: `MORPHEUS_RELAYER_MODE=requests_only`
 - DataFeed CVM: `MORPHEUS_RELAYER_MODE=feed_only`
 
-For mainnet request fulfillment, keep the signer roles explicit and network-scoped:
+For mainnet request fulfillment, provision the custody signer roles instead of
+any WIF (no signing key material is provisioned to relayers or workers):
 
-- `MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET` / `MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_MAINNET`
-- `MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET` / `MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET`
+- `SIGNER_SERVICE_URL` / `SIGNER_SERVICE_TOKEN`
+- `SIGNER_ROLE_UPDATER_KEY_ID` (dedicated raw-only feed compatibility role;
+  not the relayer's semantic transaction authority)
+- `SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID` (dedicated raw-only result role)
+- `SIGNER_ROLE_WORKER_KEY_ID` (dedicated raw-only signed-result role)
 
-`npm run render:nitro-hub-env` reads those values from local secure env
-overrides such as `.env.local` before falling back to packed runtime config.
-Do not use the domain-owner signer for request fulfillment.
+The custody caller used by raw lanes needs `raw_sign`; semantic transaction and
+consensus callers need `sign`. A key policy cannot combine `allow_raw` with
+semantic authority.
+
+`npm run render:nitro-hub-env` renders only the oracle verifier PUBLIC key;
+custody vars are interpolated from the deployment shell env. Fulfillment signs
+with the custody updater key — never the domain-owner signer.
 
 Recommended durability settings:
 
@@ -100,12 +108,18 @@ Deploy runs inside an AWS Nitro Enclave. Build the enclave image, then launch
 it on a Nitro-capable host and provision secrets via the enclave scripts:
 
 ```bash
-# Build the Nitro Enclave Image File (EIF) for the worker + signer
-./deploy/nitro/build-enclave-eif.sh
+# Build the network- and custody-bound Nitro Enclave Image File (EIF)
+MORPHEUS_NETWORK=mainnet \
+SIGNER_SERVICE_URL=https://custody.internal.example \
+SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=<raw-verifier-key-id> \
+SIGNER_ROLE_UPDATER_KEY_ID=<raw-updater-key-id> \
+SIGNER_ROLE_RELAYER_KEY_ID=<raw-relayer-key-id> \
+SIGNER_ROLE_WORKER_KEY_ID=<raw-worker-key-id> \
+  ./deploy/nitro/build-enclave-eif.sh
 
 # On the Nitro-capable host: launch the signer enclave, then provision the
-# in-enclave worker compute (chain config, provider keys, auth token, and the
-# AWS credentials the SDK egresses through the vsock proxy)
+# in-enclave worker compute (KMS ciphertext, provider keys, auth token, and
+# temporary AWS credentials used only for Recipient decrypt requests)
 ./deploy/nitro/start-nitro-signer.sh
 ./deploy/nitro/provision-enclave-compute.sh
 ```
@@ -126,24 +140,27 @@ after the mainnet request/updater signer pair is present and
 
 The host transport config must contain a non-empty `MORPHEUS_RUNTIME_TOKEN`,
 `NITRO_SIGNER_TOKEN`, `NITRO_API_TOKEN`, or `NITRO_SHARED_SECRET`, plus
-`MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64`. The ciphertext plaintext is a
+`MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64` and the distinct
+`SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64`. The runtime ciphertext plaintext is a
 versioned JSON envelope bound to purpose `neoos/nitro-runtime-auth/v1` and the
-target network. On first `/provision`, KMS releases that envelope only to the
-expected enclave measurement; the request bearer must match it. Plaintext token
-fields are never installed from the request body, and later rotation requires
-the current token plus a strictly newer KMS-envelope version.
+target network; the custody caller envelope uses
+`neoos/custody-caller-token/v1`. On the one allowed `/provision`, KMS releases
+those envelopes only
+to the expected enclave measurement; the request bearer must match it. Plaintext
+token fields are never installed from the request body. Later calls return 409.
+Temporary AWS credentials rotate through `/provision/credentials`; rotating
+runtime or confidential key material requires a fresh enclave boot.
 
 ## Required Runtime Capabilities
 
-The Oracle runtime should be provisioned with:
+The Rust Oracle frontier accepts only the provisioning allowlist in
+`docs/RUST_SERVICE_MIGRATION.md`: KMS ciphertexts, temporary AWS credentials,
+and TwelveData provider credentials. `NODE_ENV`, network, endpoints, custody
+routing, Supabase, policy switches, and trust anchors are image-owned and are
+rejected at `/provision`.
 
-- `MORPHEUS_RUNTIME_TOKEN` (or `NITRO_API_TOKEN`)
-- `MORPHEUS_RUNTIME_CONFIG_JSON`
-- Supabase server credentials
-- pinned N3 signing identities
-- optional Better Stack telemetry values
-
-The DataFeed runtime should be provisioned with the same runtime config but operate in feed-only mode.
+The DataFeed compatibility runtime uses its own deployment configuration and
+operates in feed-only mode.
 The DataFeed compose also exposes a small Caddy router on `MORPHEUS_PUBLIC_PORT` so the control
 plane can route `feed_tick` jobs to the dedicated feed workers instead of the request hub.
 

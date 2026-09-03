@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { wallet } from '@cityofzion/neon-js';
 import { signManualAction } from '@r3e-network/neo-os-services-shared/node-runtime';
 
@@ -60,6 +59,7 @@ import {
   fulfillNeoN3Request,
   getNeoN3LatestBlock,
   hasNeoN3RelayerConfig,
+  queueNeoN3AutomationRequest,
 } from './src/neo-n3.js';
 import {
   AUTOMATION_PROCESSING_CLAIM_MARKER,
@@ -125,16 +125,8 @@ function withIsolatedRelayerSigner(run) {
   const previous = new Map();
   for (const key of ISOLATED_RELAYER_SIGNER_ENV_KEYS) {
     previous.set(key, process.env[key]);
+    delete process.env[key];
   }
-
-  const isolatedSigner = new wallet.Account(wallet.generatePrivateKey());
-  process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = 'true';
-  process.env.MORPHEUS_RELAYER_NEO_N3_WIF = isolatedSigner.WIF;
-  process.env.MORPHEUS_UPDATER_NEO_N3_WIF = isolatedSigner.WIF;
-  delete process.env.MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY;
-  delete process.env.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY;
-  delete process.env.NEO_N3_WIF;
-  delete process.env.NEO_TESTNET_WIF;
 
   try {
     return run();
@@ -341,6 +333,40 @@ test('callNitro falls back to the next configured worker endpoint', async () => 
   }
 });
 
+test('callNitro never traverses fallback endpoints in production', async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  try {
+    global.fetch = async (url) => {
+      calls.push(String(url));
+      throw new Error('primary failed');
+    };
+
+    await assert.rejects(
+      callNitro(
+        {
+          nodeEnv: 'production',
+          nitro: {
+            apiUrl:
+              'https://confidential.worker,https://oracle.meshmini.app/mainnet,https://edge.meshmini.app/mainnet',
+            token: 'secret',
+            timeoutMs: 1000,
+            allowFallback: true,
+          },
+        },
+        '/oracle/query',
+        { confidential: true },
+        { allowFallback: true }
+      ),
+      /primary failed/
+    );
+
+    assert.deepEqual(calls, ['https://confidential.worker/oracle/query']);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('callNitro can disable fallback for mutating worker calls', async () => {
   const originalFetch = global.fetch;
   const requestedUrls = [];
@@ -428,7 +454,7 @@ test('callNitro injects the relayer network when the payload omits it', async ()
           timeoutMs: 1000,
         },
       },
-      '/sign/payload',
+      '/oracle/fetch',
       { target_chain: 'neo_n3', message: 'hello' }
     );
 
@@ -462,7 +488,7 @@ test('callNitro forwards the relayer derived-key preference to the worker', asyn
           useDerivedKeys: true,
         },
       },
-      '/sign/payload',
+      '/oracle/fetch',
       { target_chain: 'neo_n3', message: 'hello' }
     );
 
@@ -596,14 +622,123 @@ test('processAutomationJobs fail-closes automation jobs on request fee exhaustio
   assert.match(insertedRuns[0].error, /request fee not paid/i);
 });
 
-test('Neo N3 automation queue waits for app log and fail-closes VM faults', () => {
-  const source = fs.readFileSync(
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'src/neo-n3.js'),
-    'utf8'
-  );
+test('Neo N3 automation queue waits for the app log and fail-closes VM faults', async () => {
+  // The queued invoke is only durable once it lands: a FAULTed
+  // queueAutomationRequest execution must surface as a hard error (not an
+  // UNKNOWN vm_state), so the scheduler retries instead of trusting the tick.
+  const originalFetch = global.fetch;
+  const signer = new wallet.Account('2'.repeat(64));
+  try {
+    global.fetch = async (url, init = {}) => {
+      const href = String(url);
+      if (href.startsWith('https://custody.test/signer/api/v1/keys/key-updater')) {
+        return new Response(
+          JSON.stringify({
+            key_id: 'key-updater',
+            label: 'updater',
+            network: 'mainnet',
+            network_magic: 860833102,
+            public_key: signer.publicKey,
+            script_hash: `0x${signer.scriptHash}`,
+            address: signer.address,
+            verification_script: `0c21${signer.publicKey}4156e7b327`,
+            signing_enabled: true,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (href === 'https://custody.test/signer/api/v1/sign/transaction') {
+        const body = JSON.parse(String(init.body || '{}'));
+        assert.equal(body.key_id, 'key-updater');
+        // Real wire shape (§5): /sign/transaction carries no bare public_key —
+        // the adapter must recover it from the verification script.
+        return new Response(
+          JSON.stringify({
+            allowed: true,
+            key_id: 'key-updater',
+            script_hash: `0x${signer.scriptHash}`,
+            address: signer.address,
+            digest: 'd'.repeat(64),
+            invocation_script: `0c40${'1'.repeat(128)}`,
+            verification_script: `0c21${signer.publicKey}4156e7b327`,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
 
-  assert.match(source, /method: 'queueAutomationRequest'[\s\S]*wait: true/);
-  assert.match(source, /invoke\.body\?\.vm_state[\s\S]*FAULT/);
+      const rpcBody = JSON.parse(String(init.body || '{}'));
+      if (rpcBody.method === 'getblockcount') {
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: 1000 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (rpcBody.method === 'invokescript') {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            result: { state: 'HALT', gasconsumed: '1000000' },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (rpcBody.method === 'calculatenetworkfee') {
+        return new Response(
+          JSON.stringify({ jsonrpc: '2.0', id: 1, result: { networkfee: '100000' } }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (rpcBody.method === 'sendrawtransaction') {
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (rpcBody.method === 'getapplicationlog') {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            result: {
+              executions: [{ vmstate: 'FAULT', exception: 'request fee not paid' }],
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      throw new Error(`unexpected fetch ${href}`);
+    };
+    await assert.rejects(
+      queueNeoN3AutomationRequest(
+        {
+          network: 'mainnet',
+          nitro: {
+            apiUrl: 'https://runtime.test',
+            token: '',
+            timeoutMs: 1000,
+            custodyUrl: 'https://custody.test',
+            custodyToken: 'custody-token',
+          },
+          neo_n3: {
+            rpcUrl: 'https://neo.test',
+            rpcUrls: ['https://neo.test'],
+            networkMagic: 860833102,
+            oracleContract: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+            custodyKeyIds: { updater: 'key-updater' },
+          },
+        },
+        '0x0c3146e78efc42bfb7d4cc2e06e3efd063c01c56',
+        'privacy_oracle',
+        '{}',
+        '0x8c506f224d82e67200f20d9d5361f767f0756e3b',
+        'onOracleResult'
+      ),
+      /automation queue faulted for request .*: request fee not paid/
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test('processAutomationJobs preserves retry semantics for transient automation queue errors', async () => {
@@ -1098,57 +1233,62 @@ test('saveRelayerState creates parent directories', () => {
   assert.equal(fs.existsSync(target), true);
 });
 
-test('relayer config accepts derived-key mode for Neo N3', () => {
-  const previous = process.env.NITRO_USE_DERIVED_KEYS;
-  process.env.NITRO_USE_DERIVED_KEYS = 'true';
-
+test('hasNeoN3RelayerConfig requires rpc, contract, and a custody updater key', () => {
   const config = {
     neo_n3: {
       rpcUrl: 'https://neo.test',
       oracleContract: '0xabc',
-      updaterWif: '',
-      updaterPrivateKey: '',
+      custodyKeyIds: { updater: 'key-updater' },
     },
   };
 
   assert.equal(hasNeoN3RelayerConfig(config), true);
-
-  process.env.NITRO_USE_DERIVED_KEYS = previous;
+  assert.equal(
+    hasNeoN3RelayerConfig({
+      ...config,
+      neo_n3: { ...config.neo_n3, custodyKeyIds: { updater: '' } },
+    }),
+    false
+  );
 });
 
-test('Neo N3 fulfill signs derived-updater transactions through the runtime when no local updater key is present', async () => {
+test('Neo N3 fulfill signs updater transactions through the custody signer service', async () => {
   const originalFetch = global.fetch;
   const signer = new wallet.Account('2'.repeat(64));
-  const calls = [];
+  const custodyCalls = [];
   try {
     global.fetch = async (url, init = {}) => {
       const href = String(url);
-      calls.push(href);
-      if (href.startsWith('https://runtime.test/keys/derived')) {
+      if (href.startsWith('https://custody.test/signer/api/v1/keys/key-updater')) {
+        custodyCalls.push(href);
         return new Response(
           JSON.stringify({
-            derived: {
-              neo_n3: {
-                address: signer.address,
-                script_hash: `0x${signer.scriptHash}`,
-                public_key: signer.publicKey,
-              },
-            },
+            key_id: 'key-updater',
+            label: 'updater',
+            network: 'mainnet',
+            network_magic: 860833102,
+            public_key: signer.publicKey,
+            script_hash: `0x${signer.scriptHash}`,
+            address: signer.address,
+            verification_script: `0c21${signer.publicKey}4156e7b327`,
+            signing_enabled: true,
           }),
           { status: 200, headers: { 'content-type': 'application/json' } }
         );
       }
-      if (href === 'https://runtime.test/sign/payload') {
+      if (href === 'https://custody.test/signer/api/v1/sign/transaction') {
         const body = JSON.parse(String(init.body || '{}'));
-        assert.equal(body.key_role || body.dstack_key_role, 'updater');
-        assert.equal(body.target_chain, 'neo_n3');
-        assert.match(String(body.data_hex || ''), /^[0-9a-f]+$/i);
+        assert.equal(body.key_id, 'key-updater');
+        assert.match(String(body.unsigned_hex || ''), /^[0-9a-f]+$/i);
         return new Response(
           JSON.stringify({
-            signature: '1'.repeat(128),
-            public_key: signer.publicKey,
-            address: signer.address,
+            allowed: true,
+            key_id: 'key-updater',
             script_hash: `0x${signer.scriptHash}`,
+            address: signer.address,
+            digest: 'd'.repeat(64),
+            invocation_script: `0c40${'1'.repeat(128)}`,
+            verification_script: `0c21${signer.publicKey}4156e7b327`,
           }),
           { status: 200, headers: { 'content-type': 'application/json' } }
         );
@@ -1200,15 +1340,20 @@ test('Neo N3 fulfill signs derived-updater transactions through the runtime when
     const result = await fulfillNeoN3Request(
       {
         network: 'mainnet',
-        useDerivedKeys: true,
-        nitro: { apiUrl: 'https://runtime.test', token: '', timeoutMs: 1000, useDerivedKeys: true },
+        useDerivedKeys: false,
+        nitro: {
+          apiUrl: 'https://runtime.test',
+          token: '',
+          timeoutMs: 1000,
+          custodyUrl: 'https://custody.test',
+          custodyToken: 'custody-token',
+        },
         neo_n3: {
           rpcUrl: 'https://neo.test',
           rpcUrls: ['https://neo.test'],
           networkMagic: 860833102,
           oracleContract: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
-          updaterWif: '',
-          updaterPrivateKey: '',
+          custodyKeyIds: { updater: 'key-updater' },
         },
       },
       23,
@@ -1221,43 +1366,53 @@ test('Neo N3 fulfill signs derived-updater transactions through the runtime when
 
     assert.equal(result.vm_state, 'HALT');
     assert.equal(result.target_chain, 'neo_n3');
-    assert.ok(calls.includes('https://runtime.test/sign/payload'));
-    assert.ok(calls.some((entry) => entry.startsWith('https://runtime.test/keys/derived')));
+    assert.ok(custodyCalls.includes('https://custody.test/signer/api/v1/keys/key-updater'));
   } finally {
     global.fetch = originalFetch;
   }
 });
 
-test('Neo N3 fulfill auto-funds the derived updater when GAS fee reserve is low', async () => {
+test('Neo N3 fulfill auto-funds the custody updater when GAS fee reserve is low', async () => {
   const originalFetch = global.fetch;
   const updater = new wallet.Account('2'.repeat(64));
   const funder = new wallet.Account('4'.repeat(64));
   const sendrawTransactions = [];
   const balanceChecks = [];
+  const custodyKeyLookups = [];
   try {
     global.fetch = async (url, init = {}) => {
       const href = String(url);
-      if (href.startsWith('https://runtime.test/keys/derived')) {
+      if (href.startsWith('https://custody.test/signer/api/v1/keys/')) {
+        const keyId = decodeURIComponent(href.split('/keys/')[1]);
+        custodyKeyLookups.push(keyId);
+        const account = keyId === 'key-fee-funder' ? funder : updater;
         return new Response(
           JSON.stringify({
-            derived: {
-              neo_n3: {
-                address: updater.address,
-                script_hash: `0x${updater.scriptHash}`,
-                public_key: updater.publicKey,
-              },
-            },
+            key_id: keyId,
+            label: keyId,
+            network: 'mainnet',
+            network_magic: 860833102,
+            public_key: account.publicKey,
+            script_hash: `0x${account.scriptHash}`,
+            address: account.address,
+            verification_script: `0c21${account.publicKey}4156e7b327`,
+            signing_enabled: true,
           }),
           { status: 200, headers: { 'content-type': 'application/json' } }
         );
       }
-      if (href === 'https://runtime.test/sign/payload') {
+      if (href === 'https://custody.test/signer/api/v1/sign/transaction') {
+        const body = JSON.parse(String(init.body || '{}'));
+        const account = body.key_id === 'key-fee-funder' ? funder : updater;
         return new Response(
           JSON.stringify({
-            signature: '1'.repeat(128),
-            public_key: updater.publicKey,
-            address: updater.address,
-            script_hash: `0x${updater.scriptHash}`,
+            allowed: true,
+            key_id: body.key_id,
+            script_hash: `0x${account.scriptHash}`,
+            address: account.address,
+            digest: 'd'.repeat(64),
+            invocation_script: `0c40${'1'.repeat(128)}`,
+            verification_script: `0c21${account.publicKey}4156e7b327`,
           }),
           { status: 200, headers: { 'content-type': 'application/json' } }
         );
@@ -1324,22 +1479,25 @@ test('Neo N3 fulfill auto-funds the derived updater when GAS fee reserve is low'
     await fulfillNeoN3Request(
       {
         network: 'mainnet',
-        useDerivedKeys: true,
-        nitro: { apiUrl: 'https://runtime.test', token: '', timeoutMs: 1000, useDerivedKeys: true },
+        useDerivedKeys: false,
+        nitro: {
+          apiUrl: 'https://runtime.test',
+          token: '',
+          timeoutMs: 1000,
+          custodyUrl: 'https://custody.test',
+          custodyToken: 'custody-token',
+        },
         neo_n3: {
           rpcUrl: 'https://neo.test',
           rpcUrls: ['https://neo.test'],
           networkMagic: 860833102,
           oracleContract: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
-          updaterWif: '',
-          updaterPrivateKey: '',
+          custodyKeyIds: { updater: 'key-updater', fee_funder: 'key-fee-funder' },
           feeTopUp: {
             enabled: true,
             minBalance: '50000000',
             topUpAmount: '100000000',
             maxTopUpAmount: '500000000',
-            funderWif: funder.WIF,
-            funderPrivateKey: '',
           },
         },
       },
@@ -1355,121 +1513,11 @@ test('Neo N3 fulfill auto-funds the derived updater when GAS fee reserve is low'
       balanceChecks.includes(`0x${updater.scriptHash}`.toLowerCase()),
       'expected updater balance to be checked before fulfillment'
     );
+    assert.ok(
+      custodyKeyLookups.includes('key-fee-funder'),
+      'expected the fee-funder custody key to be resolved for the top-up'
+    );
     assert.equal(sendrawTransactions.length, 2, 'expected top-up tx and fulfill tx');
-  } finally {
-    global.fetch = originalFetch;
-  }
-});
-
-test('Neo N3 fulfill auto-funds the local (WIF) updater when GAS fee reserve is low', async () => {
-  // Regression: the primary WIF/private-key submission path did not run
-  // ensureNeoN3FeeBalance, so feeTopUp (default-enabled) was inert for the default
-  // deployment. After the fix the primary path tops up exactly like the derived-key path.
-  const originalFetch = global.fetch;
-  const updater = new wallet.Account('2'.repeat(64));
-  const funder = new wallet.Account('4'.repeat(64));
-  const sendrawTransactions = [];
-  const balanceChecks = [];
-  try {
-    global.fetch = async (url, init = {}) => {
-      const rpcBody = JSON.parse(String(init.body || '{}'));
-      if (rpcBody.method === 'getblockcount') {
-        return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: 1000 }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      if (rpcBody.method === 'invokefunction') {
-        assert.equal(rpcBody.params?.[1], 'balanceOf');
-        const account = String(rpcBody.params?.[2]?.[0]?.value || '').toLowerCase();
-        balanceChecks.push(account);
-        const value = account === `0x${updater.scriptHash}`.toLowerCase() ? '0' : '2000000000';
-        return new Response(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            id: 1,
-            result: { state: 'HALT', stack: [{ type: 'Integer', value }] },
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } }
-        );
-      }
-      if (rpcBody.method === 'invokescript') {
-        return new Response(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            id: 1,
-            result: { state: 'HALT', gasconsumed: '1000000' },
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } }
-        );
-      }
-      if (rpcBody.method === 'calculatenetworkfee') {
-        return new Response(
-          JSON.stringify({ jsonrpc: '2.0', id: 1, result: { networkfee: '100000' } }),
-          { status: 200, headers: { 'content-type': 'application/json' } }
-        );
-      }
-      if (rpcBody.method === 'sendrawtransaction') {
-        sendrawTransactions.push(String(rpcBody.params?.[0] || ''));
-        return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: true }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      if (rpcBody.method === 'getapplicationlog') {
-        return new Response(
-          JSON.stringify({ jsonrpc: '2.0', id: 1, result: { executions: [{ vmstate: 'HALT' }] } }),
-          { status: 200, headers: { 'content-type': 'application/json' } }
-        );
-      }
-      throw new Error(`unexpected fetch ${String(url)} ${rpcBody.method}`);
-    };
-
-    // The neon-js experimental.SmartContract.invoke used by the primary path issues its
-    // RPCs through neon-core's own client (not global.fetch), so the fulfill tx itself
-    // can't be intercepted here — true of every fulfill test (the derived test only works
-    // because its primary path throws on an empty signer and falls through to the
-    // global.fetch-backed derived path). We assert the FIX: the fee top-up now runs on the
-    // primary WIF path BEFORE the invoke. The invoke failing against the test host (no
-    // mocked neon-core client) is expected and swallowed.
-    await fulfillNeoN3Request(
-      {
-        network: 'mainnet',
-        neo_n3: {
-          rpcUrl: 'http://127.0.0.1:1',
-          rpcUrls: ['http://127.0.0.1:1'],
-          networkMagic: 860833102,
-          oracleContract: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
-          updaterWif: updater.WIF,
-          updaterPrivateKey: '',
-          feeTopUp: {
-            enabled: true,
-            minBalance: '50000000',
-            topUpAmount: '100000000',
-            maxTopUpAmount: '500000000',
-            funderWif: funder.WIF,
-            funderPrivateKey: '',
-          },
-        },
-      },
-      23,
-      true,
-      '',
-      '',
-      '3'.repeat(128),
-      Buffer.from('ok').toString('base64')
-    ).catch(() => {});
-
-    // Definitive proof of the fix: before it, the primary WIF path never called
-    // ensureNeoN3FeeBalance, so the updater balance was never read. Now it is.
-    assert.ok(
-      balanceChecks.includes(`0x${updater.scriptHash}`.toLowerCase()),
-      'expected the WIF updater balance to be checked (top-up wired into the primary path)'
-    );
-    assert.ok(
-      sendrawTransactions.length >= 1,
-      'expected the top-up tx to broadcast before the (un-mockable) fulfill invoke'
-    );
   } finally {
     global.fetch = originalFetch;
   }
@@ -1486,6 +1534,53 @@ test('createRelayerConfig exposes the shared-worker derived-key preference', () 
   } finally {
     if (previous === undefined) delete process.env.NITRO_USE_DERIVED_KEYS;
     else process.env.NITRO_USE_DERIVED_KEYS = previous;
+  }
+});
+
+test('createRelayerConfig rejects Neo N3 host keys even outside production', () => {
+  const keys = ['NODE_ENV', 'MORPHEUS_RELAYER_NEO_N3_WIF'];
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  process.env.NODE_ENV = 'development';
+  process.env.MORPHEUS_RELAYER_NEO_N3_WIF = 'legacy-host-wif';
+
+  try {
+    assert.throws(
+      () => createRelayerConfig(),
+      /host Neo N3 signing key configuration is forbidden.*custody key ids/i
+    );
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test('createRelayerConfig fails closed for the Neo X lane in production', () => {
+  const keys = [
+    'NODE_ENV',
+    'MORPHEUS_ACTIVE_CHAINS',
+    'MORPHEUS_RELAYER_NEOX_UPDATER_PK',
+    'NEOX_UPDATER_PK',
+    'NEOX_FEED_PK',
+  ];
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  process.env.NODE_ENV = 'production';
+  process.env.MORPHEUS_ACTIVE_CHAINS = 'neox';
+  delete process.env.MORPHEUS_RELAYER_NEOX_UPDATER_PK;
+  delete process.env.NEOX_UPDATER_PK;
+  delete process.env.NEOX_FEED_PK;
+
+  try {
+    assert.throws(
+      () => withIsolatedRelayerSigner(() => createRelayerConfig()),
+      /Neo X production signing is unavailable.*secp256k1 signer/i
+    );
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
 });
 
@@ -1539,75 +1634,31 @@ test('createRelayerConfig exposes request cursor start ids', () => {
   }
 });
 
-test('createRelayerConfig allows feed-only relayers without a pinned updater signer', () => {
+test('createRelayerConfig maps custody signer-service env into the config', () => {
   const keys = [
-    'MORPHEUS_ALLOW_UNPINNED_SIGNERS',
-    'MORPHEUS_NETWORK',
-    'MORPHEUS_RELAYER_MODE',
-    'MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET',
-    'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET',
-    'MORPHEUS_UPDATER_NEO_N3_WIF',
-    'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY',
-    'MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET',
-    'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_MAINNET',
-    'NEO_N3_WIF',
-    'NEO_TESTNET_WIF',
+    'SIGNER_SERVICE_URL',
+    'SIGNER_SERVICE_TOKEN',
+    'SIGNER_ROLE_UPDATER_KEY_ID',
+    'SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID',
+    'SIGNER_ROLE_FEE_FUNDER_KEY_ID',
   ];
   const previous = new Map(keys.map((key) => [key, process.env[key]]));
-  const driftedUpdater = new wallet.Account(wallet.generatePrivateKey());
 
-  delete process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS;
-  process.env.MORPHEUS_NETWORK = 'mainnet';
-  process.env.MORPHEUS_RELAYER_MODE = 'feed_only';
-  process.env.MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET = driftedUpdater.WIF;
-  delete process.env.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET;
-  delete process.env.MORPHEUS_UPDATER_NEO_N3_WIF;
-  delete process.env.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY;
-  delete process.env.MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET;
-  delete process.env.MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_MAINNET;
-  delete process.env.NEO_N3_WIF;
-  delete process.env.NEO_TESTNET_WIF;
+  process.env.SIGNER_SERVICE_URL = 'https://custody.example';
+  process.env.SIGNER_SERVICE_TOKEN = 'custody-token';
+  process.env.SIGNER_ROLE_UPDATER_KEY_ID = 'key-updater';
+  process.env.SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID = 'key-verifier';
+  process.env.SIGNER_ROLE_FEE_FUNDER_KEY_ID = 'key-funder';
 
   try {
     const config = createRelayerConfig();
-    assert.equal(config.mode, 'feed_only');
-    assert.equal(config.neo_n3.updaterWif, '');
-    assert.equal(config.neo_n3.updaterPrivateKey, '');
-  } finally {
-    for (const [key, value] of previous.entries()) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
-});
-
-test('createRelayerConfig still rejects updater signer drift for request-processing relayers', () => {
-  const keys = [
-    'MORPHEUS_ALLOW_UNPINNED_SIGNERS',
-    'MORPHEUS_NETWORK',
-    'MORPHEUS_RELAYER_MODE',
-    'MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET',
-    'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET',
-    'MORPHEUS_UPDATER_NEO_N3_WIF',
-    'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY',
-    'NEO_N3_WIF',
-    'NEO_TESTNET_WIF',
-  ];
-  const previous = new Map(keys.map((key) => [key, process.env[key]]));
-  const driftedUpdater = new wallet.Account(wallet.generatePrivateKey());
-
-  delete process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS;
-  process.env.MORPHEUS_NETWORK = 'mainnet';
-  process.env.MORPHEUS_RELAYER_MODE = 'combined';
-  process.env.MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET = driftedUpdater.WIF;
-  delete process.env.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET;
-  delete process.env.MORPHEUS_UPDATER_NEO_N3_WIF;
-  delete process.env.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY;
-  delete process.env.NEO_N3_WIF;
-  delete process.env.NEO_TESTNET_WIF;
-
-  try {
-    assert.throws(() => createRelayerConfig(), /updater signer drift/);
+    assert.equal(config.nitro.custodyUrl, 'https://custody.example');
+    assert.equal(config.nitro.custodyToken, 'custody-token');
+    assert.deepEqual(config.neo_n3.custodyKeyIds, {
+      updater: 'key-updater',
+      oracle_verifier: 'key-verifier',
+      fee_funder: 'key-funder',
+    });
   } finally {
     for (const [key, value] of previous.entries()) {
       if (value === undefined) delete process.env[key];
@@ -1892,8 +1943,7 @@ test('buildFeedSyncPayload does not forward target-chain signer material to the 
       provider: 'twelvedata',
     },
     neo_n3: {
-      updaterWif: 'TEST_PLACEHOLDER_NOT_A_REAL_WIF',
-      updaterPrivateKey: '',
+      custodyKeyIds: { updater: 'TEST_PLACEHOLDER_KEY_ID' },
     },
   };
 

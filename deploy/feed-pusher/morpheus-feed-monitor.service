@@ -16,5 +16,6 @@ Type=oneshot
 # documented monitor knob was silently inert. `-` keeps the unit startable on a
 # box that has not created the file yet.
 EnvironmentFile=-/opt/morpheus/nitro/feed-pusher.env
+Environment=NODE_ENV=production
 WorkingDirectory=/opt/neoos/services/deploy/feed-pusher
 ExecStart=/usr/bin/node feed-monitor.mjs

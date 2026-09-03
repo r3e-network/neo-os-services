@@ -73,6 +73,10 @@ fn a_broken_record_is_reported_as_a_failure_not_a_denial() {
         SignerAuditOutcome::Denied
     );
     assert_eq!(
+        Refusal::guard(GuardRejection::ConsensusEquivocation, String::new()).outcome,
+        SignerAuditOutcome::Denied
+    );
+    assert_eq!(
         Refusal::guard(GuardRejection::CustodyMismatch, String::new()).outcome,
         SignerAuditOutcome::Failed
     );
@@ -97,6 +101,7 @@ fn every_guard_code_is_distinct() {
         GuardRejection::KeyDisabled,
         GuardRejection::CustodyMismatch,
         GuardRejection::PublicKeyUnusable,
+        GuardRejection::ConsensusEquivocation,
     ]
     .map(GuardRejection::code);
     let unique: std::collections::BTreeSet<&str> = codes.iter().copied().collect();

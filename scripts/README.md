@@ -1,6 +1,12 @@
 # Scripts
 
-## Deployment And Verification
+## Overview
+
+These scripts deploy, configure, and verify NeoOS services. Commands default to
+read-only or local validation unless their documentation explicitly requires an
+apply flag and network.
+
+## API Reference
 
 ### Neo N3
 
@@ -37,6 +43,20 @@
 - `npm run smoke:control-plane`
 - `npm run smoke:all`
 
+## Usage Examples
+
+```sh
+npm run test:game-engine-sync
+npm run test:worker
+npm run test:relayer
+```
+
+`test:game-engine-sync` regenerates engines only when the sibling
+`neo-os-minigames/apps` source tree and its `esbuild` package are available.
+Windows and Unix both invoke the package's JavaScript CLI through Node. When the
+local-only source tree is absent, source regeneration checks are skipped while
+checked-in engine parity goldens still run.
+
 ## Validation Suites
 
 - `npm run verify:repo`
@@ -60,6 +80,9 @@ Root audit note:
 
 - `npm run check:audit:root` accepts only the explicitly excluded CityOfZion / Neon dependency chain and fails on anything new.
 - `npm run verify:repo` is the preferred local verification entrypoint before wider live/testnet runs.
+- `npm run lint` checks repository-owned JavaScript and TypeScript. Vendored
+  Rust dependency sources and generated Cargo targets are excluded and remain
+  governed by their content pins and Rust build checks.
 
 ## Relayer Operations
 
@@ -94,7 +117,7 @@ Important relayer notes:
 
 ## Expected Environment
 
-- `NEO_N3_WIF`
+- `NEO_N3_WIF` (local smoke tooling only, e.g. the testnet RNG loop; deployed lanes sign custody-side)
 - legacy `NEO_TESTNET_WIF`
 - `NEO_RPC_URL`
 - `NEO_NETWORK_MAGIC`

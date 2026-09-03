@@ -1,0 +1,11 @@
+# Historical Secrets Manager identifier in a deleted host-side signer module.
+# Exact fingerprint only; current or future values at this path remain scanned.
+4d2d136595279263b26a629ef561661661804f80:workers/morpheus-relayer/src/nitro-signer.js:generic-api-key:35
+
+# Historical generated, non-live verifier fixture in a deleted local-signing test.
+# Exact fingerprint only; no WIF-shaped fixture is permitted in maintained tests.
+4d2d136595279263b26a629ef561661661804f80:workers/morpheus-relayer/src/fulfillment.test.mjs:neo-wif-private-key:2523
+
+# Historical published private-key-one conversion vector. Maintained source now
+# uses a non-importable placeholder; only this immutable occurrence is ignored.
+09d54a9947f172303fa6c840125debbe2ef92108:workers/nitro-enclave-host/tests/unit/provision.rs:neo-wif-private-key:75

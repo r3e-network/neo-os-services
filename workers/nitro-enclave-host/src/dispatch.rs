@@ -8,10 +8,11 @@ use serde_json::Value;
 
 use crate::attestation::handle_attestation;
 use crate::auth::assert_authorized;
-use crate::bridge::resolve_worker_auth_token;
 use crate::health::handle_health;
 use crate::http_error;
-use crate::provision::{assert_provision_authorized, handle_provision};
+use crate::provision::{
+    assert_provision_authorized, handle_provision, handle_provision_credentials,
+};
 use crate::routes::{classify, Target};
 use crate::sign::{handle_keys_derived, handle_sign_payload};
 use crate::state::AppState;
@@ -135,6 +136,14 @@ fn run(
             )?))
         }
 
+        Target::ProvisionCredentials => {
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            Ok(DispatchOutcome::ok(handle_provision_credentials(
+                state, &payload,
+            )?))
+        }
+
         Target::OracleFulfill => {
             assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
             let payload = parse_body(body)?;
@@ -145,18 +154,10 @@ fn run(
 
         Target::FeedSign => {
             assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            // Body-shape errors surface before the refusal, as the mjs's
-            // JSON.parse would.
-            parse_body(body)?;
-            // The merged server's feed lane (price fetch + planFeedUpdate +
-            // the updateFeeds tx build + the updater signature) is not ported
-            // yet, and the keyless compute child does not serve /feed/sign —
-            // forwarding a SIGNING lane to it would 404 it. Fail closed until
-            // the feed fold lands.
-            Err(http_error(
-                503,
-                "feed/sign is not served by the Rust enclave host yet (pending the feed lane port)",
-            ))
+            let payload = parse_body(body)?;
+            Ok(DispatchOutcome::ok(crate::feed_sign::handle_feed_sign(
+                state, &payload,
+            )?))
         }
 
         Target::SignPayload => {
@@ -171,23 +172,73 @@ fn run(
             Ok(DispatchOutcome::ok(handle_keys_derived(state, &payload)?))
         }
 
-        Target::Passthrough(route) => {
+        Target::ComputeExecute => {
             assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
             let payload = parse_body(body)?;
-            compute_via_worker(state, route, &payload)
+            Ok(DispatchOutcome::ok(
+                crate::compute_execute::handle_compute_execute(state, &payload)?,
+            ))
+        }
+
+        Target::NeoDidBind => {
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            Ok(DispatchOutcome::ok(crate::neodid::handle_neo_did_bind(
+                state, &payload,
+            )?))
+        }
+
+        Target::NeoDidActionTicket => {
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            Ok(DispatchOutcome::ok(
+                crate::neodid::handle_neo_did_action_ticket(state, &payload)?,
+            ))
+        }
+
+        Target::NeoDidRecoveryTicket => {
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            Ok(DispatchOutcome::ok(
+                crate::neodid::handle_neo_did_recovery_ticket(state, &payload)?,
+            ))
+        }
+
+        Target::OracleQuery => {
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            crate::oracle_read::handle_oracle_query(state, &payload)
+        }
+
+        Target::OracleSmartFetch => {
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            crate::oracle_read::handle_oracle_smart_fetch(state, &payload)
+        }
+
+        Target::OracleDecrypt => {
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            crate::oracle_read::handle_oracle_decrypt(state, &payload)
+        }
+
+        Target::OracleMessageReveal => {
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            crate::oracle_read::handle_oracle_message_reveal(state, &payload)
         }
 
         Target::OraclePublicKey => {
             // Public X25519 oracle encryption key — NOT secret: clients
             // encrypt confidential payloads to it. Ungated, like the Node
-            // dispatch; the private half never leaves the child's enclave
-            // memory.
+            // dispatch; the private half never leaves enclave memory. The
+            // Phase 9 fold resolves the key in-process — no child required.
             let payload = if http_method == "POST" {
                 parse_body(body)?
             } else {
                 serde_json::json!({})
             };
-            compute_via_worker(state, "/oracle/public-key", &payload)
+            crate::oracle_read::handle_oracle_public_key(state, &payload)
         }
 
         Target::NotFound => Ok(DispatchOutcome {
@@ -195,23 +246,6 @@ fn run(
             body: serde_json::json!({ "error": "not found", "path": path }),
         }),
     }
-}
-
-/// `computeViaWorker`: resolve the worker-auth token from the overlay, POST
-/// the payload to the child, and surface its `{status, body}` verbatim. The
-/// compute lanes (and the compute part of fulfillment) live in the keyless
-/// child; signing folds in around this call.
-fn compute_via_worker(
-    state: &AppState,
-    route: &str,
-    payload: &Value,
-) -> Result<DispatchOutcome, RuntimeError> {
-    let token = resolve_worker_auth_token(&state.overlay.read().expect("overlay lock"));
-    let reply = state.bridge.forward(route, payload, token.as_deref());
-    Ok(DispatchOutcome {
-        status: reply.status,
-        body: reply.body,
-    })
 }
 
 #[cfg(test)]

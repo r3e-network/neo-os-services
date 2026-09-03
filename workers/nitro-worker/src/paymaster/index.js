@@ -47,9 +47,9 @@ function resolvePaymasterPolicy(network) {
     allowTargets: parseCsv(env(`MORPHEUS_PAYMASTER_${upper}_ALLOW_TARGETS`)).map((entry) =>
       entry.toLowerCase()
     ),
-    allowUserOpTargets: parseCsv(
-      env(`MORPHEUS_PAYMASTER_${upper}_ALLOW_USEROP_TARGETS`)
-    ).map((entry) => entry.toLowerCase()),
+    allowUserOpTargets: parseCsv(env(`MORPHEUS_PAYMASTER_${upper}_ALLOW_USEROP_TARGETS`)).map(
+      (entry) => entry.toLowerCase()
+    ),
     allowMethods: parseCsv(env(`MORPHEUS_PAYMASTER_${upper}_ALLOW_METHODS`)).map((entry) =>
       entry.toLowerCase()
     ),
@@ -357,7 +357,7 @@ export async function handlePaymasterAuthorize(payload = {}) {
     const result = await evaluatePaymasterAuthorization(payload);
     const signed = await buildSignedResultEnvelope(result, payload);
     // signed.tee_attestation already binds sha256(stableStringify(result)) via output_hash;
-    // reuse it rather than re-calling the 8787 /attest endpoint with the same report_data.
+    // reuse it rather than re-calling the 8787 /attestation endpoint with the same report_data.
     return json(200, {
       ...result,
       // D5 canonical signed-result envelope — single-sourced.

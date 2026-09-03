@@ -155,6 +155,119 @@ This keeps runtime behavior consistent and reduces operational drift.
 - signer identities are pinned and checked before deployment
 - public attestation anchors are verified in-app via the `/api/attestation/verify` endpoint (and the `/verifier` page), backed by AWS Nitro attestation for the Oracle and DataFeed CVMs
 
+## Production Confidential-Path Contract
+
+### Overview
+
+Production requests that decrypt, compute, sign, relay a transaction, or mutate a
+feed use one explicitly configured Nitro endpoint and fail closed when that
+endpoint is absent or unavailable. The web tier and relayer must not manufacture
+or traverse `oracle.meshmini.app` / `edge.meshmini.app` fallback candidates for
+these requests. Public health, status, and catalog reads remain separate,
+non-confidential routes and may name a public endpoint explicitly. A production
+proxy may retry those reads against public candidates, but it sends the runtime
+bearer only to an exact server-configured runtime candidate; public and registry
+fallbacks are always credential-free.
+
+The data-plane bearer (`MORPHEUS_RUNTIME_TOKEN`) authenticates calls to the Nitro
+runtime only. It grants no control-plane authority. Workflow delivery, operator
+actions, and relayer administration use independent credentials:
+
+- `MORPHEUS_WORKFLOW_API_KEY` authenticates Cloudflare Workflow/Queue delivery
+  to the web backend.
+- `MORPHEUS_OPERATOR_API_KEY` authenticates human/operator control-plane
+  actions.
+- `MORPHEUS_RELAYER_ADMIN_API_KEY` authenticates legacy relayer metrics, retry,
+  replay, and relayer-operation control-plane calls;
+  `MORPHEUS_RELAYER_API_KEY` is the preferred credential for new
+  relayer-originated control-plane calls.
+- `MORPHEUS_SIGNING_ADMIN_API_KEY` and `MORPHEUS_RELAY_ADMIN_API_KEY`
+  independently authorize signing and transaction-relay administration.
+- `MORPHEUS_CONTROL_PLANE_API_KEY` remains the control-plane ingress credential;
+  it is not a Nitro runtime credential.
+
+A development-only migration switch may temporarily accept the old runtime
+token for control-plane requests. Production ignores that switch and always
+fails closed. Merely copying the runtime token value into a differently named
+workflow/operator/relayer/signing/relay variable is also rejected. Production
+preflight compares all populated privilege domains pairwise; aliases are
+permitted only within their documented domain.
+
+### API reference
+
+- Confidential runtime callers configure `MORPHEUS_RUNTIME_URL` (or its
+  network-scoped form) and the runtime bearer. In production, only the first
+  server-only explicit endpoint is attempted. A `NEXT_PUBLIC_*` URL never
+  becomes a confidential server route.
+- Explicit `NEXT_PUBLIC_MORPHEUS_RUNTIME_URL` and registry public URLs remain
+  candidates only for operations marked non-confidential (health/status/catalog).
+  In production they never receive `Authorization` or `x-nitro-token`; those
+  credentials are attached only to exact `MORPHEUS_RUNTIME_URL` candidates.
+- Internal workflow routes
+  `/api/internal/control-plane/callback-broadcast`,
+  `/api/internal/control-plane/feed-tick`, and
+  `/api/internal/control-plane/automation-execute` accept the workflow or
+  operator credential; they reject the runtime token.
+- `MORPHEUS_CONTROL_PLANE_LEGACY_RUNTIME_TOKEN_COMPAT` (and migration alias
+  `MORPHEUS_ALLOW_LEGACY_RUNTIME_CONTROL_PLANE`) is honored only outside
+  production.
+- Vercel, Cloudflare control-plane, and relayer process environments reject
+  Neo N3 and Neo X WIF/private-key variables. Neo N3 writes use
+  `SIGNER_SERVICE_URL`, `SIGNER_SERVICE_TOKEN`, and
+  `SIGNER_ROLE_*_KEY_ID`.
+- The shipped Rust enclave host has no complete secp256k1 custody/signing
+  contract. Therefore a production relayer configured with `neox` active or
+  with a host EVM private key is a configuration error. The historical Node
+  reference implementation is not proof that the measured Rust EIF serves the
+  lane.
+
+### Usage examples
+
+Production confidential execution:
+
+```dotenv
+NODE_ENV=production
+MORPHEUS_RUNTIME_URL=http://127.0.0.1:8787
+MORPHEUS_RUNTIME_TOKEN=<data-plane-only-token>
+MORPHEUS_WORKFLOW_API_KEY=<workflow-delivery-token>
+MORPHEUS_OPERATOR_API_KEY=<operator-token>
+MORPHEUS_RELAYER_ADMIN_API_KEY=<relayer-operations-token>
+MORPHEUS_RELAYER_API_KEY=<relayer-to-control-plane-token>
+MORPHEUS_SIGNING_ADMIN_API_KEY=<signing-admin-token>
+MORPHEUS_RELAY_ADMIN_API_KEY=<relay-admin-token>
+```
+
+The runtime token in an `Authorization: Bearer ...` header is valid for the
+Nitro data plane, but the same request to an internal control-plane route must
+return `401`. A workflow caller uses `MORPHEUS_WORKFLOW_API_KEY` instead. If a
+non-confidential catalog read retries from this configured runtime to a public
+fallback, the retry contains neither runtime-token header.
+
+### Design decisions
+
+Endpoint failover is a trust-boundary decision, not merely an availability
+optimization: retrying confidential plaintext or ciphertext against a public
+host silently changes where decryption/compute occurs. Credential separation
+follows the same rule—possession of a data-plane bearer must not imply authority
+to schedule or broadcast control-plane work, and a fallback host must never
+learn that bearer merely because it serves a public catalog. Host signing is rejected rather
+than labeled "temporary" because an EVM signature does not reveal whether its
+private key lived inside the measured enclave.
+
+### Test coverage and expected outcomes
+
+- A production confidential call with two candidates contacts only the first.
+- A production non-confidential read may retry a public candidate, but only the
+  exact server-configured candidate receives runtime authentication headers.
+- Production config without an explicit confidential runtime URL contains no
+  automatic public candidate.
+- The runtime token receives `401` from workflow/control-plane routes; workflow
+  and operator credentials succeed; the development migration switch is ignored
+  in production.
+- Vercel/control-plane/relayer checks reject WIF or private-key configuration.
+- A production Neo X host-sign attempt fails with a stable configuration error
+  before signing or broadcasting.
+
 ## Generated Runtime Catalog Contract
 
 The public workflow contract is checked in as a generated artifact:

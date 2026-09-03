@@ -2,5 +2,6 @@
 Description=Prune morpheus relayer DB tables (prevent re-bloat / quota outage)
 [Service]
 Type=oneshot
+Environment=NODE_ENV=production
 WorkingDirectory=/opt/neoos/services/deploy/feed-pusher
 ExecStart=/usr/bin/node db-prune.mjs

@@ -10,6 +10,16 @@ describe('appConfig security boundaries', () => {
     vi.stubEnv('MORPHEUS_RUNTIME_TOKEN', '');
     vi.stubEnv('NITRO_API_TOKEN', '');
     vi.stubEnv('NITRO_SHARED_SECRET', '');
+    vi.stubEnv('MORPHEUS_WORKFLOW_API_KEY', '');
+    vi.stubEnv('MORPHEUS_APP_BACKEND_TOKEN', '');
+    vi.stubEnv('MORPHEUS_CONTROL_PLANE_API_KEY', '');
+    vi.stubEnv('MORPHEUS_OPERATOR_API_KEY', '');
+    vi.stubEnv('ADMIN_CONSOLE_API_KEY', '');
+    vi.stubEnv('MORPHEUS_RELAYER_API_KEY', '');
+    vi.stubEnv('MORPHEUS_RELAYER_ADMIN_API_KEY', '');
+    vi.stubEnv('MORPHEUS_SIGNING_ADMIN_API_KEY', '');
+    vi.stubEnv('MORPHEUS_RELAY_ADMIN_API_KEY', '');
+    vi.stubEnv('SIGNER_SERVICE_TOKEN', '');
     // PHALA_API_TOKEN / PHALA_SHARED_SECRET are no longer accepted as token
     // sources (revoked Phala credentials), so they are not stubbed here.
   });
@@ -33,6 +43,66 @@ describe('appConfig security boundaries', () => {
     const { appConfig } = await import('../lib/config');
 
     expect(appConfig.nitroToken).toBe('server-token');
+  });
+
+  it('does not grant control-plane authority to the runtime token', async () => {
+    vi.stubEnv('MORPHEUS_RUNTIME_TOKEN', 'runtime-only-token');
+    vi.stubEnv('MORPHEUS_CONTROL_PLANE_API_KEY', 'runtime-only-token');
+    vi.stubEnv('MORPHEUS_OPERATOR_API_KEY', '');
+
+    const { appConfig } = await import('../lib/config');
+
+    expect(appConfig.nitroToken).toBe('runtime-only-token');
+    expect(appConfig.controlPlaneApiKey).toBe('');
+  });
+
+  it('fails closed in production when credentials collide across trust domains', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('MORPHEUS_RUNTIME_URL_TESTNET', 'https://confidential.example.test');
+    vi.stubEnv('MORPHEUS_RUNTIME_TOKEN', 'shared-secret');
+    vi.stubEnv('MORPHEUS_CONTROL_PLANE_API_KEY', 'shared-secret');
+    vi.stubEnv('MORPHEUS_OPERATOR_API_KEY', '');
+
+    await expect(import('../lib/config')).rejects.toThrow(/pairwise distinct/i);
+  });
+
+  it('does not append public Nitro fallbacks in production', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('MORPHEUS_RUNTIME_URL', '');
+    vi.stubEnv('MORPHEUS_RUNTIME_URL_TESTNET', '');
+    vi.stubEnv('MORPHEUS_TESTNET_RUNTIME_URL', 'https://confidential.example.test');
+    vi.stubEnv('NEXT_PUBLIC_MORPHEUS_RUNTIME_URL', '');
+    vi.stubEnv('NEXT_PUBLIC_MORPHEUS_RUNTIME_URL_TESTNET', '');
+
+    const { appConfig } = await import('../lib/config');
+
+    expect(appConfig.nitroApiUrls).toEqual(['https://confidential.example.test']);
+    expect(appConfig.nitroApiUrls).not.toContain('https://oracle.meshmini.app/testnet');
+    expect(appConfig.nitroApiUrls).not.toContain('https://edge.meshmini.app/testnet');
+  });
+
+  it('does not promote a NEXT_PUBLIC URL into the production confidential route', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('MORPHEUS_RUNTIME_URL', '');
+    vi.stubEnv('MORPHEUS_RUNTIME_URL_TESTNET', '');
+    vi.stubEnv('MORPHEUS_TESTNET_RUNTIME_URL', '');
+    vi.stubEnv('NEXT_PUBLIC_MORPHEUS_RUNTIME_URL', 'https://oracle.meshmini.app/testnet');
+    vi.stubEnv('NEXT_PUBLIC_MORPHEUS_RUNTIME_URL_TESTNET', '');
+
+    const { appConfig } = await import('../lib/config');
+
+    expect(appConfig.nitroApiUrl).toBe('');
+    expect(appConfig.nitroApiUrls).toEqual([]);
+    expect(appConfig.publicNitroApiUrls).toContain('https://oracle.meshmini.app/testnet');
+  });
+
+  it('rejects host signer material in the production web process', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('MORPHEUS_RELAYER_NEO_N3_WIF', 'test-host-key');
+
+    await expect(import('../lib/config')).rejects.toThrow(
+      /host signing key configuration.*forbidden/i
+    );
   });
 
   it('no longer accepts revoked Phala credentials as runtime/control-plane tokens', async () => {

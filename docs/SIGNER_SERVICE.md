@@ -1,8 +1,12 @@
 # Signer Service
 
-Status: **the contract and the ownership boundary are defined here; the implementation
-is mid-migration.** Section [7](#7-migration) says exactly what exists today and what
-has to move.
+Status: **the Rust custody contract and ownership boundary are implemented; deployment
+and compatibility retirement remain phased.** Section [7](#7-migration) says exactly
+what exists today and what still has to move.
+
+`SIGNER_SERVICE_V2.md` is the security-hardening and Rust-migration specification.
+This document remains the compatible v1 wire contract; v2 additions are additive and
+must not weaken any rule below.
 
 ## 1. Purpose
 
@@ -27,8 +31,10 @@ any role, including updater and treasury roles. The maintainers already wrote do
 consequence: `deploy/feed-pusher/feed-pusher.mjs:350-352` explains that an earlier feed
 path which sent `getMessageForSigning` bytes there was "turning the updater key into a
 blind-signing oracle", and moved construction inside the enclave to escape it. Two
-relayer call sites still use the endpoint (`workers/morpheus-relayer/src/fulfillment/signer.js:186-194`,
-`workers/morpheus-relayer/src/neo-n3.js:883-895`).
+relayer call sites used this endpoint (`workers/morpheus-relayer/src/fulfillment/signer.js:186-194`,
+`workers/morpheus-relayer/src/neo-n3.js:883-895`); both have since moved to the custody
+service (§7 step 3), and the shim itself now refuses digest preimages such as
+`getMessageForSigning` and requests with no resolvable role.
 
 **`secure-sign-service-rs`** (separate repository). A consensus-only Rust signer with a
 genuinely solid anti-equivocation policy (`secure-sign-core/src/neo/consensus.rs:104-149`
@@ -58,9 +64,11 @@ the decision lives.
 | `neo-os-contracts`            | On-chain contracts and build evidence                                                                                           | Anything signing at runtime                                                                                  |
 | `neo-nexus`                   | **Consumer.** Operator console, config generation for runtimes, launch packs, endpoint pinning, health probes                   | Custody. It must not be able to open, derive, export or accept a private key                                 |
 
-The `neo-nexus` row is a change of status: that repository currently contains a complete
-signing engine (policy, caller auth, sealed vault, audit) built before this boundary was
-drawn. It is the right _code_; it is in the wrong _owner_. Section 7 moves it.
+The `neo-nexus` row is now enforced in source: its `src/signer_client/` module
+contains only wire types, endpoint validation, bearer/workload authentication,
+and a redirect-disabled HTTP client. It has no P-256, WIF, NEP-2, AES sealing,
+signer tables, or local fallback. Section 7 records the migration and its
+cross-repository contract test.
 
 ## 4. Boundary rules
 
@@ -77,11 +85,30 @@ no policy can be written against it.
 `data_hex` / `message_hex` shapes are not part of this contract, and are deprecated
 where they exist today.
 
+The one exception is deliberate and fenced: `POST /sign/raw` signs raw caller bytes
+under a dedicated boundary switch, `allow_raw`, which defaults to closed, and requires
+the route-specific caller capability `raw_sign`. It exists for dedicated enclave-host
+role keys whose preimages are assembled inside the measured boundary.
+
+Raw and semantic authority must never share a key. A raw caller can submit
+`magicLE || SHA256(SerializeUnsigned)` and obtain exactly the ECDSA signature a Neo
+transaction needs; cryptographic framing alone does **not** separate those domains.
+Saving a policy therefore rejects `allow_raw` when any of `allow_consensus`,
+`allow_transfer`, `allow_contract_call`, or `allow_global_scope` is enabled. Raw-only
+keys are granted only to `raw_sign` callers; transaction/consensus keys are granted
+only to `sign` callers. No amount, whitelist, fee, or window rule can make a mixed key
+safe because `/sign/raw` cannot parse intent.
+
 ### 4.2 A key carries its own boundary and its own chain
 
 Each custody key stores its policy — allowed operations, contract allow/deny lists,
-asset allow/deny lists, recipient allow/deny lists, single-amount ceiling, rolling
-window ceiling and window length — and its network magic.
+exact contract-method allow/deny lists, asset allow/deny lists, recipient allow/deny
+lists, global and per-asset single-amount and rolling-window ceilings, signer-count
+ceiling per transaction, system-fee ceiling, network-fee ceiling, and a key-wide rolling
+signature-count ceiling shared by transaction, consensus and raw routes — and its
+network magic. Multiple windows may target one asset, and every matching limit must
+pass. Fee ceilings use GAS fixed-8 raw units. Amounts and fees cross JSON as decimal
+strings so JavaScript clients cannot round them.
 
 - **The default is closed.** A key with no saved boundary signs nothing. An empty form
   save must mean "everything refused", never "no restrictions".
@@ -89,13 +116,50 @@ window ceiling and window length — and its network magic.
   cannot distinguish two private networks that share a default, and one signature is
   then valid on both.
 
+The rolling limit is a concurrency boundary, not merely an arithmetic check. All
+signing decisions share one process-wide decision lock with key disable, caller
+disable and policy mutation, so two requests cannot both read the same remaining
+capacity. An allowed signature's audit row and all of its value-ledger rows are then
+committed in one SQLite transaction before the witness leaves the service. If either
+write fails, both roll back and no witness is returned. The production process also
+holds one exclusive data-directory lease; multiple processes must not serve one vault.
+
+For `dBFT` consensus, the service also parses the inner seven-byte
+`message_type | block_index | validator_index | view_number` header and requires the
+outer validity range to be `0..block_index`. Prepare-request, prepare-response and
+commit signatures occupy a durable slot keyed by key, network magic, height, message
+type, validator and view. An exact retry is idempotent; a different payload digest for
+an occupied slot is refused as `consensus-equivocation`, including after restart.
+
 ### 4.3 A caller is a registered identity, not a shared secret
 
-Each caller has its own token; each token is granted a specific set of keys. Browser
-callers declare an `Origin` (or `Referer` for navigations) that is checked against the
-origins recorded for them; server-to-server callers record none and are refused if they
-present one. Refusals are attributable: caller, key, reason code and the digest of what
-was refused all reach the audit trail.
+Each caller has exactly one authentication mode: a bearer token, or an Ed25519
+workload identity. Each identity is granted a specific set of keys. Browser callers
+declare an `Origin` (or `Referer` for navigations) that is checked against the origins
+recorded for them; server-to-server callers record none and are refused if they present
+one. Refusals are attributable: caller, key, reason code and the digest of what was
+refused all reach the audit trail.
+
+Workload callers send `X-NeoOS-Caller`, `X-NeoOS-Timestamp`,
+`X-NeoOS-Nonce`, and `X-NeoOS-Signature`. The 64-byte Ed25519 signature is
+lowercase hex over this UTF-8 message:
+
+```text
+neoos-workload-v1
+caller:<caller-id>
+subject:<pinned-subject-or-empty>
+timestamp:<canonical-unix-seconds>
+nonce:<16-to-128-byte-base64url-alphabet>
+method:<uppercase-http-method>
+route:<exact-path-and-query>
+body-sha256:<lowercase-hex-of-exact-request-body>
+origin:<normalized-origin-or-empty>
+```
+
+The timestamp has a 60-second skew allowance. `(caller, nonce)` is inserted into a
+durable replay table before the request can reach policy; reuse is
+`workload-assertion-replayed`. Sending bearer and workload credentials together is
+`ambiguous-credential`, never a fallback from one mode to the other.
 
 Role names (`worker`, `relayer`, `updater`, `oracle_verifier`) are labels attached to
 grants, not a containment mechanism. `config/signer-identities.json` maps all four
@@ -143,9 +207,16 @@ Authentication headers: `Authorization: Bearer <caller token>`, plus `Origin` an
 | ------ | --------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `POST` | `/signer/api/v1/sign/transaction` | Sign SerializeUnsigned transaction bytes                                                        |
 | `POST` | `/signer/api/v1/sign/consensus`   | Sign consensus payload bytes                                                                    |
+| `POST` | `/signer/api/v1/sign/raw`         | Sign raw bytes (`allow_raw` keys only, §4.1)                                                    |
 | `GET`  | `/signer/api/v1/keys/{id}`        | Public identity of a key: address, script hash, verification script, whether signing is enabled |
 
-Both sign requests take `{"key_id": string, "unsigned_hex": string}`.
+The transaction and consensus routes take
+`{"key_id": string, "unsigned_hex": string, "request_id"?: string}`;
+`/sign/raw` replaces `unsigned_hex` with `data_hex` and never parses the bytes — the
+lane's only intent policy is the `allow_raw` switch (§4.1). A request id is
+caller-scoped and idempotent: an exact retry returns the stored witness without charging
+limits again; changed bytes, route, or key under the same id answer
+`request-id-conflict` (`409`).
 
 **Success** — one shape for every allowed signature:
 
@@ -163,6 +234,12 @@ Both sign requests take `{"key_id": string, "unsigned_hex": string}`.
 
 The caller assembles the witness itself; the service neither builds nor broadcasts
 transactions.
+
+`/sign/raw` answers the same envelope plus two fields the raw caller verifies against
+without rebuilding a witness: `"signature": "<64B r||s hex>"` and
+`"public_key": "<33B hex>"`, sliced out of the pinned invocation and verification
+scripts. Its `digest` is `sha256(data)` in natural byte order — the order every
+verifier computes it in — not the explorer order a transaction id displays in.
 
 **Refusal** — every denial, including authentication failures, uses one shape:
 
@@ -215,6 +292,10 @@ Access layer: `missing-token`, `unknown-token`, `caller-disabled`, `origin-requi
 — the last one covering both directions of a capability mismatch (§5.1), so no route can
 be used to classify a bearer string that was not issued for it.
 
+Workload additions are `ambiguous-credential`, `workload-assertion-malformed`,
+`unknown-workload`, `workload-assertion-stale`, `workload-signature-invalid`, and
+`workload-assertion-replayed`.
+
 `signer-admin-request-invalid` is the one code on the management surface whose `message` is
 specific rather than generic, and the exception is deliberate: `guard_admin` runs before the
 request body is read, so nothing reaches that constructor without already holding `admin` and
@@ -222,42 +303,53 @@ a whole-vault grant. Whoever is on the receiving end of it is the operator who c
 It is still never the caller's own input echoed back — a rejected private key string is a
 secret, and it appears in neither the message nor the stored detail.
 
-Key guards: `signer-key-disabled`, `signer-custody-mismatch`,
-`signer-public-key-unusable`.
+Decision guards: `signer-key-disabled`, `signer-custody-mismatch`,
+`signer-public-key-unusable`, `consensus-equivocation`.
 
-Policy layer, 18 codes: `consensus-forbidden`, `consensus-category-forbidden`,
+Policy layer, 24 codes: `consensus-forbidden`, `consensus-category-forbidden`,
 `consensus-sender-mismatch`, `transfer-forbidden`, `contract-call-forbidden`,
 `not-a-signer`, `global-scope-forbidden`, `delegation-missing`, `contract-blacklisted`,
-`contract-not-whitelisted`, `asset-blacklisted`, `asset-not-whitelisted`,
+`contract-not-whitelisted`, `contract-method-blacklisted`,
+`contract-method-not-whitelisted`, `asset-blacklisted`, `asset-not-whitelisted`,
 `recipient-blacklisted`, `recipient-not-whitelisted`, `source-mismatch`,
-`negative-amount`, `single-amount-exceeded`, `window-amount-exceeded`.
+`negative-amount`, `single-amount-exceeded`, `window-amount-exceeded`,
+`too-many-signers`, `system-fee-exceeded`, `network-fee-exceeded`, `raw-forbidden`.
 
 Codes are stable wire vocabulary. Renaming one is a breaking change; adding one is not.
 
 ### 5.1 Management API (v1)
 
-Migration step 2 is impossible without this surface. Key generation, import, boundary
-editing and caller provisioning exist today only as form posts behind `neo-nexus`'s own
-session cookie (`src/web/signer_control.rs`), so a consumer that cannot hold a key also
-cannot currently configure one. Each route below maps 1:1 onto a method that already
-exists on `SignerService`; nothing here is new behaviour, only a transport for it.
+The service owns this surface so a client can configure custody without
+reimplementing it. `neo-nexus` exposes the non-secret subset — enclave-born key
+generation, boundary editing, caller provisioning and audit — behind its own
+operator session. Secret import and `/provision` remain direct signer
+ceremonies. Each route below maps 1:1 onto a method that already exists on
+`SignerService`; nothing here is new behaviour, only a transport for it.
 
-| Method   | Path                                 | Service method                                           |
-| -------- | ------------------------------------ | -------------------------------------------------------- |
-| `POST`   | `/signer/api/v1/keys`                | `generate_key(label, network)`                           |
-| `POST`   | `/signer/api/v1/keys/import`         | `import_key(label, network, private_key)`                |
-| `POST`   | `/signer/api/v1/keys/import-nep2`    | `import_nep2_key(label, network, nep2, passphrase)`      |
-| `GET`    | `/signer/api/v1/keys`                | `list_keys` — every key's `KeyPublicInfo`                |
-| `POST`   | `/signer/api/v1/keys/{id}/state`     | `set_key_disabled` — the one-click disable               |
-| `POST`   | `/signer/api/v1/keys/{id}/policy`    | `save_policy` (blank means everything closed, §4.2)      |
-| `GET`    | `/signer/api/v1/keys/{id}/policy`    | `key_detail` — the boundary as it was stored, normalized |
-| `DELETE` | `/signer/api/v1/keys/{id}`           | `delete_key`                                             |
-| `POST`   | `/signer/api/v1/callers`             | `create_caller(label, grant, capabilities, origins)`     |
-| `GET`    | `/signer/api/v1/callers`             | `list_callers` — `CallerInfo`, digest excluded           |
-| `POST`   | `/signer/api/v1/callers/{id}/rotate` | `rotate_caller_token`                                    |
-| `POST`   | `/signer/api/v1/callers/{id}/state`  | `set_caller_disabled`                                    |
-| `DELETE` | `/signer/api/v1/callers/{id}`        | `delete_caller`                                          |
-| `GET`    | `/signer/api/v1/audit`               | `list_audit` — newest first, optionally filtered by key  |
+| Method   | Path                                 | Service method                                              |
+| -------- | ------------------------------------ | ----------------------------------------------------------- |
+| `POST`   | `/signer/api/v1/keys`                | `generate_key(label, network, magic?)`                      |
+| `POST`   | `/signer/api/v1/keys/import`         | `import_key(label, network, magic?, private_key)`           |
+| `POST`   | `/signer/api/v1/keys/import-nep2`    | `import_nep2_key(label, network, magic?, nep2, passphrase)` |
+| `GET`    | `/signer/api/v1/keys`                | `list_keys` — every key's `KeyPublicInfo`                   |
+| `POST`   | `/signer/api/v1/keys/{id}/state`     | `set_key_disabled` — the one-click disable                  |
+| `POST`   | `/signer/api/v1/keys/{id}/policy`    | `save_policy` (blank means everything closed, §4.2)         |
+| `GET`    | `/signer/api/v1/keys/{id}/policy`    | `key_detail` — the boundary as it was stored, normalized    |
+| `DELETE` | `/signer/api/v1/keys/{id}`           | `delete_key`                                                |
+| `POST`   | `/signer/api/v1/callers`             | `create_caller(label, grant, capabilities, origins)`        |
+| `POST`   | `/signer/api/v1/callers/workload`    | `create_workload_caller(..., Ed25519 public key, subject?)` |
+| `GET`    | `/signer/api/v1/callers`             | `list_callers` — `CallerInfo`, digest excluded              |
+| `POST`   | `/signer/api/v1/callers/{id}/rotate` | `rotate_caller_token`                                       |
+| `POST`   | `/signer/api/v1/callers/{id}/state`  | `set_caller_disabled`                                       |
+| `DELETE` | `/signer/api/v1/callers/{id}`        | `delete_caller`                                             |
+| `GET`    | `/signer/api/v1/audit`               | `list_audit` — newest first, optionally filtered by key     |
+
+`magic` is the optional `network_magic` body field on the three key-creation routes. Absent —
+what every pre-existing consumer sends — means the canonical value for `network`. On mainnet
+and testnet the service accepts nothing else: these chains have exactly one magic, and a key
+bound to another would seal signatures no node verifies. A private network names the magic its
+deployment actually runs, which is how §4.2's "the magic is stored per key" is satisfied; the
+bound value rides back on every key body, so an operator can confirm what a key commits to.
 
 `GET /keys/{id}/policy` is a different path from `GET /keys/{id}` (§5) because the two are
 guarded differently and return different things: the identity read is answered for a caller
@@ -267,14 +359,15 @@ guards is how a route ends up answering whichever check happens to be reached fi
 The rules that hold it together:
 
 - **One caller table with capabilities, not a second auth system.** A caller record carries
-  a capability set naming **exactly one** of `sign` or `admin`. `POST /callers` refuses an
+  a capability set naming **exactly one** of `sign`, `raw_sign`, or `admin`.
+  `POST /callers` refuses an
   empty set, a set naming both, and an unknown name — all before a token is minted, so a
   rejected request cannot leak a credential into existence. Two parallel credential stores is
   how one of them stops being checked — which is the shape of F-9's problem, restated before
   it can recur here.
 - **Admin credentials cannot sign; signing credentials cannot administer.** Either
-  mismatch refuses with `admin-capability-missing` — including an admin token used on a
-  sign route, which must not be disguised as `signer-key-unknown`. A missing capability
+  mismatch refuses with `<capability>-capability-missing` — including an admin token used
+  on a sign route, which must not be disguised as `signer-key-unknown`. A missing capability
   and a missing key are different operator actions, and collapsing them costs an
   afternoon of guessing per incident. This is also why the operator console holds only an
   admin token: compromised, it cannot become a signing oracle.
@@ -304,16 +397,14 @@ The rules that hold it together:
   never in a log (the signer request path contains no logging middleware at all, which is
   a contract, not an omission). Imported keys and NEP-2 passphrases are read from the body
   and `Zeroizing`; a query parameter or path segment carrying either is a `400`.
-- **A consumer may relay an import; it may not hold one.** `neo-nexus`'s console keeps its
-  "paste a key" form, because an operator who put custody in an enclave still has to get a
-  key _into_ it somehow, and making that a shell ceremony is how keys end up in shell
-  history. What the previous bullet forbids on this side of the wire is the resting state,
-  not the transit: the bytes appear in one request body and reach nothing else — no seal, no
-  derivation, no row, no log, no copy that outlives the call. `neo-nexus/src/signer_client`
-  holds no crypto dependency at all, which is the checkable form of the rule: an import that
-  tried to keep a key would have to add the dependency first. A relayed import is attributed
-  to the relaying console caller by its own `signer-key-imported` audit row, so the workbench
-  being the messenger never makes the act anonymous.
+- **The workbench does not relay an import.** `neo-nexus` deliberately has no
+  private-key or NEP-2 request type and no browser form for either. Enclave-born
+  key generation is the normal workbench path. Existing material enters through
+  a signer-side import ceremony only after the importer verifies a fresh Nitro
+  document, AWS chain, nonce, PCR set, runtime name, vault fingerprint,
+  boundary digest and nondecreasing state revision. This stronger boundary
+  prevents a browser host from retaining, logging, crash-dumping or backing up
+  secret material it never accepts.
 - **Every admin mutation writes an audit row.** Which key's boundary changed, from what to
   what, by which caller. A boundary nobody can account for is not a boundary. The moved
   implementation already covers each route above: `SignerAuditAction` has a variant for
@@ -393,11 +484,12 @@ at all and no way to receive its master key.
   the crate is skipped by the `workers/*` workspace glob because it carries no
   `package.json`, so `npm install` and `npm test` neither see it nor build it. Its build
   path is cargo, and its image is `deploy/nitro/Dockerfile.signer` — two stages, the second
-  being the measured one: `debian:bookworm-slim` with the `signer_service` and
-  `nsm-attest-rs` binaries, socat, iproute2 and the custody entrypoint, **and no Node and
-  no other runtime**. `build-custody-eif.sh` builds it and captures PCR0/1/2 into a
-  `morpheus-custody` measurements manifest; `start-nitro-custody.sh` runs it and walks
-  §5.2's `/provision`; `entrypoint-custody.sh` brings loopback up, bridges vsock 8787 to
+  being the measured one: `debian:bookworm-slim` with the `signer_service`,
+  `nsm-attest-rs` and `nitro_init` binaries, socat, iproute2, **and no Node and no
+  other runtime, no `/bin/sh` entrypoint**. `build-custody-eif.sh` builds it and
+  captures PCR0/1/2 into a `morpheus-custody` measurements manifest;
+  `start-nitro-custody.sh` runs it and walks §5.2's `/provision`; `nitro_init custody`
+  (`crates/nitro-init`, PID 1) brings loopback up, bridges vsock 8787 to
   127.0.0.1:8081, and fail-stops if any of the three processes dies. The retired Node
   signer image lives on as `Dockerfile.signer-legacy`, measured by
   `build-nitro-signer-eif.sh` only so the historical path keeps building while deployments
@@ -411,6 +503,21 @@ at all and no way to receive its master key.
   `--frozen-intrinsics`), which is careful work — but a signing key in that process
   would still be a V8 heap object that nothing can zero, next to every dependency the
   lane pulls in.
+- The enclave **host** is this service's first caller on the same contract as everyone
+  else. `workers/nitro-enclave-host` (the split's trusted frontier) holds no keys; its
+  signing plane resolves a role's pinned key by reading
+  `GET /signer/api/v1/keys/{id}` and blind-signs through `POST /signer/api/v1/sign/raw`
+  (§4.1) with a registered caller token — grants, the `allow_raw` boundary and the audit
+  trail apply to the host's calls exactly as to any external one. What it needs is
+  provisioned env, read live so `/provision` can connect or re-point custody mid-flight:
+  `SIGNER_SERVICE_URL` (the custody base URL), `SIGNER_SERVICE_TOKEN` (the host's caller
+  token), and `SIGNER_ROLE_{ROLE}_KEY_ID` per signing role
+  (`SIGNER_ROLE_UPDATER_KEY_ID`, `SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID`). With no URL
+  provisioned the plane reports the same unconfigured state the fail-closed shim did —
+  `/health` shows the roles without a custody connection, and every sign route answers
+  the same `503` it always did. A role whose pinned key is on the wrong network, is
+  disabled, or is not granted to the host's caller reads as unconfigured with the
+  reason in its issues; a raw-sign refusal carries custody's status and code through.
 - Port and URL follow the existing convention (`NITRO_API_URL`, `NITRO_SIGNER_URL`,
   `SIGNER_URL`): the service is reached as `SIGNER_SERVICE_URL`, and callers resolve it
   through `config-schema.js` rather than reading `process.env` inline.
@@ -471,59 +578,51 @@ at all and no way to receive its master key.
 
 Order matters: there must never be a moment when nothing owns custody.
 
-1. **Land the service** in this repo as `workers/neo-signer`, with the engine moved
-   from `neo-nexus/src/signer/` (transaction parser, policy, caller auth, sealed vault,
-   audit store) and its test suite, gates green.
-2. **Demote `neo-nexus`** to a client of it: the operator console and control pages keep
-   their shape, but talk HTTP to the service. `neo-nexus` must end up unable to open,
-   derive, export or accept a private key — its wallet module already refuses plaintext
-   keys, and the signer client inherits that property. The client is
-   `neo-nexus/src/signer_client`: seventeen routes over blocking `ureq`, a refusal returned
-   as data rather than as a failed request, and no crypto dependency to violate the rule
-   with. `a_real_service_and_this_client_agree_on_every_route` is the `#[ignore]`d probe
-   that exercises every route against a running service, which is the only way to show the
-   two halves agree rather than that each reads its own tests.
+1. **Land the service** in this repo as `workers/neo-signer`, with the earlier
+   NeoNexus custody prototype (transaction parser, policy, caller auth, sealed
+   vault and audit store) extracted into its proper owner and its test suite
+   green.
+2. **Demote `neo-nexus` to a client (implemented and contract-tested locally).**
+   `neo-nexus/src/signer_client/` now owns only endpoint validation, wire
+   models, bearer/workload request authentication and redirect-disabled
+   `ureq` transport. Refusals remain typed data, transport failures never
+   trigger a local fallback, and signing requests are not automatically
+   retried. The `/signer` workbench page uses the non-secret management routes
+   for enclave-born generation, policy, caller and audit operations. It has no
+   private-key, passphrase, transaction-sign, consensus-sign or raw-sign form.
 
-   **Existing rows migrate by the operator's hand, and nothing here deletes them.** A
-   `neonexus.db` predating this step already holds `signer_keys`, `signer_policies`,
-   `signer_callers`, `signer_audit` and `signer_value_events` — the same five tables and the
-   same columns, apart from `capabilities`, which the service adds to an old-shaped table on
-   open (`workers/neo-signer/src/store/schema.rs:98-106`). So the move is an `ATTACH` of the
-   old file into `signer.db` and one `INSERT … SELECT` per table, run against a directory
-   that has served nothing yet — `signer_audit.id` and `signer_value_events.id` are one
-   `AUTOINCREMENT` sequence in each file, so copying into a database the new service has
-   already written to can collide on a primary key, which fails the statement rather than
-   quietly renumbering history. Point `SIGNER_SERVICE_DATA_DIR`
-   at the directory holding the old `signer-master.key` — or
-   `SIGNER_SERVICE_MASTER_KEY` set to the same credential, since only the variable's name
-   changed (§6) and the derivation did not.
+   Configuration is `NEONEXUS_SIGNER_URL` plus exactly one file-backed
+   credential profile: `NEONEXUS_SIGNER_ADMIN_TOKEN_FILE`, or
+   `NEONEXUS_SIGNER_ADMIN_CALLER_ID` +
+   `NEONEXUS_SIGNER_ADMIN_WORKLOAD_KEY_FILE` and optional
+   `NEONEXUS_SIGNER_ADMIN_WORKLOAD_SUBJECT`. Non-loopback endpoints require
+   HTTPS; user-info, URL paths, query strings, fragments and redirects are
+   refused.
 
-   The fingerprint is the check, and it is worth running rather than assuming: the service
-   prints `SHA-256(master key)` truncated to four bytes at boot, and `neo-nexus` computed
-   that same value for that same key, so matching strings are proof the seals will open.
-   Matching is not the likely failure — a silent one is, because a key row stores its
-   `public_key` in plaintext: a vault opened under the wrong master credential still lists
-   every key and still answers `GET /keys/{id}` with an address, and presents as a healthy
-   vault until the first signature is refused.
+   `neo-nexus/tests/signer_service_contract.rs` starts the real Rust process
+   and exercises health, generation, key reads, complete policy round-trip,
+   bearer and Ed25519 workload callers, transaction/consensus/raw signatures,
+   key disable/enable, token rotation, audit, and deletion. The default
+   standalone test run ignores it because that repository does not clone this
+   sibling; the NeoOS workspace gate builds `signer_service` and runs it
+   explicitly.
 
-   Migrated caller rows arrive as `capabilities = 'sign'`, which is the point of that
-   default: a token minted before the management API existed was never an admin token. The
-   console credential is therefore created by `provision-admin` against the new directory,
-   and the copied ones are re-granted or deleted by the operator, not promoted. `neo-nexus`
-   then stops creating the five tables and does **not** drop them — dropping a vault's
-   history is an operator decision, and a workbench upgrade must not be the moment it
-   disappears.
+   A private fork that previously created `signer_*` tables in `neonexus.db`
+   requires an explicit offline migration with a verified backup and matching
+   master key. Mainline NeoNexus never shipped those tables, so no automatic
+   database attachment or deletion is performed during workbench startup.
 
 3. **Migrate the `/sign/payload` consumers** in this repo.
 
    **Precondition: the service is inside the enclave before a caller is moved to it.**
    The consumers leaving this step are inside a Nitro enclave today. The packaging has
    landed: a `Dockerfile.signer` whose _last_ stage is what nitro-cli measures — the Rust
-   custody runtime, zero Node — with `build-custody-eif.sh` pinning PCR0/1/2 into
-   `deploy/nitro/measurements/` the way `build-enclave-eif.sh` already does;
-   `entrypoint-custody.sh` bridging vsock to the loopback listener, since vsock is the
-   enclave's only ingress and §5's transport assumption is then true inside the memory
-   boundary rather than assumed across a host network namespace; the master key released
+   custody runtime, zero Node and zero shell — with `build-custody-eif.sh` pinning
+   PCR0/1/2 into `deploy/nitro/measurements/` the way `build-enclave-eif.sh` already does;
+   `nitro_init custody` (`crates/nitro-init`, PID 1) bridging vsock to the loopback
+   listener, since vsock is the enclave's only ingress and §5's transport assumption is
+   then true inside the memory boundary rather than assumed across a host network
+   namespace; the master key released
    by the attested KMS path (§5.2, `deploy/nitro/TEE-CONFIDENTIALITY-GAPS.md` RC2) — never
    a host-supplied environment value crossing into an unmeasured process, and never
    `signer-master.key` in the rootfs, where the EIF would carry it in plaintext to everyone
@@ -535,16 +634,93 @@ Order matters: there must never be a moment when nothing owns custody.
    a Nitro machine must be verified by hand.
 
    Then: `nitro-signer-server.mjs`
-   becomes a thin compatibility shim: it keeps answering `/sign/payload` only for a
-   fixed allowlist of request kinds it can translate into intent, and refuses
-   arbitrary `data_hex`. The same change removes the silent role default — a request
-   with no `key_role`, or one `normalizeRole` cannot map, is refused rather than signed
-   as `updater` (§4.3). Relayer and nitro-worker call sites move to
-   `/signer/api/v1/sign/transaction` one at a time, each with its own caller token.
+   becomes a thin compatibility shim: it keeps answering `/sign/payload` only for the one
+   request kind it can translate into intent — `network magic little-endian` followed by
+   the **unsigned transaction serialization**, which it forwards to the custody
+   `/signer/api/v1/sign/transaction` — and refuses everything else. The legacy preimage
+   the relayer used to send (`getMessageForSigning`: magic + bare txid) is a digest and
+   is refused by name: a bare txid cannot be policy-checked, so the shim will not sign
+   it blind. The same change removes the silent role default — a request with no
+   `key_role`, or one `normalizeRole` cannot map, is refused rather than signed as
+   `updater` (§4.3), in both this shim and `enclave-server.mjs`. Relayer and nitro-worker
+   call sites move to `/signer/api/v1/sign/transaction` one at a time, each with its own
+   caller token.
 
-4. **Retire local key material** from the remaining paths: `workers/nitro-worker`
-   (which also compares `scopes === WitnessScope.Global`, so `0x81` passes — it must
-   test the bit), and the WIF-bearing env vars in relayer and explorer.
+   **Relayer migration status (done):** every relayer Neo N3 signing call site — request
+   fulfillment, fulfillment payload signatures (`/sign/raw`), and automation queueing —
+   now signs through the custody service under the caller's configured role. The relayer
+   resolves roles from `SIGNER_SERVICE_URL` / `SIGNER_SERVICE_TOKEN` plus
+   `SIGNER_ROLE_{UPDATER,ORACLE_VERIFIER}_KEY_ID` (`SIGNER_ROLE_FEE_FUNDER_KEY_ID` is
+   optional, funding best-effort fee top-ups), it holds no WIF, and
+   `scripts/check-nitro-env.mjs` enforces that provisioning. The automation queue waits
+   for the application log and fail-closes non-HALT executions instead of returning an
+   unknown vm_state.
+
+   **Worker sign-lane migration status (done):** `workers/nitro-worker`'s sign lane —
+   `/sign/payload` (`handleSignPayload`) and every signed result envelope
+   (`buildSignedResultEnvelope`, which backs the compute, feed, and oracle quote lanes) —
+   signs through the custody service via `src/platform/custody.js`. The worker resolves
+   its key id from `SIGNER_ROLE_WORKER_KEY_ID` (default role `worker`, overridable per
+   request with `dstack_key_role`/`key_role`, e.g. `oracle_verifier`), holds no derived
+   Neo N3 signing key, and `NITRO_USE_DERIVED_KEYS` no longer affects Neo N3 signing.
+   Requests that pass `private_key`, `signing_key`, or `wif` are rejected
+   unconditionally; there is no environment escape hatch and no local signing path.
+   Provisioning is enforced by `check-nitro-env.mjs`
+   (`SIGNER_ROLE_WORKER_KEY_ID` is required). The feed-pusher fee
+   top-up (`deploy/feed-pusher/feed-topup.mjs`) likewise builds the GAS transfer locally
+   and takes its witness from custody `/sign/transaction` under
+   `SIGNER_ROLE_FEE_FUNDER_KEY_ID` — no `TOPUP_WIF` on the box.
+
+   **Worker tx-relay migration status (done):** the tx-relay lane (`chain/neo-n3.js`
+   `loadNeoN3Context` / `relayNeoN3Invocation`) signs through the custody service too.
+   `loadNeoN3Context` resolves a lazy signing identity from
+   `GET /keys/{SIGNER_ROLE_UPDATER_KEY_ID}` — the updater account, because the lane
+   relays the oracle-contract invocations the relayer fulfills under (`fulfillRequest`
+   / `queueAutomationRequest`, the txproxy allowlist) — with the public key ↔ script
+   hash cross-checked locally, so read-only consumers (on-chain baseline loads,
+   raw-transaction broadcasts) never require custody provisioning; signing lanes force
+   it with `required: true`. `relayNeoN3Invocation` builds the transaction locally,
+   sizes the system fee from the simulation, sizes the network fee via
+   `calculatenetworkfee` over a placeholder witness in the exact shape custody returns,
+   and installs the custody witness (script-hash verified) before broadcast. The
+   sponsorship lane (`sponsorNeoN3Transaction`) appends the custody witness next to
+   the user's own. The worker WIF group is retired from `check-nitro-env.mjs` required
+   provisioning, the request-hub compose files, and `morpheus.env.example`;
+   caller-supplied key material on the relay lane is rejected under the same
+   custody-only rule as the sign lane.
+
+   **Web control-plane migration status (done):** `apps/web` no longer signs anything.
+   `fulfillNeoN3RequestViaBackend` and `queueNeoN3AutomationViaBackend` used to build
+   and sign these same invocations locally from the updater/relayer WIF
+   (`resolveNeoN3UpdaterSigner`, since deleted); they now POST the JSON contract
+   params to the worker's `/txproxy/invoke` with the runtime bearer token, and the
+   worker custody-signs as the updater. The feed-tick route no longer resolves
+   updater/relayer WIFs and forward them inside the `/oracle/feed` body (the worker's
+   feed lane is custody-side); `feed-sync.ts` dropped its `wif`/`private_key`
+   plumbing, and callback-broadcast now rejects raw signer material outright like
+   automation-execute. The web tier holds no Neo N3 key and reads no WIF env var.
+
+   **NeoDID lane + env-surface retirement (done):** NeoDID digest signatures
+   (bind, action, recovery, and the runtime self-sign) sign through custody
+   `/sign/raw` under the worker role — the enclave's sha256-then-ECDSA is
+   byte-identical to the neon-js `wallet.sign` path it replaces — and caller key
+   material is rejected like on every other lane. With that, no runtime lane in
+   this repo reads signing key material from env at all, so the env surface was
+   retired to match: `check-nitro-env.mjs` treats a WIF-free runtime env as the
+   healthy state (a leftover WIF that disagrees with the pinned registry is
+   still a hard failure), `render-nitro-compose-env.mjs` renders no WIF/private
+   key into runtime env or `MORPHEUS_RUNTIME_CONFIG_JSON` (only the oracle
+   verifier PUBLIC key), the request-hub compose passthroughs are gone (relayer
+   services carry the custody vars), `render-nitro-hub-env.mjs` renders only the
+   verifier public keys, and the root-env `n3_scripts` group moved to optional
+   `smoke_signing` (smoke tooling still consumes a relayer WIF on operator
+   machines by choice).
+
+4. **Retire local key material** from the remaining paths: the WIF-bearing env vars in
+   relayer and explorer. The services-repo runtime lanes and env surface are done
+   (relayer, both worker lanes, web control plane, feed-topup, NeoDID, and every
+   rendered env file) — what remains is smoke tooling, the pinned-registry drift
+   checks, and consumers in the sibling repos.
 5. **Then** evaluate `secure-sign-service-rs` as the enclave `vault` backend, which is
    the one place its KMS-attested start is worth the build complexity — noting it cannot
    compile on Windows today because `secure-sign-rpc/Cargo.toml:15` depends on
