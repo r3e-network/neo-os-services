@@ -309,7 +309,7 @@ fn materialize_neodid_salt(
         .get("salt")
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|salt| (32..=1024).contains(&salt.as_bytes().len()))
+        .filter(|salt| (32..=1024).contains(&salt.len()))
         .ok_or_else(|| {
             http_error(
                 400,

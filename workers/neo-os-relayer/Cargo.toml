@@ -1,0 +1,32 @@
+[package]
+name = "neo-os-relayer"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Relayer orchestration shell: scans, fulfillment, automation, feed sync, observability (T01 skeleton; replaces the dead morpheus-relayer-rs)"
+
+# T01 skeleton — bodies land in T02–T04 (docs/rust-migration/ARCHITECTURE.md §6).
+# Replaces workers/morpheus-relayer-rs, which was dead code: 521 lines, a lib.rs
+# claiming seven modules (chains/processor/queue/automation/feed/persistence/
+# monitoring) of which none existed, plus a napi FFI bridge the workspace never
+# shipped. Do not resurrect it; this crate is the restart.
+#
+# Planned layout (T02–T04):
+# - config  — declarative schema over the 109 logical keys / 149 env names,
+#             alias-chain + precedence + redaction (T02)
+# - state   — state-file schema, metric counters, retry scheduling (T02)
+# - store   — Supabase REST persistence, 6 tables, optimistic-claim semantics (T03,
+#             extracted to crates/neo-os-relayer-store when it needs its own tests)
+# - scan    — per-chain discovery/cursor orchestration over the chain adapters (T04)
+# - fulfill — executor/coordinator/dispatch/delivery pipeline (T04)
+# - observe — hand-rolled Prometheus text rendering, 25 top-level counters with
+#             byte-identical exposition lines (T04, hard external contract)
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "neo-os-relayer"
+path = "src/main.rs"
+
+[dependencies]

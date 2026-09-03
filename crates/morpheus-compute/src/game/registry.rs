@@ -3,11 +3,17 @@
 //! [`resolve_engine`] at session start and [`registry_manifest`] surfaces the
 //! pin table.
 //!
-//! The `ENGINE_MANIFEST` hashes are `sha256` of each wrapper's UTF-8 source
-//! with CRLF normalized to LF (`engineHashOfFile`) — the same value the JS
-//! worker computes. `engine_hash_of_source` re-derives it, and a drift test
-//! asserts the manifest still matches the live `workers/nitro-worker` tree
-//! until the bridge stops forwarding game lanes.
+//! The `ENGINE_MANIFEST` hashes originated as the `sha256` of each wrapper's
+//! UTF-8 source with CRLF normalized to LF (`engineHashOfFile`) — the same
+//! value the JS worker computed. As of the Rust migration they keep those 11
+//! literal values unchanged but their meaning is now "engine behavior version
+//! pin": the permanent anchor is the frozen copy under
+//! `baselines/js-parity/wrappers/` (manifest-checked, survives the T05 removal
+//! of `workers/nitro-worker`), not the live JS tree. Nothing on-chain or in
+//! `apps/web` references these hashes, so no client or contract changes.
+//! `engine_hash_of_source` re-derives the value, and the drift test
+//! (`game::parity::wrapper_sources_match_pinned_engine_hashes`) asserts the
+//! manifest still matches the frozen sources.
 
 use super::abi::{OpMeta, OpOutcome, ScoreExtra, ScoreRejection};
 use serde_json::Value as Json;

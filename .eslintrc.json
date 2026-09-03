@@ -30,6 +30,7 @@
     "contracts/neox/node_modules/",
     "apps/web/.next/",
     "vendor/",
+    "baselines/",
     "target/",
     "workers/neo-signer/target/",
     "supabase/**",

@@ -60,7 +60,7 @@ impl Store {
                     let chain_family_str: Option<String> = row.get(12)?;
                     let chain_family = chain_family_str
                         .as_deref()
-                        .map(|s| ChainFamily::from_str(s))
+                        .map(ChainFamily::from_str)
                         .transpose()
                         .map_err(|error| {
                             rusqlite::Error::FromSqlConversionFailure(

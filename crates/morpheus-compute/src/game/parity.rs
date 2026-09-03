@@ -299,8 +299,16 @@ fn engines_reproduce_parity_goldens() {
 }
 
 /// registry.test.mjs drift guard: every registered engine's pinned hash still
-/// matches the live JS wrapper source (CRLF normalized), so a wrapper edit that
-/// has not been ported flips this test before anything else can trust it.
+/// matches the frozen JS wrapper source (CRLF normalized), so a wrapper edit
+/// that has not been ported flips this test before anything else can trust it.
+///
+/// The sources come from `baselines/js-parity/wrappers/`, NOT from
+/// `workers/nitro-worker/src/game/wrappers/`. That indirection is the whole
+/// point: the frozen directory is the permanent anchor for the 11 `engineHash`
+/// literals, so this test keeps working — and keeps meaning something — after
+/// `workers/nitro-worker` is deleted in T05. Reading the live tree instead
+/// would make the test panic the moment the JS tree disappears, which is
+/// precisely when the pin is the only evidence left.
 #[test]
 fn wrapper_sources_match_pinned_engine_hashes() {
     const WRAPPER_FILES: [(&str, &str); 11] = [
@@ -318,16 +326,153 @@ fn wrapper_sources_match_pinned_engine_hashes() {
     ];
     let wrapper_dir = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../workers/nitro-worker/src/game/wrappers/"
+        "/../../baselines/js-parity/wrappers/"
     );
     for (app_id, file) in WRAPPER_FILES {
         let engine = resolve_engine(app_id).unwrap_or_else(|error| panic!("{error}"));
         let source = std::fs::read_to_string(format!("{wrapper_dir}{file}"))
-            .unwrap_or_else(|error| panic!("reading {file}: {error}"));
+            .unwrap_or_else(|error| panic!("reading baseline wrapper {file}: {error}"));
         assert_eq!(
             super::registry::engine_hash_of_source(&source),
             engine.engine_hash,
             "{app_id}: {file} drifted from the pinned engine hash — port the change and re-pin"
         );
+    }
+}
+
+/// The frozen JS parity baseline (`baselines/js-parity/`) is the permanent
+/// anchor for `engineHash` and for the engine goldens. Two invariants:
+///
+/// 1. **Permanent** — every frozen asset still hashes to its `MANIFEST.sha256`
+///    entry. Holds forever, including after `workers/nitro-worker` is deleted.
+/// 2. **Until T05** — every frozen asset is byte-identical to its live source.
+///    This is the drift alarm that catches a wrapper or goldens edit nobody
+///    re-froze. It degrades to a no-op once the JS trees are removed, which is
+///    exactly when invariant 1 becomes the only evidence left.
+///
+/// Verifying the manifest here (rather than only in
+/// `scripts/freeze-js-parity-baseline.mjs --check`) means `cargo test` fails
+/// on a tampered or half-written baseline, not just an opt-in npm script.
+#[test]
+fn frozen_js_parity_baseline_is_intact() {
+    let baseline_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../baselines/js-parity/");
+    let manifest_path = format!("{baseline_dir}MANIFEST.sha256");
+    let manifest = std::fs::read_to_string(&manifest_path)
+        .unwrap_or_else(|error| panic!("reading {manifest_path}: {error}"));
+
+    // `sha256 <two spaces> <path>`; `#` lines are comments, blank lines skipped.
+    let mut pinned: std::collections::BTreeMap<String, &str> = std::collections::BTreeMap::new();
+    for line in manifest.lines() {
+        let line = line.trim_end();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (hash, path) = line
+            .split_once("  ")
+            .unwrap_or_else(|| panic!("{manifest_path}: unparseable line: {line}"));
+        assert_eq!(hash.len(), 64, "{manifest_path}: not a sha256: {hash}");
+        assert!(hash.bytes().all(|b| b.is_ascii_hexdigit()));
+        pinned.insert(path.to_string(), hash);
+    }
+
+    // engine-parity.goldens.json is byte-identical in both trees today; the
+    // frozen copy must stay equal to the one this crate `include_str!`s, or the
+    // parity driver would be testing a different corpus than the JS recorder.
+    const MIRRORS: [(&str, &str); 1] = [(
+        "workers/nitro-worker/src/game/engine-parity.goldens.json",
+        "crates/morpheus-compute/src/game/engine-parity.goldens.json",
+    )];
+    // The baseline assets this crate depends on, and where each was frozen from.
+    const ASSETS: [(&str, &str); 13] = [
+        (
+            "engine-parity.goldens.json",
+            "workers/nitro-worker/src/game/engine-parity.goldens.json",
+        ),
+        (
+            "stable-stringify-vectors.mjs",
+            "packages/shared/src/stable-stringify-vectors.mjs",
+        ),
+        (
+            "wrappers/aim.wrapper.js",
+            "workers/nitro-worker/src/game/wrappers/aim.wrapper.js",
+        ),
+        (
+            "wrappers/arrow.wrapper.js",
+            "workers/nitro-worker/src/game/wrappers/arrow.wrapper.js",
+        ),
+        (
+            "wrappers/color.wrapper.js",
+            "workers/nitro-worker/src/game/wrappers/color.wrapper.js",
+        ),
+        (
+            "wrappers/flappy.wrapper.js",
+            "workers/nitro-worker/src/game/wrappers/flappy.wrapper.js",
+        ),
+        (
+            "wrappers/game2048.wrapper.js",
+            "workers/nitro-worker/src/game/wrappers/game2048.wrapper.js",
+        ),
+        (
+            "wrappers/jump.wrapper.js",
+            "workers/nitro-worker/src/game/wrappers/jump.wrapper.js",
+        ),
+        (
+            "wrappers/merge.wrapper.js",
+            "workers/nitro-worker/src/game/wrappers/merge.wrapper.js",
+        ),
+        (
+            "wrappers/pet.wrapper.js",
+            "workers/nitro-worker/src/game/wrappers/pet.wrapper.js",
+        ),
+        (
+            "wrappers/sheep.wrapper.js",
+            "workers/nitro-worker/src/game/wrappers/sheep.wrapper.js",
+        ),
+        (
+            "wrappers/snake.wrapper.js",
+            "workers/nitro-worker/src/game/wrappers/snake.wrapper.js",
+        ),
+        (
+            "wrappers/sudoku.wrapper.js",
+            "workers/nitro-worker/src/game/wrappers/sudoku.wrapper.js",
+        ),
+    ];
+
+    let repo_root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../");
+    let hash_file = |relative: &str| -> String {
+        let bytes = std::fs::read(format!("{repo_root}{relative}"))
+            .unwrap_or_else(|error| panic!("reading {relative}: {error}"));
+        super::sha256_hex(&bytes)
+    };
+
+    for (frozen, source) in ASSETS {
+        let expected = pinned
+            .get(frozen)
+            .unwrap_or_else(|| panic!("MANIFEST.sha256 has no entry for {frozen}"));
+        let actual = hash_file(&format!("baselines/js-parity/{frozen}"));
+        assert_eq!(
+            &actual, expected,
+            "baselines/js-parity/{frozen} drifted from MANIFEST.sha256 \
+             (expected {expected}, got {actual}) — re-run \
+             node scripts/freeze-js-parity-baseline.mjs"
+        );
+        // Invariant 2: while the live source still exists it must agree.
+        let live = format!("{repo_root}{source}");
+        if std::path::Path::new(&live).exists() {
+            assert_eq!(
+                actual,
+                hash_file(source),
+                "baselines/js-parity/{frozen} no longer matches its live source {source} — \
+                 re-run node scripts/freeze-js-parity-baseline.mjs"
+            );
+        }
+    }
+
+    for (left, right) in MIRRORS {
+        let left_path = format!("{repo_root}{left}");
+        let right_path = format!("{repo_root}{right}");
+        if std::path::Path::new(&left_path).exists() && std::path::Path::new(&right_path).exists() {
+            assert_eq!(hash_file(left), hash_file(right), "{left} and {right} diverged");
+        }
     }
 }

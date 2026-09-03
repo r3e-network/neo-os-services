@@ -27,6 +27,12 @@ private-backups/
 .env*.local
 examples/
 
+# Frozen JS parity baseline (scripts/freeze-js-parity-baseline.mjs). These
+# assets are sha256-pinned in baselines/js-parity/MANIFEST.sha256 and are the
+# permanent anchor for engineHash and the 8 consensus vector families;
+# reformatting them silently invalidates every pin derived from them.
+baselines/
+
 # Third-party source is kept byte-for-byte except for the documented Cargo
 # dependency-range patch; local formatting would create an unauditable fork.
 vendor/

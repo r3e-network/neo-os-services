@@ -6,7 +6,11 @@ members = [
     "crates/morpheus-core",
     "crates/morpheus-compute",
     "crates/nitro-attest",
-    "crates/nitro-init", "workers/morpheus-relayer-rs",
+    "crates/nitro-init",
+    "crates/neo-os-games",
+    "crates/neo-os-chain-n3",
+    "crates/neo-os-chain-evm",
+    "workers/neo-os-relayer",
 ]
 
 # Every member keeps `workers/` or `crates/` positioning without a package.json,
