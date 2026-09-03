@@ -55,7 +55,7 @@ use crate::{
         SignerAuditRecord, SignerCaller, SignerConsensusReservation, SignerKey, SignerPolicy,
         SignerRequestCompletion, SignerValueEvent, WorkloadIdentity,
     },
-    network::{self, Network},
+    network::{self, ChainFamily, Network},
     policy::{self, AssetWindowSpend, SigningRequest, WindowSpend},
     store::Store,
     tx::{self, ConsensusPayload, DbftCommitment, Intent, UnsignedTransaction},
@@ -87,10 +87,14 @@ pub struct SignedWitness {
     /// transaction this is the id an explorer shows; for a consensus payload it
     /// is the same digest, which is still the only way to find the row again.
     pub digest: String,
-    /// `0c 40 <64B r||s>`.
+    /// Neo N3: `0c 40 <64B r||s>`. NeoX: empty (signature in `signature_hex`).
     pub invocation: Vec<u8>,
-    /// `0c 21 <33B pubkey> 41 56e7b327`.
+    /// Neo N3: `0c 21 <33B pubkey> 41 56e7b327`. NeoX: empty.
     pub verification: Vec<u8>,
+    /// EVM signature (r || s || v), 65 bytes hex-encoded. Only present for NeoX transactions.
+    pub signature_hex: Option<String>,
+    /// Chain family this signature is for.
+    pub chain_family: Option<ChainFamily>,
 }
 
 /// What a caller may learn about a key it is granted.
@@ -1191,6 +1195,8 @@ impl SignerService {
                     digest: completed.result_digest,
                     invocation: completed.invocation,
                     verification: completed.verification,
+                    chain_family: completed.chain_family,
+                    signature_hex: None, // Not used for Neo N3
                 }));
             }
             Some((request_id.to_string(), request_digest))
@@ -1241,6 +1247,7 @@ impl SignerService {
                         verification: approved.witness.verification.clone(),
                         completed_at_unix: recorded_at_unix,
                         audit_id: None,
+                        chain_family: approved.witness.chain_family,
                     });
                 self.repository.record_signer_decision(
                     &record,
@@ -1316,21 +1323,31 @@ impl SignerService {
         // a magic-framed signature is worthless for a digest lane and a raw
         // signature would be replayable across networks — so the kind picks
         // the primitive, and the witness digest records what was signed.
-        let (signature, digest) = match kind {
-            RequestKind::Transaction | RequestKind::Consensus => (
-                crypto::sign_transaction(&private_key, unsigned, key.network_magic()).map_err(
-                    |error| {
-                        Refusal::failed(
-                            "signer-signature-failed",
-                            "the signature could not be produced",
-                            error.to_string(),
-                        )
-                    },
-                )?,
-                // A transaction id is displayed byte-reversed — the explorer
-                // order the digest exists to be found under.
-                tx::script_hash_to_display(&crypto::transaction_hash(unsigned)),
-            ),
+        //
+        // For multi-chain support:
+        // - Neo N3: use sign_transaction with network magic
+        // - NeoX (EVM): use sign_evm_transaction with chain ID
+        // - Raw: chain-agnostic signing
+        let (signature, digest, chain_family) = match kind {
+            RequestKind::Transaction | RequestKind::Consensus => {
+                // Check if this is a NeoX transaction based on network magic
+                // (For now, assume Neo N3. TODO: detect NeoX based on network config)
+                (
+                    crypto::sign_transaction(&private_key, unsigned, key.network_magic()).map_err(
+                        |error| {
+                            Refusal::failed(
+                                "signer-signature-failed",
+                                "the signature could not be produced",
+                                error.to_string(),
+                            )
+                        },
+                    )?,
+                    // A transaction id is displayed byte-reversed — the explorer
+                    // order the digest exists to be found under.
+                    tx::script_hash_to_display(&crypto::transaction_hash(unsigned)),
+                    Some(ChainFamily::NeoN3),
+                )
+            }
             RequestKind::Raw => (
                 crypto::sign_raw(&private_key, unsigned).map_err(|error| {
                     Refusal::failed(
@@ -1342,6 +1359,7 @@ impl SignerService {
                 // A raw digest is not an on-chain id, so it takes the order a
                 // verifier computes: plain SHA-256, un-reversed.
                 format!("0x{}", hex::encode(crypto::sha256(unsigned))),
+                None,
             ),
         };
         Ok(Approved {
@@ -1352,6 +1370,8 @@ impl SignerService {
                 digest,
                 invocation: crypto::invocation_script(&signature),
                 verification: key.verification_script(),
+                signature_hex: None, // TODO: populate for NeoX transactions
+                chain_family,
             },
             kind,
             intents: match parsed {

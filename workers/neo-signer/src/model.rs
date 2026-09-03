@@ -4,7 +4,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use crate::crypto;
-use crate::network::Network;
+use crate::network::{ChainFamily, Network};
 use crate::tx;
 use crate::tx::HASH160_LEN;
 
@@ -97,7 +97,9 @@ impl FromStr for ScriptHash {
 ///   half-configured combinations that would otherwise look like protection.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SignerPolicy {
-    /// Sign dBFT consensus payloads.
+    /// Which blockchain family this policy applies to.
+    pub chain_family: Option<ChainFamily>,
+    /// Sign dBFT consensus payloads (Neo N3 only).
     pub allow_consensus: bool,
     /// Sign NEP-17 `transfer` calls.
     pub allow_transfer: bool,
@@ -776,6 +778,7 @@ pub struct SignerRequestCompletion {
     pub verification: Vec<u8>,
     pub completed_at_unix: u64,
     pub audit_id: Option<i64>,
+    pub chain_family: Option<ChainFamily>,
 }
 
 /// Value that left a custody key, recorded so the rolling window survives a
@@ -816,6 +819,61 @@ pub struct SignerConsensusReservation {
     pub checkpoint: [u8; 32],
     pub recorded_at_unix: u64,
     pub audit_id: Option<i64>,
+}
+
+/// Multi-chain signing request payload.
+///
+/// Distinguishes between Neo N3 transactions and NeoX (EVM) transactions,
+/// allowing the policy engine to apply chain-specific rules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignPayload {
+    /// Neo N3 transaction or consensus payload
+    NeoN3 {
+        /// Serialized unsigned transaction or consensus payload
+        unsigned_data: Vec<u8>,
+        /// Network magic for replay protection
+        network_magic: u32,
+    },
+    /// NeoX (EVM) transaction
+    NeoX {
+        /// RLP-encoded transaction hash (pre-signed)
+        tx_hash: [u8; 32],
+        /// Chain ID for EIP-155 replay protection
+        chain_id: u64,
+        /// Optional decoded transaction details for policy evaluation
+        tx_details: Option<EvmTxDetails>,
+    },
+    /// Raw bytes (chain-agnostic, requires explicit policy approval)
+    Raw {
+        data: Vec<u8>,
+    },
+}
+
+/// Decoded EVM transaction details for policy evaluation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvmTxDetails {
+    pub to: Option<[u8; 20]>,
+    pub value: u128,
+    pub gas_limit: u64,
+    pub gas_price: u128,
+    pub nonce: u64,
+    pub data: Vec<u8>,
+}
+
+impl SignPayload {
+    /// Get the chain family for this payload.
+    pub fn chain_family(&self) -> Option<ChainFamily> {
+        match self {
+            SignPayload::NeoN3 { .. } => Some(ChainFamily::NeoN3),
+            SignPayload::NeoX { .. } => Some(ChainFamily::NeoX),
+            SignPayload::Raw { .. } => None,
+        }
+    }
+
+    /// Check if this is a raw signing request.
+    pub fn is_raw(&self) -> bool {
+        matches!(self, SignPayload::Raw { .. })
+    }
 }
 
 #[cfg(test)]

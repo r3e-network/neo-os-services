@@ -9,6 +9,41 @@ use std::{fmt, str::FromStr};
 
 use anyhow::Result;
 
+/// The blockchain family this signer operates on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChainFamily {
+    /// Neo N3 (UTXO-like model, dBFT consensus)
+    NeoN3,
+    /// NeoX (EVM-compatible chain)
+    NeoX,
+}
+
+impl ChainFamily {
+    pub const ALL: [Self; 2] = [Self::NeoN3, Self::NeoX];
+}
+
+impl fmt::Display for ChainFamily {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::NeoN3 => "neo-n3",
+            Self::NeoX => "neox",
+        })
+    }
+}
+
+impl FromStr for ChainFamily {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "neo-n3" | "n3" => Ok(Self::NeoN3),
+            "neox" | "x" => Ok(Self::NeoX),
+            other => anyhow::bail!("unsupported chain family: {other}"),
+        }
+    }
+}
+
+/// Network environment within a chain family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Network {
     Mainnet,
@@ -43,7 +78,7 @@ impl FromStr for Network {
     }
 }
 
-/// Chain identity. Crate-visible because signing is not the only code that
+/// Chain identity for Neo N3. Crate-visible because signing is not the only code that
 /// needs it: a witness preimage embeds the magic, so a second copy of this
 /// table in the custody path is how one app ends up with keys that sign for two
 /// different chains.
@@ -52,5 +87,59 @@ pub fn network_magic(network: Network) -> u32 {
         Network::Mainnet => 860_833_102,
         Network::Testnet => 894_710_606,
         Network::Private => 1_230_000,
+    }
+}
+
+/// Chain ID for NeoX (EVM-compatible chain).
+/// These are used in EIP-155 transaction signing.
+pub fn neox_chain_id(network: Network) -> u64 {
+    match network {
+        Network::Mainnet => 47763, // NeoX Mainnet
+        Network::Testnet => 12227331, // NeoX Testnet T4
+        Network::Private => 1337, // Local development
+    }
+}
+
+/// Complete chain specification including family and network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChainSpec {
+    pub family: ChainFamily,
+    pub network: Network,
+}
+
+impl ChainSpec {
+    pub const fn new(family: ChainFamily, network: Network) -> Self {
+        Self { family, network }
+    }
+
+    /// Get the appropriate chain identifier for signing.
+    /// For Neo N3, returns the network magic.
+    /// For NeoX, returns the chain ID.
+    pub fn chain_identifier(&self) -> u64 {
+        match self.family {
+            ChainFamily::NeoN3 => network_magic(self.network) as u64,
+            ChainFamily::NeoX => neox_chain_id(self.network),
+        }
+    }
+}
+
+impl fmt::Display for ChainSpec {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}/{}", self.family, self.network)
+    }
+}
+
+impl FromStr for ChainSpec {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = value.split('/').collect();
+        if parts.len() != 2 {
+            anyhow::bail!("expected format: <chain-family>/<network>");
+        }
+        Ok(Self {
+            family: parts[0].parse()?,
+            network: parts[1].parse()?,
+        })
     }
 }

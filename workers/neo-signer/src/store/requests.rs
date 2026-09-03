@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use super::*;
 use crate::model::{SignerAuditAction, SignerRequestCompletion};
+use crate::network::ChainFamily;
 
 /// Insert the completed public result through the transaction that owns its
 /// allowed audit row and value reservations.
@@ -13,9 +14,9 @@ pub(super) fn insert_signer_request(
     connection.execute(
         "INSERT INTO signer_requests (
             caller_id, request_id, key_id, action, request_digest, result_digest,
-            script_hash, address, invocation, verification, completed_at_unix, audit_id
+            script_hash, address, invocation, verification, completed_at_unix, audit_id, chain_family
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             &completion.caller_id,
             &completion.request_id,
@@ -29,6 +30,7 @@ pub(super) fn insert_signer_request(
             &completion.verification,
             completion.completed_at_unix,
             audit_id,
+            completion.chain_family.as_ref().map(|cf| cf.to_string()),
         ],
     )?;
     Ok(())
@@ -46,7 +48,7 @@ impl Store {
             .query_row(
                 "SELECT caller_id, request_id, key_id, action, request_digest,
                         result_digest, script_hash, address, invocation, verification,
-                        completed_at_unix, audit_id
+                        completed_at_unix, audit_id, chain_family
                  FROM signer_requests
                  WHERE caller_id = ?1 AND request_id = ?2",
                 params![caller_id, request_id],
@@ -55,6 +57,18 @@ impl Store {
                     let request_digest = fixed::<32>(4, row.get(4)?, "request digest")?;
                     let script_hash =
                         ScriptHash::from_wire(fixed::<20>(6, row.get(6)?, "script hash")?);
+                    let chain_family_str: Option<String> = row.get(12)?;
+                    let chain_family = chain_family_str
+                        .as_deref()
+                        .map(|s| ChainFamily::from_str(s))
+                        .transpose()
+                        .map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                12,
+                                rusqlite::types::Type::Text,
+                                error.into(),
+                            )
+                        })?;
                     Ok(SignerRequestCompletion {
                         caller_id: row.get(0)?,
                         request_id: row.get(1)?,
@@ -74,6 +88,7 @@ impl Store {
                         verification: row.get(9)?,
                         completed_at_unix: row.get(10)?,
                         audit_id: row.get(11)?,
+                        chain_family,
                     })
                 },
             )

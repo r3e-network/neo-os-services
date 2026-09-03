@@ -1,13 +1,17 @@
 [workspace]
 resolver = "2"
-members = ["workers/neo-signer", "workers/nitro-enclave-host", "crates/morpheus-core", "crates/nitro-attest", "crates/morpheus-compute", "crates/nitro-init"]
+members = [
+    "workers/neo-signer",
+    "workers/nitro-enclave-host",
+    "crates/morpheus-core",
+    "crates/morpheus-compute",
+    "crates/nitro-attest",
+    "crates/nitro-init", "workers/morpheus-relayer-rs",
+]
 
 # Every member keeps `workers/` or `crates/` positioning without a package.json,
-# so npm's `workers/*` glob and the JS lint/format gates keep skipping them (the
-# full rationale lives in workers/neo-signer/Cargo.toml). Membership shares the
-# lockfile, the CI gates and the target dir — it must not introduce path
-# dependencies between members: the custody service and the consensus core stay
-# independently auditable.
+# so npm's `workers/*` glob and the JS lint/format gates keep skipping them.
+# Membership shares the lockfile, the CI gates and the target dir.
 
 # boa_engine 0.21 pins `icu_normalizer = "~2.0.0"` while icu_collator 2.3 (the
 # stableStringify 'en' collation sort) needs `~2.3.0`; cargo cannot build two

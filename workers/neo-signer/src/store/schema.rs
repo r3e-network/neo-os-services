@@ -342,5 +342,13 @@ pub(super) fn create_signer_indexes(connection: &Connection) -> Result<()> {
          ON signer_workload_nonces (expires_at_unix)",
         [],
     )?;
+    // `chain_family` arrived with multi-chain support. Default to NULL (Neo N3)
+    // for backward compatibility - existing requests are Neo N3.
+    if !has_column(connection, "signer_requests", "chain_family")? {
+        connection.execute(
+            "ALTER TABLE signer_requests ADD COLUMN chain_family TEXT",
+            [],
+        )?;
+    }
     Ok(())
 }

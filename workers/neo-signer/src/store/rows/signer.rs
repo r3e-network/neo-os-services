@@ -113,6 +113,7 @@ pub(in crate::store) fn signer_policy_from_row(
         max_network_fee: row.get(18)?,
         max_signatures,
         asset_limits: asset_limit_list(21, &row.get::<_, String>(21)?)?,
+        chain_family: None, // Default to Neo N3 for backward compatibility
     })
 }
 

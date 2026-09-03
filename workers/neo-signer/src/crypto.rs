@@ -14,6 +14,10 @@
 //! `SYSCALL System.Crypto.CheckSig`) paired with a 66-byte invocation script
 //! `0c 40 <64B r||s>`. The account script hash is `HASH160(verification_script)`.
 //!
+//! NeoX (EVM) custody uses secp256k1 ECDSA, following Ethereum's signing
+//! conventions. Transactions are RLP-encoded and signed with EIP-155 replay
+//! protection (chain ID embedded in the signature's v value).
+//!
 //! Every shape and preimage here is pinned by real mainnet transactions in
 //! `tests/unit/crypto.rs`, not by a round-trip against this same module.
 //!
@@ -26,10 +30,13 @@ use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use ripemd::Ripemd160;
 use sha2::{Digest, Sha256};
+use sha3::Keccak256;
 use zeroize::Zeroizing;
 
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
+
+use k256::ecdsa::SigningKey as K256SigningKey;
 
 type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
@@ -382,6 +389,97 @@ pub fn encrypt_nep2(private_key: &[u8; 32], passphrase: &str) -> Result<String, 
     payload.extend_from_slice(&address_hash);
     payload.extend_from_slice(encrypted);
     Ok(base58check_encode(&payload))
+}
+
+// ============================================================================
+// EVM (NeoX) Cryptographic Functions
+// ============================================================================
+
+/// Keccak256 hash (used by Ethereum/NeoX).
+pub fn keccak256(bytes: &[u8]) -> Vec<u8> {
+    Keccak256::digest(bytes).to_vec()
+}
+
+/// Derive the uncompressed secp256k1 public key (65 bytes) from a 32-byte private key.
+/// Returns format: [0x04, x (32 bytes), y (32 bytes)]
+pub fn evm_public_key_from_private(private_key: &[u8; 32]) -> Result<[u8; 65], SignerCryptoError> {
+    let sk = K256SigningKey::from_slice(private_key)
+        .map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
+    let vk = sk.verifying_key();
+    let point = vk.to_encoded_point(false); // uncompressed
+    let bytes = point.as_bytes();
+    let mut out = [0u8; 65];
+    out.copy_from_slice(bytes);
+    Ok(out)
+}
+
+/// Derive Ethereum address from secp256k1 public key.
+/// Address = last 20 bytes of keccak256(uncompressed_pubkey[1..65])
+pub fn evm_address_from_public_key(public_key: &[u8; 65]) -> [u8; 20] {
+    // Skip the 0x04 prefix byte, hash the rest
+    let hash = keccak256(&public_key[1..]);
+    let mut address = [0u8; 20];
+    address.copy_from_slice(&hash[12..32]);
+    address
+}
+
+/// Derive Ethereum address from private key.
+pub fn evm_address_from_private(private_key: &[u8; 32]) -> Result<[u8; 20], SignerCryptoError> {
+    let public_key = evm_public_key_from_private(private_key)?;
+    Ok(evm_address_from_public_key(&public_key))
+}
+
+/// EVM transaction signature with EIP-155 replay protection.
+///
+/// The signature includes:
+/// - r: 32 bytes
+/// - s: 32 bytes
+/// - v: 1 byte (recovery id + chain_id encoding for EIP-155)
+///
+/// Returns (r, s, v) as a 65-byte array.
+pub fn sign_evm_transaction(
+    private_key: &[u8; 32],
+    unsigned_tx_hash: &[u8; 32],
+    chain_id: u64,
+) -> Result<[u8; 65], SignerCryptoError> {
+    let sk = K256SigningKey::from_slice(private_key)
+        .map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
+
+    // Sign the transaction hash
+    let (signature, recovery_id) = sk
+        .sign_prehash_recoverable(unsigned_tx_hash)
+        .map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
+
+    let sig_bytes = signature.to_bytes();
+    let mut r = [0u8; 32];
+    let mut s = [0u8; 32];
+    r.copy_from_slice(&sig_bytes[..32]);
+    s.copy_from_slice(&sig_bytes[32..]);
+
+    // EIP-155: v = recovery_id + 35 + 2 * chain_id
+    // For non-EIP155 (legacy): v = recovery_id + 27
+    let v = if chain_id > 0 {
+        recovery_id.to_byte() as u64 + 35 + 2 * chain_id
+    } else {
+        recovery_id.to_byte() as u64 + 27
+    };
+
+    // Pack into 65-byte signature: r || s || v
+    let mut result = [0u8; 65];
+    result[..32].copy_from_slice(&r);
+    result[32..64].copy_from_slice(&s);
+    result[64] = v as u8;
+
+    Ok(result)
+}
+
+/// Generate a fresh secp256k1 private key for EVM chains.
+pub fn generate_evm_private_key() -> Zeroizing<[u8; 32]> {
+    use aes_gcm::aead::OsRng;
+    let key = K256SigningKey::random(&mut OsRng);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(key.to_bytes().as_slice());
+    Zeroizing::new(out)
 }
 
 #[cfg(test)]

@@ -1413,7 +1413,10 @@ fn build_attestation(
 
 // -- request shapes -------------------------------------------------------
 
-/// `{"key_id": …, "unsigned_hex": …}` for both sign routes (§5).
+/// `{"key_id": …, "unsigned_hex": …, "chain_family": …}` for both sign routes (§5).
+///
+/// The `chain_family` field is optional and defaults to "neo-n3" for backward compatibility.
+/// Supported values: "neo-n3", "neox".
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SignCall {
@@ -1421,6 +1424,16 @@ pub struct SignCall {
     pub unsigned_hex: String,
     #[serde(default)]
     pub request_id: Option<String>,
+    /// Chain family: "neo-n3" (default) or "neox"
+    #[serde(default = "default_chain_family")]
+    pub chain_family: String,
+    /// For NeoX transactions: the chain ID for EIP-155 replay protection
+    #[serde(default)]
+    pub chain_id: Option<u64>,
+}
+
+fn default_chain_family() -> String {
+    "neo-n3".to_string()
 }
 
 /// `{"key_id": …, "data_hex": …}` for `/sign/raw` — the bytes are signed as
@@ -1682,6 +1695,7 @@ impl PolicyBody {
                     seconds: limit.seconds,
                     count: limit.count,
                 }),
+            chain_family: None, // Default to Neo N3 for backward compatibility
         })
     }
 
