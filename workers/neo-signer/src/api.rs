@@ -84,7 +84,7 @@ use crate::{
         AssetLimit, CallerCapability, ContractMethod, KeyGrant, ScriptHash, SignatureRateLimit,
         SignerAuditAction, SignerAuditOutcome, SignerAuditRecord, SignerPolicy, WindowLimit,
     },
-    network::Network,
+    network::{ChainFamily, Network},
     provision::{self, ProvisionBody, ProvisionEnv, ProvisionGate},
     service::{
         CallerInfo, KeyPublicInfo, Outcome, SignedWitness, SignerService, WorkloadCallerSpec,
@@ -1639,6 +1639,18 @@ pub struct PolicyBody {
     pub max_network_fee: Option<String>,
     /// Key-wide rolling signature ceiling across all three signing routes.
     pub max_signatures: Option<SignatureRateBody>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evm_max_gas_price: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evm_max_gas_limit: Option<u64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub evm_method_whitelist: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub evm_method_blacklist: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evm_chain_id: Option<u64>,
 }
 
 /// One exact contract/method pair in a method-level allow or deny list.
@@ -1724,12 +1736,20 @@ impl PolicyBody {
                     seconds: limit.seconds,
                     count: limit.count,
                 }),
-            chain_family: None, // Default to Neo N3 for backward compatibility
-            evm_max_gas_price: None,
-            evm_max_gas_limit: None,
-            evm_method_whitelist: Vec::new(),
-            evm_method_blacklist: Vec::new(),
-            evm_chain_id: None,
+            chain_family: match self.chain_family.as_deref() {
+                Some("neo_n3") | Some("NeoN3") => Some(ChainFamily::NeoN3),
+                Some("neox") | Some("NeoX") => Some(ChainFamily::NeoX),
+                Some(_) => return Err("invalid chain_family: must be 'neo_n3' or 'neox'"),
+                None => None,
+            },
+            evm_max_gas_price: match &self.evm_max_gas_price {
+                Some(s) => Some(s.parse::<u128>().map_err(|_| "invalid evm_max_gas_price")?),
+                None => None,
+            },
+            evm_max_gas_limit: self.evm_max_gas_limit,
+            evm_method_whitelist: self.evm_method_whitelist.clone(),
+            evm_method_blacklist: self.evm_method_blacklist.clone(),
+            evm_chain_id: self.evm_chain_id,
         })
     }
 
@@ -1761,6 +1781,15 @@ impl PolicyBody {
                 seconds: limit.seconds,
                 count: limit.count,
             }),
+            chain_family: policy.chain_family.map(|cf| match cf {
+                ChainFamily::NeoN3 => "neo_n3".to_string(),
+                ChainFamily::NeoX => "neox".to_string(),
+            }),
+            evm_max_gas_price: policy.evm_max_gas_price.map(|p| p.to_string()),
+            evm_max_gas_limit: policy.evm_max_gas_limit,
+            evm_method_whitelist: policy.evm_method_whitelist.clone(),
+            evm_method_blacklist: policy.evm_method_blacklist.clone(),
+            evm_chain_id: policy.evm_chain_id,
         }
     }
 }
