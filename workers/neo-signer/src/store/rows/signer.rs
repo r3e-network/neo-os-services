@@ -114,6 +114,11 @@ pub(in crate::store) fn signer_policy_from_row(
         max_signatures,
         asset_limits: asset_limit_list(21, &row.get::<_, String>(21)?)?,
         chain_family: None, // Default to Neo N3 for backward compatibility
+        evm_max_gas_price: None,
+        evm_max_gas_limit: None,
+        evm_method_whitelist: Vec::new(),
+        evm_method_blacklist: Vec::new(),
+        evm_chain_id: None,
     })
 }
 

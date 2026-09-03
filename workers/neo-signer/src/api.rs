@@ -1696,6 +1696,11 @@ impl PolicyBody {
                     count: limit.count,
                 }),
             chain_family: None, // Default to Neo N3 for backward compatibility
+            evm_max_gas_price: None,
+            evm_max_gas_limit: None,
+            evm_method_whitelist: Vec::new(),
+            evm_method_blacklist: Vec::new(),
+            evm_chain_id: None,
         })
     }
 

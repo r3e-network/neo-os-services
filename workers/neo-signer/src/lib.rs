@@ -12,6 +12,7 @@ pub mod attested_identity;
 pub mod audit;
 pub mod auth;
 pub mod crypto;
+pub mod evm_tx;
 pub mod model;
 pub mod network;
 pub mod policy;

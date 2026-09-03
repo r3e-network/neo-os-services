@@ -1291,7 +1291,7 @@ impl SignerService {
         let request = parsed.request();
         let intents = match request {
             SigningRequest::Transaction { intents, .. } => intents,
-            SigningRequest::Consensus { .. } | SigningRequest::Raw => &[],
+            SigningRequest::Consensus { .. } | SigningRequest::Raw | SigningRequest::EvmTransaction { .. } => &[],
         };
         match policy::evaluate(&boundary, account, &request, &spent) {
             policy::Verdict::Allow => {}

@@ -155,6 +155,17 @@ pub struct SignerPolicy {
     /// This applies across transaction, consensus, and raw lanes so splitting
     /// traffic between routes cannot bypass the ceiling.
     pub max_signatures: Option<SignatureRateLimit>,
+    /// Maximum gas price for EVM transactions (in wei).
+    pub evm_max_gas_price: Option<u128>,
+    /// Maximum gas limit for EVM transactions.
+    pub evm_max_gas_limit: Option<u64>,
+    /// EVM method selectors (4-byte hex strings) that may be called. Empty means
+    /// any method not denied below.
+    pub evm_method_whitelist: Vec<String>,
+    /// EVM method selectors that may never be called; wins over the whitelist.
+    pub evm_method_blacklist: Vec<String>,
+    /// Expected chain ID for EVM transactions. None means any chain ID is allowed.
+    pub evm_chain_id: Option<u64>,
 }
 
 /// One exact contract and method pair in a method-level boundary.

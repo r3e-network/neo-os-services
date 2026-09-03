@@ -28,6 +28,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use crate::evm_tx::{EvmIntent, UnsignedEvmTransaction};
 use crate::model::{ContractMethod, ScriptHash, SignerPolicy};
 use crate::tx::{ConsensusPayload, Intent, Scope, UnsignedTransaction, HASH160_LEN};
 
@@ -40,7 +41,7 @@ pub const CONSENSUS_CATEGORY: &str = "dBFT";
 /// What a caller is asking this key to sign, already decoded.
 #[derive(Debug, Clone, Copy)]
 pub enum SigningRequest<'a> {
-    /// A transaction; `intents` must be the intents [`UnsignedTransaction`]
+    /// A Neo N3 transaction; `intents` must be the intents [`UnsignedTransaction`]
     /// decoded from it, so the policy decides on the same bytes the signature
     /// will cover.
     Transaction {
@@ -48,6 +49,13 @@ pub enum SigningRequest<'a> {
         transaction: &'a UnsignedTransaction,
         /// Its calls, folded into transfers and calls.
         intents: &'a [Intent],
+    },
+    /// An EVM (NeoX) transaction.
+    EvmTransaction {
+        /// The decoded, unsigned EVM transaction.
+        transaction: &'a UnsignedEvmTransaction,
+        /// What the transaction intends to do.
+        intent: &'a EvmIntent,
     },
     /// A consensus (extensible) payload.
     Consensus {
@@ -197,6 +205,16 @@ pub enum DenyReason {
     AssetSingleAmountExceeded,
     /// The token contract has exhausted one of its rolling value periods.
     AssetWindowAmountExceeded,
+    /// EVM transaction gas price exceeds policy limit.
+    EvmGasPriceExceeded,
+    /// EVM transaction gas limit exceeds policy limit.
+    EvmGasLimitExceeded,
+    /// EVM contract method selector is blacklisted.
+    EvmMethodBlacklisted,
+    /// EVM contract method selector not in whitelist.
+    EvmMethodNotWhitelisted,
+    /// EVM chain ID doesn't match expected value.
+    EvmInvalidChainId,
 }
 
 impl DenyReason {
@@ -230,6 +248,11 @@ impl DenyReason {
             DenyReason::SignatureRateExceeded => "signature-rate-exceeded",
             DenyReason::AssetSingleAmountExceeded => "asset-single-amount-exceeded",
             DenyReason::AssetWindowAmountExceeded => "asset-window-amount-exceeded",
+            DenyReason::EvmGasPriceExceeded => "evm-gas-price-exceeded",
+            DenyReason::EvmGasLimitExceeded => "evm-gas-limit-exceeded",
+            DenyReason::EvmMethodBlacklisted => "evm-method-blacklisted",
+            DenyReason::EvmMethodNotWhitelisted => "evm-method-not-whitelisted",
+            DenyReason::EvmInvalidChainId => "evm-invalid-chain-id",
         }
     }
 }
@@ -278,6 +301,13 @@ impl fmt::Display for DenyReason {
             DenyReason::AssetWindowAmountExceeded => {
                 "the transfer exceeds an asset-specific rolling ceiling"
             }
+            DenyReason::EvmGasPriceExceeded => "the EVM transaction gas price exceeds the ceiling",
+            DenyReason::EvmGasLimitExceeded => "the EVM transaction gas limit exceeds the ceiling",
+            DenyReason::EvmMethodBlacklisted => "the EVM contract method selector is blacklisted",
+            DenyReason::EvmMethodNotWhitelisted => {
+                "the EVM contract method selector is not whitelisted"
+            }
+            DenyReason::EvmInvalidChainId => "the EVM transaction chain ID doesn't match expected value",
         };
         f.write_str(message)
     }
@@ -379,6 +409,10 @@ pub fn evaluate(
             transaction,
             intents,
         } => evaluate_transaction(policy, key_account, transaction, intents, spent),
+        SigningRequest::EvmTransaction {
+            transaction,
+            intent,
+        } => evaluate_evm_transaction(policy, key_account, transaction, intent, spent),
     }
 }
 
@@ -675,6 +709,210 @@ fn check_contract(policy: &SignerPolicy, contract: ScriptHash, method: &str) -> 
         ));
     }
     None
+}
+
+fn evaluate_evm_transaction(
+    policy: &SignerPolicy,
+    _key_account: ScriptHash,
+    transaction: &UnsignedEvmTransaction,
+    intent: &EvmIntent,
+    spent: &WindowSpend,
+) -> Verdict {
+    // Check gas price limit
+    if let Some(max_gas_price) = policy.evm_max_gas_price {
+        if transaction.max_fee_per_gas > max_gas_price {
+            return deny(
+                DenyReason::EvmGasPriceExceeded,
+                format!(
+                    "gas price {} exceeds limit {}",
+                    transaction.max_fee_per_gas, max_gas_price
+                ),
+            );
+        }
+    }
+
+    // Check gas limit
+    if let Some(max_gas_limit) = policy.evm_max_gas_limit {
+        if transaction.gas_limit > max_gas_limit {
+            return deny(
+                DenyReason::EvmGasLimitExceeded,
+                format!(
+                    "gas limit {} exceeds limit {}",
+                    transaction.gas_limit, max_gas_limit
+                ),
+            );
+        }
+    }
+
+    // Evaluate intent-specific checks
+    match intent {
+        EvmIntent::NativeTransfer { to, value } => {
+            if !policy.allow_transfer {
+                return deny(
+                    DenyReason::TransferForbidden,
+                    "EVM native transfers are not allowed".to_string(),
+                );
+            }
+            // Check recipient whitelist/blacklist
+            let to_hash = ScriptHash(*to);
+            if let Some(verdict) = check_recipient(policy, to_hash) {
+                return verdict;
+            }
+            // Check amount limits
+            let amount = u256_to_i128(value);
+            if let Some(verdict) = check_transfer_amount(policy, amount, spent, to_hash) {
+                return verdict;
+            }
+            Verdict::Allow
+        }
+        EvmIntent::Erc20Transfer { token, to, amount } => {
+            if !policy.allow_transfer {
+                return deny(
+                    DenyReason::TransferForbidden,
+                    "ERC-20 transfers are not allowed".to_string(),
+                );
+            }
+            // Check token contract whitelist/blacklist
+            let token_hash = ScriptHash(*token);
+            if policy.asset_blacklist.contains(&token_hash) {
+                return deny(
+                    DenyReason::AssetBlacklisted,
+                    format!("ERC-20 token contract {} is blacklisted", token_hash),
+                );
+            }
+            if !policy.asset_whitelist.is_empty()
+                && !policy.asset_whitelist.contains(&token_hash)
+            {
+                return deny(
+                    DenyReason::AssetNotWhitelisted,
+                    format!(
+                        "ERC-20 token contract {} is not in the asset whitelist",
+                        token_hash
+                    ),
+                );
+            }
+            // Check recipient
+            let to_hash = ScriptHash(*to);
+            if let Some(verdict) = check_recipient(policy, to_hash) {
+                return verdict;
+            }
+            // Check amount limits
+            let transfer_amount = u256_to_i128(amount);
+            if let Some(verdict) = check_transfer_amount(policy, transfer_amount, spent, to_hash) {
+                return verdict;
+            }
+            Verdict::Allow
+        }
+        EvmIntent::ContractCall { to, data, .. } => {
+            if !policy.allow_contract_call {
+                return deny(
+                    DenyReason::ContractCallForbidden,
+                    "EVM contract calls are not allowed".to_string(),
+                );
+            }
+            // Check contract whitelist/blacklist
+            let contract_hash = ScriptHash(*to);
+            if policy.contract_blacklist.contains(&contract_hash) {
+                return deny(
+                    DenyReason::ContractBlacklisted,
+                    format!("EVM contract {} is blacklisted", contract_hash),
+                );
+            }
+            if !policy.contract_whitelist.is_empty()
+                && !policy.contract_whitelist.contains(&contract_hash)
+            {
+                return deny(
+                    DenyReason::ContractNotWhitelisted,
+                    format!("EVM contract {} is not in the contract whitelist", contract_hash),
+                );
+            }
+            // Check method selector (first 4 bytes) if data exists
+            if data.len() >= 4 {
+                let method_selector = hex::encode(&data[0..4]);
+                if policy.evm_method_blacklist.contains(&method_selector) {
+                    return deny(
+                        DenyReason::EvmMethodBlacklisted,
+                        format!("EVM method selector 0x{} is blacklisted", method_selector),
+                    );
+                }
+                if !policy.evm_method_whitelist.is_empty()
+                    && !policy.evm_method_whitelist.contains(&method_selector)
+                {
+                    return deny(
+                        DenyReason::EvmMethodNotWhitelisted,
+                        format!(
+                            "EVM method selector 0x{} is not in the method whitelist",
+                            method_selector
+                        ),
+                    );
+                }
+            }
+            Verdict::Allow
+        }
+    }
+}
+
+fn check_recipient(policy: &SignerPolicy, recipient: ScriptHash) -> Option<Verdict> {
+    if policy.transfer_to_blacklist.contains(&recipient) {
+        return Some(deny(
+            DenyReason::RecipientBlacklisted,
+            format!("recipient {} is blacklisted", recipient),
+        ));
+    }
+    if !policy.transfer_to_whitelist.is_empty() && !policy.transfer_to_whitelist.contains(&recipient) {
+        return Some(deny(
+            DenyReason::RecipientNotWhitelisted,
+            format!("recipient {} is not in the recipient whitelist", recipient),
+        ));
+    }
+    None
+}
+
+fn check_transfer_amount(
+    policy: &SignerPolicy,
+    amount: i128,
+    spent: &WindowSpend,
+    _recipient: ScriptHash,
+) -> Option<Verdict> {
+    if amount < 0 {
+        return Some(deny(
+            DenyReason::NegativeAmount,
+            format!("transfer amount {} is negative", amount),
+        ));
+    }
+    // Check single transfer limit
+    if let Some(max_single) = policy.max_single_amount {
+        if amount > max_single {
+            return Some(deny(
+                DenyReason::SingleAmountExceeded,
+                format!("transfer amount {} exceeds single limit {}", amount, max_single),
+            ));
+        }
+    }
+    // Check window limit (simplified - would need asset-specific tracking)
+    if let Some(window_limit) = &policy.window_limit {
+        // For EVM native transfers, we use a fixed "native" asset identifier
+        let native_asset = ScriptHash([0u8; 20]);
+        let already_spent = spent.amount(native_asset);
+        let new_total = already_spent.saturating_add(amount);
+        if new_total > window_limit.max_amount {
+            return Some(deny(
+                DenyReason::WindowAmountExceeded,
+                format!(
+                    "transfer {} + prior {} = {} exceeds window limit {}",
+                    amount, already_spent, new_total, window_limit.max_amount
+                ),
+            ));
+        }
+    }
+    None
+}
+
+fn u256_to_i128(bytes: &[u8; 32]) -> i128 {
+    // Convert u256 to i128, taking the lower 16 bytes
+    let mut buf = [0u8; 16];
+    buf.copy_from_slice(&bytes[16..32]);
+    i128::from_be_bytes(buf)
 }
 
 fn deny(reason: DenyReason, detail: impl Into<String>) -> Verdict {
