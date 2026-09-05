@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import {
   EXIT_DELIVERY_FAILED,
@@ -14,6 +15,52 @@ import {
   postAlert,
   readFeedStatusSnapshot,
 } from './alert-notify.mjs';
+
+test('alert payload bounds logs and redacts credentials before local or remote delivery', () => {
+  const payload = buildAlertPayload('worker.service', {
+    recent_log: Array.from({ length: 25 }, () => 'authorization=hidden api_key=private-value {"api_key":"json-secret"} https://hooks.example/secret-token?key=hidden Bearer tiny'),
+  }, { problems: ['token=private-value'], ok: false });
+  assert.equal(payload.recent_log.length, 20);
+  const encoded = JSON.stringify(payload);
+  for (const secret of ['private-value', 'secret-token', 'hidden', 'Bearer tiny', 'json-secret']) assert.equal(encoded.includes(secret), false);
+  assert.match(encoded, /REDACTED/);
+});
+
+test('failed webhook logs never include capability paths, query credentials or transport error text', async () => {
+  const logs = [];
+  const original = console.error;
+  console.error = (...args) => logs.push(args.join(' '));
+  try {
+    assert.equal(await postAlert('https://hooks.example/private-hook?secret=token', {}, {
+      attempts: 1, fetchImpl: async () => { throw new Error('https://hooks.example/private-hook?secret=token'); },
+    }), false);
+    assert.match(logs.join(' '), /https:\/\/hooks.example/);
+    assert.doesNotMatch(logs.join(' '), /private-hook|secret=token/);
+  } finally { console.error = original; }
+});
+
+test('local test receiver verifies alert delivery and redirect refusal without any external notification', async () => {
+  const requests = [];
+  const server = http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requests.push({ url: req.url, auth: req.headers.authorization, body: Buffer.concat(chunks).toString() });
+    if (req.url === '/redirect') { res.writeHead(307, { location: '/must-not-receive' }); res.end(); }
+    else { res.writeHead(204); res.end(); }
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  try {
+    assert.equal(await postAlert(origin + '/receiver', { text: 'test-only' }, { token: 'fixture-token', attempts: 1 }), true);
+    assert.equal(await postAlert(origin + '/redirect', { text: 'test-only' }, { token: 'fixture-token', attempts: 1 }), false);
+    assert.deepEqual(requests.map((req) => req.url), ['/receiver', '/redirect']);
+    assert.equal(requests[0].auth, 'Bearer fixture-token');
+    assert.deepEqual(JSON.parse(requests[0].body), { text: 'test-only' });
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
 
 // These cover the second half of the 2026-07/08 feed outage: the units already
 // exited non-zero, but no OnFailure= target existed, so the exit code went

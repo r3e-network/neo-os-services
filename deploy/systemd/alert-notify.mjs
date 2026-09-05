@@ -98,20 +98,32 @@ export function readFeedStatusSnapshot(
 }
 
 export function buildAlertPayload(unit, context = {}, snapshot = null, { source, now } = {}) {
-  const problems = snapshot && snapshot.problems.length ? snapshot.problems : [];
+  const scrub = (value) => String(value)
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 [REDACTED]')
+    .replace(/\b[KL][1-9A-HJ-NP-Za-km-z]{50,51}\b/g, '[REDACTED-WIF]')
+    .replace(/https?:\/\/[^\s"'<>]+/gi, (url) => {
+      try { return new URL(url).origin + '/[redacted-path]'; } catch { return '[redacted-url]'; }
+    })
+    .replace(/(["']?(?:api[_-]?key|private[_-]?key|secret|token|password|authorization|mnemonic|seed|passphrase)["']?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1[REDACTED]')
+    .slice(0, 1000);
+  const problems = Array.isArray(snapshot?.problems) ? snapshot.problems.slice(0, 20).map(scrub) : [];
+  const scalar = (value) => value == null ? null : typeof value === 'number' && Number.isFinite(value) ? value : scrub(value);
   const summary = problems.length ? problems.join(' | ') : `unit failed (${unit})`;
   return {
     severity: 'critical',
-    source: source || process.env.ALERT_SOURCE || hostname(),
-    unit,
-    title: `[NeoOS oracle] ${unit} FAILED`,
-    text: `[NeoOS oracle] ${unit} FAILED: ${summary}`,
+    source: scrub(source || process.env.ALERT_SOURCE || hostname()),
+    unit: scrub(unit),
+    title: `[NeoOS oracle] ${scrub(unit)} FAILED`,
+    text: `[NeoOS oracle] ${scrub(unit)} FAILED: ${summary}`,
     timestamp: (now ? new Date(now) : new Date()).toISOString(),
-    exec_main_status: context.ExecMainStatus ?? null,
-    result: context.Result ?? null,
+    exec_main_status: scalar(context.ExecMainStatus),
+    result: scalar(context.Result),
     problems,
-    feed_status: snapshot,
-    recent_log: context.recent_log || [],
+    feed_status: snapshot ? {
+      ts: scalar(snapshot.ts), ok: snapshot.ok == null ? null : snapshot.ok === true,
+      updater_gas: scalar(snapshot.updater_gas), feed_age_min: scalar(snapshot.feed_age_min), problems,
+    } : null,
+    recent_log: Array.isArray(context.recent_log) ? context.recent_log.slice(-20).map(scrub) : [],
   };
 }
 
@@ -132,15 +144,23 @@ export async function postAlert(
         headers,
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(timeoutMs),
+        redirect: 'error',
       });
+      // Do not leave unconsumed responses occupying connections across retries.
+      void response.body?.cancel().catch(() => {});
       if (response.ok) return true;
       lastError = new Error(`HTTP ${response.status}`);
     } catch (error) {
       lastError = error;
     }
   }
-  if (lastError)
-    console.error(`alert delivery to ${url} failed: ${lastError.message || lastError}`);
+  if (lastError) {
+    // Webhook paths/query strings are often credentials (Slack/Discord etc.).
+    // Transport errors may repeat them; report only a safe destination origin.
+    let destination = 'invalid target';
+    try { destination = new URL(url).origin; } catch { /* Keep generic label. */ }
+    console.error(`alert delivery to ${destination} failed: delivery unavailable`);
+  }
   return false;
 }
 
