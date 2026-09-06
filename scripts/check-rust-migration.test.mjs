@@ -3,9 +3,17 @@ import test from 'node:test';
 
 import {
   auditRustMigration,
+  cargoWorkspaceMembers,
   dockerInstructions,
   documentationCoverage,
 } from './check-rust-migration.mjs';
+
+test('every workspace member is visible to measured Docker build resolution', () => {
+  const members = cargoWorkspaceMembers();
+  assert.ok(members.includes('workers/neo-signer'));
+  assert.ok(members.includes('workers/neo-os-relayer'));
+  assert.ok(members.includes('crates/neo-os-service-runtime'));
+});
 
 test('docker source comments cannot trigger the measured-runtime gate', () => {
   const instructions = dockerInstructions(`
@@ -20,8 +28,8 @@ test('docker source comments cannot trigger the measured-runtime gate', () => {
 
 test('the repository satisfies its documented Rust ownership boundary', () => {
   assert.deepEqual(documentationCoverage(), {
-    documented: 4,
-    total: 4,
+    documented: 6,
+    total: 6,
     percentage: 100,
     missing: [],
   });

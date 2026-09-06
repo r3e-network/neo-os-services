@@ -1,7 +1,9 @@
 [Unit]
-Description=Morpheus DataFeed pusher - Neo N3 (8787-signed)
+Description=Morpheus Node DataFeed pusher - Neo N3 (COMPATIBILITY ONLY)
 After=network-online.target morpheus-nitro-signer.service
 Wants=network-online.target
+ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_FEED_PUSHER_COMPAT
+Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
 # A pusher that stops writing is the outage; route its exit code to a human.
 OnFailure=morpheus-alert@%n.service
 

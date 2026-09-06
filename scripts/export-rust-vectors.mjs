@@ -45,9 +45,7 @@ import {
   buildWorkerPayload,
 } from '../workers/morpheus-relayer/src/router.js';
 import { buildNeoXDigest, resolveResultBytesHex } from '../workers/morpheus-relayer/src/neox.js';
-import {
-  computeRetryDelayMs,
-} from '../workers/morpheus-relayer/src/lib/retry.js';
+import { computeRetryDelayMs } from '../workers/morpheus-relayer/src/lib/retry.js';
 import {
   isSecretName,
   redactSecretValues,
@@ -70,6 +68,7 @@ import {
   env,
   envNetworkScoped,
 } from '../workers/morpheus-relayer/src/config.js';
+import { sc, tx, u, wallet } from '@cityofzion/neon-js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const vectorsDir = path.join(repoRoot, 'crates', 'neo-os-core', 'tests', 'vectors');
@@ -963,16 +962,11 @@ function envForNetworkFamily() {
     });
   };
 
-  runCase(
-    'alias chain first set wins',
-    { A_PRIMARY: 'p', A_SECONDARY: 's' },
-    null,
-    [
-      { kind: 'env', names: ['A_PRIMARY', 'A_SECONDARY'] },
-      { kind: 'env', names: ['A_SECONDARY', 'A_PRIMARY'] },
-      { kind: 'env', names: ['A_MISSING'] },
-    ]
-  );
+  runCase('alias chain first set wins', { A_PRIMARY: 'p', A_SECONDARY: 's' }, null, [
+    { kind: 'env', names: ['A_PRIMARY', 'A_SECONDARY'] },
+    { kind: 'env', names: ['A_SECONDARY', 'A_PRIMARY'] },
+    { kind: 'env', names: ['A_MISSING'] },
+  ]);
   runCase(
     'runtime config fallback and coercion',
     {},
@@ -987,12 +981,9 @@ function envForNetworkFamily() {
       { kind: 'env', names: ['MISSING_BOTH'] },
     ]
   );
-  runCase(
-    'process env beats runtime config',
-    { K: 'direct' },
-    { K: 'from-runtime' },
-    [{ kind: 'env', names: ['K'] }]
-  );
+  runCase('process env beats runtime config', { K: 'direct' }, { K: 'from-runtime' }, [
+    { kind: 'env', names: ['K'] },
+  ]);
   runCase(
     'whitespace trims and blank skips',
     { W: '  padded  ', BLANK: '   ' },
@@ -1003,24 +994,15 @@ function envForNetworkFamily() {
       { kind: 'env', names: ['BLANK'] },
     ]
   );
-  runCase(
-    'network scoped testnet suffix wins',
-    { MY_KEY_TESTNET: 'tn', MY_KEY: 'generic' },
-    null,
-    [{ kind: 'env_network_scoped', network: 'testnet', generic_key: 'MY_KEY' }]
-  );
-  runCase(
-    'network scoped mainnet suffix wins',
-    { MY_KEY_MAINNET: 'mn', MY_KEY: 'generic' },
-    null,
-    [{ kind: 'env_network_scoped', network: 'mainnet', generic_key: 'MY_KEY' }]
-  );
-  runCase(
-    'network scoped falls back to generic',
-    { ONLY_GENERIC: 'g' },
-    null,
-    [{ kind: 'env_network_scoped', network: 'testnet', generic_key: 'ONLY_GENERIC' }]
-  );
+  runCase('network scoped testnet suffix wins', { MY_KEY_TESTNET: 'tn', MY_KEY: 'generic' }, null, [
+    { kind: 'env_network_scoped', network: 'testnet', generic_key: 'MY_KEY' },
+  ]);
+  runCase('network scoped mainnet suffix wins', { MY_KEY_MAINNET: 'mn', MY_KEY: 'generic' }, null, [
+    { kind: 'env_network_scoped', network: 'mainnet', generic_key: 'MY_KEY' },
+  ]);
+  runCase('network scoped falls back to generic', { ONLY_GENERIC: 'g' }, null, [
+    { kind: 'env_network_scoped', network: 'testnet', generic_key: 'ONLY_GENERIC' },
+  ]);
   runCase(
     'network scoped reads runtime config',
     {},
@@ -1030,18 +1012,12 @@ function envForNetworkFamily() {
       { kind: 'env_network_scoped', network: 'testnet', generic_key: 'PLAIN_SCOPED' },
     ]
   );
-  runCase(
-    'non-mainnet network uses testnet suffix',
-    { SUFFIXED_TESTNET: 't' },
-    null,
-    [{ kind: 'env_network_scoped', network: 'weird-network', generic_key: 'SUFFIXED' }]
-  );
-  runCase(
-    'empty process value defers to runtime',
-    { P2: '' },
-    { P2: 'rt-val' },
-    [{ kind: 'env', names: ['P2'] }]
-  );
+  runCase('non-mainnet network uses testnet suffix', { SUFFIXED_TESTNET: 't' }, null, [
+    { kind: 'env_network_scoped', network: 'weird-network', generic_key: 'SUFFIXED' },
+  ]);
+  runCase('empty process value defers to runtime', { P2: '' }, { P2: 'rt-val' }, [
+    { kind: 'env', names: ['P2'] },
+  ]);
   return { family: 'env_for_network', cases };
 }
 
@@ -1160,113 +1136,171 @@ function statePruneFamily() {
     { op: 'build_key', event: undefined },
   ]);
 
-  run('schedule retry backoff then exhaust', (() => {
-    const config = {
-      maxRetries: 2,
-      retryBaseDelayMs: 1000,
-      retryMaxDelayMs: 8000,
-      retryQueueLimit: 0,
-      deadLetterLimit: 500,
-    };
-    return [
-      { op: 'schedule_retry', chain: 'neo_n3', event: stateEvent(), config, rng: 0.25, now_ms: STATE_T0 },
-      {
-        op: 'schedule_retry',
-        chain: 'neo_n3',
-        event: stateEvent(),
-        config,
-        rng: 0.25,
-        now_ms: STATE_T0 + 1000,
-      },
-      {
-        op: 'schedule_retry',
-        chain: 'neo_n3',
-        event: stateEvent(),
-        config,
-        rng: 0.25,
-        now_ms: STATE_T0 + 2000,
-      },
-      { op: 'collect_active', chain: 'neo_n3' },
-    ];
-  })());
+  run(
+    'schedule retry backoff then exhaust',
+    (() => {
+      const config = {
+        maxRetries: 2,
+        retryBaseDelayMs: 1000,
+        retryMaxDelayMs: 8000,
+        retryQueueLimit: 0,
+        deadLetterLimit: 500,
+      };
+      return [
+        {
+          op: 'schedule_retry',
+          chain: 'neo_n3',
+          event: stateEvent(),
+          config,
+          rng: 0.25,
+          now_ms: STATE_T0,
+        },
+        {
+          op: 'schedule_retry',
+          chain: 'neo_n3',
+          event: stateEvent(),
+          config,
+          rng: 0.25,
+          now_ms: STATE_T0 + 1000,
+        },
+        {
+          op: 'schedule_retry',
+          chain: 'neo_n3',
+          event: stateEvent(),
+          config,
+          rng: 0.25,
+          now_ms: STATE_T0 + 2000,
+        },
+        { op: 'collect_active', chain: 'neo_n3' },
+      ];
+    })()
+  );
 
-  run('retry queue limit sheds oldest into dead letters', (() => {
-    const limits = { retryQueueLimit: 2, deadLetterLimit: 500 };
-    return [
-      { op: 'enqueue_retry', chain: 'neo_n3', event: stateEvent({ requestId: '1' }), options: { attempts: 1 }, now_ms: STATE_T0 },
-      {
-        op: 'enqueue_retry',
-        chain: 'neo_n3',
-        event: stateEvent({ requestId: '2', requestType: 'rng' }),
-        options: { attempts: 2, last_error: 'second' },
-        now_ms: STATE_T0 + 10,
-      },
-      {
-        op: 'enqueue_retry',
-        chain: 'neox',
-        event: { ...stateEvent({ requestId: '3' }), chain: 'neox' },
-        options: {},
-        now_ms: STATE_T0 + 20,
-      },
-      { op: 'enforce_limit', chain: 'neo_n3', limits, now_ms: STATE_T0 + 30 },
-      { op: 'snapshot', now_ms: STATE_T0 + 30 },
-    ];
-  })());
+  run(
+    'retry queue limit sheds oldest into dead letters',
+    (() => {
+      const limits = { retryQueueLimit: 2, deadLetterLimit: 500 };
+      return [
+        {
+          op: 'enqueue_retry',
+          chain: 'neo_n3',
+          event: stateEvent({ requestId: '1' }),
+          options: { attempts: 1 },
+          now_ms: STATE_T0,
+        },
+        {
+          op: 'enqueue_retry',
+          chain: 'neo_n3',
+          event: stateEvent({ requestId: '2', requestType: 'rng' }),
+          options: { attempts: 2, last_error: 'second' },
+          now_ms: STATE_T0 + 10,
+        },
+        {
+          op: 'enqueue_retry',
+          chain: 'neox',
+          event: { ...stateEvent({ requestId: '3' }), chain: 'neox' },
+          options: {},
+          now_ms: STATE_T0 + 20,
+        },
+        { op: 'enforce_limit', chain: 'neo_n3', limits, now_ms: STATE_T0 + 30 },
+        { op: 'snapshot', now_ms: STATE_T0 + 30 },
+      ];
+    })()
+  );
 
-  run('record processed clears retry and evicts lru', (() => {
-    const limits = { processedCacheSize: 2, deadLetterLimit: 500 };
-    return [
-      { op: 'record_processed', chain: 'neo_n3', event: stateEvent({ requestId: '1' }), status: 'ok', meta: {}, limits, now_ms: STATE_T0 },
-      {
-        op: 'record_processed',
-        chain: 'neo_n3',
-        event: stateEvent({ requestId: '2', requestType: 'rng' }),
-        status: 'ok',
-        meta: { price: '12.34' },
-        limits,
-        now_ms: STATE_T0 + 10,
-      },
-      {
-        op: 'record_processed',
-        chain: 'neo_n3',
-        event: stateEvent({ requestId: '3' }),
-        status: 'exhausted',
-        meta: { note: 'gave up' },
-        limits,
-        now_ms: STATE_T0 + 20,
-      },
-      { op: 'snapshot', now_ms: STATE_T0 + 25 },
-    ];
-  })());
+  run(
+    'record processed clears retry and evicts lru',
+    (() => {
+      const limits = { processedCacheSize: 2, deadLetterLimit: 500 };
+      return [
+        {
+          op: 'record_processed',
+          chain: 'neo_n3',
+          event: stateEvent({ requestId: '1' }),
+          status: 'ok',
+          meta: {},
+          limits,
+          now_ms: STATE_T0,
+        },
+        {
+          op: 'record_processed',
+          chain: 'neo_n3',
+          event: stateEvent({ requestId: '2', requestType: 'rng' }),
+          status: 'ok',
+          meta: { price: '12.34' },
+          limits,
+          now_ms: STATE_T0 + 10,
+        },
+        {
+          op: 'record_processed',
+          chain: 'neo_n3',
+          event: stateEvent({ requestId: '3' }),
+          status: 'exhausted',
+          meta: { note: 'gave up' },
+          limits,
+          now_ms: STATE_T0 + 20,
+        },
+        { op: 'snapshot', now_ms: STATE_T0 + 25 },
+      ];
+    })()
+  );
 
-  run('due retry items filter by time', (() => {
-    const config = {
-      maxRetries: 5,
-      retryBaseDelayMs: 1000,
-      retryMaxDelayMs: 8000,
-      retryQueueLimit: 0,
-      deadLetterLimit: 500,
-    };
-    return [
-      { op: 'schedule_retry', chain: 'neo_n3', event: stateEvent({ requestId: '1' }), config, rng: 0, now_ms: STATE_T0 },
-      {
-        op: 'schedule_retry',
-        chain: 'neo_n3',
-        event: stateEvent({ requestId: '2' }),
-        config,
-        rng: 0.999,
-        now_ms: STATE_T0,
-      },
-      { op: 'due_items', chain: 'neo_n3', now_ms: STATE_T0 + 700 },
-      { op: 'due_items', chain: 'neo_n3', now_ms: STATE_T0 + 100000 },
-      { op: 'due_items', chain: 'neox', now_ms: STATE_T0 + 100000 },
-    ];
-  })());
+  run(
+    'due retry items filter by time',
+    (() => {
+      const config = {
+        maxRetries: 5,
+        retryBaseDelayMs: 1000,
+        retryMaxDelayMs: 8000,
+        retryQueueLimit: 0,
+        deadLetterLimit: 500,
+      };
+      return [
+        {
+          op: 'schedule_retry',
+          chain: 'neo_n3',
+          event: stateEvent({ requestId: '1' }),
+          config,
+          rng: 0,
+          now_ms: STATE_T0,
+        },
+        {
+          op: 'schedule_retry',
+          chain: 'neo_n3',
+          event: stateEvent({ requestId: '2' }),
+          config,
+          rng: 0.999,
+          now_ms: STATE_T0,
+        },
+        { op: 'due_items', chain: 'neo_n3', now_ms: STATE_T0 + 700 },
+        { op: 'due_items', chain: 'neo_n3', now_ms: STATE_T0 + 100000 },
+        { op: 'due_items', chain: 'neox', now_ms: STATE_T0 + 100000 },
+      ];
+    })()
+  );
 
   run('labeled failures expand in snapshot', [
-    { op: 'increment_labeled', chain: 'neo_n3', module: 'oracle.fetch', operation: 'privacy_oracle', delta: 2 },
-    { op: 'increment_labeled', chain: 'neox', module: 'oracle.fetch', operation: 'privacy_oracle', delta: 1 },
-    { op: 'increment_labeled', chain: 'neo_n3', module: 'rng.generate', operation: 'rng', delta: 1 },
+    {
+      op: 'increment_labeled',
+      chain: 'neo_n3',
+      module: 'oracle.fetch',
+      operation: 'privacy_oracle',
+      delta: 2,
+    },
+    {
+      op: 'increment_labeled',
+      chain: 'neox',
+      module: 'oracle.fetch',
+      operation: 'privacy_oracle',
+      delta: 1,
+    },
+    {
+      op: 'increment_labeled',
+      chain: 'neo_n3',
+      module: 'rng.generate',
+      operation: 'rng',
+      delta: 1,
+    },
     { op: 'snapshot', now_ms: STATE_T0 },
   ]);
 
@@ -1361,15 +1395,15 @@ function configResolutionFamily() {
       MORPHEUS_RELAYER_NEO_N3_START_REQUEST_ID: 'abc',
     }
   );
-  run('process env beats runtime config', { MORPHEUS_RELAYER_MAX_RETRIES: '3' }, {
-    MORPHEUS_RELAYER_MAX_RETRIES: 9,
-    MORPHEUS_RELAYER_CONCURRENCY: 8,
-  });
   run(
-    'production flips the fail-closed defaults',
-    { NODE_ENV: 'production' },
-    null
+    'process env beats runtime config',
+    { MORPHEUS_RELAYER_MAX_RETRIES: '3' },
+    {
+      MORPHEUS_RELAYER_MAX_RETRIES: 9,
+      MORPHEUS_RELAYER_CONCURRENCY: 8,
+    }
   );
+  run('production flips the fail-closed defaults', { NODE_ENV: 'production' }, null);
   run(
     'gate: neo n3 host signing key configured',
     { MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY: 'ff'.repeat(32) },
@@ -1408,6 +1442,140 @@ function configResolutionFamily() {
   return { family: 'config_resolution', cases };
 }
 
+// Golden vectors for the Rust n3_tx extensions (crates/neo-os-core/src/n3_tx.rs),
+// harvested from the repo's own neon-js with the fixtures the fulfillment /
+// automation / fee-top-up lanes drive. Pins: HexBytes (verbatim) and Hash160
+// (reversed) parameter encodings, PUSHF/PUSHNULL, PUSHDATA2 for >255-byte
+// payloads, witness framing in serialize(true), the display transaction hash,
+// and script-hash derivation from a public key / a base58check address.
+// Emitted flat (no `cases` wrapper) because the Rust fixture reads top-level
+// fields; consumers tolerate the extra `family` key (serde_json::Value .get()).
+function n3ExtensionFamily() {
+  const out = {};
+
+  // fulfillRequest-shaped script: the exact args buildFulfillRequestParams
+  // builds (integer, boolean, byteArray LE-hex, string, byteArray LE-hex).
+  const fulfillArgs = [
+    sc.ContractParam.integer('12345'),
+    sc.ContractParam.boolean(true),
+    sc.ContractParam.byteArray(u.HexString.fromHex('aabbccdd', true)),
+    sc.ContractParam.string(''),
+    sc.ContractParam.byteArray(
+      u.HexString.fromHex(
+        '0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f3031',
+        true
+      )
+    ),
+  ];
+  const oracleHash = '0x' + 'ab'.repeat(20);
+  out.fulfill_script_hex = sc.createScript({
+    scriptHash: oracleHash,
+    operation: 'fulfillRequest',
+    args: fulfillArgs,
+  });
+
+  // queueAutomationRequest shape (hash160 + string + byteArray + hash160 + string).
+  const queueArgs = [
+    sc.ContractParam.hash160('NbrXdur6FV9bx33ME1jxjoKyQMBLZCWtDL'),
+    sc.ContractParam.string('oracle.fetch'),
+    sc.ContractParam.byteArray(Buffer.from('{"k":1}', 'utf8').toString('base64')),
+    sc.ContractParam.hash160('0x' + 'cd'.repeat(20)),
+    sc.ContractParam.string('onMiniAppResult'),
+  ];
+  out.queue_script_hex = sc.createScript({
+    scriptHash: oracleHash,
+    operation: 'queueAutomationRequest',
+    args: queueArgs,
+  });
+
+  // Hash160 emission, isolated: from an address (base58check) and from an
+  // ASYMMETRIC 0x-hex (palindromes cannot pin the reversal direction).
+  out.hash160_from_address_hex = sc.createScript({
+    scriptHash: '0x' + 'ab'.repeat(20),
+    operation: 'x',
+    args: [sc.ContractParam.hash160('NbrXdur6FV9bx33ME1jxjoKyQMBLZCWtDL')],
+  });
+  out.hash160_from_0xhex_hex = sc.createScript({
+    scriptHash: '0x' + 'ab'.repeat(20),
+    operation: 'x',
+    args: [sc.ContractParam.hash160('0x0102030405060708090a0b0c0d0e0f1011121314')],
+  });
+
+  // boolean false / null (Any) emission, isolated.
+  out.bool_false_and_null_hex = sc.createScript({
+    scriptHash: '0x' + 'ab'.repeat(20),
+    operation: 'x',
+    args: [sc.ContractParam.boolean(false), sc.ContractParam.any(null)],
+  });
+
+  // PUSHDATA2: a >255-byte string argument.
+  out.pushdata2_hex = sc.createScript({
+    scriptHash: '0x' + 'ab'.repeat(20),
+    operation: 'x',
+    args: [sc.ContractParam.string('A'.repeat(300))],
+  });
+
+  // Transaction: serialize(false), serialize(true), hash(), and the signing
+  // message for a fixed fixture with a witness attached.
+  const signerAccount = '5c2047b1c6b4b6e4b3a1c9d5e7f0a2b4c6d8e0f1';
+  const magic = 860833102;
+  const feedScriptHex = sc.createScript({
+    scriptHash: 'ab'.repeat(20),
+    operation: 'fulfillRequest',
+    args: fulfillArgs,
+  });
+  const transaction = new tx.Transaction({
+    version: 0,
+    nonce: 305419896, // 0x12345678
+    script: u.HexString.fromHex(feedScriptHex),
+    validUntilBlock: 1000,
+    signers: [{ account: signerAccount, scopes: tx.WitnessScope.CalledByEntry }],
+    attributes: [],
+    witnesses: [],
+  });
+  out.tx_unsigned_hex = transaction.serialize(false);
+  out.tx_message_for_signing_hex = transaction.getMessageForSigning(magic);
+
+  const invocation = '40' + 'de'.repeat(64);
+  const verification =
+    '0c210315b41fcf6671b6400237730bc8a261dcb64e25cc17de9878576c78eace1c91464156e7b327';
+  transaction.witnesses = [
+    new tx.Witness({
+      invocationScript: u.HexString.fromHex(invocation),
+      verificationScript: u.HexString.fromHex(verification),
+    }),
+  ];
+  out.witness_invocation_hex = invocation;
+  out.witness_verification_hex = verification;
+  out.tx_signed_hex = transaction.serialize(true);
+  out.tx_hash_hex = `0x${transaction.hash()}`;
+
+  // script-hash derivation: from public key and from an address.
+  const publicKey = '0315b41fcf6671b6400237730bc8a261dcb64e25cc17de9878576c78eace1c9146';
+  out.verification_script_hex = `0c21${publicKey}4156e7b327`;
+  out.script_hash_from_public_key = wallet.getScriptHashFromPublicKey(publicKey);
+  out.script_hash_from_address = wallet.getScriptHashFromAddress(
+    'NeFG5A79AJovUz4BStpnmFyQChLvQkuW72'
+  );
+  out.address_from_script_hash = wallet.getAddressFromScriptHash(
+    '3124a38a74f447b120b551db00f513ec674318c9'
+  );
+
+  // GAS transfer script (fee top-up lane): hash160 x2 + integer + any(null).
+  out.gas_transfer_script_hex = sc.createScript({
+    scriptHash: 'd2a4cff31913016155e38e474a2c06d08be276cf',
+    operation: 'transfer',
+    args: [
+      sc.ContractParam.hash160(`0x${signerAccount}`),
+      sc.ContractParam.hash160('0x' + 'ef'.repeat(20)),
+      sc.ContractParam.integer('100000000'),
+      sc.ContractParam.any(null),
+    ],
+  });
+
+  return { family: 'n3_extension', ...out };
+}
+
 // ── driver ───────────────────────────────────────────────────────────────────
 
 const FAMILIES = [
@@ -1424,6 +1592,7 @@ const FAMILIES = [
   envForNetworkFamily,
   statePruneFamily,
   configResolutionFamily,
+  n3ExtensionFamily,
 ];
 
 function render(family) {

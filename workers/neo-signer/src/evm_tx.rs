@@ -317,7 +317,10 @@ impl UnsignedEvmTransaction {
         };
 
         // Check for ERC-20 transfer
-        if self.data.len() == 68 && self.data.starts_with(&ERC20_TRANSFER_SELECTOR) {
+        if is_zero(&self.value)
+            && self.data.len() == 68
+            && self.data.starts_with(&ERC20_TRANSFER_SELECTOR)
+        {
             let mut recipient = [0u8; 20];
             recipient.copy_from_slice(&self.data[16..36]);
             let mut amount = [0u8; 32];
@@ -330,7 +333,10 @@ impl UnsignedEvmTransaction {
         }
 
         // Check for ERC-20 transferFrom
-        if self.data.len() == 100 && self.data.starts_with(&ERC20_TRANSFER_FROM_SELECTOR) {
+        if is_zero(&self.value)
+            && self.data.len() == 100
+            && self.data.starts_with(&ERC20_TRANSFER_FROM_SELECTOR)
+        {
             let mut recipient = [0u8; 20];
             recipient.copy_from_slice(&self.data[48..68]);
             let mut amount = [0u8; 32];
@@ -360,12 +366,18 @@ impl UnsignedEvmTransaction {
 
     /// Compute the signing hash for this transaction.
     pub fn signing_hash(&self) -> [u8; 32] {
-        let mut encoded = vec![EIP1559_TX_TYPE];
-        encode_eip1559_fields(self, None, &mut encoded);
+        let encoded = self.encode_unsigned();
         let hash = Keccak256::digest(&encoded);
         let mut result = [0u8; 32];
         result.copy_from_slice(&hash);
         result
+    }
+
+    /// Canonical unsigned type-2 transaction bytes accepted by the signer API.
+    pub fn encode_unsigned(&self) -> Vec<u8> {
+        let mut encoded = vec![EIP1559_TX_TYPE];
+        encode_eip1559_fields(self, None, &mut encoded);
+        encoded
     }
 }
 
@@ -548,7 +560,10 @@ mod tests {
             let rec_id = RecoveryId::try_from(v).unwrap();
             let recovered =
                 VerifyingKey::recover_from_prehash(hash.as_slice(), &signature, rec_id).unwrap();
-            assert_eq!(&recovered, expected_vk, "recovered key must match for hash {i}");
+            assert_eq!(
+                &recovered, expected_vk,
+                "recovered key must match for hash {i}"
+            );
         }
     }
 
@@ -650,6 +665,9 @@ mod tests {
         // Truncated payload
         valid_encoded[0] = EIP1559_TX_TYPE;
         let err = UnsignedEvmTransaction::parse(&valid_encoded[..5], 47763).unwrap_err();
-        assert!(matches!(err, EvmTxError::InvalidRlp { .. } | EvmTxError::Truncated));
+        assert!(matches!(
+            err,
+            EvmTxError::InvalidRlp { .. } | EvmTxError::Truncated
+        ));
     }
 }

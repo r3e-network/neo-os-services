@@ -52,8 +52,18 @@ fn provisioning_cannot_change_the_image_owned_network() {
 }
 
 #[test]
-fn the_two_signing_roles_are_the_ones_health_and_provision_emit() {
-    assert_eq!(AppState::SIGNING_ROLES, ["updater", "oracle_verifier"]);
+fn every_measured_signing_role_is_reported_in_one_stable_order() {
+    assert_eq!(
+        AppState::SIGNING_ROLES,
+        [
+            "updater",
+            "oracle_verifier",
+            "relayer",
+            "worker",
+            "neox_updater",
+            "neox_verifier"
+        ]
+    );
 }
 
 #[test]

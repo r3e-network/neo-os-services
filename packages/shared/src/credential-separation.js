@@ -49,6 +49,7 @@ export function assertCredentialDomainsDistinct(environment, options = {}) {
   const collisions = findCredentialDomainCollisions(environment, options.domains);
   if (collisions.length === 0) return;
   const names = formatCredentialDomainCollisions(collisions);
-  const prefix = options.messagePrefix || 'credentials must be pairwise distinct across trust domains';
+  const prefix =
+    options.messagePrefix || 'credentials must be pairwise distinct across trust domains';
   throw new Error(`${prefix}: ${names}`);
 }

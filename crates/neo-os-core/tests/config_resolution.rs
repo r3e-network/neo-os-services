@@ -32,8 +32,7 @@ fn config_resolution_matches_js_oracle() {
                     .get("v")
                     .and_then(|v| v.as_str())
                     .unwrap_or_else(|| panic!("case {name}: error case without message"));
-                let err = result
-                    .expect_err(&format!("case {name}: expected the JS gate error"));
+                let err = result.expect_err(&format!("case {name}: expected the JS gate error"));
                 assert_eq!(err.0, message, "case {name} gate error message");
             }
             _ => {

@@ -26,7 +26,12 @@ function readSelectedEnv() {
   const raw =
     trimString(process.env.NEXT_PUBLIC_MORPHEUS_NETWORK) ||
     trimString(process.env.MORPHEUS_NETWORK);
-  if (!raw) return 'mainnet';
+  if (!raw) {
+    throw new Error(
+      `MORPHEUS_NETWORK/NEXT_PUBLIC_MORPHEUS_NETWORK is required but not set. ` +
+        `Set to "testnet" or "mainnet". Example: export MORPHEUS_NETWORK=testnet`
+    );
+  }
   const normalized = normalizeNetworkKey(raw);
   if (!normalized) {
     // Fail fast: a typo like MORPHEUS_NETWORK=mainet must not silently select

@@ -204,6 +204,60 @@ fn run(
             ))
         }
 
+        Target::NeoDidZkLoginTicket => {
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            Ok(DispatchOutcome::ok(
+                crate::neodid::handle_neo_did_zklogin_ticket(state, &payload)?,
+            ))
+        }
+
+        Target::VrfRandom => {
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            Ok(DispatchOutcome::ok(crate::vrf::handle_vrf_random(
+                state, &payload,
+            )?))
+        }
+
+        Target::PaymasterAuthorize => {
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            Ok(DispatchOutcome::ok(
+                crate::paymaster::handle_paymaster_authorize(state, &payload)?,
+            ))
+        }
+
+        Target::SessionStart => {
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            crate::session::handle_session_start(state, &payload)
+        }
+
+        Target::SessionStep => {
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            crate::session::handle_session_step(state, &payload)
+        }
+
+        Target::SessionFinalize => {
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            crate::session::handle_session_finalize(state, &payload)
+        }
+
+        Target::AutomationExecute => {
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            crate::automation::handle_automation_execute(state, &payload)
+        }
+
+        Target::OracleFeed => {
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            crate::oracle_feed::handle_oracle_feed(state, &payload)
+        }
+
         Target::OracleQuery => {
             assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
             let payload = parse_body(body)?;

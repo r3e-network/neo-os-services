@@ -6,6 +6,7 @@ license.workspace = true
 description = "Keyless compute engine, ported lane-by-lane from workers/nitro-worker: platform guards, policy engine, capability routing; the enclave host links the lanes and shrinks the bridge table"
 
 [dependencies]
+neo-os-games = { path = "../neo-os-games" }
 # preserve_order: JSON.parse in V8 preserves key order and the policy/decision
 # bodies copy that order into caller-facing JSON; the BTreeMap default would
 # silently sort keys.

@@ -1,0 +1,9 @@
+[package]
+name = "neo-os-service-runtime"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Shared lifecycle primitives for neo-os Rust service processes"
+
+[dependencies]
+tokio = { version = "1", features = ["signal"] }

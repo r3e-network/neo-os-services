@@ -188,8 +188,8 @@ If one of these is wrong, the system usually stops working.
 ### Neo X signer boundary / Neo X 签名边界
 
 - `MORPHEUS_FEED_PUSHER_ENCLAVE_SIGN=true` and `NEOX_FEED_FROM`
-  English: Explicitly select an attested feed-pusher enclave signing route and declare its public EVM address. Production refuses the host-key route; the currently shipped Rust frontier returns `503` for Neo X `/feed/sign`, so this setting is usable only after a compatible measured secp256k1 signer EIF is deployed and attested.
-  中文：显式选择经过证明的 feed-pusher enclave 签名路径并声明其公开 EVM 地址。生产环境拒绝 host-key 路径；当前发布的 Rust frontier 对 Neo X `/feed/sign` 返回 `503`，因此只有部署并验证兼容的 secp256k1 signer EIF 后才能启用此配置。
+  English: Legacy Node feed-pusher selection. The production Rust host now implements attested NeoX `/feed/sign` through the distinct `SIGNER_ROLE_NEOX_UPDATER_KEY_ID`, and the Rust relayer owns broadcast, successful receipt confirmation, and durable state. Production refuses the host-key route; these variables remain compatibility-only.
+  中文：旧 Node feed-pusher 的选择项。生产 Rust host 已通过独立的 `SIGNER_ROLE_NEOX_UPDATER_KEY_ID` 实现可证明的 NeoX `/feed/sign`，并由 Rust relayer 负责广播、成功回执确认与持久化状态。生产环境拒绝 host-key 路径；这些变量仅保留用于兼容。
 
 - `MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER=true`
   English: Development-only opt-in for legacy host-side Neo X signing. It never enables host signing in production.
@@ -238,8 +238,8 @@ They do not usually change trust assumptions.
 ### Feed Policy / Feed 策略
 
 - `MORPHEUS_ACTIVE_CHAINS`
-  English: Comma-separated active chain list for relayer scanning and automatic feed sync. Current production default should be `neo_n3`.
-  中文：relayer 扫链和自动 feed 同步所使用的活动链列表，逗号分隔。当前生产默认应该是 `neo_n3`。
+  English: Comma-separated active chain list for relayer scanning and feed sync: `neo_n3`, `neox`, or both. The generated production template defaults conservatively to `neo_n3`; both chains are authoritative when fully configured.
+  中文：relayer 扫链和 feed 同步使用的活动链列表，可为 `neo_n3`、`neox` 或两者。生成的生产模板保守地默认 `neo_n3`；完整配置后两条链均为权威 Rust 通道。
 
 - `MORPHEUS_FEED_PROJECT_SLUG`
   English: Default project slug used by feed tasks.
@@ -304,8 +304,8 @@ They do not usually change trust assumptions.
 ### Automation / 自动化任务
 
 - `MORPHEUS_AUTOMATION_ENABLED`
-  English: Enables the relayer automation scheduler.
-  中文：开启 relayer 自动化调度器。
+  English: Legacy automation scheduler switch. The production Rust relayer currently requires `false` and rejects `true` during config validation because durable automation claim/confirmation/persistence is not yet authoritative.
+  中文：旧自动化调度器开关。当前生产 Rust relayer 必须设为 `false`；由于自动化的持久 claim/确认/落盘协议尚未成为权威实现，配置校验会拒绝 `true`。
 
 - `MORPHEUS_AUTOMATION_BATCH_SIZE`
   English: Maximum active automation jobs loaded from Supabase per tick.
@@ -450,6 +450,10 @@ rename them. Format: default + one-line semantics.
   English: Custody key ids per signing role. Updater and oracle_verifier are required for the relayer's Neo N3 lanes; updater is also the tx-relay lane's on-chain identity on the worker (the lane relays oracle-contract invocations — `fulfillRequest` / `queueAutomationRequest` — as the updater account), and worker is required for the worker sign lane (`check-nitro-env.mjs` enforces all three); fee_funder is optional (auto fee top-up only, best-effort).
   中文：各签名角色对应的托管 key id。updater 与 oracle_verifier 是 relayer Neo N3 通道的必需项；updater 同时也是 worker tx-relay 通道的链上身份（该通道以 updater 账户转发 oracle 合约调用——`fulfillRequest` / `queueAutomationRequest`）；worker 是 worker 签名通道的必需项（`check-nitro-env.mjs` 强制校验）；fee_funder 可选（仅自动手续费补充，尽力而为）。
 
+- `SIGNER_ROLE_NEOX_UPDATER_KEY_ID` / `SIGNER_ROLE_NEOX_VERIFIER_KEY_ID`
+  English: Distinct NeoX custody roles. `NEOX_UPDATER` signs EIP-1559 transactions submitted to NeoX; `NEOX_VERIFIER` signs the semantic EIP-191 fulfillment proof consumed by the oracle contract. They must never resolve to the same key id.
+  中文：相互独立的 NeoX 托管角色。`NEOX_UPDATER` 签署提交至 NeoX 的 EIP-1559 交易；`NEOX_VERIFIER` 签署预言机合约消费的语义化 EIP-191 履约证明。两者绝不能解析到同一个 key id。
+
 ### Signer Pinning And Network-Scoped Keys / 签名 pinning 与分网络密钥
 
 - `MORPHEUS_ALLOW_UNPINNED_SIGNERS`
@@ -493,8 +497,16 @@ rename them. Format: default + one-line semantics.
 ### Relayer Operations / Relayer 运行参数
 
 - `MORPHEUS_RELAYER_MODE`
-  English: Lane selection: `requests_only` (oracle CVM), `feed_only` (datafeed CVM), or unset for both lanes.
-  中文：通道选择：`requests_only`（oracle CVM）、`feed_only`（datafeed CVM），不设置则两条通道都跑。
+  English: Production Rust lane selection: `requests_only`, `feed_only`, or `combined` (also the default when unset).
+  中文：生产 Rust 通道选择：`requests_only`、`feed_only` 或 `combined`（不设置时也默认 combined）。
+
+- `MORPHEUS_FEED_SYNC_ENABLED` / `MORPHEUS_FEED_SYMBOLS`
+  English: `feed_only` requires sync enabled and at least one comma-separated symbol; config validation and runtime readiness both fail closed otherwise. `combined` may explicitly disable feed sync and operate as a request-only deployment; when feed sync is enabled it has the same symbol requirement.
+  中文：`feed_only` 必须启用同步并至少配置一个逗号分隔的 symbol，否则配置校验与运行时就绪检查都会失败关闭。`combined` 可显式关闭 feed sync 并退化为仅请求部署；启用 feed sync 时同样必须配置 symbol。
+
+- `MORPHEUS_RELAYER_NEOX_ORACLE` / `MORPHEUS_RELAYER_NEOX_DATAFEED`
+  English: NeoX oracle and datafeed contract addresses. Request mode requires the oracle address; an enabled feed mode requires the datafeed address.
+  中文：NeoX oracle 与 datafeed 合约地址。request 模式需要 oracle 地址；启用 feed 时需要 datafeed 地址。
 
 - `MORPHEUS_RELAYER_MAX_CALLBACK_RETRIES`
   English: Default `maxRetries * 2`. Retry ceiling for prepared-callback and finalize-only redelivery before the event is dead-lettered.

@@ -1,6 +1,8 @@
+# NODE COMPATIBILITY ONLY. Production authority is the systemd-managed Rust
+# Nitro host/custody topology. Both compat images must be pinned explicitly.
 services:
   nitro-worker:
-    image: ${MORPHEUS_NITRO_WORKER_IMAGE:-ghcr.io/r3e-network/neo-os-services-nitro-worker:latest}
+    image: '${MORPHEUS_COMPAT_NITRO_WORKER_IMAGE:?pin-explicit-node-compat-worker-image}'
     container_name: morpheus-nitro-worker
     restart: unless-stopped
     env_file:
@@ -44,7 +46,7 @@ services:
       - caddy-config:/config
 
   morpheus-relayer:
-    image: ${MORPHEUS_RELAYER_IMAGE:-ghcr.io/r3e-network/neo-os-services-relayer:latest}
+    image: '${MORPHEUS_COMPAT_RELAYER_IMAGE:?pin-explicit-node-compat-relayer-image}'
     container_name: morpheus-relayer
     restart: unless-stopped
     depends_on:

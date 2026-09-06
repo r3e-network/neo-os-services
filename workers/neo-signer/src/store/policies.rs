@@ -33,6 +33,18 @@ impl Store {
         let contract_method_whitelist = encode_contract_methods(&policy.contract_method_whitelist)?;
         let contract_method_blacklist = encode_contract_methods(&policy.contract_method_blacklist)?;
         let asset_limits = encode_asset_limits(&policy.asset_limits)?;
+        let evm_method_whitelist = encode_args(&policy.evm_method_whitelist);
+        let evm_method_blacklist = encode_args(&policy.evm_method_blacklist);
+        let evm_max_gas_limit = policy
+            .evm_max_gas_limit
+            .map(i64::try_from)
+            .transpose()
+            .context("EVM gas limit exceeds SQLite integer range")?;
+        let evm_chain_id = policy
+            .evm_chain_id
+            .map(i64::try_from)
+            .transpose()
+            .context("EVM chain id exceeds SQLite integer range")?;
         connection.execute(
             "INSERT INTO signer_policies (
                 key_id, allow_consensus, allow_raw, allow_transfer, allow_contract_call,
@@ -43,11 +55,13 @@ impl Store {
                 transfer_to_whitelist, transfer_to_blacklist, max_single_amount,
                 window_seconds, window_max_amount, max_signers, max_system_fee,
                 max_network_fee, signature_window_seconds, signature_window_count,
-                asset_limits, updated_at_unix
+                asset_limits, chain_family, evm_max_gas_price, evm_max_gas_limit,
+                evm_method_whitelist, evm_method_blacklist, evm_chain_id, updated_at_unix
              )
              VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
+                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                 ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26,
+                 ?27, ?28, ?29, ?30
              )
              ON CONFLICT(key_id) DO UPDATE SET
                 allow_consensus = excluded.allow_consensus,
@@ -72,6 +86,12 @@ impl Store {
                 signature_window_seconds = excluded.signature_window_seconds,
                 signature_window_count = excluded.signature_window_count,
                 asset_limits = excluded.asset_limits,
+                chain_family = excluded.chain_family,
+                evm_max_gas_price = excluded.evm_max_gas_price,
+                evm_max_gas_limit = excluded.evm_max_gas_limit,
+                evm_method_whitelist = excluded.evm_method_whitelist,
+                evm_method_blacklist = excluded.evm_method_blacklist,
+                evm_chain_id = excluded.evm_chain_id,
                 updated_at_unix = excluded.updated_at_unix",
             params![
                 key_id,
@@ -97,6 +117,12 @@ impl Store {
                 signature_window_seconds,
                 signature_window_count,
                 asset_limits,
+                policy.chain_family.map(|family| family.to_string()),
+                policy.evm_max_gas_price.map(|value| value.to_string()),
+                evm_max_gas_limit,
+                evm_method_whitelist,
+                evm_method_blacklist,
+                evm_chain_id,
                 updated_at_unix,
             ],
         )?;
@@ -121,7 +147,8 @@ impl Store {
                         transfer_to_whitelist, transfer_to_blacklist, max_single_amount,
                         window_seconds, window_max_amount, max_signers, max_system_fee,
                         max_network_fee, signature_window_seconds, signature_window_count,
-                        asset_limits
+                        asset_limits, chain_family, evm_max_gas_price, evm_max_gas_limit,
+                        evm_method_whitelist, evm_method_blacklist, evm_chain_id
                  FROM signer_policies
                  WHERE key_id = ?1",
                 params![key_id],

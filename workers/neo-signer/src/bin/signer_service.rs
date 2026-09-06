@@ -28,16 +28,22 @@ use std::{
 use anyhow::{bail, Context, Result};
 use fs2::FileExt;
 use neo_signer::{
-    api::{self, ApiState, DEFAULT_BODY_LIMIT},
+    api::{self, ApiState, DEFAULT_BODY_LIMIT, DEFAULT_MAX_IN_FLIGHT_REQUESTS},
     attestation::BootGuard,
+    auth::WorkloadAuthPolicy,
     model::CallerCapability,
     provision,
     service::{provision_admin_caller, SignerService},
+    signclient::{self, SignClientBridge},
     store::Store,
     vault::{MASTER_KEY_ENV, MASTER_KEY_FILE},
 };
 use nitro_attest::release::NsmAttestation;
-use tokio::net::TcpListener;
+use tokio::{
+    net::TcpListener,
+    sync::{watch, Semaphore},
+};
+use zeroize::Zeroizing;
 
 /// Where the SQLite file, the audit trail and the master key file live.
 const DATA_DIR_ENV: &str = "SIGNER_SERVICE_DATA_DIR";
@@ -48,6 +54,20 @@ const HOST_ENV: &str = "SIGNER_SERVICE_HOST";
 const PORT_ENV: &str = "SIGNER_SERVICE_PORT";
 /// Ceiling on a request body, overriding [`DEFAULT_BODY_LIMIT`].
 const BODY_LIMIT_ENV: &str = "SIGNER_SERVICE_MAX_BODY_BYTES";
+/// Process-wide custody requests admitted before body parsing, authentication,
+/// or blocking work. Health and metrics do not consume this budget.
+const MAX_IN_FLIGHT_ENV: &str = "SIGNER_SERVICE_MAX_IN_FLIGHT_REQUESTS";
+/// Canonical public origin committed to by every v2 workload assertion.
+const WORKLOAD_AUDIENCE_ENV: &str = "SIGNER_SERVICE_WORKLOAD_AUDIENCE";
+/// Temporary migration escape hatch for audience-less v1 assertions.
+const ALLOW_LEGACY_WORKLOAD_V1_ENV: &str = "SIGNER_SERVICE_ALLOW_LEGACY_WORKLOAD_V1";
+/// Optional official Neo SignClient gRPC bridge. The upstream protocol carries
+/// no credentials, so this listener is hard-limited to loopback and internally
+/// assumes exactly one caller/key binding.
+const SIGNCLIENT_HOST_ENV: &str = "SIGNER_SERVICE_SIGNCLIENT_HOST";
+const SIGNCLIENT_PORT_ENV: &str = "SIGNER_SERVICE_SIGNCLIENT_PORT";
+const SIGNCLIENT_KEY_ID_ENV: &str = "SIGNER_SERVICE_SIGNCLIENT_KEY_ID";
+const SIGNCLIENT_CALLER_TOKEN_ENV: &str = "SIGNER_SERVICE_SIGNCLIENT_CALLER_TOKEN";
 /// Name of the one database file inside the data directory. Fixed rather than
 /// configurable: a deployment that points two signer processes at two names in
 /// one directory has two vaults and no error to tell it so.
@@ -133,6 +153,13 @@ async fn serve() -> Result<()> {
     let guard = BootGuard::from_env().context("invalid attested-boot configuration")?;
     let repository = Store::open(config.database_path())
         .with_context(|| "failed to open the signer database")?;
+    let listener = TcpListener::bind(config.bind)
+        .await
+        .with_context(|| format!("failed to bind {}", config.bind))?;
+    let bound = listener
+        .local_addr()
+        .context("the bound address could not be read back")?;
+    let workload_auth = config.workload_auth(bound)?;
     let state = match &guard {
         Some(guard) => {
             refuse_plaintext_master_key_at_boot()?;
@@ -148,28 +175,75 @@ async fn serve() -> Result<()> {
                 config.data_dir.clone(),
                 std::sync::Arc::new(provision::release_envelope),
             )
+            .with_workload_auth(workload_auth.clone())
             .with_body_limit(config.max_body_bytes)
+            .with_max_in_flight_requests(config.max_in_flight_requests)
         }
         None => {
             let service = SignerService::open(repository.clone(), &config.data_dir)
                 .context("failed to open the vault for this data directory")?;
-            ApiState::new(service).with_body_limit(config.max_body_bytes)
+            ApiState::new(service)
+                .with_workload_auth(workload_auth.clone())
+                .with_body_limit(config.max_body_bytes)
+                .with_max_in_flight_requests(config.max_in_flight_requests)
         }
     };
 
-    let listener = TcpListener::bind(config.bind)
-        .await
-        .with_context(|| format!("failed to bind {}", config.bind))?;
-    let bound = listener
-        .local_addr()
-        .context("the bound address could not be read back")?;
+    let bridge = config.signclient.as_ref().map(|signclient| {
+        (
+            signclient.bind,
+            SignClientBridge::new(
+                state.clone(),
+                signclient.key_id.clone(),
+                signclient.caller_token.as_str(),
+            ),
+        )
+    });
+    if state.service_snapshot().is_some() {
+        if let Some((_, bridge)) = &bridge {
+            bridge
+                .preflight()
+                .await
+                .map_err(anyhow::Error::msg)
+                .context("the SignClient caller/key binding failed startup validation")?;
+        }
+    }
+    report(&repository, &state, &config, &workload_auth, bound)?;
+    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let signal_task = tokio::spawn(async move {
+        shutdown_signal().await;
+        let _ = shutdown_sender.send(true);
+    });
+    let http = async {
+        axum::serve(listener, api::router(state))
+            .with_graceful_shutdown(wait_for_shutdown(shutdown_receiver.clone()))
+            .await
+            .context("the signer HTTP service stopped serving")
+    };
+    let result = if let Some((grpc_bind, bridge)) = bridge {
+        let grpc_shutdown = shutdown_receiver.clone();
+        let grpc = async move {
+            signclient::serve(grpc_bind, bridge, wait_for_shutdown(grpc_shutdown))
+                .await
+                .context("the SignClient gRPC service stopped serving")
+        };
+        tokio::try_join!(http, grpc).map(|_| ())
+    } else {
+        http.await
+    };
+    signal_task.abort();
+    result
+}
 
-    report(&repository, &state, &config, bound)?;
-    axum::serve(listener, api::router(state))
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("the signer service stopped serving")?;
-    Ok(())
+async fn wait_for_shutdown(mut receiver: watch::Receiver<bool>) {
+    if *receiver.borrow() {
+        return;
+    }
+    while receiver.changed().await.is_ok() {
+        if *receiver.borrow_and_update() {
+            return;
+        }
+    }
 }
 
 /// Exclusive operating-system lease for one signer data directory.
@@ -235,7 +309,13 @@ fn refuse_plaintext_master_key_at_boot() -> Result<()> {
 /// exist yet, and saying so beats printing a placeholder. The measured-PCR0
 /// line already went to stderr in `serve`, so nothing about the guard repeats
 /// here.
-fn report(repository: &Store, state: &ApiState, config: &Config, bound: SocketAddr) -> Result<()> {
+fn report(
+    repository: &Store,
+    state: &ApiState,
+    config: &Config,
+    workload_auth: &WorkloadAuthPolicy,
+    bound: SocketAddr,
+) -> Result<()> {
     let keys = repository
         .list_signer_keys()
         .context("failed to read the custody keys at startup")?;
@@ -277,6 +357,22 @@ fn report(repository: &Store, state: &ApiState, config: &Config, bound: SocketAd
              the only browser-side check in between"
         );
     }
+    eprintln!(
+        "signer service: workload audience {} (protocol neoos-workload-v2)",
+        workload_auth.audience()
+    );
+    if workload_auth.allows_legacy_v1() {
+        eprintln!(
+            "signer service: WARNING audience-less neoos-workload-v1 compatibility is enabled; \
+             disable {ALLOW_LEGACY_WORKLOAD_V1_ENV} after all callers migrate"
+        );
+    }
+    if let Some(signclient) = &config.signclient {
+        eprintln!(
+            "signer service: official Neo SignClient bridge on {} for key {} (loopback only)",
+            signclient.bind, signclient.key_id
+        );
+    }
     Ok(())
 }
 
@@ -284,32 +380,25 @@ fn report(repository: &Store, state: &ApiState, config: &Config, bound: SocketAd
 /// half-written to a socket is a caller that retries blind, so draining is the
 /// only acceptable way to end.
 async fn shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        match signal(SignalKind::terminate()) {
-            Ok(mut terminate) => {
-                tokio::select! {
-                    _ = tokio::signal::ctrl_c() => eprintln!("signer service: interrupted"),
-                    _ = terminate.recv() => eprintln!("signer service: terminating"),
-                }
-                return;
-            }
-            Err(error) => eprintln!("signer service: no SIGTERM handler ({error}); Ctrl-C only"),
-        }
-    }
-    if tokio::signal::ctrl_c().await.is_err() {
-        eprintln!("signer service: the interrupt handler could not be installed");
-    } else {
-        eprintln!("signer service: interrupted");
-    }
+    let reason = neo_os_service_runtime::shutdown_signal().await;
+    eprintln!("signer service: {reason}");
 }
 
-/// The whole deployment configuration, which is four names in the environment.
+/// The deployment configuration resolved before the listener is opened.
 struct Config {
     data_dir: PathBuf,
     bind: SocketAddr,
+    workload_audience: Option<String>,
+    allow_legacy_workload_v1: bool,
     max_body_bytes: usize,
+    max_in_flight_requests: usize,
+    signclient: Option<SignClientConfig>,
+}
+
+struct SignClientConfig {
+    bind: SocketAddr,
+    key_id: String,
+    caller_token: Zeroizing<String>,
 }
 
 impl Config {
@@ -330,26 +419,160 @@ impl Config {
         let port: u16 = environment_or(PORT_ENV, &DEFAULT_PORT.to_string())
             .parse()
             .with_context(|| format!("{PORT_ENV} must be a port number"))?;
+        let bind = SocketAddr::new(host, port);
+        let workload_audience = env::var(WORKLOAD_AUDIENCE_ENV)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let allow_legacy_v1 = parse_strict_bool(
+            ALLOW_LEGACY_WORKLOAD_V1_ENV,
+            &environment_or(ALLOW_LEGACY_WORKLOAD_V1_ENV, "false"),
+        )?;
         let max_body_bytes: usize = environment_or(BODY_LIMIT_ENV, &DEFAULT_BODY_LIMIT.to_string())
             .parse::<usize>()
             .ok()
             .filter(|limit| *limit > 0)
             .with_context(|| format!("{BODY_LIMIT_ENV} must be a positive byte count"))?;
+        let max_in_flight_requests = parse_max_in_flight_requests(&environment_or(
+            MAX_IN_FLIGHT_ENV,
+            &DEFAULT_MAX_IN_FLIGHT_REQUESTS.to_string(),
+        ))?;
+        let signclient = parse_signclient_config(bind)?;
         Ok(Config {
             data_dir,
-            bind: SocketAddr::new(host, port),
+            bind,
+            workload_audience,
+            allow_legacy_workload_v1: allow_legacy_v1,
             max_body_bytes,
+            max_in_flight_requests,
+            signclient,
         })
     }
 
     fn database_path(&self) -> PathBuf {
         self.data_dir.join(DATABASE_FILE)
     }
+
+    fn workload_auth(&self, bound: SocketAddr) -> Result<WorkloadAuthPolicy> {
+        let audience = match self.workload_audience.as_deref() {
+            Some(audience) => audience.to_string(),
+            None if !bound.ip().is_unspecified() => format!("http://{bound}"),
+            None => bail!(
+                "{WORKLOAD_AUDIENCE_ENV} is required when {HOST_ENV} is an unspecified bind \
+                 address; workload proofs must name the public signer origin, not 0.0.0.0 or ::"
+            ),
+        };
+        WorkloadAuthPolicy::new(&audience, self.allow_legacy_workload_v1)
+            .map_err(anyhow::Error::msg)
+            .with_context(|| {
+                format!("{WORKLOAD_AUDIENCE_ENV} must be one canonical HTTP(S) origin with no path")
+            })
+    }
+}
+
+fn parse_signclient_config(http_bind: SocketAddr) -> Result<Option<SignClientConfig>> {
+    signclient_config_from_values(
+        http_bind,
+        configured(SIGNCLIENT_HOST_ENV),
+        configured(SIGNCLIENT_PORT_ENV),
+        configured(SIGNCLIENT_KEY_ID_ENV),
+        configured(SIGNCLIENT_CALLER_TOKEN_ENV),
+    )
+}
+
+fn signclient_config_from_values(
+    http_bind: SocketAddr,
+    configured_host: Option<String>,
+    configured_port: Option<String>,
+    configured_key: Option<String>,
+    configured_token: Option<String>,
+) -> Result<Option<SignClientConfig>> {
+    if configured_host.is_none()
+        && configured_port.is_none()
+        && configured_key.is_none()
+        && configured_token.is_none()
+    {
+        return Ok(None);
+    }
+    let port: u16 = configured_port
+        .with_context(|| {
+            format!(
+                "{SIGNCLIENT_PORT_ENV}, {SIGNCLIENT_KEY_ID_ENV} and \
+                 {SIGNCLIENT_CALLER_TOKEN_ENV} must be set together"
+            )
+        })?
+        .parse()
+        .ok()
+        .filter(|port| *port != 0)
+        .with_context(|| format!("{SIGNCLIENT_PORT_ENV} must be a non-zero port number"))?;
+    let key_id = configured_key.with_context(|| {
+        format!(
+            "{SIGNCLIENT_PORT_ENV}, {SIGNCLIENT_KEY_ID_ENV} and \
+             {SIGNCLIENT_CALLER_TOKEN_ENV} must be set together"
+        )
+    })?;
+    let caller_token = configured_token.with_context(|| {
+        format!(
+            "{SIGNCLIENT_PORT_ENV}, {SIGNCLIENT_KEY_ID_ENV} and \
+             {SIGNCLIENT_CALLER_TOKEN_ENV} must be set together"
+        )
+    })?;
+    let host: IpAddr = configured_host
+        .unwrap_or_else(|| DEFAULT_HOST.to_string())
+        .parse()
+        .with_context(|| {
+            format!("{SIGNCLIENT_HOST_ENV} must be a loopback IP such as {DEFAULT_HOST}")
+        })?;
+    if !host.is_loopback() {
+        bail!(
+            "{SIGNCLIENT_HOST_ENV} must be loopback because the official SignClient protocol \
+             has no transport authentication"
+        );
+    }
+    let bind = SocketAddr::new(host, port);
+    if bind == http_bind || (bind.port() == http_bind.port() && http_bind.ip().is_unspecified()) {
+        bail!("the SignClient and HTTP listeners cannot use the same address {bind}");
+    }
+    Ok(Some(SignClientConfig {
+        bind,
+        key_id,
+        caller_token: Zeroizing::new(caller_token),
+    }))
+}
+
+/// Parse only counts Tokio's semaphore can represent. Keeping this validation
+/// in configuration turns an out-of-range operator value into a startup error
+/// rather than a panic in `Semaphore::new` after the vault has been opened.
+fn parse_max_in_flight_requests(raw: &str) -> Result<usize> {
+    raw.parse::<usize>()
+        .ok()
+        .filter(|limit| (1..=Semaphore::MAX_PERMITS).contains(limit))
+        .with_context(|| {
+            format!(
+                "{MAX_IN_FLIGHT_ENV} must be between 1 and {}",
+                Semaphore::MAX_PERMITS
+            )
+        })
+}
+
+fn parse_strict_bool(name: &str, raw: &str) -> Result<bool> {
+    match raw {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => bail!("{name} must be exactly `true` or `false`"),
+    }
 }
 
 /// An environment value, or the default when the name is unset or empty.
 fn environment_or(name: &str, default: &str) -> String {
     configured_or(env::var(name).ok(), default)
+}
+
+fn configured(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 /// An empty value counting as unset is what lets a compose file render
@@ -371,7 +594,7 @@ fn help_text() -> String {
     let attested_boot_env = neo_signer::attestation::ATTESTED_BOOT_ENV;
     let expected_pcr0_env = neo_signer::attestation::EXPECTED_PCR0_ENV;
     format!(
-        "signer service — Neo N3 key custody with per-key signing boundaries
+        "signer service — Neo N3 and NeoX key custody with per-key signing boundaries
 
 Usage:
   signer_service [serve]                serve the API in docs/SIGNER_SERVICE.md §5, §5.1
@@ -390,6 +613,16 @@ Environment:
   {HOST_ENV:<31}bind address, default {DEFAULT_HOST}
   {PORT_ENV:<31}bind port, default {DEFAULT_PORT}
   {BODY_LIMIT_ENV:<31}request body ceiling, default {DEFAULT_BODY_LIMIT}
+  {MAX_IN_FLIGHT_ENV:<31}custody request concurrency, default {DEFAULT_MAX_IN_FLIGHT_REQUESTS};
+                                 excess requests receive 503 + Retry-After
+  {WORKLOAD_AUDIENCE_ENV:<31}canonical public signer origin committed to by
+                                 neoos-workload-v2; defaults to the concrete bind origin
+  {ALLOW_LEGACY_WORKLOAD_V1_ENV:<31}exactly true or false, default false; temporary
+                                 compatibility for audience-less v1 assertions
+  {SIGNCLIENT_HOST_ENV:<31}optional SignClient gRPC loopback host, default {DEFAULT_HOST}
+  {SIGNCLIENT_PORT_ENV:<31}enables the official Neo SignClient gRPC bridge
+  {SIGNCLIENT_KEY_ID_ENV:<31}single Neo N3 custody key exposed by that bridge
+  {SIGNCLIENT_CALLER_TOKEN_ENV:<31}internal sign-capable caller token; never sent over gRPC
   {MASTER_KEY_ENV:<31}64 hex characters or a passphrase; without it
                                  the vault creates <data_dir>/{MASTER_KEY_FILE}
                                  on first start (see src/vault.rs). Refused at
@@ -418,6 +651,13 @@ mod tests {
             HOST_ENV,
             PORT_ENV,
             BODY_LIMIT_ENV,
+            MAX_IN_FLIGHT_ENV,
+            WORKLOAD_AUDIENCE_ENV,
+            ALLOW_LEGACY_WORKLOAD_V1_ENV,
+            SIGNCLIENT_HOST_ENV,
+            SIGNCLIENT_PORT_ENV,
+            SIGNCLIENT_KEY_ID_ENV,
+            SIGNCLIENT_CALLER_TOKEN_ENV,
             MASTER_KEY_ENV,
             neo_signer::attestation::ATTESTED_BOOT_ENV,
             neo_signer::attestation::EXPECTED_PCR0_ENV,
@@ -436,6 +676,71 @@ mod tests {
         assert_eq!(configured_or(Some(String::new()), "8081"), "8081");
         assert_eq!(configured_or(Some("  ".to_string()), "8081"), "8081");
         assert_eq!(configured_or(Some(" 9000 ".to_string()), "8081"), "9000");
+    }
+
+    #[test]
+    fn the_in_flight_budget_stays_within_tokios_representable_range() {
+        assert_eq!(
+            parse_max_in_flight_requests(&Semaphore::MAX_PERMITS.to_string())
+                .expect("the semaphore maximum is representable"),
+            Semaphore::MAX_PERMITS
+        );
+        let above_maximum = Semaphore::MAX_PERMITS
+            .checked_add(1)
+            .expect("Tokio's semaphore maximum leaves room in usize");
+        assert!(parse_max_in_flight_requests(&above_maximum.to_string()).is_err());
+        assert!(parse_max_in_flight_requests("0").is_err());
+        assert!(parse_max_in_flight_requests("not-a-number").is_err());
+    }
+
+    #[test]
+    fn the_legacy_workload_switch_is_explicit() {
+        assert!(parse_strict_bool("TEST", "true").unwrap());
+        assert!(!parse_strict_bool("TEST", "false").unwrap());
+        for value in ["1", "yes", "TRUE", " true ", ""] {
+            assert!(parse_strict_bool("TEST", value).is_err(), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn the_credentialless_signclient_protocol_is_loopback_and_all_or_nothing() {
+        let http = "127.0.0.1:8081".parse().unwrap();
+        assert!(signclient_config_from_values(http, None, None, None, None)
+            .unwrap()
+            .is_none());
+        assert!(signclient_config_from_values(
+            http,
+            None,
+            Some("9991".to_string()),
+            Some("key-one".to_string()),
+            Some("token-one".to_string()),
+        )
+        .unwrap()
+        .is_some());
+        assert!(signclient_config_from_values(
+            http,
+            Some("0.0.0.0".to_string()),
+            Some("9991".to_string()),
+            Some("key-one".to_string()),
+            Some("token-one".to_string()),
+        )
+        .is_err());
+        assert!(signclient_config_from_values(
+            http,
+            None,
+            Some("9991".to_string()),
+            Some("key-one".to_string()),
+            None,
+        )
+        .is_err());
+        assert!(signclient_config_from_values(
+            http,
+            None,
+            Some("8081".to_string()),
+            Some("key-one".to_string()),
+            Some("token-one".to_string()),
+        )
+        .is_err());
     }
 
     #[test]

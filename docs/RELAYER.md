@@ -1,6 +1,9 @@
 # Relayer
 
-`workers/morpheus-relayer` is the async request/response bridge for the Morpheus MiniApp OS kernel.
+`workers/neo-os-relayer` is the authoritative Rust async request/response
+bridge for the Morpheus MiniApp OS kernel. `workers/morpheus-relayer` is the
+frozen Node compatibility/parity implementation; it is not a production
+authority and is never the target of the canonical run commands below.
 
 In the current production architecture, the relayer sits between the on-chain request surface and
 the confidential execution plane. It persists chain-originated work before checkpoint advancement
@@ -18,6 +21,11 @@ It closes the loop:
 ## Supported chains
 
 - Neo N3
+- NeoX
+
+Both chains support request and feed delivery. Select either or both with
+`MORPHEUS_ACTIVE_CHAINS`, and choose `requests_only`, `feed_only`, or `combined`.
+Automation is not part of this authority boundary and must remain disabled.
 
 ## Request routing
 
@@ -44,20 +52,29 @@ Long-term target:
 ## Commands
 
 ```bash
-npm --prefix workers/morpheus-relayer test
-npm --prefix workers/morpheus-relayer run once
-npm --prefix workers/morpheus-relayer run start
-npm --prefix workers/morpheus-relayer run metrics
+cargo test --locked --all-targets -p neo-os-relayer
+npm run config:relayer:rust
+npm run once:relayer
+npm run start:relayer
+npm run metrics:relayer
 ```
+
+The historical Node commands carry the explicit `:compat` suffix, for example
+`npm run start:relayer:compat`; use them only under the documented
+`ENABLE_NODE_COMPAT` boundary.
 
 ## Required env
 
 - `MORPHEUS_RUNTIME_URL`
 - `MORPHEUS_RUNTIME_TOKEN` or `NITRO_API_TOKEN` / `NITRO_SHARED_SECRET`
+- `MORPHEUS_RELAYER_ENCLAVE_FULFILL=true` for every request lane
 - `MORPHEUS_NETWORK` (`testnet` or `mainnet`)
-- `NEO_RPC_URL`
-- `CONTRACT_MORPHEUS_ORACLE_HASH`
-- `SIGNER_SERVICE_URL` / `SIGNER_SERVICE_TOKEN` with `SIGNER_ROLE_UPDATER_KEY_ID` and `SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID` — all relayer Neo N3 signing goes through the custody signer service; the relayer holds no signing key material
+- a network-scoped Neo N3 RPC list and oracle/datafeed contract for each enabled
+  Neo N3 lane
+- `MORPHEUS_RELAYER_NEOX_RPC_URL`, `MORPHEUS_RELAYER_NEOX_CHAIN_ID`, and the
+  NeoX oracle/datafeed contract for each enabled NeoX lane
+- `SIGNER_SERVICE_URL` / `SIGNER_SERVICE_TOKEN` with `SIGNER_ROLE_UPDATER_KEY_ID` and `SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID` — the token belongs to a dedicated bearer caller; `workload-ed25519` assertions are not yet supported by the relayer transport. All relayer Neo N3 signing goes through the custody signer service; the relayer holds no signing key material
+- `SIGNER_ROLE_NEOX_UPDATER_KEY_ID` / `SIGNER_ROLE_NEOX_VERIFIER_KEY_ID` — separate NeoX custody identities for EIP-1559 submission and semantic EIP-191 fulfillment proofs; the same key id must not be used for both
 
 If direct worker-side provider default resolution is needed during relayer processing, also set:
 
@@ -98,6 +115,8 @@ Checkpoint note:
 Neo N3 txproxy note:
 
 - the Neo N3 txproxy allowlist now permits both `fulfillRequest` and `queueAutomationRequest` on the Morpheus kernel contract so automation executions can be queued on-chain through the compatibility path
+- that automation statement describes the frozen Node compatibility path; the
+  production Rust relayer rejects `MORPHEUS_AUTOMATION_ENABLED=true`
 
 ## Supabase Persistence
 
@@ -131,12 +150,17 @@ Override with:
 
 ## Docker
 
-Build and run:
+Build the production Rust image. Its default command is deliberately
+`config:validate`, so selecting a run loop is explicit:
 
 ```bash
-docker build -f workers/morpheus-relayer/Dockerfile -t morpheus-relayer .
-docker run --env-file .env morpheus-relayer
+docker build -f deploy/nitro/Dockerfile.relayer -t neo-os-relayer:local .
+docker run --rm --env-file deploy/nitro/neo-os-relayer.env neo-os-relayer:local
 ```
+
+For a loop use `docker-compose.rust.yml` with an immutable image. The historical
+`workers/morpheus-relayer/Dockerfile` is Node compatibility only and is not
+published as a production service image.
 
 ## systemd
 
@@ -149,9 +173,13 @@ Typical install:
 ```bash
 sudo cp deploy/systemd/morpheus-relayer.service /etc/systemd/system/morpheus-relayer.service
 sudo systemctl daemon-reload
-sudo systemctl enable morpheus-relayer
-sudo systemctl start morpheus-relayer
+sudo systemctl enable --now morpheus-relayer
 ```
+
+The unit launches `/opt/neoos/services/bin/neo-os-relayer`, never npm. Neo N3
+and NeoX request/feed delivery are production Rust lanes; automation remains
+disabled and is rejected during configuration validation. See
+[`PRODUCTION_RUST_TOPOLOGY.md`](./PRODUCTION_RUST_TOPOLOGY.md).
 
 ## Nitro Sidecar Pattern
 
@@ -159,7 +187,7 @@ A simple production pattern is:
 
 - deploy the Rust `workers/nitro-enclave-host` EIF and its paired
   `workers/neo-signer` custody boundary
-- run `workers/morpheus-relayer` as a sidecar process on a small VM or container
+- run the `neo-os-relayer` Rust binary as a sidecar process on a small VM or container
 - point enclave-fulfillment traffic at the authenticated vsock gateway
 - keep Neo private keys in `neo-signer`; the sidecar holds only its scoped
   workload credential and non-custody provider configuration

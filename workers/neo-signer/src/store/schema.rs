@@ -25,7 +25,9 @@ pub(super) fn create_signer_tables(connection: &Connection) -> Result<()> {
             ciphertext BLOB NOT NULL,
             created_at_unix INTEGER NOT NULL,
             disabled INTEGER NOT NULL DEFAULT 0,
-            network_magic INTEGER NOT NULL
+            network_magic INTEGER NOT NULL,
+            chain_family TEXT NOT NULL DEFAULT 'neo-n3',
+            chain_id INTEGER NOT NULL
         );
         CREATE TABLE IF NOT EXISTS signer_policies (
             key_id TEXT PRIMARY KEY,
@@ -51,6 +53,12 @@ pub(super) fn create_signer_tables(connection: &Connection) -> Result<()> {
             signature_window_seconds INTEGER,
             signature_window_count INTEGER,
             asset_limits TEXT NOT NULL DEFAULT '[]',
+            chain_family TEXT,
+            evm_max_gas_price TEXT,
+            evm_max_gas_limit INTEGER,
+            evm_method_whitelist TEXT NOT NULL DEFAULT '',
+            evm_method_blacklist TEXT NOT NULL DEFAULT '',
+            evm_chain_id INTEGER,
             updated_at_unix INTEGER NOT NULL,
             FOREIGN KEY (key_id) REFERENCES signer_keys(id) ON DELETE CASCADE
         );
@@ -122,6 +130,8 @@ pub(super) fn create_signer_tables(connection: &Connection) -> Result<()> {
             verification BLOB NOT NULL,
             completed_at_unix INTEGER NOT NULL,
             audit_id INTEGER,
+            chain_family TEXT,
+            signed_transaction TEXT,
             PRIMARY KEY (caller_id, request_id)
         );
         CREATE TABLE IF NOT EXISTS signer_workload_nonces (
@@ -226,6 +236,44 @@ pub(super) fn migrate_signer_tables(connection: &Connection) -> Result<()> {
             [],
         )?;
     }
+    if !has_column(connection, "signer_policies", "chain_family")? {
+        connection.execute(
+            "ALTER TABLE signer_policies ADD COLUMN chain_family TEXT",
+            [],
+        )?;
+    }
+    if !has_column(connection, "signer_policies", "evm_max_gas_price")? {
+        connection.execute(
+            "ALTER TABLE signer_policies ADD COLUMN evm_max_gas_price TEXT",
+            [],
+        )?;
+    }
+    if !has_column(connection, "signer_policies", "evm_max_gas_limit")? {
+        connection.execute(
+            "ALTER TABLE signer_policies ADD COLUMN evm_max_gas_limit INTEGER",
+            [],
+        )?;
+    }
+    if !has_column(connection, "signer_policies", "evm_method_whitelist")? {
+        connection.execute(
+            "ALTER TABLE signer_policies
+             ADD COLUMN evm_method_whitelist TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    if !has_column(connection, "signer_policies", "evm_method_blacklist")? {
+        connection.execute(
+            "ALTER TABLE signer_policies
+             ADD COLUMN evm_method_blacklist TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    if !has_column(connection, "signer_policies", "evm_chain_id")? {
+        connection.execute(
+            "ALTER TABLE signer_policies ADD COLUMN evm_chain_id INTEGER",
+            [],
+        )?;
+    }
     // `network_magic` arrived with binding the chain identity to the row instead
     // of deriving it from `network` at signing time. The backfill is the
     // historical truth: every key held before this column existed signed under
@@ -244,6 +292,23 @@ pub(super) fn migrate_signer_tables(connection: &Connection) -> Result<()> {
                  ELSE 1230000
              END
              WHERE network_magic = 0;
+             COMMIT;",
+        )?;
+    }
+    // Curve/chain binding is immutable custody metadata, not a request hint.
+    // Every historical key is P-256/N3, so the only truthful backfill is N3.
+    if !has_column(connection, "signer_keys", "chain_family")? {
+        connection.execute(
+            "ALTER TABLE signer_keys
+             ADD COLUMN chain_family TEXT NOT NULL DEFAULT 'neo-n3'",
+            [],
+        )?;
+    }
+    if !has_column(connection, "signer_keys", "chain_id")? {
+        connection.execute_batch(
+            "BEGIN;
+             ALTER TABLE signer_keys ADD COLUMN chain_id INTEGER NOT NULL DEFAULT 0;
+             UPDATE signer_keys SET chain_id = network_magic WHERE chain_id = 0;
              COMMIT;",
         )?;
     }
@@ -294,6 +359,18 @@ pub(super) fn migrate_signer_tables(connection: &Connection) -> Result<()> {
              COMMIT;",
         )?;
     }
+    if !has_column(connection, "signer_requests", "chain_family")? {
+        connection.execute(
+            "ALTER TABLE signer_requests ADD COLUMN chain_family TEXT",
+            [],
+        )?;
+    }
+    if !has_column(connection, "signer_requests", "signed_transaction")? {
+        connection.execute(
+            "ALTER TABLE signer_requests ADD COLUMN signed_transaction TEXT",
+            [],
+        )?;
+    }
     Ok(())
 }
 
@@ -342,13 +419,5 @@ pub(super) fn create_signer_indexes(connection: &Connection) -> Result<()> {
          ON signer_workload_nonces (expires_at_unix)",
         [],
     )?;
-    // `chain_family` arrived with multi-chain support. Default to NULL (Neo N3)
-    // for backward compatibility - existing requests are Neo N3.
-    if !has_column(connection, "signer_requests", "chain_family")? {
-        connection.execute(
-            "ALTER TABLE signer_requests ADD COLUMN chain_family TEXT",
-            [],
-        )?;
-    }
     Ok(())
 }

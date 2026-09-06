@@ -62,11 +62,22 @@ pub enum SigningRequest<'a> {
         /// The decoded, unsigned payload.
         payload: &'a ConsensusPayload,
     },
+    /// A validated Neo N3 block header. Structural validation and immutable
+    /// network/key binding happen in the service before this policy decision;
+    /// the operator-facing permission is the same consensus authority as dBFT.
+    Block,
     /// Unstructured caller bytes. There is nothing to decode, which is
     /// exactly why the boundary switch governing it is a separate one: the
     /// lists below describe transactions, and a raw signature lets none of
     /// them speak.
     Raw,
+    /// A verifier signature for the canonical NeoX oracle fulfillment digest.
+    /// The route supplies only structured fields and binds them to this exact
+    /// chain contract before this policy decision is reached.
+    Eip191Fulfillment {
+        oracle_contract: ScriptHash,
+        method_selector: [u8; 4],
+    },
 }
 
 /// Value that has already left the key inside the policy window.
@@ -307,7 +318,9 @@ impl fmt::Display for DenyReason {
             DenyReason::EvmMethodNotWhitelisted => {
                 "the EVM contract method selector is not whitelisted"
             }
-            DenyReason::EvmInvalidChainId => "the EVM transaction chain ID doesn't match expected value",
+            DenyReason::EvmInvalidChainId => {
+                "the EVM transaction chain ID doesn't match expected value"
+            }
         };
         f.write_str(message)
     }
@@ -395,6 +408,7 @@ pub fn evaluate(
 ) -> Verdict {
     match request {
         SigningRequest::Consensus { payload } => evaluate_consensus(policy, key_account, payload),
+        SigningRequest::Block => evaluate_block(policy, key_account),
         SigningRequest::Raw => {
             if policy.allow_raw {
                 Verdict::Allow
@@ -405,6 +419,10 @@ pub fn evaluate(
                 )
             }
         }
+        SigningRequest::Eip191Fulfillment {
+            oracle_contract,
+            method_selector,
+        } => evaluate_eip191_fulfillment(policy, *oracle_contract, *method_selector),
         SigningRequest::Transaction {
             transaction,
             intents,
@@ -414,6 +432,57 @@ pub fn evaluate(
             intent,
         } => evaluate_evm_transaction(policy, key_account, transaction, intent, spent),
     }
+}
+
+fn evaluate_block(policy: &SignerPolicy, key_account: ScriptHash) -> Verdict {
+    if policy.allow_consensus {
+        Verdict::Allow
+    } else {
+        deny(
+            DenyReason::ConsensusForbidden,
+            format!("{key_account} asked to sign a Neo block header"),
+        )
+    }
+}
+
+fn evaluate_eip191_fulfillment(
+    policy: &SignerPolicy,
+    oracle_contract: ScriptHash,
+    method_selector: [u8; 4],
+) -> Verdict {
+    if !policy.allow_contract_call {
+        return deny(
+            DenyReason::ContractCallForbidden,
+            format!("NeoX fulfillment verifier signature for {oracle_contract} is not allowed"),
+        );
+    }
+    if policy.contract_blacklist.contains(&oracle_contract) {
+        return deny(
+            DenyReason::ContractBlacklisted,
+            format!("NeoX oracle contract {oracle_contract} is blacklisted"),
+        );
+    }
+    if policy.contract_whitelist.is_empty() || !policy.contract_whitelist.contains(&oracle_contract)
+    {
+        return deny(
+            DenyReason::ContractNotWhitelisted,
+            format!("NeoX oracle contract {oracle_contract} is not whitelisted"),
+        );
+    }
+    let selector = hex::encode(method_selector);
+    if policy.evm_method_blacklist.contains(&selector) {
+        return deny(
+            DenyReason::EvmMethodBlacklisted,
+            format!("NeoX fulfillment selector 0x{selector} is blacklisted"),
+        );
+    }
+    if policy.evm_method_whitelist.is_empty() || !policy.evm_method_whitelist.contains(&selector) {
+        return deny(
+            DenyReason::EvmMethodNotWhitelisted,
+            format!("NeoX fulfillment selector 0x{selector} is not whitelisted"),
+        );
+    }
+    Verdict::Allow
 }
 
 fn evaluate_consensus(
@@ -754,7 +823,7 @@ fn evaluate_evm_transaction(
                 );
             }
             // Check recipient whitelist/blacklist
-            let to_hash = ScriptHash(*to);
+            let to_hash = ScriptHash::from_evm_address(*to);
             if let Some(verdict) = check_recipient(policy, to_hash) {
                 return verdict;
             }
@@ -777,16 +846,14 @@ fn evaluate_evm_transaction(
                 );
             }
             // Check token contract whitelist/blacklist
-            let token_hash = ScriptHash(*token);
+            let token_hash = ScriptHash::from_evm_address(*token);
             if policy.asset_blacklist.contains(&token_hash) {
                 return deny(
                     DenyReason::AssetBlacklisted,
                     format!("ERC-20 token contract {} is blacklisted", token_hash),
                 );
             }
-            if !policy.asset_whitelist.is_empty()
-                && !policy.asset_whitelist.contains(&token_hash)
-            {
+            if !policy.asset_whitelist.is_empty() && !policy.asset_whitelist.contains(&token_hash) {
                 return deny(
                     DenyReason::AssetNotWhitelisted,
                     format!(
@@ -796,7 +863,7 @@ fn evaluate_evm_transaction(
                 );
             }
             // Check recipient
-            let to_hash = ScriptHash(*to);
+            let to_hash = ScriptHash::from_evm_address(*to);
             if let Some(verdict) = check_recipient(policy, to_hash) {
                 return verdict;
             }
@@ -805,12 +872,13 @@ fn evaluate_evm_transaction(
                 Ok(amt) => amt,
                 Err(verdict) => return verdict,
             };
-            if let Some(verdict) = check_transfer_amount(policy, transfer_amount, spent, token_hash) {
+            if let Some(verdict) = check_transfer_amount(policy, transfer_amount, spent, token_hash)
+            {
                 return verdict;
             }
             Verdict::Allow
         }
-        EvmIntent::ContractCall { to, data, .. } => {
+        EvmIntent::ContractCall { to, data, value } => {
             if !policy.allow_contract_call {
                 return deny(
                     DenyReason::ContractCallForbidden,
@@ -818,7 +886,7 @@ fn evaluate_evm_transaction(
                 );
             }
             // Check contract whitelist/blacklist
-            let contract_hash = ScriptHash(*to);
+            let contract_hash = ScriptHash::from_evm_address(*to);
             if policy.contract_blacklist.contains(&contract_hash) {
                 return deny(
                     DenyReason::ContractBlacklisted,
@@ -830,7 +898,10 @@ fn evaluate_evm_transaction(
             {
                 return deny(
                     DenyReason::ContractNotWhitelisted,
-                    format!("EVM contract {} is not in the contract whitelist", contract_hash),
+                    format!(
+                        "EVM contract {} is not in the contract whitelist",
+                        contract_hash
+                    ),
                 );
             }
             // Check method selector (first 4 bytes) if data exists
@@ -854,6 +925,26 @@ fn evaluate_evm_transaction(
                     );
                 }
             }
+            if value.iter().any(|byte| *byte != 0) {
+                if !policy.allow_transfer {
+                    return deny(
+                        DenyReason::TransferForbidden,
+                        "native value attached to an EVM contract call is not allowed".to_string(),
+                    );
+                }
+                if let Some(verdict) = check_recipient(policy, contract_hash) {
+                    return verdict;
+                }
+                let amount = match u256_to_i128(value) {
+                    Ok(amount) => amount,
+                    Err(verdict) => return verdict,
+                };
+                if let Some(verdict) =
+                    check_transfer_amount(policy, amount, spent, ScriptHash([0u8; 20]))
+                {
+                    return verdict;
+                }
+            }
             Verdict::Allow
         }
     }
@@ -866,7 +957,9 @@ fn check_recipient(policy: &SignerPolicy, recipient: ScriptHash) -> Option<Verdi
             format!("recipient {} is blacklisted", recipient),
         ));
     }
-    if !policy.transfer_to_whitelist.is_empty() && !policy.transfer_to_whitelist.contains(&recipient) {
+    if !policy.transfer_to_whitelist.is_empty()
+        && !policy.transfer_to_whitelist.contains(&recipient)
+    {
         return Some(deny(
             DenyReason::RecipientNotWhitelisted,
             format!("recipient {} is not in the recipient whitelist", recipient),
@@ -892,7 +985,10 @@ fn check_transfer_amount(
         if amount > max_single {
             return Some(deny(
                 DenyReason::SingleAmountExceeded,
-                format!("transfer amount {} exceeds single limit {}", amount, max_single),
+                format!(
+                    "transfer amount {} exceeds single limit {}",
+                    amount, max_single
+                ),
             ));
         }
     }

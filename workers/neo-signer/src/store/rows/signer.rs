@@ -16,7 +16,7 @@ use crate::{
         SignatureRateLimit, SignerAuditAction, SignerAuditOutcome, SignerAuditRecord, SignerCaller,
         SignerKey, SignerPolicy, SignerValueEvent, WindowLimit, WorkloadIdentity,
     },
-    network::Network,
+    network::{ChainFamily, Network},
     policy::WindowSpend,
     tx::HASH160_LEN,
 };
@@ -28,6 +28,7 @@ pub(in crate::store) fn signer_key_from_row(
     row: &rusqlite::Row<'_>,
 ) -> rusqlite::Result<SignerKey> {
     let network_raw: String = row.get(2)?;
+    let chain_family_raw: String = row.get(9)?;
     let nonce = fixed::<12>(4, row.get(4)?)?;
     Ok(SignerKey {
         id: row.get(0)?,
@@ -41,6 +42,9 @@ pub(in crate::store) fn signer_key_from_row(
         created_at_unix: row.get(6)?,
         disabled: row.get(7)?,
         network_magic: row.get(8)?,
+        chain_family: parse_field::<ChainFamily>(&chain_family_raw)?,
+        chain_id: u64::try_from(row.get::<_, i64>(10)?)
+            .map_err(|_| length_error(10, "chain id"))?,
     })
 }
 
@@ -85,6 +89,24 @@ pub(in crate::store) fn signer_policy_from_row(
             ))
         }
     };
+    let chain_family = row
+        .get::<_, Option<String>>(22)?
+        .as_deref()
+        .map(parse_field::<ChainFamily>)
+        .transpose()?;
+    let evm_max_gas_price = row
+        .get::<_, Option<String>>(23)?
+        .as_deref()
+        .map(|raw| parse_u128(23, raw))
+        .transpose()?;
+    let evm_max_gas_limit = row
+        .get::<_, Option<i64>>(24)?
+        .map(|value| u64::try_from(value).map_err(|_| length_error(24, "EVM gas limit")))
+        .transpose()?;
+    let evm_chain_id = row
+        .get::<_, Option<i64>>(27)?
+        .map(|value| u64::try_from(value).map_err(|_| length_error(27, "EVM chain id")))
+        .transpose()?;
 
     Ok(SignerPolicy {
         allow_consensus: row.get(0)?,
@@ -113,12 +135,12 @@ pub(in crate::store) fn signer_policy_from_row(
         max_network_fee: row.get(18)?,
         max_signatures,
         asset_limits: asset_limit_list(21, &row.get::<_, String>(21)?)?,
-        chain_family: None, // Default to Neo N3 for backward compatibility
-        evm_max_gas_price: None,
-        evm_max_gas_limit: None,
-        evm_method_whitelist: Vec::new(),
-        evm_method_blacklist: Vec::new(),
-        evm_chain_id: None,
+        chain_family,
+        evm_max_gas_price,
+        evm_max_gas_limit,
+        evm_method_whitelist: decode_args_field(&row.get::<_, String>(25)?),
+        evm_method_blacklist: decode_args_field(&row.get::<_, String>(26)?),
+        evm_chain_id,
     })
 }
 
@@ -223,6 +245,18 @@ fn parse_i128(index: usize, raw: &str) -> rusqlite::Result<i128> {
             index,
             rusqlite::types::Type::Text,
             Box::new(rusqlite::Error::InvalidColumnName("amount".to_string())),
+        )
+    })
+}
+
+fn parse_u128(index: usize, raw: &str) -> rusqlite::Result<u128> {
+    u128::from_str(raw).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(rusqlite::Error::InvalidColumnName(
+                "unsigned amount".to_string(),
+            )),
         )
     })
 }

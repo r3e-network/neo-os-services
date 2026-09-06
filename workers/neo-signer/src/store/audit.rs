@@ -116,7 +116,8 @@ impl Store {
                AND action IN (
                    'signer-transaction-signed',
                    'signer-consensus-signed',
-                   'signer-raw-signed'
+                   'signer-raw-signed',
+                   'signer-eip191-fulfillment-signed'
                )",
             params![key_id, since_unix],
             |row| row.get(0),

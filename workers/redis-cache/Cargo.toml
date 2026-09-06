@@ -1,0 +1,63 @@
+[package]
+name = "redis-cache"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Redis caching layer for NeoOS services - high-performance distributed caching with policy, pubkey, address, and query caches"
+
+[lib]
+name = "redis_cache"
+path = "src/lib.rs"
+
+[dependencies]
+# Redis client
+redis = { version = "0.25", features = [
+    "tokio-comp",
+    "connection-manager",
+    "cluster",
+    "cluster-async",
+    "sentinel",
+    "script",
+    "tokio-runtime",
+] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+anyhow = "1"
+
+# Async runtime
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+# Metrics (Prometheus)
+prometheus = "0.13"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Utilities
+hex = "0.4"
+thiserror = "1"
+dashmap = "6"  # In-memory L1 cache fallback
+
+# Crypto utilities
+sha3 = "0.10"
+ripemd = "0.1"
+
+# Time management
+chrono = { version = "0.4", features = ["serde"] }
+
+# Workspace crates
+neo-os-core = { path = "../../crates/neo-os-core" }
+neo-os-chain-evm = { path = "../../crates/neo-os-chain-evm" }
+
+[dev-dependencies]
+tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "cache_benchmarks"
+harness = false

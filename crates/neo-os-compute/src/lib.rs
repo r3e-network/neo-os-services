@@ -26,10 +26,13 @@
 //!   reader, so tests drive every env branch without process mutation and the
 //!   host can feed its overlay.
 //!
-//! The workspace rule forbids path dependencies between members (see the root
-//! `Cargo.toml`), so the JS-semantics helpers (`js.rs`) are local: they mirror
-//! `neo-os-core`'s `js_value`/`js_number` but stay independent.
+//! The game dependency is deliberately one-way: this crate re-exports
+//! `neo-os-games` through [`game`] for source compatibility, while
+//! `neo-os-games` depends only on `neo-os-core` and never back on compute.
+//! Compute's remaining JS-semantics helpers (`js.rs`) stay local to its
+//! protocol lanes.
 
+pub mod automation;
 pub mod capabilities;
 pub mod circuit_breaker;
 pub mod compute;

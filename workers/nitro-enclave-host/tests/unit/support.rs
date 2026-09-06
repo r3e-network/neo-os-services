@@ -15,10 +15,11 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use crate::overlay::EnvOverlay;
 use crate::state::{
-    AppState, BridgePlane, BridgeReply, KmsDiag, KmsReleaseParams, KmsReleaser, OracleIo,
-    PriceSource, RoleReport, SignerPlane,
+    AppState, BridgePlane, BridgeReply, Eip191FulfillmentRequest, JwksFetcher, KmsDiag,
+    KmsReleaseParams, KmsReleaser, OracleIo, PriceSource, RoleReport, SignerPlane,
 };
 use crate::RuntimeError;
+use rlp::{Rlp, RlpStream};
 
 pub const TEST_NETWORK: &str = "testnet";
 
@@ -112,26 +113,48 @@ pub struct FakeSigner {
     inner: Arc<FakeSignerInner>,
 }
 
+pub type CapturedTransactionCall = (String, String, u64, String, String);
+pub type CapturedN3TransactionCall = (String, String, String, String);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedEip191Call {
+    pub network: String,
+    pub role: String,
+    pub chain_id: u64,
+    pub oracle_contract: String,
+    pub fulfillment: neo_os_chain_evm::Fulfillment,
+    pub result_bytes_hex: String,
+    pub request_id: String,
+}
+
 #[derive(Clone)]
 pub struct SignerConfig {
     pub healthy: bool,
+    pub unhealthy_roles: Vec<String>,
+    pub shared_neox_identity: bool,
     pub public_key: String,
     pub identity: serde_json::Value,
     pub issues: Vec<String>,
     pub key_source: String,
     pub sign_result: Option<Result<serde_json::Value, RuntimeError>>,
+    pub transaction_result: Option<Result<serde_json::Value, RuntimeError>>,
+    pub eip191_result: Option<Result<serde_json::Value, RuntimeError>>,
 }
 
 impl Default for SignerConfig {
     fn default() -> Self {
         SignerConfig {
             healthy: true,
+            unhealthy_roles: Vec::new(),
+            shared_neox_identity: false,
             public_key: "02f8a5a1e0f3b6c9d2e5f8a1b4c7d0e3f6a9b2c5d8e1f4a7b0c3d6e9f2a5b8c1"
                 .to_string(),
             identity: healthy_identity(),
             issues: Vec::new(),
             key_source: "kms_attested".to_string(),
             sign_result: None,
+            transaction_result: None,
+            eip191_result: None,
         }
     }
 }
@@ -139,6 +162,9 @@ impl Default for SignerConfig {
 struct FakeSignerInner {
     config: Mutex<SignerConfig>,
     sign_calls: Mutex<Vec<(String, String, String)>>,
+    transaction_calls: Mutex<Vec<CapturedTransactionCall>>,
+    n3_transaction_calls: Mutex<Vec<CapturedN3TransactionCall>>,
+    eip191_calls: Mutex<Vec<CapturedEip191Call>>,
 }
 
 impl FakeSigner {
@@ -147,6 +173,9 @@ impl FakeSigner {
             inner: Arc::new(FakeSignerInner {
                 config: Mutex::new(config),
                 sign_calls: Mutex::new(Vec::new()),
+                transaction_calls: Mutex::new(Vec::new()),
+                n3_transaction_calls: Mutex::new(Vec::new()),
+                eip191_calls: Mutex::new(Vec::new()),
             }),
         }
     }
@@ -173,17 +202,65 @@ impl FakeSigner {
             .expect("sign calls lock")
             .clone()
     }
+
+    pub fn transaction_calls(&self) -> Vec<CapturedTransactionCall> {
+        self.inner
+            .transaction_calls
+            .lock()
+            .expect("transaction calls lock")
+            .clone()
+    }
+
+    pub fn n3_transaction_calls(&self) -> Vec<CapturedN3TransactionCall> {
+        self.inner
+            .n3_transaction_calls
+            .lock()
+            .expect("N3 transaction calls lock")
+            .clone()
+    }
+
+    pub fn eip191_calls(&self) -> Vec<CapturedEip191Call> {
+        self.inner
+            .eip191_calls
+            .lock()
+            .expect("EIP-191 calls lock")
+            .clone()
+    }
 }
 
 impl SignerPlane for FakeSigner {
-    fn role_report(&self, _network: &str, _role: &str) -> RoleReport {
+    fn role_report(&self, _network: &str, role: &str) -> RoleReport {
         let config = self.inner.config.lock().expect("config lock").clone();
-        if config.healthy {
+        if config.healthy && !config.unhealthy_roles.iter().any(|value| value == role) {
+            let identity = match role {
+                "neox_updater" => serde_json::json!({
+                    "address": "0x1111111111111111111111111111111111111111",
+                    "script_hash": "0x1111111111111111111111111111111111111111",
+                    "public_key": config.public_key,
+                    "chain_id": 12_227_332,
+                    "chain_family": "neox",
+                }),
+                "neox_verifier" => {
+                    let address = if config.shared_neox_identity {
+                        "0x1111111111111111111111111111111111111111"
+                    } else {
+                        "0x2222222222222222222222222222222222222222"
+                    };
+                    serde_json::json!({
+                        "address": address,
+                        "script_hash": address,
+                        "public_key": config.public_key,
+                        "chain_id": 12_227_332,
+                        "chain_family": "neox",
+                    })
+                }
+                _ => config.identity,
+            };
             RoleReport {
                 ok: true,
                 materialized: true,
                 public_key: config.public_key,
-                identity: config.identity,
+                identity,
                 issues: config.issues,
                 key_source: config.key_source,
             }
@@ -228,6 +305,159 @@ impl SignerPlane for FakeSigner {
                 "key_source": "vault_sealed",
             })),
         }
+    }
+
+    fn sign_transaction(
+        &self,
+        network: &str,
+        role: &str,
+        chain_id: u64,
+        unsigned_hex: &str,
+        request_id: &str,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        self.inner
+            .transaction_calls
+            .lock()
+            .expect("transaction calls lock")
+            .push((
+                network.to_string(),
+                role.to_string(),
+                chain_id,
+                unsigned_hex.to_string(),
+                request_id.to_string(),
+            ));
+        let result = self
+            .inner
+            .config
+            .lock()
+            .expect("config lock")
+            .transaction_result
+            .clone();
+        if let Some(result) = result {
+            return result;
+        }
+        let raw = unsigned_hex
+            .strip_prefix("0x")
+            .or_else(|| unsigned_hex.strip_prefix("0X"))
+            .unwrap_or(unsigned_hex);
+        let unsigned = hex::decode(raw).expect("fake receives valid unsigned hex");
+        assert_eq!(unsigned.first(), Some(&0x02));
+        let rlp = Rlp::new(&unsigned[1..]);
+        assert_eq!(rlp.item_count().expect("unsigned list"), 9);
+        let mut signed = RlpStream::new_list(12);
+        for index in 0..9 {
+            signed.append_raw(rlp.at(index).expect("unsigned item").as_raw(), 1);
+        }
+        signed.append(&0u8);
+        signed.append(&[1u8].as_slice());
+        signed.append(&[2u8].as_slice());
+        let mut signed_bytes = vec![0x02];
+        signed_bytes.extend_from_slice(&signed.out());
+        let signed_transaction = format!("0x{}", hex::encode(signed_bytes));
+        Ok(serde_json::json!({
+            "status": "ok",
+            "network": network,
+            "role": role,
+            "chain_family": "neox",
+            "chain_id": chain_id,
+            "address": "0x1111111111111111111111111111111111111111",
+            "signed_transaction": signed_transaction,
+            "signature_hex": signed_transaction,
+        }))
+    }
+
+    fn sign_n3_transaction(
+        &self,
+        network: &str,
+        role: &str,
+        unsigned_hex: &str,
+        request_id: &str,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        self.inner
+            .n3_transaction_calls
+            .lock()
+            .expect("N3 transaction calls lock")
+            .push((
+                network.to_string(),
+                role.to_string(),
+                unsigned_hex.to_string(),
+                request_id.to_string(),
+            ));
+        Ok(serde_json::json!({
+            "status": "ok",
+            "network": network,
+            "role": role,
+            "chain_family": "neo-n3",
+            "key_id": "updater-test",
+            "signature": "00",
+            "signature_hex": "00",
+            "public_key": self.inner.config.lock().expect("config lock").public_key.clone(),
+            "address": healthy_identity()["address"],
+            "script_hash": healthy_identity()["script_hash"],
+            "digest": "0x00",
+            "invocation_script": "0c4000",
+            "verification_script": "0c2100",
+            "key_source": "custody",
+        }))
+    }
+
+    fn sign_eip191_fulfillment(
+        &self,
+        request: &Eip191FulfillmentRequest<'_>,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        let network = request.network;
+        let role = request.role;
+        let chain_id = request.chain_id;
+        let oracle_contract = request.oracle_contract;
+        let fulfillment = request.fulfillment;
+        let result_bytes_hex = request.result_bytes_hex;
+        let request_id = request.request_id;
+        self.inner
+            .eip191_calls
+            .lock()
+            .expect("EIP-191 calls lock")
+            .push(CapturedEip191Call {
+                network: network.to_string(),
+                role: role.to_string(),
+                chain_id,
+                oracle_contract: oracle_contract.to_string(),
+                fulfillment: fulfillment.clone(),
+                result_bytes_hex: result_bytes_hex.to_string(),
+                request_id: request_id.to_string(),
+            });
+        let result = self
+            .inner
+            .config
+            .lock()
+            .expect("config lock")
+            .eip191_result
+            .clone();
+        if let Some(result) = result {
+            return result;
+        }
+        let digest = neo_os_chain_evm::build_neox_digest(
+            chain_id,
+            oracle_contract,
+            fulfillment,
+            result_bytes_hex,
+        )
+        .expect("fake receives a valid structured fulfillment");
+        let message_hash = neo_os_chain_evm::eip191_message_hash(&digest);
+        Ok(serde_json::json!({
+            "status": "ok",
+            "network": network,
+            "role": role,
+            "chain_family": "neox",
+            "chain_id": chain_id,
+            "key_id": "neox-verifier-test",
+            "oracle_contract": oracle_contract,
+            "address": "0x1111111111111111111111111111111111111111",
+            "public_key": self.inner.config.lock().expect("config lock").public_key.clone(),
+            "digest": format!("0x{}", hex::encode(digest)),
+            "message_hash": format!("0x{}", hex::encode(message_hash)),
+            "signature": format!("0x{}", "00".repeat(64)) + "1b",
+            "key_source": "custody",
+        }))
     }
 }
 
@@ -464,12 +694,10 @@ impl FakeOracleIo {
     pub fn set_addresses(&self, addresses: &[(&str, u8)]) {
         *self.inner.addresses.lock().expect("addresses lock") = addresses
             .iter()
-            .map(
-                |(address, family)| neo_os_compute::ssrf::ResolvedAddress {
-                    address: (*address).to_string(),
-                    family: *family,
-                },
-            )
+            .map(|(address, family)| neo_os_compute::ssrf::ResolvedAddress {
+                address: (*address).to_string(),
+                family: *family,
+            })
             .collect();
     }
 
@@ -526,6 +754,15 @@ impl OracleIo for FakeOracleIo {
     fn sleep_ms(&self, _ms: u64) {}
 }
 
+#[derive(Clone, Default)]
+pub struct FakeJwksFetcher;
+
+impl JwksFetcher for FakeJwksFetcher {
+    fn fetch_jwks(&self, _url: &str) -> Result<serde_json::Value, String> {
+        Err("unexpected JWKS fetch in this test".to_string())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // State assembly
 // ---------------------------------------------------------------------------
@@ -537,6 +774,7 @@ pub struct TestState {
     pub kms: FakeKms,
     pub price: FakePrice,
     pub oracle_io: FakeOracleIo,
+    pub jwks_fetcher: FakeJwksFetcher,
     pub state: AppState,
 }
 
@@ -549,6 +787,7 @@ pub fn test_state(
 ) -> TestState {
     let price = FakePrice::default();
     let oracle_io = FakeOracleIo::default();
+    let jwks_fetcher = FakeJwksFetcher;
     let state = AppState {
         overlay: Arc::new(RwLock::new(EnvOverlay::new(
             overlay_pairs.iter().map(|(key, value)| (*key, *value)),
@@ -560,6 +799,7 @@ pub fn test_state(
         kms: Box::new(kms.clone()),
         price: Box::new(price.clone()),
         oracle_io: Box::new(oracle_io.clone()),
+        jwks_fetcher: Box::new(jwks_fetcher.clone()),
         oracle_runtime: Mutex::new(neo_os_compute::oracle::providers::ProviderRuntime::default()),
         kms_diag: Mutex::new(KmsDiag::default()),
     };
@@ -570,6 +810,7 @@ pub fn test_state(
         kms,
         price,
         oracle_io,
+        jwks_fetcher,
         state,
     }
 }

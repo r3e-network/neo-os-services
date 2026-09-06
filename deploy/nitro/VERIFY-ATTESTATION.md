@@ -111,6 +111,8 @@ SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=<manifest-raw-verifier-key-id> \
 SIGNER_ROLE_UPDATER_KEY_ID=<manifest-raw-updater-key-id> \
 SIGNER_ROLE_RELAYER_KEY_ID=<manifest-raw-relayer-key-id> \
 SIGNER_ROLE_WORKER_KEY_ID=<manifest-raw-worker-key-id> \
+SIGNER_ROLE_NEOX_UPDATER_KEY_ID=<manifest-neox-updater-key-id> \
+SIGNER_ROLE_NEOX_VERIFIER_KEY_ID=<manifest-neox-verifier-key-id> \
   bash deploy/nitro/build-enclave-eif.sh --verify-reproducible
 ```
 
@@ -131,11 +133,12 @@ different PCRs by design. Compare against the manifest your own build wrote, not
 this table.
 
 **Why it is reproducible (this release):** base images are digest-pinned
-(`@sha256`), node deps come from the committed `package-lock.json` via `npm ci`,
-the Go NSM helper is pinned via `go.mod`/`go.sum` and built with
-`-trimpath -buildvcs=false`, apt versions are pinned, and every build-time
-cache/log/mtime that would otherwise flip a layer (npm cache + logs, Node's V8
-compile cache, apt/dpkg logs, file mtimes) is stripped in `Dockerfile.enclave`.
+(`@sha256`), Rust dependencies resolve from committed `Cargo.lock` with
+`--locked`, apt versions are pinned, and build-time cache/log/mtime sources that
+would otherwise flip a layer (Cargo build outputs, apt/dpkg logs, and rootfs
+file mtimes) are normalized or excluded in `Dockerfile.enclave`. The NSM path is
+Rust and talks to `/dev/nsm` directly; neither Node/npm nor a Go helper is part
+of the measured image graph.
 
 **Why the current Rust image is reproducible:** both stages pull a digest-pinned
 base, `cargo build --locked` resolves against the committed `Cargo.lock` and the

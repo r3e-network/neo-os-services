@@ -37,6 +37,9 @@ target
 # fails loudly without it, rather than shipping a service with no listener.
 !workers/neo-signer/src/bin
 !workers/neo-signer/src/bin/**
+# The Rust enclave host also uses Cargo's src/bin layout.
+!workers/nitro-enclave-host/src/bin
+!workers/nitro-enclave-host/src/bin/**
 # `crates/nitro-attest/src/bin` is hit by the same `**/bin` rule (its
 # `nsm-attest-rs` binary lives there); re-include it for the same reason.
 !crates/nitro-attest/src/bin

@@ -13,11 +13,12 @@ use std::collections::BTreeMap;
 /// The complete `/provision` allowlist. Security mode, network, endpoints,
 /// custody routing, policy toggles, and trust anchors are deliberately absent:
 /// those values belong to the measured image, not to its untrusted parent.
-pub const PROVISIONABLE_NAMES: [&str; 12] = [
+pub const PROVISIONABLE_NAMES: [&str; 13] = [
     "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64",
     "SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64",
     "MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64",
     "MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64",
+    "MORPHEUS_GAME_SECRET_KMS_CIPHERTEXT_BASE64",
     "MORPHEUS_ORACLE_KMS_DIAG_CIPHERTEXT",
     "AWS_REGION",
     "NITRO_AWS_REGION",
@@ -150,6 +151,20 @@ impl EnvOverlay {
             .insert("NEODID_SECRET_SALT".to_string(), salt.to_string());
         self.overlay.insert(
             "NEODID_SECRET_SALT_SOURCE".to_string(),
+            "nitro-recipient-kms".to_string(),
+        );
+    }
+
+    /// Install the non-signing HMAC root for authenticated game sessions.
+    /// Only the recipient-attested KMS provision path can set the source
+    /// marker; `/provision` never accepts the plaintext root.
+    pub(crate) fn set_game_secret_root(&mut self, secret_root_hex: &str) {
+        self.overlay.insert(
+            "MORPHEUS_GAME_SECRET_ROOT_HEX".to_string(),
+            secret_root_hex.to_string(),
+        );
+        self.overlay.insert(
+            "MORPHEUS_GAME_SECRET_ROOT_SOURCE".to_string(),
             "nitro-recipient-kms".to_string(),
         );
     }

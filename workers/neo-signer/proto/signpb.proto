@@ -1,0 +1,66 @@
+// Copyright (C) 2015-2026 The Neo Project.
+//
+// Fields 1-8 are wire-identical to the official Neo SignClient plugin. Fields
+// 9-10 are the existing secure-sign state-root extension and are additive.
+
+syntax = "proto3";
+
+package signpb;
+
+message BlockHeader {
+    uint32 version = 1;
+    bytes prev_hash = 2;
+    bytes merkle_root = 3;
+    uint64 timestamp = 4;
+    uint64 nonce = 5;
+    uint32 index = 6;
+    uint32 primary_index = 7;
+    bytes next_consensus = 8;
+    // Wire-compatible secure-sign extension. Official SignClient omits both;
+    // declaring them prevents a state-root-aware client from being silently
+    // decoded as (and signed as) the shorter header.
+    bytes prev_state_root = 9;
+    bool state_root_enabled = 10;
+}
+
+message TrimmedBlock {
+    BlockHeader header = 1;
+    repeated bytes tx_hashes = 2;
+}
+
+message ExtensiblePayload {
+    string category = 1;
+    uint32 valid_block_start = 2;
+    uint32 valid_block_end = 3;
+    bytes sender = 4;
+    bytes data = 5;
+}
+
+message AccountSign {
+    bytes signature = 1;
+    bytes public_key = 2;
+}
+
+message AccountContract {
+    bytes script = 1;
+    repeated uint32 parameters = 2;
+    bool deployed = 3;
+}
+
+enum AccountStatus {
+    NoSuchAccount = 0;
+    NoPrivateKey = 1;
+    Single = 2;
+    Multiple = 3;
+    Locked = 4;
+}
+
+message AccountSigns {
+    repeated AccountSign signs = 1;
+    AccountContract contract = 2;
+    AccountStatus status = 3;
+}
+
+message MultiAccountSigns {
+    repeated AccountSigns signs = 1;
+}

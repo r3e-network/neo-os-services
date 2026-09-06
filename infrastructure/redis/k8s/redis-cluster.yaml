@@ -1,0 +1,269 @@
+# Production Kubernetes Redis Cluster for NeoOS
+# Apply: kubectl apply -f infrastructure/redis/k8s/redis-cluster.yaml
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-cluster-config
+  namespace: neoos-system
+data:
+  redis.conf: |
+    # Redis production configuration for NeoOS
+    bind 0.0.0.0
+    port 6379
+    
+    # Cluster configuration
+    cluster-enabled yes
+    cluster-config-file nodes.conf
+    cluster-node-timeout 5000
+    cluster-require-full-coverage no
+    
+    # Persistence - RDB snapshots
+    save 900 1
+    save 300 10
+    save 60 10000
+    
+    # Persistence - AOF
+    appendonly yes
+    appendfsync everysec
+    auto-aof-rewrite-percentage 100
+    auto-aof-rewrite-min-size 64mb
+    
+    # Memory management
+    maxmemory 2gb
+    maxmemory-policy allkeys-lru
+    
+    # Security
+    requirepass ${REDIS_PASSWORD}
+    
+    # Slow log for debugging
+    slowlog-log-slower-than 10000
+    slowlog-max-len 128
+    
+    # Client output buffer limits
+    client-output-buffer-limit normal 0 0 0
+    client-output-buffer-limit replica 256mb 64mb 60
+    client-output-buffer-limit pubsub 64mb 16mb 60
+
+---
+# Headless Service for Redis Cluster
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster
+  namespace: neoos-system
+spec:
+  clusterIP: None
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+    - name: redis-cluster
+      port: 16379
+      targetPort: 16379
+  selector:
+    app: redis-cluster
+
+---
+# StatefulSet for Redis Cluster (3 masters, 3 replicas)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+  namespace: neoos-system
+spec:
+  serviceName: redis-cluster
+  replicas: 6
+  selector:
+    matchLabels:
+      app: redis-cluster
+  updateStrategy:
+    type: RollingUpdate
+  podManagementPolicy: Parallel
+  template:
+    metadata:
+      labels:
+        app: redis-cluster
+        role: redis
+      annotations:
+        checksum/config: "placeholder"
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.2-alpine
+          command:
+            - sh
+            - -c
+            - |
+              if [ $POD_INDEX -lt 3 ]; then
+                ROLE="master"
+              else
+                ROLE="replica"
+              fi
+              
+              redis-server /etc/redis/redis.conf \
+                --cluster-node-timeout 5000 \
+                --replicaof redis-cluster-$((POD_INDEX - 3)).redis-cluster.default.svc.cluster.local 6379
+                
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 6379
+              name: redis
+            - containerPort: 16379
+              name: redis-cluster
+          env:
+            - name: POD_INDEX
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: password
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /etc/redis
+          livenessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: redis-cluster
+                topologyKey: kubernetes.io/hostname
+      volumes:
+        - name: config
+          configMap:
+            name: redis-cluster-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+        storageClassName: standard
+
+---
+# Initial cluster join job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redis-cluster-init
+  namespace: neoos-system
+  labels:
+    app: redis-cluster
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: redis-init
+          image: redis:7.2-alpine
+          command:
+            - sh
+            - -c
+            - |
+              # Wait for all pods to be ready
+              sleep 30
+              
+              # Get first master node
+              MASTER_HOST=$(kubectl get pods -l app=redis-cluster -o jsonpath='{.items[0].status.podIP}')
+              
+              # Initialize cluster with 3 masters and 3 replicas
+              redis-cli --cluster create \
+                $(for i in {0..5}; do echo "-c redis-cluster-$i.redis-cluster.$(kubectl get ns -o name | tr -d '/')$i.redis-cluster.$(kubectl get ns -o name | tr -d '/').svc.cluster.local:6379"; done) \
+                --cluster-replicas 1 \
+                --cluster-use-empty-masters \
+                --cluster-yes \
+                -a ${REDIS_PASSWORD}
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: password
+      initContainers:
+        - name: wait-for-network
+          image: busybox:latest
+          command: ['sh', '-c', 'until nslookup redis-cluster; do echo waiting; sleep 2; done']
+
+---
+# Redis credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-secret
+  namespace: neoos-system
+type: Opaque
+stringData:
+  password: "${REDIS_PASSWORD}"
+
+---
+# Redis resource quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: redis-quota
+  namespace: neoos-system
+spec:
+  hard:
+    requests.memory: "8Gi"
+    requests.cpu: "4000m"
+    limits.memory: "16Gi"
+    limits.cpu: "8000m"
+
+---
+# LimitRange for Redis pods
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: redis-limit-range
+  namespace: neoos-system
+spec:
+  limits:
+    - type: Container
+      default:
+        memory: 1Gi
+        cpu: "500m"
+      defaultRequest:
+        memory: 512Mi
+        cpu: "250m"
+      max:
+        memory: 2Gi
+        cpu: "1000m"
+      min:
+        memory: 256Mi
+        cpu: "100m"

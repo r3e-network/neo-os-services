@@ -1,8 +1,11 @@
 [Unit]
-Description=Run Morpheus feed pusher (Neo N3) every 5 minutes
+Description=Run Morpheus Node feed pusher (Neo N3, COMPATIBILITY ONLY)
+ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_FEED_PUSHER_COMPAT
+Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
 [Timer]
 OnBootSec=3min
 OnUnitActiveSec=5min
 AccuracySec=15s
-[Install]
-WantedBy=timers.target
+
+# Deliberately no [Install] section. Production feed authority belongs to the
+# Rust relayer; an operator may start this timer only for an explicit rollback.

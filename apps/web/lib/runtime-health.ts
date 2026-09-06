@@ -9,7 +9,7 @@ import { trimString } from '@r3e-network/neo-os-services-shared/utils';
 // The attested in-TEE enclave server exposes /health publicly (unauthenticated).
 // This is the real liveness source for the public status surface — NOT the retired
 // runtime proxy (oracle.meshmini.app, which serves the emergency stub).
-const DEFAULT_BOX_HEALTH_URL = 'https://runtime.meshmini.app/health';
+const DEFAULT_BOX_HEALTH_URL = 'https://runtime.meshmini.app/{network}/health';
 
 export function resolveRuntimeRequestNetwork(request: Request): NetworkKey {
   const url = new URL(request.url);
@@ -36,46 +36,95 @@ export interface RuntimeProbe {
   body: unknown;
 }
 
+async function readBoxHealth(url: string): Promise<{ status: number; body: unknown }> {
+  const controller = new AbortController();
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const operation = (async () => {
+    const response = await fetch(url, {
+      method: 'GET', cache: 'no-store', signal: controller.signal, redirect: 'error',
+    });
+    if (controller.signal.aborted) {
+      void response.body?.cancel().catch(() => {});
+      throw new Error('Health request expired');
+    }
+    reader = response.body?.getReader();
+    if (!reader) throw new Error('Missing health body');
+    let bytes = 0;
+    const chunks: Uint8Array[] = [];
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      bytes += part.value.byteLength;
+      if (bytes > 65536) throw new Error('Health response exceeds limit');
+      chunks.push(part.value);
+    }
+    const content = new Uint8Array(bytes);
+    let offset = 0;
+    for (const chunk of chunks) { content.set(chunk, offset); offset += chunk.byteLength; }
+    return { status: response.status, body: JSON.parse(new TextDecoder().decode(content)) as unknown };
+  })();
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error('Health request expired'));
+    }, 8000);
+  });
+  try {
+    // The deadline includes both headers and every streamed body read, even
+    // when a custom fetch implementation does not honor its AbortSignal.
+    return await Promise.race([operation, deadline]);
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+    if (reader) {
+      void reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+  }
+}
+
 export async function fetchBoxHealth(networkOverride?: string | null): Promise<RuntimeProbe> {
   const networkKey = getSelectedNetworkKey(networkOverride);
   try {
-    const response = await fetch(resolveBoxHealthUrl(networkKey), {
-      method: 'GET',
-      cache: 'no-store',
-      signal: AbortSignal.timeout(8000),
-    });
-    const text = await response.text();
-    let body: unknown;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      body = text || null;
-    }
+    const response = await readBoxHealth(resolveBoxHealthUrl(networkKey));
+    // Never return a raw response string (or spread string characters into an
+    // error envelope). Only structured health documents can supply evidence.
+    const body = response.body && typeof response.body === 'object' && !Array.isArray(response.body)
+      ? response.body as Record<string, unknown> : {};
 
-    const reportedNetwork =
-      body && typeof body === 'object' && !Array.isArray(body)
-        ? normalizeNetworkKey((body as Record<string, unknown>).network as string | null)
-        : null;
-    if (reportedNetwork && reportedNetwork !== networkKey) {
+    const reportedNetwork = normalizeNetworkKey(body.network as string | null);
+    if (response.status === 200 && reportedNetwork !== networkKey) {
       return {
         ok: false,
         status: 503,
         body: {
-          ...(body as Record<string, unknown>),
+          ...body,
           status: 'degraded',
           ready: false,
-          error: 'runtime_network_mismatch',
+          error: reportedNetwork ? 'runtime_network_mismatch' : 'runtime_network_unverified',
           requested_network: networkKey,
           actual_network: reportedNetwork,
         },
       };
     }
-    return { ok: response.ok, status: response.status, body };
-  } catch (error) {
+    if (response.status === 200 && (body.ready !== true || (body.status !== undefined && body.status !== 'ok'))) {
+      return {
+        ok: false,
+        status: 503,
+        body: { ...body, error: 'runtime_not_ready', status: 'degraded', ready: false },
+      };
+    }
+    return {
+      ok: response.status === 200,
+      status: response.status,
+      body: response.status === 200 ? body : { ...body, ready: false },
+    };
+  } catch {
     return {
       ok: false,
       status: 0,
-      body: { error: error instanceof Error ? error.message : String(error) },
+      body: { error: 'runtime_health_unavailable', ready: false, requested_network: networkKey },
     };
   }
 }

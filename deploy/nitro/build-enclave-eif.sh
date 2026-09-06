@@ -19,8 +19,9 @@
 #   NITRO_CLI_BLOBS        nitro-cli blobs dir (default /usr/share/nitro_enclaves/blobs)
 #   MORPHEUS_RELEASE       release id for the manifest (default oracle-<UTC date>)
 #   MORPHEUS_NETWORK       network label for the manifest (default testnet)
-#   SIGNER_SERVICE_URL and SIGNER_ROLE_{ORACLE_VERIFIER,UPDATER,RELAYER,WORKER}_KEY_ID
-#                          immutable custody trust anchors baked into PCR0
+#   SIGNER_SERVICE_URL and SIGNER_ROLE_{ORACLE_VERIFIER,UPDATER,RELAYER,WORKER,
+#                          NEOX_UPDATER,NEOX_VERIFIER}_KEY_ID are immutable
+#                          custody trust anchors baked into PCR0
 #   --verify-reproducible  rebuild the docker image FROM SCRATCH and require
 #                          identical PCRs. Costs a second full build (the Rust
 #                          stage compiles twice) — that is the check.
@@ -39,6 +40,8 @@ signer_role_oracle_verifier_key_id="${SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID:-}"
 signer_role_updater_key_id="${SIGNER_ROLE_UPDATER_KEY_ID:-}"
 signer_role_relayer_key_id="${SIGNER_ROLE_RELAYER_KEY_ID:-}"
 signer_role_worker_key_id="${SIGNER_ROLE_WORKER_KEY_ID:-}"
+signer_role_neox_updater_key_id="${SIGNER_ROLE_NEOX_UPDATER_KEY_ID:-}"
+signer_role_neox_verifier_key_id="${SIGNER_ROLE_NEOX_VERIFIER_KEY_ID:-}"
 release="${MORPHEUS_RELEASE:-oracle-$(date -u +%Y-%m-%d)}"
 dockerfile="$repo_root/deploy/nitro/Dockerfile.enclave"
 measurements_dir="$repo_root/deploy/nitro/measurements"
@@ -49,12 +52,19 @@ for required_value in \
   "$signer_role_oracle_verifier_key_id" \
   "$signer_role_updater_key_id" \
   "$signer_role_relayer_key_id" \
-  "$signer_role_worker_key_id"; do
+  "$signer_role_worker_key_id" \
+  "$signer_role_neox_updater_key_id" \
+  "$signer_role_neox_verifier_key_id"; do
   if [ -z "$required_value" ]; then
-    echo "ERROR: signer service URL and all four SIGNER_ROLE_*_KEY_ID values are required build-time trust anchors" >&2
+    echo "ERROR: signer service URL and all six SIGNER_ROLE_*_KEY_ID values are required build-time trust anchors" >&2
     exit 2
   fi
 done
+
+if [ "$signer_role_neox_updater_key_id" = "$signer_role_neox_verifier_key_id" ]; then
+  echo "ERROR: SIGNER_ROLE_NEOX_UPDATER_KEY_ID and SIGNER_ROLE_NEOX_VERIFIER_KEY_ID must be distinct custody roles" >&2
+  exit 2
+fi
 
 verify_reproducible=0
 build_eif=1
@@ -69,10 +79,10 @@ done
 git_commit="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo unknown)"
 
 # Extract a Measurements field (PCR0/PCR1/PCR2/HashAlgorithm) from a captured
-# `nitro-cli build-enclave` JSON blob. node is present on the box (runs the
-# worker); use it for robust parsing rather than fragile grep.
+# `nitro-cli build-enclave` JSON blob. jq is already a Nitro host prerequisite;
+# the Rust production build path has no Node dependency.
 extract_measurement() { # $1=json blob  $2=field name
-  printf '%s' "$1" | FIELD="$2" node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.stdout.write((j.Measurements&&j.Measurements[process.env.FIELD])||"")}catch(e){process.stdout.write("")}})'
+  printf '%s' "$1" | jq -er --arg field "$2" '.Measurements[$field] // empty' 2>/dev/null || true
 }
 
 echo "==> building enclave image $image from $dockerfile"
@@ -83,6 +93,8 @@ build_args=(
   --build-arg "SIGNER_ROLE_UPDATER_KEY_ID=$signer_role_updater_key_id"
   --build-arg "SIGNER_ROLE_RELAYER_KEY_ID=$signer_role_relayer_key_id"
   --build-arg "SIGNER_ROLE_WORKER_KEY_ID=$signer_role_worker_key_id"
+  --build-arg "SIGNER_ROLE_NEOX_UPDATER_KEY_ID=$signer_role_neox_updater_key_id"
+  --build-arg "SIGNER_ROLE_NEOX_VERIFIER_KEY_ID=$signer_role_neox_verifier_key_id"
 )
 # SOURCE_DATE_EPOCH is also set in the Dockerfile; pass it through for any
 # builder that honors it at the layer level.
@@ -197,30 +209,32 @@ SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID="$signer_role_oracle_verifier_key_id" \
 SIGNER_ROLE_UPDATER_KEY_ID="$signer_role_updater_key_id" \
 SIGNER_ROLE_RELAYER_KEY_ID="$signer_role_relayer_key_id" \
 SIGNER_ROLE_WORKER_KEY_ID="$signer_role_worker_key_id" \
-node -e '
-const fs = require("node:fs");
-const m = {
-  release: process.env.RELEASE,
-  app_id: process.env.APP_ID,
-  network: process.env.NETWORK,
-  custody_boundary: {
-    service_url: process.env.SIGNER_SERVICE_URL,
-    oracle_verifier_key_id: process.env.SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID,
-    updater_key_id: process.env.SIGNER_ROLE_UPDATER_KEY_ID,
-    relayer_key_id: process.env.SIGNER_ROLE_RELAYER_KEY_ID,
-    worker_key_id: process.env.SIGNER_ROLE_WORKER_KEY_ID,
-  },
-  git_commit: process.env.GIT_COMMIT,
-  image_id: process.env.IMAGE_ID,
-  eif_sha256: process.env.EIF_SHA256 || null,
-  hash_algorithm: process.env.HASH_ALGO || "SHA384",
-  pcr0: process.env.PCR0,
-  pcr1: process.env.PCR1,
-  pcr2: process.env.PCR2,
-  built_at: process.env.BUILT_AT,
-};
-fs.writeFileSync(process.argv[1], JSON.stringify(m, null, 2) + "\n");
-' "$manifest"
+SIGNER_ROLE_NEOX_UPDATER_KEY_ID="$signer_role_neox_updater_key_id" \
+SIGNER_ROLE_NEOX_VERIFIER_KEY_ID="$signer_role_neox_verifier_key_id" \
+jq -n '
+  {
+    release: env.RELEASE,
+    app_id: env.APP_ID,
+    network: env.NETWORK,
+    custody_boundary: {
+      service_url: env.SIGNER_SERVICE_URL,
+      oracle_verifier_key_id: env.SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID,
+      updater_key_id: env.SIGNER_ROLE_UPDATER_KEY_ID,
+      relayer_key_id: env.SIGNER_ROLE_RELAYER_KEY_ID,
+      worker_key_id: env.SIGNER_ROLE_WORKER_KEY_ID,
+      neox_updater_key_id: env.SIGNER_ROLE_NEOX_UPDATER_KEY_ID,
+      neox_verifier_key_id: env.SIGNER_ROLE_NEOX_VERIFIER_KEY_ID
+    },
+    git_commit: env.GIT_COMMIT,
+    image_id: env.IMAGE_ID,
+    eif_sha256: (if env.EIF_SHA256 == "" then null else env.EIF_SHA256 end),
+    hash_algorithm: (env.HASH_ALGO // "SHA384"),
+    pcr0: env.PCR0,
+    pcr1: env.PCR1,
+    pcr2: env.PCR2,
+    built_at: env.BUILT_AT
+  }
+' >"$manifest"
 
 echo "==> measurements captured:"
 cat "$manifest"

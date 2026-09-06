@@ -1,7 +1,9 @@
 [Unit]
-Description=Morpheus DataFeed pusher - Neo X (EVM, key-signed)
+Description=Morpheus Node DataFeed pusher - Neo X (COMPATIBILITY ONLY)
 After=network-online.target
 Wants=network-online.target
+ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_FEED_PUSHER_COMPAT
+Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
 [Service]
 Type=oneshot
 EnvironmentFile=/opt/morpheus/nitro/feed-pusher.env

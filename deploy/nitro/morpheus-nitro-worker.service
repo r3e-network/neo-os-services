@@ -1,6 +1,7 @@
 [Unit]
-Description=NeoOS Nitro compute worker (Morpheus-compatible runtime lanes)
+Description=NeoOS Node compute worker (COMPATIBILITY ONLY; not production authority)
 After=network-online.target morpheus-nitro-signer.service
+ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_COMPAT
 
 [Service]
 Type=simple
@@ -13,5 +14,6 @@ ExecStart=/usr/bin/node src/server.js
 Restart=always
 RestartSec=5
 
-[Install]
-WantedBy=multi-user.target
+# Deliberately no [Install] section. This parity runtime can only be started
+# manually after an operator creates ENABLE_NODE_COMPAT; it is never enabled as
+# a default production authority.

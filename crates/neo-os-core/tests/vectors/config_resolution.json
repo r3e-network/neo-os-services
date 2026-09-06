@@ -567,9 +567,30 @@
                 "__t": "string",
                 "v": ""
               },
+              "datafeedContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedGasLimit": {
+                "__t": "number",
+                "v": "2000000"
+              },
               "allowHostSigner": {
                 "__t": "bool",
                 "v": false
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "verifier": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
               },
               "updaterPrivateKey": {
                 "__t": "string",
@@ -1182,9 +1203,30 @@
                 "__t": "string",
                 "v": ""
               },
+              "datafeedContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedGasLimit": {
+                "__t": "number",
+                "v": "2000000"
+              },
               "allowHostSigner": {
                 "__t": "bool",
                 "v": false
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "verifier": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
               },
               "updaterPrivateKey": {
                 "__t": "string",
@@ -1819,9 +1861,30 @@
                 "__t": "string",
                 "v": ""
               },
+              "datafeedContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedGasLimit": {
+                "__t": "number",
+                "v": "2000000"
+              },
               "allowHostSigner": {
                 "__t": "bool",
                 "v": false
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "verifier": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
               },
               "updaterPrivateKey": {
                 "__t": "string",
@@ -2459,9 +2522,30 @@
                 "__t": "string",
                 "v": ""
               },
+              "datafeedContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedGasLimit": {
+                "__t": "number",
+                "v": "2000000"
+              },
               "allowHostSigner": {
                 "__t": "bool",
                 "v": false
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "verifier": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
               },
               "updaterPrivateKey": {
                 "__t": "string",
@@ -3093,9 +3177,30 @@
                 "__t": "string",
                 "v": ""
               },
+              "datafeedContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedGasLimit": {
+                "__t": "number",
+                "v": "2000000"
+              },
               "allowHostSigner": {
                 "__t": "bool",
                 "v": false
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "verifier": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
               },
               "updaterPrivateKey": {
                 "__t": "string",
@@ -3724,9 +3829,30 @@
                 "__t": "string",
                 "v": ""
               },
+              "datafeedContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedGasLimit": {
+                "__t": "number",
+                "v": "2000000"
+              },
               "allowHostSigner": {
                 "__t": "bool",
                 "v": false
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "verifier": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
               },
               "updaterPrivateKey": {
                 "__t": "string",
@@ -4629,9 +4755,30 @@
                 "__t": "string",
                 "v": ""
               },
+              "datafeedContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedGasLimit": {
+                "__t": "number",
+                "v": "2000000"
+              },
               "allowHostSigner": {
                 "__t": "bool",
                 "v": true
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "verifier": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
               },
               "updaterPrivateKey": {
                 "__t": "string",
@@ -4779,8 +4926,574 @@
         }
       },
       "expected": {
-        "__t": "error",
-        "v": "Neo X production signing is unavailable: the shipped Rust enclave/custody runtime has no complete secp256k1 signer. Remove neox from MORPHEUS_ACTIVE_CHAINS until the measured custody/enclave signer and transaction relay are implemented."
+        "__t": "object",
+        "v": {
+          "network": {
+            "__t": "string",
+            "v": "testnet"
+          },
+          "nodeEnv": {
+            "__t": "string",
+            "v": "production"
+          },
+          "mode": {
+            "__t": "string",
+            "v": "combined"
+          },
+          "useDerivedKeys": {
+            "__t": "bool",
+            "v": false
+          },
+          "activeChains": {
+            "__t": "array",
+            "v": [
+              {
+                "__t": "string",
+                "v": "neo_n3"
+              },
+              {
+                "__t": "string",
+                "v": "neox"
+              }
+            ]
+          },
+          "pollIntervalMs": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "discoveryIdleBackoffMs": {
+            "__t": "number",
+            "v": "0"
+          },
+          "concurrency": {
+            "__t": "number",
+            "v": "4"
+          },
+          "maxBlocksPerTick": {
+            "__t": "number",
+            "v": "250"
+          },
+          "maxRetries": {
+            "__t": "number",
+            "v": "5"
+          },
+          "maxCallbackRetries": {
+            "__t": "number",
+            "v": "10"
+          },
+          "retryBaseDelayMs": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "retryMaxDelayMs": {
+            "__t": "number",
+            "v": "10000"
+          },
+          "statePersistMinIntervalMs": {
+            "__t": "number",
+            "v": "250"
+          },
+          "processedCacheSize": {
+            "__t": "number",
+            "v": "5000"
+          },
+          "deadLetterLimit": {
+            "__t": "number",
+            "v": "500"
+          },
+          "retryQueueLimit": {
+            "__t": "number",
+            "v": "0"
+          },
+          "durableQueue": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "failClosed": {
+                "__t": "bool",
+                "v": true
+              },
+              "allowLocalClaimDuringBackoff": {
+                "__t": "bool",
+                "v": false
+              },
+              "syncLimit": {
+                "__t": "number",
+                "v": "200"
+              },
+              "staleProcessingMs": {
+                "__t": "number",
+                "v": "45000"
+              }
+            }
+          },
+          "runSnapshots": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "errorBackoffMs": {
+                "__t": "number",
+                "v": "300000"
+              }
+            }
+          },
+          "backpressure": {
+            "__t": "object",
+            "v": {
+              "maxFreshEventsPerTick": {
+                "__t": "number",
+                "v": "32"
+              },
+              "maxRetryEventsPerTick": {
+                "__t": "number",
+                "v": "16"
+              },
+              "deferDelayMs": {
+                "__t": "number",
+                "v": "5000"
+              }
+            }
+          },
+          "feedSync": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "intervalMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "waitForSubmission": {
+                "__t": "bool",
+                "v": false
+              },
+              "projectSlug": {
+                "__t": "string",
+                "v": "morpheus"
+              },
+              "projectConfigEnabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "provider": {
+                "__t": "string",
+                "v": ""
+              },
+              "providers": {
+                "__t": "array",
+                "v": []
+              },
+              "symbols": {
+                "__t": "array",
+                "v": []
+              },
+              "changeThresholdBps": {
+                "__t": "string",
+                "v": "10"
+              },
+              "minUpdateIntervalMs": {
+                "__t": "string",
+                "v": "60000"
+              },
+              "staleAfterMs": {
+                "__t": "string",
+                "v": "300000"
+              }
+            }
+          },
+          "automation": {
+            "__t": "object",
+            "v": {
+              "enabled": {
+                "__t": "bool",
+                "v": true
+              },
+              "batchSize": {
+                "__t": "number",
+                "v": "50"
+              },
+              "maxQueuedPerTick": {
+                "__t": "number",
+                "v": "10"
+              },
+              "pricePollPairsPerTick": {
+                "__t": "number",
+                "v": "25"
+              },
+              "defaultPriceCooldownMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "claimStaleMs": {
+                "__t": "number",
+                "v": "120000"
+              },
+              "idleBackoffMs": {
+                "__t": "number",
+                "v": "0"
+              }
+            }
+          },
+          "logFormat": {
+            "__t": "string",
+            "v": "json"
+          },
+          "logLevel": {
+            "__t": "string",
+            "v": "info"
+          },
+          "confirmations": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "number",
+                "v": "1"
+              },
+              "neox": {
+                "__t": "number",
+                "v": "2"
+              }
+            }
+          },
+          "startRequestIds": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "null"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "startBlocks": {
+            "__t": "object",
+            "v": {
+              "neo_n3": {
+                "__t": "null"
+              },
+              "neox": {
+                "__t": "null"
+              }
+            }
+          },
+          "nitro": {
+            "__t": "object",
+            "v": {
+              "apiUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "allowFallback": {
+                "__t": "bool",
+                "v": false
+              },
+              "signerUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "custodyUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "custodyToken": {
+                "__t": "string",
+                "v": ""
+              },
+              "enclaveFulfill": {
+                "__t": "bool",
+                "v": false
+              },
+              "expectedPcr0": {
+                "__t": "string",
+                "v": ""
+              },
+              "verifyEnclaveSignature": {
+                "__t": "bool",
+                "v": true
+              },
+              "enclaveFulfillUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "decryptUrl": {
+                "__t": "string",
+                "v": ""
+              },
+              "nitroRootCertPem": {
+                "__t": "string",
+                "v": ""
+              },
+              "attestationMaxAgeMs": {
+                "__t": "number",
+                "v": "0"
+              },
+              "token": {
+                "__t": "string",
+                "v": ""
+              },
+              "timeoutMs": {
+                "__t": "number",
+                "v": "10000"
+              },
+              "useDerivedKeys": {
+                "__t": "bool",
+                "v": false
+              }
+            }
+          },
+          "neo_n3": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "n3index_notifications"
+              },
+              "fulfillConfirmTimeoutMs": {
+                "__t": "null"
+              },
+              "fulfillConfirmThrowOnTimeout": {
+                "__t": "bool",
+                "v": true
+              },
+              "indexerUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/rest/v1"
+              },
+              "startRequestId": {
+                "__t": "null"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://api.n3index.dev/testnet"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://api.n3index.dev/testnet"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://testnet1.neo.coz.io:443"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed1t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed2t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed3t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed4t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed5t5.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed3.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed4.neo.org:20332"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "http://seed5.neo.org:20332"
+                  }
+                ]
+              },
+              "networkMagic": {
+                "__t": "number",
+                "v": "894710606"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef"
+              },
+              "datafeedContract": {
+                "__t": "string",
+                "v": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064"
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "oracle_verifier": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
+              },
+              "feeTopUp": {
+                "__t": "object",
+                "v": {
+                  "enabled": {
+                    "__t": "bool",
+                    "v": true
+                  },
+                  "minBalance": {
+                    "__t": "string",
+                    "v": "50000000"
+                  },
+                  "topUpAmount": {
+                    "__t": "string",
+                    "v": "100000000"
+                  },
+                  "maxTopUpAmount": {
+                    "__t": "string",
+                    "v": "500000000"
+                  }
+                }
+              }
+            }
+          },
+          "neox": {
+            "__t": "object",
+            "v": {
+              "scanMode": {
+                "__t": "string",
+                "v": "request_cursor"
+              },
+              "rpcUrl": {
+                "__t": "string",
+                "v": "https://neoxt4seed1.ngd.network"
+              },
+              "rpcUrls": {
+                "__t": "array",
+                "v": [
+                  {
+                    "__t": "string",
+                    "v": "https://neoxt4seed1.ngd.network"
+                  },
+                  {
+                    "__t": "string",
+                    "v": "https://neoxt4seed2.ngd.network"
+                  }
+                ]
+              },
+              "chainId": {
+                "__t": "number",
+                "v": "12227332"
+              },
+              "oracleContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "datafeedContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedGasLimit": {
+                "__t": "number",
+                "v": "2000000"
+              },
+              "allowHostSigner": {
+                "__t": "bool",
+                "v": false
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "verifier": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
+              },
+              "updaterPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "verifierPrivateKey": {
+                "__t": "string",
+                "v": ""
+              },
+              "confirmTimeoutMs": {
+                "__t": "number",
+                "v": "45000"
+              },
+              "workerUrl": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "metricsServer": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": "127.0.0.1"
+              },
+              "port": {
+                "__t": "number",
+                "v": "9464"
+              },
+              "path": {
+                "__t": "string",
+                "v": "/metrics"
+              }
+            }
+          },
+          "heartbeats": {
+            "__t": "object",
+            "v": {
+              "relayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedRelayer": {
+                "__t": "string",
+                "v": ""
+              },
+              "failure": {
+                "__t": "string",
+                "v": ""
+              },
+              "deadLetter": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          }
+        }
       }
     },
     {
@@ -5356,9 +6069,30 @@
                 "__t": "string",
                 "v": ""
               },
+              "datafeedContract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feedGasLimit": {
+                "__t": "number",
+                "v": "2000000"
+              },
               "allowHostSigner": {
                 "__t": "bool",
                 "v": false
+              },
+              "custodyKeyIds": {
+                "__t": "object",
+                "v": {
+                  "updater": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "verifier": {
+                    "__t": "string",
+                    "v": ""
+                  }
+                }
               },
               "updaterPrivateKey": {
                 "__t": "string",

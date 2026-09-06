@@ -52,11 +52,19 @@ pub enum Target {
     NeoDidBind,
     NeoDidActionTicket,
     NeoDidRecoveryTicket,
+    NeoDidZkLoginTicket,
     OracleQuery,
     OracleSmartFetch,
     OracleDecrypt,
     OracleMessageReveal,
     OraclePublicKey,
+    VrfRandom,
+    PaymasterAuthorize,
+    SessionStart,
+    SessionStep,
+    SessionFinalize,
+    AutomationExecute,
+    OracleFeed,
     NotFound,
 }
 
@@ -98,6 +106,30 @@ pub fn classify(method: &str, path: &str) -> Target {
         }
         if matches_route(path, "/neodid/recovery-ticket") {
             return Target::NeoDidRecoveryTicket;
+        }
+        if matches_route(path, "/neodid/zklogin-ticket") {
+            return Target::NeoDidZkLoginTicket;
+        }
+        if matches_route(path, "/vrf/random") {
+            return Target::VrfRandom;
+        }
+        if matches_route(path, "/paymaster/authorize") {
+            return Target::PaymasterAuthorize;
+        }
+        if matches_route(path, "/session/start") {
+            return Target::SessionStart;
+        }
+        if matches_route(path, "/session/step") {
+            return Target::SessionStep;
+        }
+        if matches_route(path, "/session/finalize") {
+            return Target::SessionFinalize;
+        }
+        if matches_route(path, "/automation/execute") {
+            return Target::AutomationExecute;
+        }
+        if matches_route(path, "/oracle/feed") {
+            return Target::OracleFeed;
         }
         // The Phase 9 folds: the last four child-forwarded lanes, in-process
         // since the flip ([`crate::oracle_read`]).

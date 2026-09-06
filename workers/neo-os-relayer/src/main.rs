@@ -1,15 +1,17 @@
-//! Placeholder binary for the neo-os-relayer skeleton (T01).
-//!
-//! The real CLI (`loop` / `once` / `metrics` / `metrics:prom` /
-//! `serve:metrics` / `config:validate` / `config:dump`, with the exact exit
-//! codes ops tooling depends on — see docs/rust-migration/ARCHITECTURE.md
-//! §5.3) lands in T04. This placeholder exists only so the workspace member
-//! compiles; it must never be wired into deploy tooling.
+//! neo-os-relayer binary entry point (T04).
 
-fn main() {
-    eprintln!(
-        "neo-os-relayer: skeleton binary (T01). Implementation lands in T04; \
-         do not deploy this placeholder."
-    );
-    std::process::exit(2);
+#[tokio::main]
+async fn main() {
+    // Initialize tracing / logger
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
+    if let Err(e) = neo_os_relayer::cli::run_cli().await {
+        eprintln!("Error: {e}");
+        std::process::exit(1);
+    }
 }

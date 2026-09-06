@@ -384,14 +384,6 @@ export function createRelayerConfig() {
         'MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER=true for an explicit non-production test'
     );
   }
-  if (production && activeChains.includes('neox')) {
-    throw new Error(
-      'Neo X production signing is unavailable: the shipped Rust enclave/custody runtime has no ' +
-        'complete secp256k1 signer. Remove neox from MORPHEUS_ACTIVE_CHAINS until the measured ' +
-        'custody/enclave signer and transaction relay are implemented.'
-    );
-  }
-
   return {
     repoRoot,
     network,
@@ -741,10 +733,21 @@ export function createRelayerConfig() {
       oracleContract:
         trimString(env('MORPHEUS_RELAYER_NEOX_ORACLE', 'NEOX_ORACLE')) ||
         trimString(registry.neox?.contracts?.morpheus_oracle || ''),
+      datafeedContract:
+        trimString(env('MORPHEUS_RELAYER_NEOX_DATAFEED', 'NEOX_DATAFEED')) ||
+        trimString(registry.neox?.contracts?.morpheus_datafeed || ''),
+      feedGasLimit: Math.max(
+        parseNumericEnv(env('MORPHEUS_RELAYER_NEOX_FEED_GAS_LIMIT'), 2_000_000),
+        21_000
+      ),
       // Legacy host secp256k1 signing is only available for an explicitly
       // opted-in non-production test. The production Rust EIF has no complete
       // EVM custody signer, so createRelayerConfig refuses the Neo X lane.
       allowHostSigner: allowInsecureHostEvmSigner,
+      custodyKeyIds: {
+        updater: trimString(env('SIGNER_ROLE_NEOX_UPDATER_KEY_ID')),
+        verifier: trimString(env('SIGNER_ROLE_NEOX_VERIFIER_KEY_ID')),
+      },
       updaterPrivateKey: allowInsecureHostEvmSigner
         ? trimString(env('MORPHEUS_RELAYER_NEOX_UPDATER_PK', 'NEOX_UPDATER_PK', 'NEOX_FEED_PK'))
         : '',

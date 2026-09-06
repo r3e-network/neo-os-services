@@ -1,0 +1,1697 @@
+openapi: 3.0.3
+info:
+  title: NeoOS Signer Service API
+  description: |
+    Production-grade custody service for Neo N3 and NeoX private keys.
+    
+    The signer service is the only component in NeoOS allowed to hold an unlocked 
+    Neo N3 or NeoX private key, and the only component that decides whether a given 
+    key signs a given intent. Every key is immutably bound to its chain family and 
+    chain identifier.
+    
+    ## Security Considerations
+    - Transport: loopback or internal network only
+    - Authentication: Bearer token or Ed25519 workload identity
+    - Origin checking: Required for browser-based callers
+    - Audit trail: All decisions are recorded with full details
+    
+    ## Key Concepts
+    - **Keys**: Custody keys bound to specific chains (Neo N3/Neo X)
+    - **Callers**: Registered identities requesting signatures
+    - **Policies**: Boundaries defining what each key can sign
+    - **Audit Trail**: Complete record of all signing decisions
+    
+    ## Chain Families
+    - `neo-n3`: Neo N3 (NEO Legacy) network support
+    - `neox`: Neo X (EVM-compatible) network support
+    
+    For complete documentation, see [SIGNER_SERVICE.md](../SIGNER_SERVICE.md)
+  version: 2.1.0
+  contact:
+    name: NeoOS Security Team
+    email: security@neo-os.org
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: https://signer.internal.neo-os.org/signer/api/v1
+    description: Production environment
+  - url: https://signer-testnet.internal.neo-os.org/signer/api/v1
+    description: Testnet environment
+  - url: http://127.0.0.1:8081/signer/api/v1
+    description: Local development
+
+tags:
+  - name: Transaction Signing
+    description: Operations for signing transactions
+  - name: Key Management
+    description: Create, import, list, and delete custody keys
+  - name: Caller Management
+    description: Manage caller identities and their permissions
+  - name: Policy Management
+    description: Configure policy boundaries for keys
+  - name: Audit & Compliance
+    description: Security audit logs and compliance records
+
+paths:
+  /provision:
+    post:
+      tags:
+        - Enclave Operations
+      summary: Provision the vault with master key material
+      description: |
+        Unlocks the master key through attestation verification. This must be called
+        once per boot before any other operations. Only callable from trusted enclave hosts.
+        
+        The vault starts sealed and becomes open after successful provisioning.
+      operationId: provisionVault
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProvisionBody'
+            examples:
+              nitro:
+                value:
+                  env:
+                    provision_key_arn: "arn:aws:kms:us-east-1:123456789012:key/abcd1234-5678-9012-abcd-ef1234567890"
+                    vault_id: "vault-prod-001"
+                    attestation_source: "nitro"
+      responses:
+        '200':
+          description: Vault successfully provisioned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  vault_fingerprint:
+                    type: string
+                    description: SHA-256 fingerprint of the vault state
+                    example: "a3f5c8b9d2e1f4a7c6b5d8e9f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0"
+        '409':
+          description: Vault already provisioned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefusalReply'
+              examples:
+                default:
+                  value:
+                    allowed: false
+                    code: "signer-provision-already-done"
+                    message: "the vault is already provisioned; provisioning happens once per boot"
+        '503':
+          description: Vault not yet provisioned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefusalReply'
+
+  /health:
+    get:
+      tags:
+        - Health Checks
+      summary: Health check endpoint
+      description: Returns the operational status of the signer service
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - ok
+                      - unprovisioned
+                    description: Current service status
+              examples:
+                ready:
+                  value:
+                    status: "ok"
+                pending:
+                  value:
+                    status: "unprovisioned"
+
+  /metrics:
+    get:
+      tags:
+        - Health Checks
+      summary: Prometheus metrics endpoint
+      description: Exposes Prometheus-format metrics for monitoring
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Prometheus metrics
+          headers:
+            Content-Type:
+              schema:
+                type: string
+              example: text/plain; version=0.0.4; charset=utf-8
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: |
+                # HELP signer_requests_total Total number of requests
+                # TYPE signer_requests_total counter
+                signer_requests_total{route="/sign/transaction"} 1234
+
+  /attestation:
+    get:
+      tags:
+        - Enclave Operations
+      summary: Get TEE attestation document
+      description: |
+        Returns a COSE-SIGN1 CBOR document attesting to the runtime integrity
+        and policy boundaries loaded in this instance. Requires a nonce to prevent
+        replay attacks.
+      operationId: getAttestation
+      parameters:
+        - name: nonce
+          in: query
+          required: false
+          description: Hex-encoded random nonce to bind attestation to single use
+          schema:
+            type: string
+            format: hex
+            minLength: 32
+            maxLength: 256
+      responses:
+        '200':
+          description: Attestation document returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttestationResponse'
+              examples:
+                default:
+                  value:
+                    status: "ok"
+                    runtime: "nitro-eif-2.1.0"
+                    format: "cose-sign1-cbor-base64"
+                    vault_fingerprint: "abc123def456..."
+                    boundaries_sha256: "e3b0c44298fc1c149af..."
+                    boundaries_json: '{"keys":[...]}'
+                    nonce: "random_hex_nonce_here"
+                    user_data_hex: "attested_user_data"
+                    document_len: 512
+                    attestation_document: "eyJz..."
+
+  # ==================== TRANSACTION SIGNING ENDPOINTS ====================
+
+  /sign/transaction:
+    post:
+      tags:
+        - Transaction Signing
+      summary: Sign a Neo N3 or NeoX transaction
+      description: |
+        Signs a SerializeUnsigned transaction using the specified key. The request
+        includes unsigned transaction bytes which are parsed and validated according
+        to the key's policy before signing.
+        
+        For NeoN3: returns witness data for the transaction
+        For NeoX: returns complete signed EVM transaction
+        
+        Idempotent by request_id - exact retries return cached signature without
+        consuming limits again.
+      operationId: signTransaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignTransactionRequest'
+            examples:
+              neotx:
+                value:
+                  key_id: "key-neon3-treasury-001"
+                  unsigned_hex: "1100abcdef..."
+                  request_id: "tx-uuid-12345"
+                  chain_family: "neo-n3"
+                  chain_id: null
+              neox_tx:
+                value:
+                  key_id: "key-neox-oracle-001"
+                  unsigned_hex: "02f88b..."
+                  request_id: "tx-uuid-67890"
+                  chain_family: "neox"
+                  chain_id: 12227332
+      responses:
+        '200':
+          description: Transaction successfully signed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignatureResponse'
+        '400':
+          description: Invalid transaction format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefusalReply'
+        '403':
+          description: Transaction refused by policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefusalReply'
+        '404':
+          description: Key or caller not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefusalReply'
+        '409':
+          description: Duplicate request_id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefusalReply'
+
+  /sign/consensus:
+    post:
+      tags:
+        - Transaction Signing
+      summary: Sign a dBFT consensus payload
+      description: |
+        Signs a Neo N3 consensus message (PrepareRequest, PrepareResponse, Commit).
+        Only supports Neo N3 (no NeoX consensus). Includes anti-equivocation protection
+        with durable slot reservation.
+      operationId: signConsensus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignConsensusRequest'
+      responses:
+        '200':
+          description: Consensus payload signed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignatureResponse'
+        '400':
+          description: Invalid consensus payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefusalReply'
+
+  /sign/block:
+    post:
+      tags:
+        - Transaction Signing
+      summary: Sign a Neo N3 block header
+      description: |
+        Signs a Neo N3 block header through a dedicated durability lane. Validates
+        the Merkle root, checks primary_index, binds network and public key to
+        custody record, and reserves a durable height-wide block slot.
+      operationId: signBlock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignBlockRequest'
+      responses:
+        '200':
+          description: Block header signed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignatureResponse'
+
+  /sign/raw:
+    post:
+      tags:
+        - Transaction Signing
+      summary: Sign raw bytes (restricted)
+      description: |
+        Signs arbitrary raw bytes. REQUIRES the key to have allow_raw=true policy flag.
+        Only available to dedicated enclave-host role keys with raw_sign capability.
+        
+        WARNING: No parsing or validation occurs. Caller has full control over what
+        gets signed. Use only for preimages assembled inside measured boundary.
+      operationId: signRaw
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignRawRequest'
+      responses:
+        '200':
+          description: Raw bytes signed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignatureRawResponse'
+
+  /sign/eip191-fulfillment:
+    post:
+      tags:
+        - Transaction Signing
+      summary: Sign NeoX oracle fulfillment verifier
+      description: |
+        Signs a NeoX oracle fulfillment digest using EIP-191 encoding. The signer
+        computes both domain digest and message hash internally. Caller cannot
+        supply digest directly - this prevents blind signing attacks.
+      operationId: signEip191Fulfillment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignEip191Request'
+      responses:
+        '200':
+          description: Fulfillment signature generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignatureEip191Response'
+
+  # ==================== KEY MANAGEMENT ENDPOINTS ====================
+
+  /keys:
+    get:
+      tags:
+        - Key Management
+      summary: List all custody keys
+      description: |
+        Returns public identity information for all keys in the vault. Does NOT
+        expose private keys or sensitive details. Caller must have admin capabilities
+        or appropriate read access.
+      operationId: listKeys
+      responses:
+        '200':
+          description: List of keys retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeysListResponse'
+    post:
+      tags:
+        - Key Management
+      summary: Generate new custody key
+      description: |
+        Generates a new P-256 cryptographic key pair within the custody vault.
+        The key is immediately usable but requires policy configuration before
+        it will sign anything.
+      operationId: generateKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateKeyRequest'
+      responses:
+        '200':
+          description: Key generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyInfoResponse'
+        '400':
+          description: Invalid request parameters
+
+  /keys/import:
+    post:
+      tags:
+        - Key Management
+      summary: Import existing key into vault
+      description: |
+        Imports an existing private key into the custody vault. The private key
+        is encrypted at rest and never stored in plaintext. Requires admin capabilities.
+        
+        WARNING: Private key material is sent in the request body and should be
+        transmitted securely.
+      operationId: importKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportKeyRequest'
+      responses:
+        '200':
+          description: Key imported successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyInfoResponse'
+
+  /keys/import-nep2:
+    post:
+      tags:
+        - Key Management
+      summary: Import NEP-2 encrypted key
+      description: |
+        Imports a NEP-2 encrypted wallet file. The encrypted blob and passphrase
+        are used to decrypt the key, which is then stored securely in the vault.
+      operationId: importNep2Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportNep2Request'
+      responses:
+        '200':
+          description: NEP-2 key imported successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyInfoResponse'
+
+  /keys/{id}:
+    get:
+      tags:
+        - Key Management
+      summary: Get key public information
+      description: |
+        Retrieves public information for a specific key. Includes address,
+        script hash, verification script, and enabled/disabled status.
+      operationId: getKeyInfo
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Unique identifier of the key
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Key information retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyInfoResponse'
+        '404':
+          description: Key not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefusalReply'
+    delete:
+      tags:
+        - Key Management
+      summary: Delete a custody key
+      description: |
+        Permanently deletes a key from the vault. This action is irreversible.
+        Requires admin capabilities and the key must be disabled first.
+      operationId: deleteKey
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Key deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteKeyResponse'
+        '404':
+          description: Key not found
+
+  /keys/{id}/state:
+    post:
+      tags:
+        - Key Management
+      summary: Toggle key enabled/disabled state
+      description: |
+        Enables or disables a key. A disabled key will refuse all signing requests.
+        Useful for revoking access without permanently deleting the key.
+      operationId: setKeyState
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetKeyStateRequest'
+      responses:
+        '200':
+          description: State updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyInfoResponse'
+        '404':
+          description: Key not found
+
+  /keys/{id}/policy:
+    get:
+      tags:
+        - Policy Management
+      summary: Get key policy configuration
+      description: |
+        Retrieves the current policy configuration for a key. Policies define
+        what operations the key can perform and under what conditions.
+      operationId: getKeyPolicy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Policy retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyPolicyResponse'
+        '404':
+          description: Key not found
+    post:
+      tags:
+        - Policy Management
+      summary: Create or update key policy
+      description: |
+        Sets the policy configuration for a key. Policies are evaluated for every
+        signing request and enforce fine-grained access controls.
+        
+        The default policy is CLOSED - nothing is allowed until explicitly permitted.
+      operationId: saveKeyPolicy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyBody'
+      responses:
+        '200':
+          description: Policy saved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavePolicyResponse'
+
+  # ==================== CALLER MANAGEMENT ENDPOINTS ====================
+
+  /callers:
+    get:
+      tags:
+        - Caller Management
+      summary: List all registered callers
+      description: |
+        Returns information about all registered callers. Callers are identities
+        that can request signatures from the vault.
+      operationId: listCallers
+      responses:
+        '200':
+          description: List of callers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallersListResponse'
+    post:
+      tags:
+        - Caller Management
+      summary: Register a new caller
+      description: |
+        Creates a new caller identity with specified capabilities and key grants.
+        Returns an authentication token for bearer-mode callers or instructions
+        for workload identity setup.
+      operationId: createCaller
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCallerRequest'
+      responses:
+        '200':
+          description: Caller created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateCallerResponse'
+        '400':
+          description: Invalid request parameters
+
+  /callers/workload:
+    post:
+      tags:
+        - Caller Management
+      summary: Create workload caller (Ed25519)
+      description: |
+        Creates a caller identity using Ed25519 workload authentication instead
+        of bearer tokens. Used for server-to-server communication with stronger
+        security guarantees.
+      operationId: createWorkloadCaller
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkloadCallerRequest'
+      responses:
+        '200':
+          description: Workload caller created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateWorkloadCallerResponse'
+
+  /callers/{id}/rotate:
+    post:
+      tags:
+        - Caller Management
+      summary: Rotate caller authentication token
+      description: |
+        Rotates the authentication token for a bearer-mode caller. Useful for
+        security best practices and incident response.
+      operationId: rotateCallerToken
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Token rotated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RotateCallerResponse'
+        '404':
+          description: Caller not found
+
+  /callers/{id}/state:
+    post:
+      tags:
+        - Caller Management
+      summary: Enable/disable a caller
+      description: |
+        Enables or disables a caller identity. Disabled callers cannot make
+        signing requests.
+      operationId: setCallerState
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetCallerStateRequest'
+      responses:
+        '200':
+          description: Caller state updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallerInfoResponse'
+
+  /callers/{id}:
+    delete:
+      tags:
+        - Caller Management
+      summary: Delete a caller identity
+      description: |
+        Permanently removes a caller from the registry. Irreversible action.
+        Requires admin capabilities.
+      operationId: deleteCaller
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Caller deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteCallerResponse'
+
+  # ==================== AUDIT LOGS ENDPOINTS ====================
+
+  /audit:
+    get:
+      tags:
+        - Audit & Compliance
+      summary: Retrieve security audit logs
+      description: |
+        Accesses the complete audit trail of signing decisions and administrative
+        actions. Requires admin capabilities and whole-vault grant.
+        
+        The detail field contains sensitive information (hashes, amounts) and is
+        ONLY available here - never exposed in refusal responses to regular callers.
+      operationId: listAuditLogs
+      parameters:
+        - name: key_id
+          in: query
+          description: Filter audit entries by key ID
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Maximum number of entries (default 100, max 500)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        '200':
+          description: Audit log entries retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogResponse'
+
+components:
+  schemas:
+    # ==================== REQUEST MODELS ====================
+
+    SignTransactionRequest:
+      type: object
+      required:
+        - key_id
+        - unsigned_hex
+      properties:
+        key_id:
+          type: string
+          description: ID of the key to use for signing
+          example: "key-neon3-treasury-001"
+        unsigned_hex:
+          type: string
+          format: hex
+          description: Unsigned transaction bytes in hexadecimal format
+          example: "1100abcdef..."
+          minLength: 2
+        request_id:
+          type: string
+          format: uuid
+          description: Optional unique request ID for idempotency
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        chain_family:
+          type: string
+          enum: ["neo-n3", "neox"]
+          default: "neo-n3"
+          description: Target chain family
+        chain_id:
+          type: integer
+          minimum: 1
+          description: NeoX chain ID (required if chain_family is neox)
+          example: 12227332
+
+    SignConsensusRequest:
+      type: object
+      required:
+        - key_id
+        - unsigned_hex
+      properties:
+        key_id:
+          type: string
+          description: ID of the consensus signer key
+        unsigned_hex:
+          type: string
+          format: hex
+          description: Consensus payload bytes in hexadecimal
+        request_id:
+          type: string
+          format: uuid
+          description: Optional request ID for idempotency
+        chain_id:
+          type: integer
+          description: NeoX chain ID (for consensus only)
+
+    SignBlockRequest:
+      type: object
+      required:
+        - key_id
+        - network
+        - public_key
+        - block
+      properties:
+        key_id:
+          type: string
+        network:
+          type: integer
+          description: Network magic number
+        public_key:
+          type: string
+          format: hex
+          description: Compressed or uncompressed P-256 public key
+        block:
+          $ref: '#/components/schemas/BlockFields'
+        request_id:
+          type: string
+
+    SignRawRequest:
+      type: object
+      required:
+        - key_id
+        - data_hex
+      properties:
+        key_id:
+          type: string
+        data_hex:
+          type: string
+          format: hex
+          description: Raw bytes to sign (must use allow_raw key)
+        request_id:
+          type: string
+
+    SignEip191Request:
+      type: object
+      required:
+        - key_id
+        - request_id
+        - chain_id
+        - oracle_contract
+        - fulfillment
+        - result_bytes_hex
+      properties:
+        key_id:
+          type: string
+        request_id:
+          type: string
+        chain_id:
+          type: integer
+        oracle_contract:
+          type: string
+          format: address
+        fulfillment:
+          $ref: '#/components/schemas/Eip191Fulfillment'
+        result_bytes_hex:
+          type: string
+          format: hex
+
+    GenerateKeyRequest:
+      type: object
+      required:
+        - label
+        - network
+        - chain_family
+      properties:
+        label:
+          type: string
+          maxLength: 100
+          description: Human-readable label for the key
+        network:
+          type: string
+          enum: ["mainnet", "testnet", "private"]
+          description: Target network
+        chain_family:
+          type: string
+          enum: ["neo-n3", "neox"]
+          default: "neo-n3"
+        chain_id:
+          type: integer
+          description: NeoX chain ID
+        network_magic:
+          type: integer
+          description: Custom network magic for private networks
+
+    ImportKeyRequest:
+      type: object
+      required:
+        - label
+        - network
+        - chain_family
+        - private_key
+      properties:
+        label:
+          type: string
+        network:
+          type: string
+          enum: ["mainnet", "testnet", "private"]
+        chain_family:
+          type: string
+          enum: ["neo-n3", "neox"]
+        private_key:
+          type: string
+          description: Private key material (will be zeroed after import)
+          writeOnly: true
+        chain_id:
+          type: integer
+        network_magic:
+          type: integer
+
+    ImportNep2Request:
+      type: object
+      required:
+        - label
+        - network
+        - nep2
+        - passphrase
+      properties:
+        label:
+          type: string
+        network:
+          type: string
+        nep2:
+          type: string
+          description: NEP-2 encrypted wallet data
+        passphrase:
+          type: string
+          writeOnly: true
+        network_magic:
+          type: integer
+
+    SetKeyStateRequest:
+      type: object
+      required:
+        - disabled
+      properties:
+        disabled:
+          type: boolean
+          description: If true, disables the key
+
+    CreateCallerRequest:
+      type: object
+      required:
+        - label
+        - capabilities
+      properties:
+        label:
+          type: string
+        key_grant:
+          $ref: '#/components/schemas/GrantBody'
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: Allowed capabilities
+        allowed_origins:
+          type: array
+          items:
+            type: string
+          description: Browser origins allowed (for web callers)
+
+    CreateWorkloadCallerRequest:
+      type: object
+      required:
+        - caller
+        - workload_public_key
+      properties:
+        caller:
+          $ref: '#/components/schemas/CreateCallerRequest'
+        workload_public_key:
+          type: string
+          format: hex
+          minLength: 64
+          maxLength: 64
+          description: Ed25519 public key (32 bytes as hex)
+        workload_subject:
+          type: string
+          description: JWT subject claim for workload identity
+
+    PolicyBody:
+      type: object
+      properties:
+        allow_consensus:
+          type: boolean
+          default: false
+        allow_transfer:
+          type: boolean
+          default: false
+        allow_contract_call:
+          type: boolean
+          default: false
+        allow_global_scope:
+          type: boolean
+          default: false
+        allow_raw:
+          type: boolean
+          default: false
+          description: WARNING: Allows blind signing of raw bytes
+        contract_whitelist:
+          type: array
+          items:
+            type: string
+            format: address
+        contract_blacklist:
+          type: array
+          items:
+            type: string
+            format: address
+        contract_method_whitelist:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContractMethod'
+        contract_method_blacklist:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContractMethod'
+        asset_whitelist:
+          type: array
+          items:
+            type: string
+            format: hash-160
+        asset_blacklist:
+          type: array
+          items:
+            type: string
+            format: hash-160
+        asset_limits:
+          type: array
+          items:
+            $ref: '#/components/schemas/AssetLimit'
+        transfer_to_whitelist:
+          type: array
+          items:
+            type: string
+            format: address
+        transfer_to_blacklist:
+          type: array
+          items:
+            type: string
+            format: address
+        max_single_amount:
+          type: string
+          description: Maximum amount as decimal string (fixed-point)
+        window_limit:
+          $ref: '#/components/schemas/WindowLimit'
+        max_signers:
+          type: integer
+          maximum: 16
+        max_system_fee:
+          type: string
+          description: Max system fee as GAS fixed-8 string
+        max_network_fee:
+          type: string
+          description: Max network fee as GAS fixed-8 string
+        max_signatures:
+          $ref: '#/components/schemas/SignatureRate'
+        chain_family:
+          type: string
+          enum: ["neo-n3", "neox"]
+        evm_max_gas_price:
+          type: string
+        evm_max_gas_limit:
+          type: integer
+        evm_method_whitelist:
+          type: array
+          items:
+            type: string
+        evm_method_blacklist:
+          type: array
+          items:
+            type: string
+        evm_chain_id:
+          type: integer
+
+    GrantBody:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: ["any", "only"]
+          default: "only"
+        key_ids:
+          type: array
+          items:
+            type: string
+
+    ContractMethod:
+      type: object
+      required:
+        - contract
+        - method
+      properties:
+        contract:
+          type: string
+          format: address
+        method:
+          type: string
+
+    AssetLimit:
+      type: object
+      required:
+        - asset
+      properties:
+        asset:
+          type: string
+          format: hash-160
+        max_single_amount:
+          type: string
+        window_limit:
+          $ref: '#/components/schemas/WindowLimit'
+
+    WindowLimit:
+      type: object
+      required:
+        - seconds
+        - max_amount
+      properties:
+        seconds:
+          type: integer
+          minimum: 1
+        max_amount:
+          type: string
+          description: Amount as decimal string
+
+    SignatureRate:
+      type: object
+      required:
+        - seconds
+        - count
+      properties:
+        seconds:
+          type: integer
+          minimum: 1
+        count:
+          type: integer
+          minimum: 1
+
+    Eip191Fulfillment:
+      type: object
+      required:
+        - request_id
+        - app_id
+        - module_id
+        - operation
+        - success
+      properties:
+        request_id:
+          type: string
+        app_id:
+          type: string
+        module_id:
+          type: string
+        operation:
+          type: string
+        success:
+          type: boolean
+        error:
+          type: string
+
+    BlockFields:
+      type: object
+      required:
+        - header
+        - tx_hashes
+      properties:
+        header:
+          $ref: '#/components/schemas/BlockHeader'
+        tx_hashes:
+          type: array
+          items:
+            type: string
+            format: hash-256
+
+    BlockHeader:
+      type: object
+      required:
+        - version
+        - prev_hash
+        - merkle_root
+        - timestamp
+        - nonce
+        - index
+        - primary_index
+        - next_consensus
+      properties:
+        version:
+          type: integer
+        prev_hash:
+          type: string
+          format: hash-256
+        merkle_root:
+          type: string
+          format: hash-256
+        timestamp:
+          type: integer
+          format: uint64
+        nonce:
+          type: integer
+          format: uint64
+        index:
+          type: integer
+        primary_index:
+          type: integer
+        next_consensus:
+          type: string
+          format: hash-160
+        prev_state_root:
+          type: string
+          format: hash-256
+        state_root_enabled:
+          type: boolean
+
+    ProvisionBody:
+      type: object
+      required:
+        - env
+      properties:
+        env:
+          type: object
+          description: Environment-specific provision parameters
+          additionalProperties: true
+
+    # ==================== RESPONSE MODELS ====================
+
+    SignatureResponse:
+      type: object
+      required:
+        - allowed
+        - key_id
+        - script_hash
+        - address
+        - digest
+        - invocation_script
+        - verification_script
+      properties:
+        allowed:
+          type: boolean
+          enum: [true]
+        key_id:
+          type: string
+        script_hash:
+          type: string
+          format: hash-160
+        address:
+          type: string
+        digest:
+          type: string
+          format: hash-256
+        invocation_script:
+          type: string
+          format: hex
+        verification_script:
+          type: string
+          format: hex
+        chain_family:
+          type: string
+          enum: ["neo-n3", "neox"]
+        signature_hex:
+          type: string
+          description: Signed transaction (deprecated, use signature instead)
+        signature:
+          type: string
+          format: hex
+        signed_transaction:
+          type: string
+          description: Complete signed transaction (NeoX only)
+
+    SignatureRawResponse:
+      allOf:
+        - $ref: '#/components/schemas/SignatureResponse'
+        - type: object
+          required:
+            - signature
+            - public_key
+          properties:
+            signature:
+              type: string
+              description: 64-byte signature (r||s)
+              format: hex
+              minLength: 128
+              maxLength: 128
+            public_key:
+              type: string
+              description: Public key (33 bytes)
+              format: hex
+              minLength: 66
+              maxLength: 66
+
+    SignatureEip191Response:
+      allOf:
+        - $ref: '#/components/schemas/SignatureResponse'
+        - type: object
+          required:
+            - oracle_contract
+            - chain_id
+          properties:
+            oracle_contract:
+              type: string
+              format: address
+            chain_id:
+              type: integer
+            digest:
+              type: string
+              description: Keccak-256 of signed transaction
+
+    KeysListResponse:
+      type: object
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/KeyInfo'
+
+    KeyInfoResponse:
+      allOf:
+        - $ref: '#/components/schemas/KeyInfo'
+        - type: object
+          properties:
+            problems:
+              type: array
+              items:
+                type: string
+              description: Policy advice/warnings
+
+    KeyInfo:
+      type: object
+      required:
+        - id
+        - network
+        - chain_family
+        - address
+        - script_hash
+        - public_key
+        - enabled
+      properties:
+        id:
+          type: string
+          format: uuid
+        network:
+          type: string
+          enum: ["mainnet", "testnet", "private"]
+        chain_family:
+          type: string
+          enum: ["neo-n3", "neox"]
+        chain_id:
+          type: integer
+        label:
+          type: string
+        address:
+          type: string
+        script_hash:
+          type: string
+          format: hash-160
+        public_key:
+          type: string
+          format: hex
+        enabled:
+          type: boolean
+        created_at:
+          type: integer
+          format: uint64
+        network_magic:
+          type: integer
+
+    KeyPolicyResponse:
+      type: object
+      required:
+        - key
+        - policy
+      properties:
+        key:
+          $ref: '#/components/schemas/KeyInfo'
+        problems:
+          type: array
+          items:
+            type: string
+        policy:
+          $ref: '#/components/schemas/PolicyBody'
+
+    SavePolicyResponse:
+      type: object
+      required:
+        - policy
+      properties:
+        problems:
+          type: array
+          items:
+            type: string
+        policy:
+          $ref: '#/components/schemas/PolicyBody'
+
+    DeleteKeyResponse:
+      type: object
+      required:
+        - key_id
+      properties:
+        key_id:
+          type: string
+
+    CallersListResponse:
+      type: object
+      required:
+        - callers
+      properties:
+        callers:
+          type: array
+          items:
+            $ref: '#/components/schemas/CallerInfo'
+
+    CallerInfoResponse:
+      allOf:
+        - $ref: '#/components/schemas/CallerInfo'
+        - type: object
+          properties:
+            problems:
+              type: array
+              items:
+                type: string
+
+    CallerInfo:
+      type: object
+      required:
+        - id
+        - label
+        - enabled
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        enabled:
+          type: boolean
+        key_grant:
+          $ref: '#/components/schemas/GrantBody'
+        capabilities:
+          type: array
+          items:
+            type: string
+        allowed_origins:
+          type: array
+          items:
+            type: string
+        caller_type:
+          type: string
+          enum: ["bearer", "workload"]
+
+    CreateCallerResponse:
+      type: object
+      required:
+        - caller
+        - token
+      properties:
+        caller:
+          $ref: '#/components/schemas/CallerInfo'
+        token:
+          type: string
+          description: Bearer token for this caller (only returned once on creation)
+
+    CreateWorkloadCallerResponse:
+      type: object
+      required:
+        - caller
+      properties:
+        caller:
+          $ref: '#/components/schemas/CallerInfo'
+
+    RotateCallerResponse:
+      type: object
+      required:
+        - caller_id
+        - token
+      properties:
+        caller_id:
+          type: string
+        token:
+          type: string
+
+    DeleteCallerResponse:
+      type: object
+      required:
+        - caller_id
+      properties:
+        caller_id:
+          type: string
+
+    AuditLogEntry:
+      type: object
+      required:
+        - id
+        - recorded_at_unix
+        - action
+        - outcome
+      properties:
+        id:
+          type: integer
+        recorded_at_unix:
+          type: integer
+          format: uint64
+        action:
+          type: string
+          enum:
+            - TransactionSigned
+            - ConsensusSigned
+            - BlockSigned
+            - RawSigned
+            - Eip191FulfillmentSigned
+            - KeyGenerated
+            - KeyImported
+            - KeyDeleted
+            - KeyViewed
+            - KeyEnabled
+            - KeyDisabled
+            - PolicySaved
+            - CallerCreated
+            - CallerDeleted
+            - CallerViewed
+            - CallerRotated
+            - CallerEnabled
+            - CallerDisabled
+            - AuditRead
+        outcome:
+          type: string
+          enum:
+            - Allowed
+            - Denied
+            - Failed
+        caller_id:
+          type: string
+        key_id:
+          type: string
+        tx_id:
+          type: string
+        reason:
+          type: string
+        detail:
+          type: string
+          description: Bounded detailed explanation (≤512 bytes)
+        origin:
+          type: string
+
+    AuditLogResponse:
+      type: object
+      required:
+        - entries
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLogEntry'
+
+    AttestationResponse:
+      type: object
+      required:
+        - status
+        - runtime
+        - format
+        - vault_fingerprint
+        - boundaries_sha256
+        - boundaries_json
+        - attestation_document
+      properties:
+        status:
+          type: string
+          enum: ["ok"]
+        runtime:
+          type: string
+        format:
+          type: string
+          enum: ["cose-sign1-cbor-base64"]
+        vault_fingerprint:
+          type: string
+          format: hash-256
+        boundaries_sha256:
+          type: string
+          format: hash-256
+        boundaries_json:
+          type: string
+          description: JSON-encoded policy boundaries
+        nonce:
+          type: string
+          format: hex
+        user_data_hex:
+          type: string
+          format: hex
+        document_len:
+          type: integer
+        attestation_document:
+          type: string
+          description: Base64-encoded CBOR attestation document
+
+    RefusalReply:
+      type: object
+      required:
+        - allowed
+        - code
+        - message
+      properties:
+        allowed:
+          type: boolean
+          enum: [false]
+        code:
+          type: string
+          description: Machine-readable error code
+        message:
+          type: string
+          description: Human-readable error message
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Bearer token authentication
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key authentication
+    OriginHeader:
+      type: apiKey
+      in: header
+      name: Origin
+      description: Browser origin header (required for web callers)
+    WorkloadV2Headers:
+      description: >
+        Workload v2 authentication headers:
+        - X-NeoOS-Workload-Protocol: neoos-workload-v2
+        - X-NeoOS-Audience: configured audience
+        - X-NeoOS-Caller: caller ID
+        - X-NeoOS-Timestamp: Unix timestamp
+        - X-NeoOS-Nonce: base64url random nonce
+        - X-NeoOS-Signature: Ed25519 hex signature
+      type: custom
+
+security:
+  - BearerAuth: []

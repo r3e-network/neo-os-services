@@ -1,4 +1,13 @@
-# Mainnet price feed outage — restore runbook
+# Mainnet Node feed compatibility outage — incident runbook
+
+> This document records recovery for the frozen Node compatibility writer.
+> Production feed recovery must restore the Rust `neo-os-relayer`. Before any
+> command below starts `morpheus-feed-pusher*` or `morpheus-feed-topup*`, stop
+> both Rust relayer units and create the corresponding
+> `/opt/morpheus/nitro/ENABLE_NODE_FEED_PUSHER_COMPAT` or
+> `/opt/morpheus/nitro/ENABLE_NODE_FEE_TOPUP_COMPAT` marker. Remove the markers
+> before returning authority to Rust. The systemd units enforce this mutual
+> exclusion so Node and Rust cannot write chain state concurrently.
 
 **RESOLVED 2026-08-20T13:12:31Z after 22.5 days. Kept as the incident record and
 the procedure for the next time.** What actually happened, verified on the box
@@ -258,17 +267,17 @@ These steps move funds. **Do them yourself.**
   been the refund source. Preferably fund the dedicated low-value topup key
   instead and let `morpheus-feed-topup.timer` do the transfer — see 2.2.
 
-### 2.2 Make sure the auto-topup is actually installed
+### 2.2 Historical compatibility auto-topup
 
-`morpheus-feed-topup.timer` is **absent from the enable list** in
-`RUNBOOK.md` step 5, so it may never have been installed on the box. Check and
-install it:
+`morpheus-feed-topup.timer` is a Node compatibility chain writer and is
+deliberately non-installable. Do not enable it on a Rust production host. For a
+time-bounded compatibility rollback only, stop the Rust relayer, create the
+marker, and start it manually:
 
 ```bash
-systemctl list-timers --all | grep -E 'feed-(pusher|monitor|topup)'
-systemctl status morpheus-feed-topup.timer
-# if missing:
-systemctl enable --now morpheus-feed-topup.timer
+systemctl stop morpheus-relayer.service morpheus-relayer-nitro.service
+install -m 0600 /dev/null /opt/morpheus/nitro/ENABLE_NODE_FEE_TOPUP_COMPAT
+systemctl start morpheus-feed-topup.timer
 ```
 
 It reads `CUSTODY_URL`, `CUSTODY_TOKEN`, and `FUNDER_KEY_ID` from

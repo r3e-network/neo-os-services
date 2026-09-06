@@ -24,9 +24,16 @@ Current production architecture:
 }
 ```
 
-## Script Registry References
+## Script Registry References (not yet available in the Rust host)
 
-If the inline script would make the request payload too large, you can store the script body in a Neo N3 contract getter and send only a small reference:
+The request vocabulary reserves `script_ref` for a future Neo N3 registry
+reader, but the production Rust enclave host does not resolve it today. A
+request containing `script_ref.contract_hash` or `script_registry_contract`
+fails closed before any contract read with an explicit `not implemented`
+response. Use an inline `script` or `script_base64` within the configured source
+size limit instead.
+
+Reserved request shape:
 
 ```json
 {
@@ -41,9 +48,9 @@ If the inline script would make the request payload too large, you can store the
 }
 ```
 
-Rules:
+Planned rules when registry resolution is implemented:
 
-- current supported chain for `script_ref` is `neo_n3`
+- the first supported chain for `script_ref` will be `neo_n3`
 - the contract getter must be read-only and return either `String` or `ByteString`
 - the fetched script still passes the normal script-policy validator and timeout limits
 - this reduces notification / payload pressure without bypassing the existing execution sandbox
@@ -143,5 +150,6 @@ They are intentionally designed so that later Oracle runtime profiles can replac
 Current runtime hardening also enforces:
 
 - compute input size limits
-- script / wasm result size limits
-- worker timeouts for JS and WASM execution
+- script result size limits and execution timeouts
+- WASM input/result size validation; WASM execution itself remains fail-closed
+  until a runtime is linked into the Rust enclave host

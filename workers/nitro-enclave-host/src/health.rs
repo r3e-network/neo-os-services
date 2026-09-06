@@ -17,9 +17,10 @@ use crate::RUNTIME_NAME;
 
 pub fn handle_health(state: &AppState) -> serde_json::Value {
     let network = state.resolve_network();
-    let verifier = state.signer.role_report(&network, "oracle_verifier");
-    let signer_ok = verifier.ok && verifier.materialized;
-    let updater = state.signer.role_report(&network, "updater");
+    let reports = state.signing_role_reports();
+    let signer_ok = reports
+        .iter()
+        .all(|(_, report)| report.ok && report.materialized);
 
     // The measured runtime has no optional compute child. Implemented lanes
     // execute in-process and unmigrated fulfillment types refuse
@@ -31,9 +32,25 @@ pub fn handle_health(state: &AppState) -> serde_json::Value {
         "compute": compute_ready,
         "signer": signer_ok,
     });
-    if !verifier.public_key.is_empty() {
-        checks["oracle_verifier_public_key"] =
-            serde_json::Value::String(verifier.public_key.clone());
+    let mut key_source = serde_json::Map::new();
+    let mut signer_errors = Vec::new();
+    for (role, report) in &reports {
+        checks[format!("{role}_ready")] = serde_json::Value::Bool(report.ok && report.materialized);
+        if !report.public_key.is_empty() {
+            checks[format!("{role}_public_key")] =
+                serde_json::Value::String(report.public_key.clone());
+        }
+        key_source.insert(
+            (*role).to_string(),
+            serde_json::Value::String(report.key_source.clone()),
+        );
+        if !report.ok || !report.materialized {
+            if report.issues.is_empty() {
+                signer_errors.push(format!("{role}: custody identity is not materialized"));
+            } else {
+                signer_errors.push(format!("{role}: {}", report.issues.join("; ")));
+            }
+        }
     }
 
     let mut body = serde_json::json!({
@@ -43,15 +60,12 @@ pub fn handle_health(state: &AppState) -> serde_json::Value {
         "network": network,
         "provisioned": state.runtime_token_kms_version.load(std::sync::atomic::Ordering::SeqCst) > 0,
         "checks": checks,
-        "key_source": {
-            "oracle_verifier": verifier.key_source,
-            "updater": updater.key_source,
-        },
+        "key_source": key_source,
         "plaintext_key_provision_allowed": false,
         "kms_diag": state.kms_diag.lock().expect("kms diag lock").value.clone(),
     });
-    if !signer_ok && !verifier.issues.is_empty() {
-        body["signer_error"] = serde_json::Value::String(verifier.issues.join("; "));
+    if !signer_errors.is_empty() {
+        body["signer_error"] = serde_json::Value::String(signer_errors.join(" | "));
     }
     body
 }

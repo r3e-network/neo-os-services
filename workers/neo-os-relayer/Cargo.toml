@@ -3,24 +3,7 @@ name = "neo-os-relayer"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "Relayer orchestration shell: scans, fulfillment, automation, feed sync, observability (T01 skeleton; replaces the dead morpheus-relayer-rs)"
-
-# T01 skeleton — bodies land in T02–T04 (docs/rust-migration/ARCHITECTURE.md §6).
-# Replaces workers/morpheus-relayer-rs, which was dead code: 521 lines, a lib.rs
-# claiming seven modules (chains/processor/queue/automation/feed/persistence/
-# monitoring) of which none existed, plus a napi FFI bridge the workspace never
-# shipped. Do not resurrect it; this crate is the restart.
-#
-# Planned layout (T02–T04):
-# - config  — declarative schema over the 109 logical keys / 149 env names,
-#             alias-chain + precedence + redaction (T02)
-# - state   — state-file schema, metric counters, retry scheduling (T02)
-# - store   — Supabase REST persistence, 6 tables, optimistic-claim semantics (T03,
-#             extracted to crates/neo-os-relayer-store when it needs its own tests)
-# - scan    — per-chain discovery/cursor orchestration over the chain adapters (T04)
-# - fulfill — executor/coordinator/dispatch/delivery pipeline (T04)
-# - observe — hand-rolled Prometheus text rendering, 25 top-level counters with
-#             byte-identical exposition lines (T04, hard external contract)
+description = "Relayer orchestration shell: scans, fulfillment, automation, feed sync, observability (T04)"
 
 [lib]
 path = "src/lib.rs"
@@ -30,3 +13,26 @@ name = "neo-os-relayer"
 path = "src/main.rs"
 
 [dependencies]
+neo-os-core = { path = "../../crates/neo-os-core" }
+neo-os-chain-n3 = { path = "../../crates/neo-os-chain-n3", features = ["http"] }
+neo-os-chain-evm = { path = "../../crates/neo-os-chain-evm" }
+neo-os-relayer-store = { path = "../../crates/neo-os-relayer-store" }
+neo-os-service-runtime = { path = "../../crates/neo-os-service-runtime" }
+nitro-attest = { path = "../../crates/nitro-attest" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "charset", "http2", "rustls-tls", "json"] }
+axum = "0.8"
+http = "1"
+hex = "0.4"
+sha2 = "0.10"
+p256 = { version = "0.13", features = ["ecdsa"] }
+url = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[dev-dependencies]
+rlp = "0.5"
+k256 = { version = "0.13", features = ["ecdsa"] }

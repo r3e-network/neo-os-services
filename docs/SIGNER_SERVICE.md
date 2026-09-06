@@ -11,9 +11,11 @@ must not weaken any rule below.
 ## 1. Purpose
 
 The signer service is the only component in NeoOS allowed to hold an unlocked Neo N3
-private key, and the only component that decides whether a given key signs a given
-intent. Everything else — the web host, the admin console, the explorer, the relayers,
-node-operations tooling — asks it to sign and is told yes or no.
+or NeoX private key, and the only component that decides whether a given key signs a
+given intent. Every key is immutably bound to its chain family and chain identifier;
+an N3/P-256 identity can never be reinterpreted as a NeoX/K-256 identity. Everything
+else — the web host, the admin console, the explorer, the relayers, node-operations
+tooling — asks it to sign and is told yes or no.
 
 One sentence to test any new code against:
 
@@ -90,6 +92,14 @@ under a dedicated boundary switch, `allow_raw`, which defaults to closed, and re
 the route-specific caller capability `raw_sign`. It exists for dedicated enclave-host
 role keys whose preimages are assembled inside the measured boundary.
 
+NeoX oracle verification does **not** use that exception. The semantic
+`POST /sign/eip191-fulfillment` route accepts the chain, oracle contract and structured
+fulfillment fields, recomputes both the domain digest and EIP-191 message hash inside
+custody, and returns a recoverable verifier signature. The caller cannot supply either
+digest. This lane requires ordinary `sign` capability and a NeoX policy explicitly
+bound to the exact chain id, a non-empty contract whitelist containing the oracle, and
+a non-empty selector whitelist containing `fulfillRequest(uint256,bool,bytes,string,bytes)`.
+
 Raw and semantic authority must never share a key. A raw caller can submit
 `magicLE || SHA256(SerializeUnsigned)` and obtain exactly the ECDSA signature a Neo
 transaction needs; cryptographic framing alone does **not** separate those domains.
@@ -140,12 +150,15 @@ recorded for them; server-to-server callers record none and are refused if they 
 one. Refusals are attributable: caller, key, reason code and the digest of what was
 refused all reach the audit trail.
 
-Workload callers send `X-NeoOS-Caller`, `X-NeoOS-Timestamp`,
-`X-NeoOS-Nonce`, and `X-NeoOS-Signature`. The 64-byte Ed25519 signature is
-lowercase hex over this UTF-8 message:
+Workload callers use the audience-bound v2 assertion by default. They send
+`X-NeoOS-Workload-Protocol: neoos-workload-v2`, `X-NeoOS-Audience`,
+`X-NeoOS-Caller`, `X-NeoOS-Timestamp`, `X-NeoOS-Nonce`, and
+`X-NeoOS-Signature`. The 64-byte Ed25519 signature is lowercase hex over this
+UTF-8 message:
 
 ```text
-neoos-workload-v1
+neoos-workload-v2
+audience:<canonical-signer-origin>
 caller:<caller-id>
 subject:<pinned-subject-or-empty>
 timestamp:<canonical-unix-seconds>
@@ -156,10 +169,33 @@ body-sha256:<lowercase-hex-of-exact-request-body>
 origin:<normalized-origin-or-empty>
 ```
 
+The audience is one canonical HTTP(S) **origin**, not a general URL: user-info, path,
+query, and fragment are forbidden and default ports/host case are normalized. The
+service compares the signed value byte-for-byte with its configured audience. A proxy
+therefore cannot route two signer instances by path under one audience; each custody
+service needs its own origin. `SIGNER_SERVICE_WORKLOAD_AUDIENCE` sets that origin. It
+defaults to the concrete listener origin, but is required for an unspecified bind such
+as `0.0.0.0` and for a TLS/reverse-proxy public origin.
+
+The audience identifies one logical custody security domain. Independent vaults or
+replicas with independent nonce databases must never share it: use a distinct origin
+for each, or keep one authoritative signer behind the origin. A rolling replacement
+must preserve the signer database (including workload nonces and idempotency rows) and
+drain the old process before the new one accepts traffic. In the Nitro custody image,
+the caller-visible origin is baked into the measured EIF at build time; the default
+matches the `127.0.0.1:8789` host bridge, while an external TLS origin must be passed as
+`SIGNER_SERVICE_WORKLOAD_AUDIENCE` to `build-custody-eif.sh` and used verbatim by
+NeoNexus.
+
 The timestamp has a 60-second skew allowance. `(caller, nonce)` is inserted into a
 durable replay table before the request can reach policy; reuse is
-`workload-assertion-replayed`. Sending bearer and workload credentials together is
-`ambiguous-credential`, never a fallback from one mode to the other.
+`workload-assertion-replayed`. Audience-less `neoos-workload-v1` is rejected by default.
+`SIGNER_SERVICE_ALLOW_LEGACY_WORKLOAD_V1=true` temporarily accepts its original
+four-header canonical form during a controlled migration; it must be removed after all
+callers send v2. Sending bearer and workload credentials together is
+`ambiguous-credential`, never a fallback from one mode to the other. Protocol and
+audience failures use `workload-protocol-unsupported` and
+`workload-audience-mismatch`.
 
 Role names (`worker`, `relayer`, `updater`, `oracle_verifier`) are labels attached to
 grants, not a containment mechanism. `config/signer-identities.json` maps all four
@@ -203,20 +239,58 @@ authorization.
 Authentication headers: `Authorization: Bearer <caller token>`, plus `Origin` and/or
 `Referer` when the caller is a browser.
 
-| Method | Path                              | Purpose                                                                                         |
-| ------ | --------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `POST` | `/signer/api/v1/sign/transaction` | Sign SerializeUnsigned transaction bytes                                                        |
-| `POST` | `/signer/api/v1/sign/consensus`   | Sign consensus payload bytes                                                                    |
-| `POST` | `/signer/api/v1/sign/raw`         | Sign raw bytes (`allow_raw` keys only, §4.1)                                                    |
-| `GET`  | `/signer/api/v1/keys/{id}`        | Public identity of a key: address, script hash, verification script, whether signing is enabled |
+| Method | Path                                     | Purpose                                                                                         |
+| ------ | ---------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `POST` | `/signer/api/v1/sign/transaction`        | Sign SerializeUnsigned transaction bytes                                                        |
+| `POST` | `/signer/api/v1/sign/consensus`          | Sign consensus payload bytes                                                                    |
+| `POST` | `/signer/api/v1/sign/block`              | Validate and sign a structured Neo N3 block header through the durable consensus lane           |
+| `POST` | `/signer/api/v1/sign/raw`                | Sign raw bytes (`allow_raw` keys only, §4.1)                                                    |
+| `POST` | `/signer/api/v1/sign/eip191-fulfillment` | Sign a structured, chain/contract-bound NeoX fulfillment verifier digest                        |
+| `GET`  | `/signer/api/v1/keys/{id}`               | Public identity of a key: address, script hash, verification script, whether signing is enabled |
 
-The transaction and consensus routes take
-`{"key_id": string, "unsigned_hex": string, "request_id"?: string}`;
+The transaction route takes
+`{"key_id": string, "unsigned_hex": string, "request_id"?: string,
+"chain_family"?: "neo-n3" | "neox", "chain_id"?: integer}`. The family defaults
+to `neo-n3` for compatible N3 clients; `chain_id` is required for NeoX and must match
+both the EIP-1559 payload and the immutable key binding. The consensus route accepts
+only `neo-n3` and no `chain_id`.
+The block route accepts `key_id`, `network`, a compressed or uncompressed P-256
+`public_key`, and a structured `{header, tx_hashes}` block. Hash strings are the
+wire-order bytes represented as hex. The service recomputes the Neo double-SHA256
+Merkle root, checks the one-byte `primary_index`, binds both network and public key
+to the immutable custody record, and reserves one durable height-wide block slot
+before opening key material. It never forwards a block through `/sign/raw`.
 `/sign/raw` replaces `unsigned_hex` with `data_hex` and never parses the bytes — the
 lane's only intent policy is the `allow_raw` switch (§4.1). A request id is
 caller-scoped and idempotent: an exact retry returns the stored witness without charging
 limits again; changed bytes, route, or key under the same id answer
 `request-id-conflict` (`409`).
+
+The EIP-191 fulfillment route takes this closed semantic shape (unknown fields are
+rejected):
+
+```json
+{
+  "key_id": "neox-verifier-key",
+  "request_id": "relayer:neox:42",
+  "chain_id": 12227332,
+  "oracle_contract": "0x1111111111111111111111111111111111111111",
+  "fulfillment": {
+    "request_id": "42",
+    "app_id": "price-oracle",
+    "module_id": "http",
+    "operation": "get",
+    "success": true,
+    "error": ""
+  },
+  "result_bytes_hex": "0x7b7d"
+}
+```
+
+Its success body contains `digest`, the EIP-191 `message_hash`, a 65-byte
+`signature` (`r || s || v`, with `v` 27 or 28), `public_key`, `address`, `chain_id`,
+and the normalized `oracle_contract`. The caller must recompute the digest/message hash
+and recover the returned identity before placing the signature in updater calldata.
 
 **Success** — one shape for every allowed signature:
 
@@ -232,8 +306,13 @@ limits again; changed bytes, route, or key under the same id answer
 }
 ```
 
-The caller assembles the witness itself; the service neither builds nor broadcasts
-transactions.
+For Neo N3 the caller assembles the witness itself; the service neither builds nor
+broadcasts transactions. A NeoX success additionally returns `"chain_family": "neox"`
+and the complete EIP-1559 transaction as `"signed_transaction": "0x02…"`.
+`"signature_hex"` currently repeats that complete transaction as a deprecated
+compatibility alias. NeoX invocation and verification scripts are empty because they
+are N3 witness concepts; its `digest` is the Keccak-256 hash of the complete signed
+transaction.
 
 `/sign/raw` answers the same envelope plus two fields the raw caller verifies against
 without rebuilding a witness: `"signature": "<64B r||s hex>"` and
@@ -259,8 +338,8 @@ Status codes: `403` for every denial of an intent (`Denied` outcome), `400` for
 `signer-payload-unparsable` / `signer-unsigned-hex-unreadable` /
 `signer-request-unreadable` / `signer-admin-request-invalid`, `404` for
 `signer-key-unknown`, `signer-caller-unknown` and `signer-route-unknown`, `413` for
-`signer-request-too-large`, `500` otherwise — which in practice means
-`signer-service-failed`.
+`signer-request-too-large`, `503` plus `Retry-After: 1` for `signer-service-busy`,
+and `500` otherwise — which in practice means `signer-service-failed`.
 
 Two codes are matched before their audit outcome is consulted, and the disagreement is
 deliberate rather than an oversight in the table above. `signer-transaction-unparsable`
@@ -272,20 +351,23 @@ to classify the other's ids.
 
 ### Reason codes
 
-Transport layer, four codes for requests that never reached a decision:
+Transport layer, five codes for requests that never reached a decision:
 `signer-request-unreadable` (a body that is not JSON, or a field whose value is not what
 §5 says it is — the message names the caller's own field, which is the useful half, and
 never quotes the input, because on `/keys/import` the input is a private key),
 `signer-request-too-large`, `signer-route-unknown` (an unmatched path answers in the
 refusal shape, so nothing this service sends makes a client guess whether it is talking
-JSON), and `signer-service-failed` (the store refused a read, a write or the clock; the
-message is fixed and the specifics go to an audit row the transport writes itself, since
-the service that would have recorded them never got that far).
+JSON), `signer-service-busy` (the process-wide custody budget is occupied; a fixed `503`
+and `Retry-After: 1` reveal neither the route nor the live count), and
+`signer-service-failed` (the store refused a read, a write or the clock; the message is
+fixed and the specifics go to an audit row the transport writes itself, since the service
+that would have recorded them never got that far).
 
-The first three are answered without authenticating the caller and write no audit row.
-That is safe because each describes only the caller's own bytes or its own URL — there is
-no vault fact to leak and nothing attributable to record — and it is why a malformed body
-cannot be the one thing on this service that answers in `text/plain`.
+The first four are answered without authenticating the caller and write no audit row.
+That is safe because the first three describe only the caller's own bytes or URL, while
+the fourth exposes only temporary process availability — never a vault fact, route, limit,
+or live count. No pre-authentication failure becomes the one thing on this service that
+answers in `text/plain`.
 
 Access layer: `missing-token`, `unknown-token`, `caller-disabled`, `origin-required`,
 `origin-not-allowed`, `origin-unexpected`, `key-not-granted`, and `admin-capability-missing`
@@ -293,7 +375,8 @@ Access layer: `missing-token`, `unknown-token`, `caller-disabled`, `origin-requi
 be used to classify a bearer string that was not issued for it.
 
 Workload additions are `ambiguous-credential`, `workload-assertion-malformed`,
-`unknown-workload`, `workload-assertion-stale`, `workload-signature-invalid`, and
+`unknown-workload`, `workload-assertion-stale`, `workload-signature-invalid`,
+`workload-protocol-unsupported`, `workload-audience-mismatch`, and
 `workload-assertion-replayed`.
 
 `signer-admin-request-invalid` is the one code on the management surface whose `message` is
@@ -328,8 +411,8 @@ ceremonies. Each route below maps 1:1 onto a method that already exists on
 
 | Method   | Path                                 | Service method                                              |
 | -------- | ------------------------------------ | ----------------------------------------------------------- |
-| `POST`   | `/signer/api/v1/keys`                | `generate_key(label, network, magic?)`                      |
-| `POST`   | `/signer/api/v1/keys/import`         | `import_key(label, network, magic?, private_key)`           |
+| `POST`   | `/signer/api/v1/keys`                | `generate_key_for_chain(label, network, family, id?)`       |
+| `POST`   | `/signer/api/v1/keys/import`         | `import_key_for_chain(label, network, family, id?, key)`    |
 | `POST`   | `/signer/api/v1/keys/import-nep2`    | `import_nep2_key(label, network, magic?, nep2, passphrase)` |
 | `GET`    | `/signer/api/v1/keys`                | `list_keys` — every key's `KeyPublicInfo`                   |
 | `POST`   | `/signer/api/v1/keys/{id}/state`     | `set_key_disabled` — the one-click disable                  |
@@ -344,12 +427,15 @@ ceremonies. Each route below maps 1:1 onto a method that already exists on
 | `DELETE` | `/signer/api/v1/callers/{id}`        | `delete_caller`                                             |
 | `GET`    | `/signer/api/v1/audit`               | `list_audit` — newest first, optionally filtered by key     |
 
-`magic` is the optional `network_magic` body field on the three key-creation routes. Absent —
-what every pre-existing consumer sends — means the canonical value for `network`. On mainnet
-and testnet the service accepts nothing else: these chains have exactly one magic, and a key
-bound to another would seal signatures no node verifies. A private network names the magic its
-deployment actually runs, which is how §4.2's "the magic is stored per key" is satisfied; the
-bound value rides back on every key body, so an operator can confirm what a key commits to.
+Generated and raw-imported keys accept `chain_family` (`neo-n3` by default) and the
+family-specific identifier. `network_magic` is valid only for Neo N3; absent means the
+canonical magic for `network`. `chain_id` is valid only for NeoX; public networks accept
+only the published chain id (mainnet `47763`, testnet `12227332`) while a non-zero private
+chain id may be supplied. NEP-2 import remains Neo N3-only. Every key response exposes
+`chain_family`, `chain_id`, `public_key`, `address`, and the compatibility `script_hash`;
+NeoX `public_key` is compressed secp256k1 and its `address` is the natural-order EVM
+address. The stored identifier rides back on every key body so an operator and client can
+confirm what signatures commit to.
 
 `GET /keys/{id}/policy` is a different path from `GET /keys/{id}` (§5) because the two are
 guarded differently and return different things: the identity read is answered for a caller
@@ -424,17 +510,19 @@ The rules that hold it together:
 
 ### 5.2 Enclave routes (recorded §5 change)
 
-Three routes live outside the `/signer/api/v1` prefix, because they exist to
-bootstrap a vault that cannot authenticate anyone yet. This is the §5 change the
-enclave deployment (§7 step 3) required, recorded here as a decision rather than
-discovered in a compose file: before it, this service had no unauthenticated route
-at all and no way to receive its master key.
+Three bootstrap routes live outside the `/signer/api/v1` prefix because they
+must work while a vault cannot authenticate anyone yet. A fourth unprefixed
+route, `/metrics`, keeps saturation observable but never changes vault state.
+This is the §5 change the enclave deployment (§7 step 3) required, recorded
+here as a decision rather than discovered in a compose file: before it, this
+service had no unauthenticated route at all and no way to receive its master key.
 
 | Method | Path           | Auth                      | Purpose                                                                                                   |
 | ------ | -------------- | ------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `GET`  | `/health`      | none                      | Process liveness plus vault state: `{"status":"ok"}` when open, `{"status":"unprovisioned"}` while sealed |
 | `POST` | `/provision`   | Bearer transport token    | The one door the master key comes through, walked once per boot                                           |
 | `GET`  | `/attestation` | none (optional `?nonce=`) | A fresh NSM attestation document binding the vault fingerprint and the boundaries                         |
+| `GET`  | `/metrics`     | none                      | Prometheus process and request metrics; no vault contents or caller labels                                |
 
 - **The sealed window.** In an attested deployment (`SIGNER_SERVICE_ATTESTED_BOOT=require`)
   the process boots with the vault sealed: `/health` says `unprovisioned` and every custody
@@ -476,6 +564,48 @@ at all and no way to receive its master key.
   the enclave image whose PCR0 the operator pinned; the operator takes the measured PCR0
   the boot report and `/attestation` surface and pins it there, and in the committed
   measurements manifest (`deploy/nitro/measurements/`).
+
+### 5.3 Official Neo SignClient gRPC bridge
+
+The process can additionally serve the protobuf contract used by the official Neo
+`SignClient` plugin: `servicepb.SecureSign/SignExtensiblePayload`, `SignBlock`, and
+`GetAccountStatus`. Fields 1–8 in the checked-in proto are wire-identical to the current
+official plugin. Fields 9–10 explicitly recognize the existing secure-sign state-root
+extension so those bytes can never be silently discarded by protobuf decoding. This is
+an adapter into the same service, not another signer: caller
+grants, key state, `allow_consensus`, signature limits, audit rows, idempotency, network
+binding, and the SQLite anti-equivocation journal all remain in force.
+
+The upstream protocol carries no bearer token, client certificate, or other
+authentication field. Enabling the bridge therefore requires all three settings below,
+binds one endpoint to one key/caller pair, and refuses every non-loopback bind:
+
+```text
+SIGNER_SERVICE_SIGNCLIENT_PORT=9991
+SIGNER_SERVICE_SIGNCLIENT_KEY_ID=key-...
+SIGNER_SERVICE_SIGNCLIENT_CALLER_TOKEN=neoos_caller_...
+SIGNER_SERVICE_SIGNCLIENT_HOST=127.0.0.1   # optional; loopback is mandatory
+```
+
+Neo's plugin then points `SignClient.json` at `http://127.0.0.1:9991`. The token above
+never crosses gRPC; it is the bridge's internal NeoOS identity and must have `sign` plus
+a grant for exactly that key. The adapter accepts both compressed and uncompressed P-256
+keys, returns `Single`/`Locked`/`NoSuchAccount` using official enum values, and preserves
+one response entry for every requested script hash.
+
+`SignBlock` is a semantic path. It validates the transaction Merkle root and serializes
+the exact current official header fields before signing
+`networkMagicLE || SHA256(header)`. Its deterministic request id makes plugin retries
+idempotent, while a dedicated `0xff` consensus reservation phase prevents the same public
+key from signing a different header at the same network and height across restarts. The
+current official client leaves state-root fields absent. When the known secure-sign
+extension sets `state_root_enabled`, the bridge requires a 32-byte `prev_state_root` and
+commits it to the signed header; it rejects a missing or unexpected root. No claim is made
+for other future header extensions that are not represented in this proto.
+
+There is no TLS or protocol-level authentication on this listener. Loopback (or a
+separately reviewed loopback-to-vsock transport) is the trust boundary; it must not be
+published on a LAN or internet socket.
 
 ## 6. Deployment in this repository
 
@@ -532,9 +662,18 @@ at all and no way to receive its master key.
   guessed directory would let a deployment start against an empty vault and look healthy
   doing it. `SIGNER_SERVICE_HOST` defaults to `127.0.0.1` — §5's transport assumption is
   something a deployment opts out of loudly, not something it discovers — and
-  `SIGNER_SERVICE_PORT` to `8081`. `SIGNER_SERVICE_MAX_BODY_BYTES` overrides the 256 KiB
-  ceiling the transport applies. Everything else about a deployment is a caller record or a
-  policy row, which is to say auditable.
+  `SIGNER_SERVICE_PORT` to `8081`. `SIGNER_SERVICE_WORKLOAD_AUDIENCE` is the canonical
+  public origin signed by workload v2 and defaults to that concrete bind origin;
+  `SIGNER_SERVICE_ALLOW_LEGACY_WORKLOAD_V1` defaults to `false` and is a temporary
+  migration switch, not a steady-state setting. `SIGNER_SERVICE_MAX_BODY_BYTES` overrides the 256 KiB
+  ceiling the transport applies. `SIGNER_SERVICE_MAX_IN_FLIGHT_REQUESTS` defaults to `32`
+  and bounds the whole custody route before body buffering, authentication, SQLite,
+  cryptography, and blocking-pool submission; excess calls are shed immediately with the
+  fixed `signer-service-busy` response. `/health` and `/metrics` stay outside that budget so
+  saturation remains observable. The optional SignClient listener is configured by the
+  four `SIGNER_SERVICE_SIGNCLIENT_*` variables in §5.3 and shares the same bounded blocking
+  budget. Everything else about a deployment is a caller record or
+  a policy row, which is to say auditable.
 - Boot prints the bound address and a vault summary — fingerprint, key and caller counts,
   database path — plus one hint line when there is no `admin` caller yet or the listener is
   off loopback. Then nothing, until a signal. That is the whole observability surface, and
@@ -599,13 +738,17 @@ Order matters: there must never be a moment when nothing owns custody.
    HTTPS; user-info, URL paths, query strings, fragments and redirects are
    refused.
 
-   `neo-nexus/tests/signer_service_contract.rs` starts the real Rust process
-   and exercises health, generation, key reads, complete policy round-trip,
-   bearer and Ed25519 workload callers, transaction/consensus/raw signatures,
-   key disable/enable, token rotation, audit, and deletion. The default
-   standalone test run ignores it because that repository does not clone this
-   sibling; the NeoOS workspace gate builds `signer_service` and runs it
-   explicitly.
+   `neo-nexus/tests/unit/signer_client/client/tests.rs` contains an ignored
+   real-service contract test that exercises health, generation, key reads,
+   complete policy round-trip, bearer and Ed25519 workload callers, successful
+   NeoX transaction/EIP-191, Neo N3 consensus and raw signatures, structured
+   refusals, key disable/enable, token rotation, audit, and deletion. The default
+   standalone test run ignores it because no custody process exists there.
+   `scripts/run-neo-nexus-signer-contract.sh` owns a disposable vault, builds and
+   starts `signer_service` on an ephemeral loopback port, provisions a protected
+   admin file, runs the exact test, and cleans up on every exit. The Rust job in
+   this repository and the Linux job in NeoNexus CI each check out the sibling
+   main branch and invoke that harness, so either side of the contract is gated.
 
    A private fork that previously created `signer_*` tables in `neonexus.db`
    requires an explicit offline migration with a verified backup and matching
@@ -646,15 +789,18 @@ Order matters: there must never be a moment when nothing owns custody.
    call sites move to `/signer/api/v1/sign/transaction` one at a time, each with its own
    caller token.
 
-   **Relayer migration status (done):** every relayer Neo N3 signing call site — request
-   fulfillment, fulfillment payload signatures (`/sign/raw`), and automation queueing —
-   now signs through the custody service under the caller's configured role. The relayer
-   resolves roles from `SIGNER_SERVICE_URL` / `SIGNER_SERVICE_TOKEN` plus
-   `SIGNER_ROLE_{UPDATER,ORACLE_VERIFIER}_KEY_ID` (`SIGNER_ROLE_FEE_FUNDER_KEY_ID` is
-   optional, funding best-effort fee top-ups), it holds no WIF, and
-   `scripts/check-nitro-env.mjs` enforces that provisioning. The automation queue waits
-   for the application log and fail-closes non-HALT executions instead of returning an
-   unknown vm_state.
+   **Relayer migration status (done for request and feed delivery):** Neo N3 request and
+   feed transactions are built locally, signed through custody `/sign/transaction`,
+   broadcast, HALT-confirmed and durably recorded. NeoX request delivery first obtains a
+   verifier signature through the structured `/sign/eip191-fulfillment` lane, then signs
+   the separate updater EIP-1559 transaction through `/sign/transaction`; NeoX feed uses
+   that updater transaction lane directly. Both NeoX paths require a status-1 receipt and
+   persist the confirmed outcome. The verifier and updater are distinct policy-bound keys,
+   configured through `SIGNER_ROLE_NEOX_VERIFIER_KEY_ID` and
+   `SIGNER_ROLE_NEOX_UPDATER_KEY_ID`; the Neo N3 updater uses
+   `SIGNER_ROLE_UPDATER_KEY_ID`. The Rust relayer holds no WIF/private key and has no local
+   signing fallback. Automation delivery remains explicitly fail-closed until durable
+   claim, on-chain queue confirmation and run persistence are implemented.
 
    **Worker sign-lane migration status (done):** `workers/nitro-worker`'s sign lane —
    `/sign/payload` (`handleSignPayload`) and every signed result envelope

@@ -1,6 +1,8 @@
+# NODE COMPATIBILITY ONLY. This historical multi-network hub is not a Rust
+# production authority; pin both compatibility images explicitly.
 services:
   mainnet-request-worker:
-    image: ${MORPHEUS_NITRO_WORKER_IMAGE}
+    image: '${MORPHEUS_COMPAT_NITRO_WORKER_IMAGE:?pin-explicit-node-compat-worker-image}'
     restart: unless-stopped
     environment:
       # Fail-closed: activates the child-process sandbox guard (permission-guard.js).
@@ -36,6 +38,8 @@ services:
       # The tx-relay lane signs oracle-contract invocations as the updater
       # account (the relayer's fulfillment identity).
       SIGNER_ROLE_UPDATER_KEY_ID: ${SIGNER_ROLE_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_NEOX_UPDATER_KEY_ID: ${SIGNER_ROLE_NEOX_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_NEOX_VERIFIER_KEY_ID: ${SIGNER_ROLE_NEOX_VERIFIER_KEY_ID:-}
     expose:
       - '8080'
     volumes:
@@ -55,7 +59,7 @@ services:
       start_period: 15s
 
   testnet-request-worker:
-    image: ${MORPHEUS_NITRO_WORKER_IMAGE}
+    image: '${MORPHEUS_COMPAT_NITRO_WORKER_IMAGE:?pin-explicit-node-compat-worker-image}'
     restart: unless-stopped
     environment:
       # Fail-closed: activates the child-process sandbox guard (permission-guard.js).
@@ -91,6 +95,8 @@ services:
       # The tx-relay lane signs oracle-contract invocations as the updater
       # account (the relayer's fulfillment identity).
       SIGNER_ROLE_UPDATER_KEY_ID: ${SIGNER_ROLE_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_NEOX_UPDATER_KEY_ID: ${SIGNER_ROLE_NEOX_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_NEOX_VERIFIER_KEY_ID: ${SIGNER_ROLE_NEOX_VERIFIER_KEY_ID:-}
     expose:
       - '8080'
     volumes:
@@ -155,7 +161,7 @@ services:
         exec caddy run --config /etc/caddy/Caddyfile
 
   mainnet-request-relayer:
-    image: ${MORPHEUS_RELAYER_IMAGE}
+    image: '${MORPHEUS_COMPAT_RELAYER_IMAGE:?pin-explicit-node-compat-relayer-image}'
     restart: unless-stopped
     depends_on:
       mainnet-request-worker:
@@ -178,6 +184,8 @@ services:
       SIGNER_SERVICE_URL: ${SIGNER_SERVICE_URL:-}
       SIGNER_SERVICE_TOKEN: ${SIGNER_SERVICE_TOKEN:-}
       SIGNER_ROLE_UPDATER_KEY_ID: ${SIGNER_ROLE_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_NEOX_UPDATER_KEY_ID: ${SIGNER_ROLE_NEOX_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_NEOX_VERIFIER_KEY_ID: ${SIGNER_ROLE_NEOX_VERIFIER_KEY_ID:-}
       SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID: ${SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID:-}
       MORPHEUS_RELAYER_MODE: requests_only
       MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.requests_only.mainnet.json
@@ -193,7 +201,7 @@ services:
       start_period: 90s
 
   testnet-request-relayer:
-    image: ${MORPHEUS_RELAYER_IMAGE}
+    image: '${MORPHEUS_COMPAT_RELAYER_IMAGE:?pin-explicit-node-compat-relayer-image}'
     restart: unless-stopped
     depends_on:
       testnet-request-worker:
@@ -216,6 +224,8 @@ services:
       SIGNER_SERVICE_URL: ${SIGNER_SERVICE_URL:-}
       SIGNER_SERVICE_TOKEN: ${SIGNER_SERVICE_TOKEN:-}
       SIGNER_ROLE_UPDATER_KEY_ID: ${SIGNER_ROLE_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_NEOX_UPDATER_KEY_ID: ${SIGNER_ROLE_NEOX_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_NEOX_VERIFIER_KEY_ID: ${SIGNER_ROLE_NEOX_VERIFIER_KEY_ID:-}
       SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID: ${SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID:-}
       MORPHEUS_RELAYER_MODE: requests_only
       MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.requests_only.testnet.json

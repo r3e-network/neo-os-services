@@ -1,0 +1,26 @@
+[Unit]
+Description=NeoOS Node Relayer (COMPATIBILITY ONLY; not production authority)
+After=network-online.target morpheus-nitro-signer.service
+Wants=network-online.target morpheus-nitro-signer.service
+ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_COMPAT
+Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/neoos/services
+EnvironmentFile=/opt/morpheus/nitro/morpheus-relayer.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm --prefix workers/morpheus-relayer run start
+Restart=always
+RestartSec=5
+User=morpheus
+Group=morpheus
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+StandardOutput=journal
+StandardError=journal
+
+# Deliberately no [Install] section. Enablement is reserved for the Rust unit;
+# this unit requires an explicit compatibility marker on every boot.

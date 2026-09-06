@@ -1,7 +1,10 @@
 // One-shot generator: emit the Rust static CONFIG_SCHEMA table from the JS
-// oracle so the 109-entry manifest is transcribed without hand-copy errors.
+// oracle so the manifest is transcribed without hand-copy errors.
 // Run: node scripts/gen-config-schema-rust.mjs > /tmp/config_schema_table.rs
-import { CONFIG_SCHEMA, DIRECT_CONTROL_ENV_KEYS } from '../workers/morpheus-relayer/src/config-schema.js';
+import {
+  CONFIG_SCHEMA,
+  DIRECT_CONTROL_ENV_KEYS,
+} from '../workers/morpheus-relayer/src/config-schema.js';
 
 const esc = (s) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 

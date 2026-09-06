@@ -21,8 +21,7 @@ const isProduction = process.env.NODE_ENV === 'production';
 // same table; this runtime assert closes the gap when env slips past them.
 if (isProduction) {
   assertCredentialDomainsDistinct(process.env, {
-    messagePrefix:
-      'production credentials must be pairwise distinct across trust domains',
+    messagePrefix: 'production credentials must be pairwise distinct across trust domains',
   });
 }
 

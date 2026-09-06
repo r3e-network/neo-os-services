@@ -33,10 +33,66 @@ use crate::model::{CallerCapability, KeyGrant, SignerCaller};
 /// iframe, a `data:` document, a request with `Referrer-Policy` stripping it.
 /// It matches nothing and is never a configured allow-list entry.
 pub const NULL_ORIGIN: &str = "null";
-pub const WORKLOAD_PROTOCOL: &str = "neoos-workload-v1";
+pub const WORKLOAD_PROTOCOL_V1: &str = "neoos-workload-v1";
+pub const WORKLOAD_PROTOCOL_V2: &str = "neoos-workload-v2";
 pub const WORKLOAD_MAX_CLOCK_SKEW_SECONDS: u64 = 60;
 pub const WORKLOAD_NONCE_MIN_BYTES: usize = 16;
 pub const WORKLOAD_NONCE_MAX_BYTES: usize = 128;
+const WORKLOAD_AUDIENCE_MAX_BYTES: usize = 512;
+
+/// The one custody origin workload assertions issued for this process must name.
+///
+/// It is deliberately an origin rather than a general URL. A reverse proxy may
+/// not use a path rewrite to make one signed audience name two signer services.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkloadAuthPolicy {
+    audience: String,
+    allow_legacy_v1: bool,
+}
+
+impl WorkloadAuthPolicy {
+    pub fn new(audience: &str, allow_legacy_v1: bool) -> Result<Self, String> {
+        Ok(Self {
+            audience: canonical_workload_audience(audience)?,
+            allow_legacy_v1,
+        })
+    }
+
+    pub fn audience(&self) -> &str {
+        &self.audience
+    }
+
+    pub fn allows_legacy_v1(&self) -> bool {
+        self.allow_legacy_v1
+    }
+}
+
+/// Normalize a workload audience to one unambiguous HTTP(S) origin.
+pub fn canonical_workload_audience(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > WORKLOAD_AUDIENCE_MAX_BYTES {
+        return Err(format!(
+            "workload audience must be 1..={WORKLOAD_AUDIENCE_MAX_BYTES} bytes"
+        ));
+    }
+    if !value.is_ascii() || value.bytes().any(|byte| byte.is_ascii_control()) {
+        return Err("workload audience must contain printable ASCII only".to_string());
+    }
+    let parsed = url::Url::parse(value)
+        .map_err(|_| "workload audience must be an absolute HTTP(S) origin".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return Err("workload audience must be an absolute HTTP(S) origin".to_string());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("workload audience must not contain URL credentials".to_string());
+    }
+    if parsed.path() != "/" || parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(
+            "workload audience must be an origin with no path, query, or fragment".to_string(),
+        );
+    }
+    Ok(parsed.origin().ascii_serialization())
+}
 
 /// Why a request was refused before the key's policy was consulted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +134,10 @@ pub enum AccessRejection {
     WorkloadStale,
     /// The Ed25519 signature did not verify.
     WorkloadSignatureInvalid,
+    /// The assertion did not use the required audience-bound protocol.
+    WorkloadProtocolUnsupported,
+    /// The signed audience names another custody service.
+    WorkloadAudienceMismatch,
     /// This caller already used the assertion nonce.
     WorkloadReplay,
 }
@@ -99,6 +159,8 @@ impl AccessRejection {
             AccessRejection::UnknownWorkload => "unknown-workload",
             AccessRejection::WorkloadStale => "workload-assertion-stale",
             AccessRejection::WorkloadSignatureInvalid => "workload-signature-invalid",
+            AccessRejection::WorkloadProtocolUnsupported => "workload-protocol-unsupported",
+            AccessRejection::WorkloadAudienceMismatch => "workload-audience-mismatch",
             AccessRejection::WorkloadReplay => "workload-assertion-replayed",
         }
     }
@@ -131,6 +193,12 @@ impl std::fmt::Display for AccessRejection {
             }
             AccessRejection::WorkloadSignatureInvalid => {
                 "the workload assertion signature is invalid"
+            }
+            AccessRejection::WorkloadProtocolUnsupported => {
+                "the workload assertion protocol is not enabled"
+            }
+            AccessRejection::WorkloadAudienceMismatch => {
+                "the workload assertion names another signer audience"
             }
             AccessRejection::WorkloadReplay => "the workload assertion nonce was already used",
         };
@@ -177,6 +245,8 @@ pub struct CallerCredentials {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WorkloadAssertion {
+    protocol: Option<String>,
+    audience: Option<String>,
     caller_id: Option<String>,
     timestamp: Option<String>,
     nonce: Option<String>,
@@ -184,10 +254,13 @@ struct WorkloadAssertion {
     method: String,
     route: String,
     body_digest: [u8; 32],
+    policy: WorkloadAuthPolicy,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WorkloadRequestHeaders<'a> {
+    pub protocol: Option<&'a str>,
+    pub audience: Option<&'a str>,
     pub caller_id: Option<&'a str>,
     pub timestamp: Option<&'a str>,
     pub nonce: Option<&'a str>,
@@ -224,11 +297,14 @@ impl CallerCredentials {
         origin: Option<&str>,
         referer: Option<&str>,
         workload: WorkloadRequestHeaders<'_>,
+        workload_policy: &WorkloadAuthPolicy,
         method: &str,
         route: &str,
     ) -> Self {
         let mut credentials = Self::new(authorization, origin, referer);
         if [
+            workload.protocol,
+            workload.audience,
             workload.caller_id,
             workload.timestamp,
             workload.nonce,
@@ -238,6 +314,8 @@ impl CallerCredentials {
         .any(|value| value.is_some())
         {
             credentials.workload = Some(WorkloadAssertion {
+                protocol: workload.protocol.map(str::to_owned),
+                audience: workload.audience.map(str::to_owned),
                 caller_id: workload.caller_id.map(str::to_owned),
                 timestamp: workload.timestamp.map(str::to_owned),
                 nonce: workload.nonce.map(str::to_owned),
@@ -245,6 +323,7 @@ impl CallerCredentials {
                 method: method.to_ascii_uppercase(),
                 route: route.to_string(),
                 body_digest: body_sha256(&[]),
+                policy: workload_policy.clone(),
             });
         }
         credentials
@@ -362,6 +441,9 @@ pub fn workload_public_key_is_valid(public_key: &[u8; 32]) -> bool {
 
 /// Values bound by one Ed25519 workload assertion.
 pub struct WorkloadMessage<'a> {
+    /// `Some` selects audience-bound v2. `None` exists only for the explicit,
+    /// opt-in v1 compatibility path.
+    pub audience: Option<&'a str>,
     pub caller_id: &'a str,
     pub subject: Option<&'a str>,
     pub timestamp: u64,
@@ -379,8 +461,12 @@ impl WorkloadMessage<'_> {
     /// parsing or represented as lowercase hexadecimal, so newline separation
     /// is unambiguous across languages.
     pub fn to_bytes(&self) -> Vec<u8> {
+        let protocol = match self.audience {
+            Some(audience) => format!("{WORKLOAD_PROTOCOL_V2}\naudience:{audience}\n"),
+            None => format!("{WORKLOAD_PROTOCOL_V1}\n"),
+        };
         format!(
-            "{WORKLOAD_PROTOCOL}\ncaller:{}\nsubject:{}\ntimestamp:{}\nnonce:{}\nmethod:{}\nroute:{}\nbody-sha256:{}\norigin:{}",
+            "{protocol}caller:{}\nsubject:{}\ntimestamp:{}\nnonce:{}\nmethod:{}\nroute:{}\nbody-sha256:{}\norigin:{}",
             self.caller_id,
             self.subject.unwrap_or_default(),
             self.timestamp,
@@ -455,7 +541,26 @@ fn verify_workload(
     let verifying_key = VerifyingKey::from_bytes(&identity.public_key)
         .map_err(|_| AccessRejection::WorkloadSignatureInvalid)?;
     let signature = Signature::from_bytes(&signature_bytes);
+    let audience = match (assertion.protocol.as_deref(), assertion.audience.as_deref()) {
+        (Some(WORKLOAD_PROTOCOL_V2), Some(audience)) => {
+            let canonical = canonical_workload_audience(audience)
+                .map_err(|_| AccessRejection::WorkloadMalformed)?;
+            if canonical != audience {
+                return Err(AccessRejection::WorkloadMalformed);
+            }
+            if audience != assertion.policy.audience() {
+                return Err(AccessRejection::WorkloadAudienceMismatch);
+            }
+            Some(audience)
+        }
+        (None, None) if assertion.policy.allows_legacy_v1() => None,
+        (None, None) | (Some(_), Some(_)) => {
+            return Err(AccessRejection::WorkloadProtocolUnsupported)
+        }
+        _ => return Err(AccessRejection::WorkloadMalformed),
+    };
     let message = WorkloadMessage {
+        audience,
         caller_id,
         subject: identity.subject.as_deref(),
         timestamp,

@@ -94,9 +94,20 @@ pub fn network_magic(network: Network) -> u32 {
 /// These are used in EIP-155 transaction signing.
 pub fn neox_chain_id(network: Network) -> u64 {
     match network {
-        Network::Mainnet => 47763, // NeoX Mainnet
-        Network::Testnet => 12227331, // NeoX Testnet T4
-        Network::Private => 1337, // Local development
+        Network::Mainnet => 47763,      // NeoX Mainnet
+        Network::Testnet => 12_227_332, // NeoX Testnet T4
+        Network::Private => 1337,       // Local development
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn neox_public_chain_ids_match_the_published_networks() {
+        assert_eq!(neox_chain_id(Network::Mainnet), 47_763);
+        assert_eq!(neox_chain_id(Network::Testnet), 12_227_332);
     }
 }
 

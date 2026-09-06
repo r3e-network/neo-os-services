@@ -23,6 +23,7 @@ fn apply_enforces_the_exact_provision_allowlist() {
     let mut overlay = EnvOverlay::new(Vec::<(&str, &str)>::new());
     assert!(overlay.apply("AWS_ACCESS_KEY_ID", &value("x")));
     assert!(overlay.apply("MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64", &value("x")));
+    assert!(overlay.apply("MORPHEUS_GAME_SECRET_KMS_CIPHERTEXT_BASE64", &value("x")));
     assert!(!overlay.apply("NODE_ENV", &value("production")));
     assert!(!overlay.apply("MORPHEUS_NETWORK", &value("mainnet")));
     assert!(!overlay.apply("SIGNER_SERVICE_URL", &value("https://attacker")));
@@ -98,6 +99,9 @@ fn is_provisionable_name_matches_the_documented_allowlist() {
     assert!(is_provisionable_name("AWS_REGION"));
     assert!(is_provisionable_name(
         "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64"
+    ));
+    assert!(is_provisionable_name(
+        "MORPHEUS_GAME_SECRET_KMS_CIPHERTEXT_BASE64"
     ));
     assert!(!is_provisionable_name("MORPHEUS_NETWORK"));
     assert!(!is_provisionable_name("NODE_ENV"));

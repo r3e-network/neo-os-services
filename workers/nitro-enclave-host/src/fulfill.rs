@@ -8,16 +8,19 @@
 //! `data_hex` for this route: only the fold's own digest is signed.
 //!
 //! Divergences from the Node server, all deliberate:
-//!   - `chain: 'neox'` fails closed with a 503 before any compute: the EVM
-//!     digest (`buildNeoXDigest`) and an EVM custody signing role do not
-//!     exist yet, so a neox fulfillment could never be signed — refusing
-//!     early beats refusing late (or, worse, signing on the N3 lane).
+//!   - NeoX uses the custody service's semantic EIP-191 endpoint: this host
+//!     sends structured fulfillment fields and independently checks the
+//!     returned digest/signature identity. No raw secp256k1 signing surface is
+//!     exposed and the `neox_verifier` role stays distinct from the updater.
 //!   - A failed signing call surfaces the signer plane's own status (503
 //!     for an unconfigured plane) where the Node server's untyped throw
 //!     rendered a 500; the message is identical.
 //!   - `BigInt` values in a JsValue (the builders never put one in these
 //!     envelopes) serialize to their decimal string, not `null`.
 
+use neo_os_chain_evm::{
+    build_neox_digest, resolve_result_bytes_hex, Fulfillment as EvmFulfillment,
+};
 use neo_os_core::digest::{build_fulfillment_digest_bytes, FulfillmentOptions};
 use neo_os_core::envelope::{build_onchain_result_envelope, encode_fulfillment_result};
 use neo_os_core::js_number::json_number_to_string;
@@ -26,8 +29,13 @@ use neo_os_core::kernel::{build_worker_payload, resolve_kernel_intent};
 
 use crate::attestation::{handle_attestation, normalize_hex};
 use crate::http_error;
-use crate::state::AppState;
+use crate::state::{AppState, Eip191FulfillmentRequest};
 use crate::RuntimeError;
+
+const N3_MAINNET_MAGIC: u32 = 860_833_102;
+const N3_TESTNET_MAGIC: u32 = 894_710_606;
+const N3_MAINNET_ORACLE_CONTRACT: &str = "0xf54d8584ef82315c1800373272ab08ae0db2d5ef";
+const N3_TESTNET_ORACLE_CONTRACT: &str = "0xf54d8584ef82315c1800373272ab08ae0db2d5ef";
 
 /// JS `String(value)` over serde JSON — `??` chains never hand us
 /// null/undefined, so `Null` here is unreachable in practice.
@@ -189,15 +197,6 @@ pub fn handle_oracle_fulfill(
         return Err(http_error(400, "request_id is required"));
     }
 
-    // The neox fold needs the EVM digest builder + an EVM custody role; until
-    // either exists, refuse before doing any compute (see the module header).
-    if chain == "neox" {
-        return Err(http_error(
-            503,
-            "neox fulfillment signing is not available on the Rust enclave host",
-        ));
-    }
-
     let intent = resolve_kernel_intent(&request_type);
 
     // Kernel envelope fields the digest binds (verbatim — matches the
@@ -245,6 +244,24 @@ pub fn handle_oracle_fulfill(
         &payload_text(body, &payload),
     );
 
+    // Infrastructure failures are retryable and must never be committed as a
+    // deterministic on-chain refusal. This mirrors the relayer's worker-status
+    // classifier: business 4xx replies can be encoded as unsuccessful
+    // fulfillments, while timeout/rate-limit/5xx replies leave the request open
+    // for a later attempt.
+    if !reply.ok && is_transient_worker_status(reply.status) {
+        let detail = truthy_trimmed(&reply.body, &["error", "message", "code"]);
+        let message = if detail.is_empty() {
+            format!("transient compute failure (HTTP {})", reply.status)
+        } else {
+            format!(
+                "transient compute failure (HTTP {}): {detail}",
+                reply.status
+            )
+        };
+        return Err(http_error(reply.status, message));
+    }
+
     // (c) Encode the on-chain fulfillment fields + result envelope via the
     // CANONICAL builders (identical to the relayer's prepareOracleFulfillment).
     let worker_response = worker_response_value(&reply);
@@ -257,52 +274,101 @@ pub fn handle_oracle_fulfill(
     let error = fulfillment.error.clone();
 
     // (d)+(e) BUILD the digest with the canonical builder + SIGN atomically.
-    // Neo N3 / legacy: bind to the executing contract + network magic when
-    // supplied (matches signFulfillmentPayload, which appends
-    // contractScriptHash + magic).
+    // Read caller context for mismatch detection only. Neo N3 / legacy
+    // signatures are always bound to the measured network's contract + magic;
+    // an untrusted relayer cannot omit or replace that domain.
     let contract_script_hash = truthy_trimmed(
         &fulfillment_context,
         &["contract_script_hash", "contractScriptHash"],
     );
-    let network_magic = fulfillment_context
-        .get("network_magic")
-        .filter(|v| !v.is_null())
-        .or_else(|| {
-            fulfillment_context
-                .get("networkMagic")
-                .filter(|v| !v.is_null())
-        })
-        .and_then(|value| value.as_f64());
-    let options = FulfillmentOptions {
-        chain: Some(chain.to_string()),
-        app_id,
-        module_id,
-        operation,
-        contract_script_hash,
-        network_magic,
-    };
-    let digest_bytes = build_fulfillment_digest_bytes(
-        &JsValue::Str(request_id.clone()),
-        &request_type,
-        fulfillment.success,
-        &result,
-        &error,
-        &result_bytes_base64,
-        &options,
-    )
-    .map_err(|error| http_error(500, format!("fulfillment digest failed: {error}")))?;
-    let digest_hex = hex::encode(digest_bytes);
-
     let network = state.resolve_network();
-    let signed = state
-        .signer
-        .sign_payload(&network, "oracle_verifier", &digest_hex)?;
+    let (digest_hex, signed, result_bytes_hex, attestation_role) = if chain == "neox" {
+        let chain_id = required_neox_chain_id(&fulfillment_context)?;
+        let oracle_contract =
+            truthy_trimmed(&fulfillment_context, &["oracle_contract", "oracleContract"]);
+        if oracle_contract.is_empty() {
+            return Err(http_error(
+                400,
+                "neox fulfillment_context.oracle_contract is required",
+            ));
+        }
+        let evm = EvmFulfillment {
+            request_id: request_id.clone(),
+            app_id: app_id.clone(),
+            module_id: module_id.clone(),
+            operation: operation.clone(),
+            success: fulfillment.success,
+            error: error.clone(),
+        };
+        let result_bytes_hex = resolve_result_bytes_hex(&result, &result_bytes_base64);
+        let digest = build_neox_digest(chain_id, &oracle_contract, &evm, &result_bytes_hex)
+            .map_err(|error| http_error(400, format!("invalid NeoX fulfillment: {error}")))?;
+        let signer_request_id = format!("neox-fulfill:{}", hex::encode(digest));
+        let signed = state
+            .signer
+            .sign_eip191_fulfillment(&Eip191FulfillmentRequest {
+                network: &network,
+                role: "neox_verifier",
+                chain_id,
+                oracle_contract: &oracle_contract,
+                fulfillment: &evm,
+                result_bytes_hex: &result_bytes_hex,
+                request_id: &signer_request_id,
+            })?;
+        (
+            format!("0x{}", hex::encode(digest)),
+            signed,
+            Some(result_bytes_hex),
+            "neox_verifier",
+        )
+    } else {
+        let (contract_script_hash, network_magic) = measured_n3_binding(
+            &network,
+            &contract_script_hash,
+            fulfillment_context
+                .get("network_magic")
+                .filter(|value| !value.is_null())
+                .or_else(|| {
+                    fulfillment_context
+                        .get("networkMagic")
+                        .filter(|value| !value.is_null())
+                }),
+        )?;
+        let options = FulfillmentOptions {
+            chain: Some(chain.to_string()),
+            app_id: app_id.clone(),
+            module_id: module_id.clone(),
+            operation: operation.clone(),
+            contract_script_hash,
+            network_magic,
+        };
+        let digest_bytes = build_fulfillment_digest_bytes(
+            &JsValue::Str(request_id.clone()),
+            &request_type,
+            fulfillment.success,
+            &result,
+            &error,
+            &result_bytes_base64,
+            &options,
+        )
+        .map_err(|error| http_error(500, format!("fulfillment digest failed: {error}")))?;
+        let digest_hex = hex::encode(digest_bytes);
+        let signed = state
+            .signer
+            .sign_payload(&network, "oracle_verifier", &digest_hex)?;
+        (digest_hex, signed, None, "oracle_verifier")
+    };
 
     // (f) Return the contract. result_bytes_base64 only present for compact
     // lanes (vrf/neodid). nonce echoed for the relayer/verifier freshness
     // binding.
     let mut response = serde_json::json!({
         "status": "ok",
+        "chain": chain,
+        "request_id": request_id,
+        "app_id": app_id,
+        "module_id": module_id,
+        "operation": operation,
         "success": fulfillment.success,
         "result": result,
         "error": error,
@@ -314,6 +380,9 @@ pub fn handle_oracle_fulfill(
     });
     if !result_bytes_base64.is_empty() {
         response["result_bytes_base64"] = serde_json::Value::String(result_bytes_base64);
+    }
+    if let Some(result_bytes_hex) = result_bytes_hex {
+        response["result_bytes_hex"] = serde_json::Value::String(result_bytes_hex);
     }
     if !nonce.is_empty() {
         response["nonce"] = serde_json::Value::String(nonce.clone());
@@ -333,7 +402,7 @@ pub fn handle_oracle_fulfill(
     }
     attestation_payload.insert(
         "role".to_string(),
-        serde_json::Value::String("oracle_verifier".to_string()),
+        serde_json::Value::String(attestation_role.to_string()),
     );
     match handle_attestation(state, &serde_json::Value::Object(attestation_payload)) {
         Ok(attestation) => {
@@ -374,6 +443,78 @@ pub fn handle_oracle_fulfill(
     }
 
     Ok(response)
+}
+
+fn measured_n3_binding(
+    network: &str,
+    supplied_contract: &str,
+    supplied_magic: Option<&serde_json::Value>,
+) -> Result<(String, Option<f64>), RuntimeError> {
+    let expected_contract = measured_n3_oracle_contract(network);
+    if !supplied_contract.is_empty() && !supplied_contract.eq_ignore_ascii_case(expected_contract) {
+        return Err(http_error(
+            400,
+            format!(
+                "neo_n3 fulfillment contract does not match measured {network} oracle contract"
+            ),
+        ));
+    }
+
+    let expected_magic = measured_n3_magic(network);
+    if let Some(value) = supplied_magic {
+        let parsed = match value {
+            serde_json::Value::Number(number) => number.as_u64(),
+            serde_json::Value::String(text) => text.trim().parse::<u64>().ok(),
+            _ => None,
+        };
+        if parsed != Some(u64::from(expected_magic)) {
+            return Err(http_error(
+                400,
+                format!(
+                    "neo_n3 fulfillment network magic does not match measured {network} network"
+                ),
+            ));
+        }
+    }
+    Ok((
+        expected_contract.to_string(),
+        Some(f64::from(expected_magic)),
+    ))
+}
+
+fn measured_n3_oracle_contract(network: &str) -> &'static str {
+    if network == "mainnet" {
+        N3_MAINNET_ORACLE_CONTRACT
+    } else {
+        N3_TESTNET_ORACLE_CONTRACT
+    }
+}
+
+fn measured_n3_magic(network: &str) -> u32 {
+    if network == "mainnet" {
+        N3_MAINNET_MAGIC
+    } else {
+        N3_TESTNET_MAGIC
+    }
+}
+
+fn required_neox_chain_id(context: &serde_json::Value) -> Result<u64, RuntimeError> {
+    let value = context
+        .get("chain_id")
+        .filter(|value| !value.is_null())
+        .or_else(|| context.get("chainId").filter(|value| !value.is_null()));
+    let chain_id = match value {
+        Some(serde_json::Value::Number(number)) => number.as_u64(),
+        Some(serde_json::Value::String(text)) => text.trim().parse::<u64>().ok(),
+        _ => None,
+    }
+    .filter(|value| *value > 0)
+    .ok_or_else(|| http_error(400, "neox fulfillment_context.chain_id is required"))?;
+    Ok(chain_id)
+}
+
+fn is_transient_worker_status(status: u16) -> bool {
+    matches!(status, 408 | 425 | 429) || (500..=599).contains(&status)
 }
 
 /// `computeWorkerResponse` (enclave-server.mjs:721-740): the confidential
@@ -445,6 +586,20 @@ fn execute_fulfillment_route(
         "/neodid/recovery-ticket" => value_reply(crate::neodid::handle_neo_did_recovery_ticket(
             state, payload,
         )),
+        "/neodid/zklogin-ticket" => {
+            value_reply(crate::neodid::handle_neo_did_zklogin_ticket(state, payload))
+        }
+        "/vrf/random" => value_reply(crate::vrf::handle_vrf_random(state, payload)),
+        "/paymaster/authorize" => {
+            value_reply(crate::paymaster::handle_paymaster_authorize(state, payload))
+        }
+        "/session/finalize" => {
+            outcome_reply(crate::session::handle_session_finalize(state, payload))
+        }
+        "/automation/execute" => {
+            outcome_reply(crate::automation::handle_automation_execute(state, payload))
+        }
+        "/oracle/feed" => outcome_reply(crate::oracle_feed::handle_oracle_feed(state, payload)),
         _ => crate::bridge::unavailable_reply(route),
     }
 }

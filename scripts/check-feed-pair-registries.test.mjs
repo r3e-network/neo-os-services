@@ -1,8 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import {
+  parseRustFeedRegistry,
+  parseRustFeedSignMapping,
+  parseRustRetiredPairs,
+  sameTwelveDataInstrument,
+} from './check-feed-pair-registries.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CHECK = path.join(REPO_ROOT, 'scripts', 'check-feed-pair-registries.mjs');
@@ -16,9 +24,9 @@ function runCheck(extraArgs = []) {
   });
 }
 
-// Static mode reads four checked-in registries and makes no network calls, so it is
-// safe to run in CI. `--onchain` is deliberately not exercised here.
-test('the advertised, pushed, worker and runtime feed registries agree', () => {
+// Static mode reads the Rust authority plus checked-in projections/compatibility
+// mirrors and makes no network calls, so it is safe in CI. `--onchain` is omitted.
+test('the Rust authority, advertised/runtime projections, and Node compatibility mirrors agree', () => {
   const result = runCheck();
   const report = JSON.parse(result.stdout);
   assert.deepEqual(
@@ -35,10 +43,37 @@ test('the advertised, pushed, worker and runtime feed registries agree', () => {
 // nothing. Every registry must contribute the same non-trivial count.
 test('the check actually compared a non-trivial, equal number of pairs', () => {
   const report = JSON.parse(runCheck().stdout);
-  assert.ok(report.advertised_pair_count > 20, 'advertised set looks empty or truncated');
-  assert.equal(report.pushed_pair_count, report.advertised_pair_count);
-  assert.equal(report.worker_pair_count, report.advertised_pair_count);
+  assert.ok(report.rust_feed_sign_pair_count > 20, 'Rust /feed/sign map looks empty or truncated');
+  assert.equal(report.rust_registry_pair_count, report.rust_feed_sign_pair_count);
+  assert.equal(report.advertised_pair_count, report.rust_feed_sign_pair_count);
+  assert.equal(report.node_pusher_compat_pair_count, report.advertised_pair_count);
+  assert.equal(report.node_worker_compat_pair_count, report.advertised_pair_count);
   assert.equal(report.runtime_pair_count, report.advertised_pair_count);
+});
+
+test('the checker parses the Rust delivery mappings and their explicit inverse semantics', () => {
+  const rustRegistrySource = fs.readFileSync(
+    path.join(REPO_ROOT, 'crates', 'neo-os-compute', 'src', 'oracle', 'feed_registry.rs'),
+    'utf8'
+  );
+  const feedSignSource = fs.readFileSync(
+    path.join(REPO_ROOT, 'workers', 'nitro-enclave-host', 'src', 'feed_sign.rs'),
+    'utf8'
+  );
+  const registry = parseRustFeedRegistry(rustRegistrySource);
+  const writer = parseRustFeedSignMapping(feedSignSource);
+  const retired = parseRustRetiredPairs(rustRegistrySource);
+
+  assert.equal(writer.get('CORN-USD'), 'C_1');
+  assert.deepEqual(registry.get('CORN-USD'), { symbol: 'C_1', priceTransform: null });
+  assert.equal(writer.get('JPY-USD'), 'JPY/USD');
+  assert.deepEqual(registry.get('JPY-USD'), {
+    symbol: 'USD/JPY',
+    priceTransform: 'inverse',
+  });
+  assert.ok(sameTwelveDataInstrument(writer.get('JPY-USD'), registry.get('JPY-USD')));
+  assert.ok(!sameTwelveDataInstrument('JPY/USD', { symbol: 'USD/JPY', priceTransform: null }));
+  assert.ok(retired.has('COPPER-USD'));
 });
 
 // The two known wrong-asset mappings must stay retired. TwelveData resolves HG1 to

@@ -12,9 +12,9 @@
 //! inputs (`now_ms`) are injected — the JS oracle grew optional `nowMs`
 //! parameters with `Date.now()` defaults for exactly this purpose.
 
-use crate::js_value::to_display_string;
 #[cfg(test)]
 use crate::js_number::number_to_string;
+use crate::js_value::to_display_string;
 use crate::js_value::{JsObject, JsValue};
 use crate::kernel;
 use crate::retry::compute_retry_delay_ms;
@@ -203,8 +203,11 @@ pub fn parse_iso_date_ms(input: &str) -> Option<f64> {
     if !(1..=12).contains(&m) || d < 1 || d > days_in_month(y, m) {
         return None;
     }
-    let utc_ms =
-        (days_from_civil(y, m, d) * 86_400_000) + hour * 3_600_000 + minute * 60_000 + second * 1000 + milli;
+    let utc_ms = (days_from_civil(y, m, d) * 86_400_000)
+        + hour * 3_600_000
+        + minute * 60_000
+        + second * 1000
+        + milli;
     Some(utc_ms as f64 - offset_ms)
 }
 
@@ -437,9 +440,7 @@ fn metric_number(value: &JsValue) -> f64 {
 pub fn build_event_key(event: &JsValue) -> String {
     let empty = JsObject::new();
     let obj = event.as_object().unwrap_or(&empty);
-    let get = |key: &str| -> JsValue {
-        obj.get(key).cloned().unwrap_or(JsValue::Undefined)
-    };
+    let get = |key: &str| -> JsValue { obj.get(key).cloned().unwrap_or(JsValue::Undefined) };
     let chain = string_with_fallback(&get("chain"), "unknown");
     let request_id = string_with_fallback(&get("requestId"), "0");
     let tx_hash = string_with_fallback(&get("txHash"), "");
@@ -474,7 +475,10 @@ fn prune_processed_records(chain_state: &mut JsObject, limit: f64) {
         if key.is_empty() {
             continue;
         }
-        if let Some(records) = chain_state.get_mut("processed_records").and_then(|v| v.as_object_mut()) {
+        if let Some(records) = chain_state
+            .get_mut("processed_records")
+            .and_then(|v| v.as_object_mut())
+        {
             records.remove(&key);
         }
     }
@@ -519,7 +523,11 @@ pub fn increment_labeled_failure(
         "{}{LABELED_FAILURE_DELIMITER}{}{LABELED_FAILURE_DELIMITER}{}",
         if chain.is_empty() { "unknown" } else { chain },
         if module.is_empty() { "unknown" } else { module },
-        if operation.is_empty() { "unknown" } else { operation },
+        if operation.is_empty() {
+            "unknown"
+        } else {
+            operation
+        },
     );
     let Some(metrics) = state.get_mut("metrics").and_then(|v| v.as_object_mut()) else {
         return;
@@ -527,15 +535,19 @@ pub fn increment_labeled_failure(
     if !matches!(metrics.get("labeled_failures"), Some(JsValue::Object(_))) {
         metrics.set("labeled_failures", JsValue::Object(JsObject::new()));
     }
-    let Some(labeled) = metrics.get_mut("labeled_failures").and_then(|v| v.as_object_mut()) else {
+    let Some(labeled) = metrics
+        .get_mut("labeled_failures")
+        .and_then(|v| v.as_object_mut())
+    else {
         return;
     };
     // JS: (Number(existing) || 0) + delta — NaN (missing) seeds at 0.
-    let existing = labeled
-        .get(&key)
-        .map(metric_number)
-        .unwrap_or(f64::NAN);
-    let base = if existing.is_nan() || existing == 0.0 { 0.0 } else { existing };
+    let existing = labeled.get(&key).map(metric_number).unwrap_or(f64::NAN);
+    let base = if existing.is_nan() || existing == 0.0 {
+        0.0
+    } else {
+        existing
+    };
     labeled.set(key, JsValue::Number(base + delta));
 }
 
@@ -597,7 +609,10 @@ pub fn snapshot_metrics(state: &JsObject, now_ms: f64) -> JsObject {
         dead_letter_sizes.set(*chain, JsValue::Number(dead_letters.len() as f64));
         checkpoints.set(
             *chain,
-            chain_state.get("last_block").cloned().unwrap_or(JsValue::Null),
+            chain_state
+                .get("last_block")
+                .cloned()
+                .unwrap_or(JsValue::Null),
         );
         request_checkpoints.set(
             *chain,
@@ -676,15 +691,17 @@ pub fn is_event_queued_for_retry(state: &JsObject, chain: &str, key: &str) -> bo
         .and_then(|cs| cs.get("retry_queue"))
         .and_then(|v| v.as_array())
         .map(|queue| {
-            queue
-                .iter()
-                .any(|item| item.as_object().and_then(|o| o.get("key")).map(JsValue::truthy)
+            queue.iter().any(|item| {
+                item.as_object()
+                    .and_then(|o| o.get("key"))
+                    .map(JsValue::truthy)
                     == Some(true)
                     && item
                         .as_object()
                         .and_then(|o| o.get("key"))
                         .and_then(|k| k.as_str())
-                        == Some(key))
+                        == Some(key)
+            })
         })
         .unwrap_or(false)
 }
@@ -765,10 +782,7 @@ fn dead_letter_from_shed(item: &JsValue, chain: &str, now_ms: f64) -> JsValue {
     let mut letter = JsObject::new();
     letter.set(
         "key",
-        item_obj
-            .get("key")
-            .cloned()
-            .unwrap_or(JsValue::Undefined),
+        item_obj.get("key").cloned().unwrap_or(JsValue::Undefined),
     );
     letter.set(
         "request_id",
@@ -781,17 +795,28 @@ fn dead_letter_from_shed(item: &JsValue, chain: &str, now_ms: f64) -> JsValue {
     letter.set("event", event);
     letter.set(
         "attempts",
-        JsValue::Number(number_or_zero(&item_obj.get("attempts").cloned().unwrap_or(JsValue::Undefined))),
+        JsValue::Number(number_or_zero(
+            &item_obj
+                .get("attempts")
+                .cloned()
+                .unwrap_or(JsValue::Undefined),
+        )),
     );
     letter.set(
         "last_error",
         JsValue::Str(string_with_fallback(
-            &item_obj.get("last_error").cloned().unwrap_or(JsValue::Undefined),
+            &item_obj
+                .get("last_error")
+                .cloned()
+                .unwrap_or(JsValue::Undefined),
             "retry_queue_overflow",
         )),
     );
     letter.set("exhausted_at", JsValue::Str(ms_to_iso_string(now_ms)));
-    letter.set("shed_reason", JsValue::Str("retry_queue_overflow".to_string()));
+    letter.set(
+        "shed_reason",
+        JsValue::Str("retry_queue_overflow".to_string()),
+    );
     JsValue::Object(letter)
 }
 
@@ -804,8 +829,13 @@ pub fn enforce_retry_queue_limit(
     limits: &JsObject,
     now_ms: f64,
 ) -> f64 {
-    let limit = number_or_zero(&limits.get("retryQueueLimit").cloned().unwrap_or(JsValue::Undefined))
-        .max(0.0);
+    let limit = number_or_zero(
+        &limits
+            .get("retryQueueLimit")
+            .cloned()
+            .unwrap_or(JsValue::Undefined),
+    )
+    .max(0.0);
     if limit <= 0.0 {
         return 0.0;
     }
@@ -837,7 +867,11 @@ pub fn enforce_retry_queue_limit(
             .unwrap_or(JsValue::Undefined),
     );
     // JS: limits.deadLetterLimit || 200 — 0 falls through to 200.
-    let dead_letter_limit = if dead_letter_limit == 0.0 { 200.0 } else { dead_letter_limit };
+    let dead_letter_limit = if dead_letter_limit == 0.0 {
+        200.0
+    } else {
+        dead_letter_limit
+    };
     prune_dead_letters(chain_state, dead_letter_limit);
     increment_metric(state, "retry_queue_overflow_total", shed.len() as f64);
     shed.len() as f64
@@ -853,14 +887,23 @@ pub fn enqueue_retry_item(
     now_ms: f64,
 ) -> JsValue {
     let key = build_event_key(event);
-    let attempts = number_or_zero(&options.get("attempts").cloned().unwrap_or(JsValue::Undefined));
+    let attempts = number_or_zero(
+        &options
+            .get("attempts")
+            .cloned()
+            .unwrap_or(JsValue::Undefined),
+    );
     let next_retry_at = number_or_zero(
         &options
             .get("next_retry_at")
             .cloned()
             .unwrap_or(JsValue::Undefined),
     );
-    let next_retry_at = if next_retry_at == 0.0 { now_ms } else { next_retry_at };
+    let next_retry_at = if next_retry_at == 0.0 {
+        now_ms
+    } else {
+        next_retry_at
+    };
     let first_failed_at = match options.get("first_failed_at") {
         Some(v) if v.truthy() => to_display_string(v),
         _ => ms_to_iso_string(now_ms),
@@ -878,10 +921,7 @@ pub fn enqueue_retry_item(
     item.set("updated_at", JsValue::Str(ms_to_iso_string(now_ms)));
     item.set(
         "last_error",
-        options
-            .get("last_error")
-            .cloned()
-            .unwrap_or(JsValue::Null),
+        options.get("last_error").cloned().unwrap_or(JsValue::Null),
     );
     item.set(
         "manual_action",
@@ -974,9 +1014,8 @@ pub fn record_processed_event(
     let key = build_event_key(event);
     let empty = JsObject::new();
     let event_obj = event.as_object().unwrap_or(&empty);
-    let get_event = |name: &str| -> JsValue {
-        event_obj.get(name).cloned().unwrap_or(JsValue::Undefined)
-    };
+    let get_event =
+        |name: &str| -> JsValue { event_obj.get(name).cloned().unwrap_or(JsValue::Undefined) };
     let request_type = string_with_fallback(&get_event("requestType"), "");
     let intent = kernel::resolve_kernel_intent(&request_type);
 
@@ -1041,7 +1080,10 @@ pub fn record_processed_event(
             "request_id",
             JsValue::Str(string_with_fallback(&get_event("requestId"), "0")),
         );
-        letter.set("request_type", JsValue::Str(string_with_fallback(&get_event("requestType"), "")));
+        letter.set(
+            "request_type",
+            JsValue::Str(string_with_fallback(&get_event("requestType"), "")),
+        );
         letter.set("module_id", JsValue::Str(intent.module_id.to_string()));
         letter.set("operation", JsValue::Str(intent.operation.clone()));
         letter.set("chain", JsValue::Str(chain.to_string()));
@@ -1057,7 +1099,11 @@ pub fn record_processed_event(
                 .cloned()
                 .unwrap_or(JsValue::Undefined),
         );
-        let dead_letter_limit = if dead_letter_limit == 0.0 { 200.0 } else { dead_letter_limit };
+        let dead_letter_limit = if dead_letter_limit == 0.0 {
+            200.0
+        } else {
+            dead_letter_limit
+        };
         prune_dead_letters(chain_state, dead_letter_limit);
     }
     let processed_cache_size = number_or_zero(
@@ -1066,7 +1112,11 @@ pub fn record_processed_event(
             .cloned()
             .unwrap_or(JsValue::Undefined),
     );
-    let processed_cache_size = if processed_cache_size == 0.0 { 5000.0 } else { processed_cache_size };
+    let processed_cache_size = if processed_cache_size == 0.0 {
+        5000.0
+    } else {
+        processed_cache_size
+    };
     prune_processed_records(chain_state, processed_cache_size);
     record_value
 }
@@ -1106,10 +1156,17 @@ pub fn schedule_retry(
         .map(number_or_zero)
         .unwrap_or(0.0);
     // JS: (existing?.attempts || 0) + 1
-    let attempts = if existing_attempts == 0.0 { 0.0 } else { existing_attempts } + 1.0;
+    let attempts = if existing_attempts == 0.0 {
+        0.0
+    } else {
+        existing_attempts
+    } + 1.0;
 
     let max_retries = crate::js_number::number_of(
-        &config.get("maxRetries").cloned().unwrap_or(JsValue::Undefined),
+        &config
+            .get("maxRetries")
+            .cloned()
+            .unwrap_or(JsValue::Undefined),
     );
     if attempts > max_retries {
         chain_state.set(
@@ -1164,15 +1221,13 @@ pub fn schedule_retry(
     let item_value = JsValue::Object(item);
 
     let mut new_queue: Vec<JsValue> = queue;
-    match new_queue
-        .iter()
-        .position(|entry| {
-            entry
-                .as_object()
-                .and_then(|o| o.get("key"))
-                .and_then(|k| k.as_str())
-                == Some(key.as_str())
-        }) {
+    match new_queue.iter().position(|entry| {
+        entry
+            .as_object()
+            .and_then(|o| o.get("key"))
+            .and_then(|k| k.as_str())
+            == Some(key.as_str())
+    }) {
         Some(index) => new_queue[index] = item_value.clone(),
         None => new_queue.push(item_value.clone()),
     }
@@ -1318,7 +1373,10 @@ mod tests {
     fn empty_state_shape_is_pinned() {
         let state = create_empty_relayer_state();
         let keys: Vec<&str> = state.iter().map(|(k, _)| k).collect();
-        assert_eq!(keys, vec!["version", "updated_at", "neo_n3", "neox", "metrics"]);
+        assert_eq!(
+            keys,
+            vec!["version", "updated_at", "neo_n3", "neox", "metrics"]
+        );
         let chain_keys: Vec<&str> = state
             .get("neo_n3")
             .unwrap()
@@ -1340,7 +1398,11 @@ mod tests {
             ]
         );
         let metrics = state.get("metrics").unwrap().as_object().unwrap();
-        assert_eq!(metrics.len(), 35, "24 counters + 10 nullable + labeled_failures");
+        assert_eq!(
+            metrics.len(),
+            35,
+            "24 counters + 10 nullable + labeled_failures"
+        );
         assert_eq!(metrics.get("ticks_total"), Some(&JsValue::Number(0.0)));
         assert_eq!(metrics.get("last_tick_started_at"), Some(&JsValue::Null));
     }
@@ -1381,13 +1443,22 @@ mod tests {
             make("2026-01-01T00:00:40.000Z"),
         ];
         let now = parse_iso_date_ms("2026-01-01T00:01:00.000Z").unwrap();
-        assert_eq!(oldest_age_seconds(&items, "first_failed_at", now), JsValue::Number(50.0));
+        assert_eq!(
+            oldest_age_seconds(&items, "first_failed_at", now),
+            JsValue::Number(50.0)
+        );
         // Future timestamp clamps to 0, never negative.
         let future = vec![make("2026-01-01T01:00:00.000Z")];
-        assert_eq!(oldest_age_seconds(&future, "first_failed_at", now), JsValue::Number(0.0));
+        assert_eq!(
+            oldest_age_seconds(&future, "first_failed_at", now),
+            JsValue::Number(0.0)
+        );
         // Nothing parseable → null.
         let empty: Vec<JsValue> = vec![];
-        assert_eq!(oldest_age_seconds(&empty, "first_failed_at", now), JsValue::Null);
+        assert_eq!(
+            oldest_age_seconds(&empty, "first_failed_at", now),
+            JsValue::Null
+        );
     }
 
     #[test]
@@ -1458,7 +1529,12 @@ mod tests {
         assert_eq!(r2_obj.get("attempts"), Some(&JsValue::Number(2.0)));
         let chain_state = state.get("neox").unwrap().as_object().unwrap();
         assert_eq!(
-            chain_state.get("retry_queue").unwrap().as_array().unwrap().len(),
+            chain_state
+                .get("retry_queue")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
             0
         );
     }
@@ -1473,9 +1549,18 @@ mod tests {
         config.set("retryMaxDelayMs", JsValue::Number(5000.0));
         let now = 1_700_000_000_000.0;
         let result = schedule_retry(&mut state, "neo_n3", &e, "x", &config, 0.5, now);
-        let item = result.as_object().unwrap().get("item").unwrap().as_object().unwrap();
+        let item = result
+            .as_object()
+            .unwrap()
+            .get("item")
+            .unwrap()
+            .as_object()
+            .unwrap();
         // ceiling 1000, jitter 0.75 → 750.
-        assert_eq!(item.get("next_retry_at"), Some(&JsValue::Number(now + 750.0)));
+        assert_eq!(
+            item.get("next_retry_at"),
+            Some(&JsValue::Number(now + 750.0))
+        );
         assert_eq!(
             item.get("first_failed_at"),
             Some(&JsValue::Str(ms_to_iso_string(now)))
@@ -1489,9 +1574,25 @@ mod tests {
         let now = 1_700_000_000_000.0;
         let mut limits = JsObject::new();
         limits.set("processedCacheSize", JsValue::Number(1.0));
-        record_processed_event(&mut state, "neo_n3", &e, "fulfilled", &JsObject::new(), &limits, now);
+        record_processed_event(
+            &mut state,
+            "neo_n3",
+            &e,
+            "fulfilled",
+            &JsObject::new(),
+            &limits,
+            now,
+        );
         let e2 = event("neo_n3", "6", "tx6", 3.0, 401.0);
-        record_processed_event(&mut state, "neo_n3", &e2, "fulfilled", &JsObject::new(), &limits, now);
+        record_processed_event(
+            &mut state,
+            "neo_n3",
+            &e2,
+            "fulfilled",
+            &JsObject::new(),
+            &limits,
+            now,
+        );
         let chain_state = state.get("neo_n3").unwrap().as_object().unwrap();
         assert_eq!(
             chain_state
@@ -1555,7 +1656,10 @@ mod tests {
             "earliest next_retry_at first"
         );
         // Future-scheduled items stay hidden.
-        assert_eq!(get_due_retry_items(&state, "neo_n3", now - 10_000.0).len(), 0);
+        assert_eq!(
+            get_due_retry_items(&state, "neo_n3", now - 10_000.0).len(),
+            0
+        );
     }
 
     #[test]
@@ -1587,7 +1691,10 @@ mod tests {
             &JsObject::new(),
             now,
         );
-        assert_eq!(collect_active_request_ids(&state, "neo_n3"), vec!["11", "22"]);
+        assert_eq!(
+            collect_active_request_ids(&state, "neo_n3"),
+            vec!["11", "22"]
+        );
     }
 
     #[test]
@@ -1629,14 +1736,13 @@ mod tests {
         increment_labeled_failure(&mut state, "neo_n3", "neo", "fulfill", 2.0);
         increment_labeled_failure(&mut state, "neox", "evm", "submit", 1.0);
         let snap = snapshot_metrics(&state, 0.0);
-        let labeled = snap
-            .get("labeled_failures")
-            .unwrap()
-            .as_array()
-            .unwrap();
+        let labeled = snap.get("labeled_failures").unwrap().as_array().unwrap();
         assert_eq!(labeled.len(), 2);
         let first = labeled[0].as_object().unwrap();
-        assert_eq!(first.get("chain"), Some(&JsValue::Str("neo_n3".to_string())));
+        assert_eq!(
+            first.get("chain"),
+            Some(&JsValue::Str("neo_n3".to_string()))
+        );
         assert_eq!(first.get("value"), Some(&JsValue::Number(3.0)));
     }
 

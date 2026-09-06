@@ -468,12 +468,18 @@ This returns:
 If multiple providers are requested, every successful quote is returned and every failed provider is listed in `errors`.
 Production feed sync uses `twelvedata` by default unless you explicitly override `MORPHEUS_FEED_PROVIDERS`.
 
-### Trigger an on-chain feed sync
+### Inspect feed candidates and publish through the Rust relayer
 
-This flow is operator-only. End users should not request `datafeed` through the Oracle contract. If they do, the
-request is rejected and finalized with a failure callback.
+On-chain feed publication is operator-only. End users should not request
+`datafeed` through the Oracle contract; such a request is rejected and finalized
+with a failure callback.
 
-Web cron route:
+The production publisher is `neo-os-relayer` running in `feed_only` or
+`combined` mode with feed sync enabled. It calls the measured `/feed/sign`
+route, broadcasts the custody-signed transaction, waits for a concrete HALT or
+status-1 receipt, and only then advances its durable feed state.
+
+Web cron/control-plane trigger:
 
 ```bash
 curl http://localhost:3000/api/cron/feed/run \
@@ -482,10 +488,16 @@ curl http://localhost:3000/api/cron/feed/run \
 
 Production Vercel Cron is accepted by the Vercel cron user agent. Manual
 operator probes use `MORPHEUS_CRON_SECRET` plus the cron BetterStack heartbeat
-URLs configured in the `apps/web` deployment environment. Validate the non-secret
-presence check with `npm run check:web-cron-env -- --fail-on-missing`.
+URLs configured in the `apps/web` deployment environment. The current
+control-plane `/feeds/tick` lane is retired and returns `410 Gone`; when that
+control plane is enabled, the web cron forwards the retired response instead of
+claiming a successful publication. A scheduler invocation or heartbeat is
+**not** evidence that a transaction was submitted. Validate on-chain freshness
+through relayer delivery metrics and the confirmed contract state instead.
+Validate the non-secret presence check with
+`npm run check:web-cron-env -- --fail-on-missing`.
 
-Direct worker route:
+Direct host observation route:
 
 ```bash
 curl "$MORPHEUS_RUNTIME_URL/oracle/feed" \
@@ -500,18 +512,35 @@ curl "$MORPHEUS_RUNTIME_URL/oracle/feed" \
   }'
 ```
 
-Returned fields:
+`/oracle/feed` is an observation, aggregation, and policy adapter. It does not
+build or broadcast a chain transaction. `wait:false` returns `409` because the
+host has no durable background queue. With `wait:true`, candidates that would
+need publication are recorded as observations, reported as
+`relay_status:"skipped"` with `skip_reason:"submission_unavailable"`, and the
+request returns `503`; `batch_submitted` remains `false` and `anchored_tx`
+remains `null`. `require_submission:true` makes the caller's intent explicit and
+changes the error detail, but a pending update never produces a false-success
+response. The Rust relayer owns publication.
 
-- `pair`
-- `providers_requested`
+Returned top-level fields include:
+
+- `network`
+- `target_chain`
+- `symbols`
+- `batch_submitted`
+- `batch_count`
+- `batch_tx`
 - `sync_results`
 - `errors`
+- `state_persisted`
+- `sync_policy`
 
-Each successful sync result contains:
+Each provider result contains fields such as:
 
 - `provider`
 - `storage_pair`
 - `relay_status`
+- `skip_reason`
 - `anchored_tx`
 - `quote`
 

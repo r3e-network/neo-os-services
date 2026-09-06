@@ -2,15 +2,20 @@
 
 ## Overview
 
-NeoOS is migrating confidential runtime paths from JavaScript to Rust without
-changing their public byte contract. The target has three explicit ownership
-boundaries:
+NeoOS is migrating backend runtime paths from JavaScript to Rust without
+changing their public byte contract. The target has three Rust process
+boundaries plus one explicitly temporary compatibility runtime:
 
-- `workers/neo-signer` is the only Neo private-key custody and signing
-  authority. Its measured image is Rust-only.
-- `workers/nitro-enclave-host` plus `crates/neo-os-compute` own the measured
-  confidential execution frontier. `deploy/nitro/Dockerfile.enclave` contains
-  only the Rust frontier and Rust PID 1 supervisor.
+- `workers/neo-os-relayer` owns chain scanning, durable orchestration and
+  delivery. It holds no private keys and calls custody for every signature.
+- `workers/neo-signer` is the only Neo N3 and NeoX private-key custody and
+  signing authority. Its measured image is Rust-only. It remains an isolated
+  process for blast-radius and attestation reasons, but is a first-class member
+  of the same Cargo workspace, lifecycle model and deployment architecture.
+- `workers/nitro-enclave-host` plus `crates/neo-os-compute` and
+  `crates/neo-os-games` own the measured confidential execution frontier.
+  `deploy/nitro/Dockerfile.enclave` contains only the Rust frontier and Rust
+  PID 1 supervisor.
 - `workers/nitro-worker` remains a compatibility runtime for container/CVM
   deployments and the JavaScript parity oracle while migration gates still
   consume its vectors. It is not packaged into the measured Rust EIF.
@@ -19,20 +24,39 @@ The migration is not complete merely because an image contains no Node binary.
 Every route reachable in that image must execute in-process or fail closed with
 an intentional, documented response. The production Rust host therefore has no
 child-process supervisor or loopback Node client. Fulfillment request types not
-yet folded into Rust receive the deterministic `rust-compute-lane-unavailable`
-compute response; they cannot silently activate a second engine.
+yet folded into Rust receive a retryable `rust-compute-lane-unavailable`
+runtime error before fulfillment encoding or custody signing; they cannot
+silently activate a second engine or become a signed permanent rejection.
+
+The concise process/route ownership and cutover status is maintained in
+[`docs/rust-migration/SERVICE_CONTRACT_MATRIX.md`](rust-migration/SERVICE_CONTRACT_MATRIX.md).
 
 ## API Reference
 
 ### Runtime ownership
 
-- `neo-os-compute` exposes keyless deterministic compute, game engines,
-  oracle helpers, NeoDID logic, policy, and sandbox primitives.
+- `neo-os-compute` exposes keyless deterministic compute, oracle helpers,
+  NeoDID logic, policy, and sandbox primitives. Its `game` module is a
+  compatibility-only re-export.
+- `neo-os-games` owns the 11 hash-pinned engines, registry, parity goldens, and
+  generic confidential session protocol; the enclave host depends on it
+  directly.
+- `neo-os-relayer` composes the N3/NeoX adapters, persistence and operational
+  state machine. Neo N3 and NeoX request/feed lanes are authoritative in
+  `requests_only`, `feed_only`, and `combined`: they call the measured host,
+  sign through custody, broadcast, require HALT or receipt status 1, and record
+  durable success before cursor advancement. Automation remains a separate
+  unavailable commit protocol; startup and configuration validation reject it
+  when enabled.
 - `nitro-enclave-host` owns HTTP authentication, route classification,
   one-shot allowlisted provisioning, Nitro Recipient KMS materialization,
   custody calls, egress adapters, response rendering, and lifecycle.
-- `neo-signer` owns P-256 key generation/import, encrypted custody, policy,
-  caller authentication, idempotency, audit, and signatures.
+- `neo-signer` owns chain-bound P-256/Neo N3 and secp256k1/NeoX key
+  generation/import, encrypted custody, policy, caller authentication,
+  idempotency, audit, and signatures.
+- `neo-os-service-runtime` owns only cross-process lifecycle primitives such
+  as platform shutdown signals. It must never own route policy, key material,
+  signing, chain semantics, or application state.
 - `nitro-worker` must not be imported by a Rust EIF build. Its public routes
   remain supported only by the separately published compatibility image until
   their deployment consumers move.
@@ -46,13 +70,14 @@ handlers:
 - `/oracle/query`, `/oracle/smart-fetch`, `/oracle/decrypt`, and
   `/oracle/message-reveal`;
 - `/neodid/bind`, `/neodid/action-ticket`, and
-  `/neodid/recovery-ticket`.
+  `/neodid/recovery-ticket`;
+- `/neodid/zklogin-ticket`, `/vrf/random`, and
+  `/paymaster/authorize`.
 
-The remaining `/session/*`, `/vrf/random`, `/automation/execute`,
-`/paymaster/authorize`, `/oracle/feed`, and `/neodid/zklogin-ticket` routes
+The remaining `/session/*`, `/automation/execute`, and `/oracle/feed` routes
 produce `rust-compute-lane-unavailable` until their Rust host adapters land.
-That failure is encoded and signed as an unsuccessful fulfillment; no network
-or child process is consulted.
+That transient `503` is returned before digest construction or custody signing,
+so the request remains retryable; no network or child process is consulted.
 
 Every route that returns a signed result requires a healthy custody role for
 the selected network. Missing, disabled, mismatched, unreachable, or incomplete
@@ -136,6 +161,8 @@ MORPHEUS_NETWORK=mainnet \
 SIGNER_SERVICE_URL=https://custody.internal.example \
 SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=<raw-verifier-key-id> \
 SIGNER_ROLE_UPDATER_KEY_ID=<raw-updater-key-id> \
+SIGNER_ROLE_NEOX_UPDATER_KEY_ID=<raw-neox-updater-key-id> \
+SIGNER_ROLE_NEOX_VERIFIER_KEY_ID=<raw-neox-verifier-key-id> \
 SIGNER_ROLE_RELAYER_KEY_ID=<raw-relayer-key-id> \
 SIGNER_ROLE_WORKER_KEY_ID=<raw-worker-key-id> \
   ./deploy/nitro/build-enclave-eif.sh
@@ -236,10 +263,12 @@ The initial measured set is:
 
 - `workers/neo-signer/src/lib.rs` → `docs/SIGNER_SERVICE_V2.md`;
 - `workers/nitro-enclave-host/src/lib.rs` → this document;
+- `workers/neo-os-relayer/src/lib.rs` → this document;
+- `crates/neo-os-service-runtime/src/lib.rs` → this document;
 - `crates/neo-os-compute/src/lib.rs` → this document;
 - `crates/neo-os-compute/src/oracle/crypto.rs` →
   `docs/CRYPTO_OWNERSHIP.md`.
 
 Adding a security-critical Rust owner without adding its pair to the gate is a
-review failure. A reported `4/4 (100%)` is the current acceptance baseline; the
+review failure. A reported `6/6 (100%)` is the current acceptance baseline; the
 numerator and denominator must grow together as migration expands.

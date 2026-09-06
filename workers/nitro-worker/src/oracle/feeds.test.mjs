@@ -68,14 +68,14 @@ test.before(() => {
           ? 'mainnet'
           : 'testnet';
       return {
-          key_id: 'test-worker-key',
-          network,
-          network_magic: network === 'mainnet' ? 860833102 : 894710606,
-          public_key: `02${'22'.repeat(32)}`,
-          address: 'NTestWorkerCustodyAddress',
-          script_hash: `0x${'33'.repeat(20)}`,
-          signing_enabled: true,
-        };
+        key_id: 'test-worker-key',
+        network,
+        network_magic: network === 'mainnet' ? 860833102 : 894710606,
+        public_key: `02${'22'.repeat(32)}`,
+        address: 'NTestWorkerCustodyAddress',
+        script_hash: `0x${'33'.repeat(20)}`,
+        signing_enabled: true,
+      };
     }
     return {
       allowed: true,

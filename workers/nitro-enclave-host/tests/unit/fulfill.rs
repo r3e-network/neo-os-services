@@ -13,6 +13,9 @@
 use super::*;
 use crate::state::BridgeReply;
 use base64::Engine as _;
+use neo_os_chain_evm::{
+    build_neox_digest, resolve_result_bytes_hex, Fulfillment as EvmFulfillment,
+};
 use neo_os_core::digest::{build_fulfillment_digest_bytes, FulfillmentOptions};
 use neo_os_core::envelope::{build_onchain_result_envelope, encode_fulfillment_result};
 use neo_os_core::js_value::JsValue;
@@ -113,7 +116,7 @@ fn neo_n3_with_app_id_digest_envelope_and_signature_byte_exact() {
             "app_id": "demo.app",
             "module_id": intent.module_id,
             "operation": intent.operation,
-            "contract_script_hash": format!("0x{}", "1f".repeat(20)),
+            "contract_script_hash": measured_n3_oracle_contract(TEST_NETWORK),
             "network_magic": 894710606,
         },
         "nonce": "deadbeef",
@@ -136,7 +139,7 @@ fn neo_n3_with_app_id_digest_envelope_and_signature_byte_exact() {
         app_id: "demo.app".to_string(),
         module_id: intent.module_id.to_string(),
         operation: intent.operation.to_string(),
-        contract_script_hash: format!("0x{}", "1f".repeat(20)),
+        contract_script_hash: measured_n3_oracle_contract(TEST_NETWORK).to_string(),
         network_magic: Some(894710606.0),
     };
     let expected_digest = build_fulfillment_digest_bytes(
@@ -193,6 +196,112 @@ fn neo_n3_with_app_id_digest_envelope_and_signature_byte_exact() {
 }
 
 #[test]
+fn neo_n3_refuses_parent_selected_contract_or_network_domain_before_signing() {
+    for (field, value, expected) in [
+        (
+            "contract_script_hash",
+            json!(format!("0x{}", "11".repeat(20))),
+            "contract does not match measured testnet",
+        ),
+        (
+            "network_magic",
+            json!(860_833_102),
+            "network magic does not match measured testnet",
+        ),
+    ] {
+        let harness = fulfill_harness(price_reply());
+        let mut body = price_body_without_binding();
+        body["fulfillment_context"][field] = value;
+
+        let error = handle_oracle_fulfill(&harness.state, &body).expect_err("foreign N3 domain");
+        assert_eq!(error.status, 400);
+        assert!(error.message.contains(expected), "{}", error.message);
+        assert!(harness.signer.sign_calls().is_empty());
+    }
+}
+
+#[test]
+fn neox_fulfillment_uses_structured_verifier_custody_and_exposes_delivery_fields() {
+    let harness = fulfill_harness(price_reply());
+    let intent = resolve_kernel_intent("oracle_query");
+    let oracle_contract = format!("0x{}", "22".repeat(20));
+    let body = json!({
+        "chain": "neox",
+        "request_type": "oracle_query",
+        "request_id": "4242",
+        "payload": { "symbol": "BTC/USD", "requester": format!("0x{}", "aa".repeat(20)) },
+        "fulfillment_context": {
+            "app_id": "demo.app",
+            "module_id": intent.module_id,
+            "operation": intent.operation,
+            "chain_id": 12_227_332,
+            "oracle_contract": oracle_contract.clone(),
+        },
+        "nonce": "deadbeef",
+    });
+
+    let response = handle_oracle_fulfill(&harness.state, &body).expect("NeoX fulfillment");
+    assert_eq!(response["status"], "ok");
+    assert_eq!(response["chain"], "neox");
+    assert_eq!(response["request_id"], "4242");
+    assert_eq!(response["app_id"], "demo.app");
+    assert_eq!(response["module_id"], intent.module_id);
+    assert_eq!(response["operation"], intent.operation);
+    assert_eq!(response["trust_tier"], "enclave-attested");
+    assert_eq!(response["nonce"], "deadbeef");
+    assert!(harness.signer.sign_calls().is_empty());
+
+    let worker_response = JsValue::from_json(&json!({
+        "ok": true, "status": 200, "body": fixed_price_body(),
+    }));
+    let encoded = encode_fulfillment_result("oracle_query", &worker_response).expect("encode");
+    let result_bytes_hex = resolve_result_bytes_hex(
+        &encoded.result,
+        encoded.result_bytes_base64.as_deref().unwrap_or(""),
+    );
+    let expected = EvmFulfillment {
+        request_id: "4242".to_string(),
+        app_id: "demo.app".to_string(),
+        module_id: intent.module_id.to_string(),
+        operation: intent.operation.to_string(),
+        success: true,
+        error: String::new(),
+    };
+    let expected_digest = build_neox_digest(
+        12_227_332,
+        body["fulfillment_context"]["oracle_contract"]
+            .as_str()
+            .expect("contract"),
+        &expected,
+        &result_bytes_hex,
+    )
+    .expect("digest");
+    assert_eq!(response["result"], encoded.result);
+    assert_eq!(response["result_bytes_hex"], result_bytes_hex);
+    assert_eq!(
+        response["fulfillment_digest_hex"],
+        format!("0x{}", hex::encode(expected_digest))
+    );
+    assert_eq!(
+        response["signature"].as_str().expect("signature").len(),
+        132
+    );
+
+    let calls = harness.signer.eip191_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].network, TEST_NETWORK);
+    assert_eq!(calls[0].role, "neox_verifier");
+    assert_eq!(calls[0].chain_id, 12_227_332);
+    assert_eq!(calls[0].oracle_contract, oracle_contract);
+    assert_eq!(calls[0].fulfillment, expected);
+    assert_eq!(calls[0].result_bytes_hex, result_bytes_hex);
+    assert_eq!(
+        calls[0].request_id,
+        format!("neox-fulfill:{}", hex::encode(expected_digest))
+    );
+}
+
+#[test]
 fn migrated_compute_fulfillment_executes_in_process() {
     let mut harness = fulfill_harness(price_reply());
     use_production_compute(&mut harness);
@@ -219,6 +328,83 @@ fn migrated_compute_fulfillment_executes_in_process() {
     assert!(harness.bridge.forwards().is_empty());
     // The compute result and the final fulfillment digest both cross custody.
     assert_eq!(harness.signer.sign_calls().len(), 2);
+}
+
+#[test]
+fn session_finalize_fulfillment_uses_the_session_handler() {
+    let mut harness = fulfill_harness(price_reply());
+    use_production_compute(&mut harness);
+    let body = json!({
+        "chain": "neo_n3",
+        "request_type": "session.finalize",
+        "request_id": "901",
+        "payload": {},
+        "fulfillment_context": {},
+    });
+
+    let response = handle_oracle_fulfill(&harness.state, &body).expect("signed rejection");
+    assert_eq!(response["status"], "ok");
+    assert_eq!(response["success"], false);
+    assert!(
+        response["error"]
+            .as_str()
+            .expect("session error")
+            .contains("app_id must be one of"),
+        "{response}"
+    );
+    assert!(harness.bridge.forwards().is_empty());
+}
+
+#[test]
+fn automation_fulfillment_executes_the_nested_rust_handler() {
+    let mut harness = fulfill_harness(price_reply());
+    use_production_compute(&mut harness);
+    let body = json!({
+        "chain": "neo_n3",
+        "request_type": "automation_execute",
+        "request_id": "902",
+        "payload": {
+            "automation_id": "automation:fulfill:test",
+            "idempotency_key": "automation-fulfill-test-902",
+            "execution_request_type": "compute_hash",
+            "execution_payload": {
+                "function": "hash.sha256",
+                "input": { "answer": 42 },
+            },
+        },
+        "fulfillment_context": {},
+    });
+
+    let response = handle_oracle_fulfill(&harness.state, &body).expect("fulfillment");
+    assert_eq!(response["status"], "ok");
+    assert_eq!(response["success"], true);
+    assert!(response["result"]
+        .as_str()
+        .expect("encoded automation result")
+        .contains("automation"));
+    assert!(harness.bridge.forwards().is_empty());
+    assert_eq!(harness.signer.sign_calls().len(), 2);
+}
+
+#[test]
+fn feed_fulfillment_reuses_the_direct_background_refusal() {
+    let mut harness = fulfill_harness(price_reply());
+    use_production_compute(&mut harness);
+    let body = json!({
+        "chain": "neo_n3",
+        "request_type": "price_feed",
+        "request_id": "903",
+        "payload": { "symbol": "NEO-USD", "fast_ack": true },
+        "fulfillment_context": {},
+    });
+
+    let response = handle_oracle_fulfill(&harness.state, &body).expect("signed rejection");
+    assert_eq!(response["success"], false);
+    assert!(response["error"]
+        .as_str()
+        .expect("feed error")
+        .contains("durable background feed execution is unavailable"));
+    assert!(harness.bridge.forwards().is_empty());
 }
 
 #[test]
@@ -258,7 +444,7 @@ fn migrated_decrypt_fulfillment_executes_in_process() {
 }
 
 #[test]
-fn an_unmigrated_fulfillment_lane_refuses_without_a_bridge() {
+fn random_fulfillment_executes_in_process_without_a_bridge() {
     let mut harness = fulfill_harness(vrf_reply());
     use_production_compute(&mut harness);
     let body = json!({
@@ -269,13 +455,19 @@ fn an_unmigrated_fulfillment_lane_refuses_without_a_bridge() {
         "fulfillment_context": {},
     });
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("signed refusal");
+    let response = handle_oracle_fulfill(&harness.state, &body).expect("signed fulfillment");
     assert_eq!(response["status"], "ok");
-    assert_eq!(response["success"], false);
-    assert_eq!(
-        response["error"],
-        "the /vrf/random fulfillment lane has not migrated to Rust"
-    );
+    assert_eq!(response["success"], true);
+    assert!(response["error"].as_str().unwrap_or_default().is_empty());
+    assert_eq!(response["result"], "");
+    let callback = base64::engine::general_purpose::STANDARD
+        .decode(
+            response["result_bytes_base64"]
+                .as_str()
+                .expect("compact random result"),
+        )
+        .expect("base64 callback");
+    assert_eq!(callback.len(), 32);
     assert!(harness.bridge.forwards().is_empty());
 }
 
@@ -306,6 +498,8 @@ fn legacy_no_app_id_uses_the_legacy_domain() {
         fulfillment.result_bytes_base64.as_deref().unwrap_or(""),
         &FulfillmentOptions {
             chain: Some("legacy".to_string()),
+            contract_script_hash: measured_n3_oracle_contract(TEST_NETWORK).to_string(),
+            network_magic: Some(f64::from(measured_n3_magic(TEST_NETWORK))),
             ..FulfillmentOptions::default()
         },
     )
@@ -333,7 +527,7 @@ fn vrf_compact_lane_returns_the_callback_bytes() {
             "app_id": "dice.app",
             "module_id": intent.module_id,
             "operation": intent.operation,
-            "contract_script_hash": format!("0x{}", "2c".repeat(20)),
+            "contract_script_hash": measured_n3_oracle_contract(TEST_NETWORK),
             "network_magic": 894710606,
         },
     });
@@ -359,7 +553,7 @@ fn vrf_compact_lane_returns_the_callback_bytes() {
         app_id: "dice.app".to_string(),
         module_id: intent.module_id.to_string(),
         operation: intent.operation.to_string(),
-        contract_script_hash: format!("0x{}", "2c".repeat(20)),
+        contract_script_hash: measured_n3_oracle_contract(TEST_NETWORK).to_string(),
         network_magic: Some(894710606.0),
     };
     let expected_digest = build_fulfillment_digest_bytes(
@@ -410,7 +604,7 @@ fn arbitrary_url_smart_fetch_is_host_unattested() {
 }
 
 #[test]
-fn neox_fails_closed_before_any_compute() {
+fn neox_invalid_contract_never_reaches_any_signing_surface() {
     let harness = fulfill_harness(price_reply());
     let body = json!({
         "chain": "neox",
@@ -420,21 +614,18 @@ fn neox_fails_closed_before_any_compute() {
         "fulfillment_context": { "chain_id": 1868, "oracle_contract": "0xabc" },
     });
 
-    let error = handle_oracle_fulfill(&harness.state, &body).expect_err("neox refused");
-    assert_eq!(error.status, 503);
-    assert_eq!(
-        error.message,
-        "neox fulfillment signing is not available on the Rust enclave host"
-    );
-    // No compute ran: the EVM lane can never be signed on this host.
-    assert!(harness.bridge.forwards().is_empty());
+    let error = handle_oracle_fulfill(&harness.state, &body).expect_err("invalid contract");
+    assert_eq!(error.status, 400);
+    assert!(error.message.contains("invalid oracle contract address"));
+    assert!(harness.signer.sign_calls().is_empty());
+    assert!(harness.signer.eip191_calls().is_empty());
 }
 
 #[test]
-fn a_failed_compute_encodes_as_an_unsuccessful_fulfillment() {
+fn a_deterministic_business_rejection_encodes_as_an_unsuccessful_fulfillment() {
     let harness = fulfill_harness(BridgeReply {
         ok: false,
-        status: 500,
+        status: 422,
         body: json!({ "error": "boom" }),
     });
     let body = price_body_without_binding();
@@ -448,6 +639,24 @@ fn a_failed_compute_encodes_as_an_unsuccessful_fulfillment() {
     // records unsuccessful fulfillments through the same path.
     assert_ne!(response["fulfillment_digest_hex"], serde_json::Value::Null);
     assert_eq!(response["signature"], "00");
+}
+
+#[test]
+fn transient_compute_failures_are_never_signed_as_permanent_fulfillments() {
+    for status in [408, 425, 429, 500, 502, 503, 504, 508, 599] {
+        let harness = fulfill_harness(BridgeReply {
+            ok: false,
+            status,
+            body: json!({ "error": "try again" }),
+        });
+
+        let error = handle_oracle_fulfill(&harness.state, &price_body_without_binding())
+            .expect_err("transient compute failure must remain retryable");
+
+        assert_eq!(error.status, status);
+        assert!(error.message.contains("transient compute failure"));
+        assert!(harness.signer.sign_calls().is_empty());
+    }
 }
 
 #[test]

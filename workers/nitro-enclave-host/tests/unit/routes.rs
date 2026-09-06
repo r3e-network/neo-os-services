@@ -36,6 +36,23 @@ fn the_exact_routes_classify() {
         classify_post("/neodid/recovery-ticket"),
         Target::NeoDidRecoveryTicket
     );
+    assert_eq!(
+        classify_post("/neodid/zklogin-ticket"),
+        Target::NeoDidZkLoginTicket
+    );
+    assert_eq!(classify_post("/vrf/random"), Target::VrfRandom);
+    assert_eq!(
+        classify_post("/paymaster/authorize"),
+        Target::PaymasterAuthorize
+    );
+    assert_eq!(classify_post("/session/start"), Target::SessionStart);
+    assert_eq!(classify_post("/session/step"), Target::SessionStep);
+    assert_eq!(classify_post("/session/finalize"), Target::SessionFinalize);
+    assert_eq!(
+        classify_post("/automation/execute"),
+        Target::AutomationExecute
+    );
+    assert_eq!(classify_post("/oracle/feed"), Target::OracleFeed);
     assert_eq!(classify_post("/oracle/query"), Target::OracleQuery);
     assert_eq!(
         classify_post("/oracle/smart-fetch"),

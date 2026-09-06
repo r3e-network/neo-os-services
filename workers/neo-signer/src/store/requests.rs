@@ -14,9 +14,10 @@ pub(super) fn insert_signer_request(
     connection.execute(
         "INSERT INTO signer_requests (
             caller_id, request_id, key_id, action, request_digest, result_digest,
-            script_hash, address, invocation, verification, completed_at_unix, audit_id, chain_family
+            script_hash, address, invocation, verification, completed_at_unix, audit_id,
+            chain_family, signed_transaction
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             &completion.caller_id,
             &completion.request_id,
@@ -31,6 +32,7 @@ pub(super) fn insert_signer_request(
             completion.completed_at_unix,
             audit_id,
             completion.chain_family.as_ref().map(|cf| cf.to_string()),
+            &completion.signed_transaction,
         ],
     )?;
     Ok(())
@@ -48,7 +50,7 @@ impl Store {
             .query_row(
                 "SELECT caller_id, request_id, key_id, action, request_digest,
                         result_digest, script_hash, address, invocation, verification,
-                        completed_at_unix, audit_id, chain_family
+                        completed_at_unix, audit_id, chain_family, signed_transaction
                  FROM signer_requests
                  WHERE caller_id = ?1 AND request_id = ?2",
                 params![caller_id, request_id],
@@ -89,6 +91,7 @@ impl Store {
                         completed_at_unix: row.get(10)?,
                         audit_id: row.get(11)?,
                         chain_family,
+                        signed_transaction: row.get(13)?,
                     })
                 },
             )

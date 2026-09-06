@@ -49,6 +49,11 @@ kill_web_builders() {
 }
 
 npm run check:audit:root
+npm run check:rust-migration
+npm run check:production-topology
+npm run format:rust:check
+npm run check:rust
+npm run test:rust
 npm run test:scripts
 npm run test:game-engine-sync
 npm run test:control-plane
@@ -56,6 +61,8 @@ npm run check:worker
 npm run test:worker
 npm run check:relayer
 npm run test:relayer
+npm run check:relayer:compat
+npm run test:relayer:compat
 npm run check:brand
 npm run check:web-content
 npm --prefix apps/web run test:run

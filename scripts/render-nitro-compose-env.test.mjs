@@ -127,6 +127,13 @@ test('render-nitro-compose-env omits archived Neo X fields from generated output
   const verifierPublicKey = lineValue('MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY');
   assert.ok(verifierPublicKey, 'rendered env must expose the oracle verifier PUBLIC key');
   assert.match(verifierPublicKey, /^[0-9a-f]{66}$/);
+  assert.equal(
+    lineValue('MORPHEUS_RELAYER_NEOX_CHAIN_ID'),
+    '47763',
+    'staged NeoX configuration must retain the selected network chain identity'
+  );
+  assert.equal(lineValue('SIGNER_ROLE_NEOX_VERIFIER_KEY_ID'), '');
+  assert.equal(lineValue('MORPHEUS_RELAYER_NEOX_FEED_GAS_LIMIT'), '2000000');
 
   assert.ok(renderedKeys.has('NITRO_USE_DERIVED_KEYS'), 'missing NITRO_USE_DERIVED_KEYS line');
   assert.equal(

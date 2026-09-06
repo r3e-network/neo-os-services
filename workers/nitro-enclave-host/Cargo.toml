@@ -1,8 +1,8 @@
 [package]
 name = "nitro-enclave-host"
 version = "0.1.0"
-edition = "2021"
-license = "MIT"
+edition.workspace = true
+license.workspace = true
 description = "Rust-only Nitro enclave frontier: auth, compute, provisioning, attestation and custody calls"
 
 # This crate is the Rust rewrite of deploy/nitro/enclave-server.mjs's trusted
@@ -11,12 +11,12 @@ description = "Rust-only Nitro enclave frontier: auth, compute, provisioning, at
 # machine, /attestation's binding, and the translation of signing intents into
 # custody calls over loopback. The
 # compute lanes are ported here phase by phase (5b-6) and run through the
-# golden-vector-pinned `neo-os-compute` crate in-process. The production
-# binary contains no child-process or loopback execution fallback. The crate's
-# path dependencies are all security-critical (consensus primitives, the NSM/
-# KMS seam, and the compute engine), and no Node tooling ever sees this
-# directory (no package.json — the npm `workers/*` glob skips it for the same
-# reason it skips neo-signer).
+# golden-vector-pinned `neo-os-compute` and `neo-os-games` crates in-process.
+# The production binary contains no child-process or loopback execution
+# fallback. The crate's path dependencies are all security-critical (consensus
+# primitives, the NSM/KMS seam, and the compute/game engines), and no Node
+# tooling ever sees this directory (no package.json — the npm `workers/*` glob
+# skips it for the same reason it skips neo-signer).
 
 [lib]
 name = "nitro_enclave_host"
@@ -27,19 +27,26 @@ axum = "0.8"
 base64 = "0.22"
 hex = "0.4"
 http = "1"
+k256 = { version = "0.13", features = ["ecdsa"] }
+p256 = { version = "0.13", features = ["ecdsa"] }
 neo-os-compute = { path = "../../crates/neo-os-compute" }
+neo-os-chain-evm = { path = "../../crates/neo-os-chain-evm" }
 neo-os-core = { path = "../../crates/neo-os-core" }
+neo-os-games = { path = "../../crates/neo-os-games" }
+neo-os-service-runtime = { path = "../../crates/neo-os-service-runtime" }
 nitro-attest = { path = "../../crates/nitro-attest" }
 # The custody signing plane's backing transport. Same version/features as
 # nitro-attest's, so the lockfile carries one tree: the host already trusted
 # this client for the KMS release call.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "charset", "http2", "rustls-tls"] }
+rlp = "0.5"
 serde = { version = "1", features = ["derive"] }
 # preserve_order: the Node oracle builds response objects in insertion order and
 # the HTTP-parity tests compare serialized bodies; the BTreeMap default would
 # silently sort keys and make the Rust host's responses diverge byte-for-byte.
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
+sha3 = "0.10"
 # The neodid fold verifies web3auth id_tokens in-process (RS256 over a JWKS the
 # fold fetches through the enclave egress). The compute engine already uses the
 # same crate for builtin RSA-SHA256 verification, so the lockfile carries no

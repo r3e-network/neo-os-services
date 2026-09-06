@@ -12,11 +12,11 @@
 //!   key material at all — that is the property that makes the frontier
 //!   auditable. `/sign/payload` is a policy-enforcing custody client, never a
 //!   local signing fallback.
-//! * **`neo-os-compute`** serves migrated compute, oracle, NeoDID, and
-//!   policy code in-process. Its game engines are parity-complete, but their
-//!   session host has not migrated yet. No Node child or loopback execution
-//!   bridge exists in the measured host. Unmigrated fulfillment request types
-//!   terminate at the deterministic no-IO boundary in [`bridge`].
+//! * **`neo-os-compute`** serves migrated compute, oracle, NeoDID, and policy
+//!   code in-process. **`neo-os-games`** owns the generic confidential session
+//!   protocol and all 11 registered game engines. No Node child or loopback
+//!   execution bridge exists in the measured host. Unmigrated fulfillment
+//!   request types terminate at the deterministic no-IO boundary in [`bridge`].
 //!
 //! The pure core of this crate is [`dispatch`]: `(method, raw_url, headers,
 //! body) -> (status, json body)`, no socket, exactly like the Node server's
@@ -25,6 +25,7 @@
 
 pub mod attestation;
 pub mod auth;
+pub mod automation;
 pub mod bridge;
 pub mod compute_execute;
 pub mod custody;
@@ -34,12 +35,16 @@ pub mod fulfill;
 pub mod health;
 pub mod kms_release;
 pub mod neodid;
+pub mod oracle_feed;
 pub mod oracle_read;
 pub mod overlay;
+pub mod paymaster;
 pub mod provision;
 pub mod routes;
+pub mod session;
 pub mod sign;
 pub mod state;
+pub mod vrf;
 
 /// The runtime name the Node server puts in every error and health body; the
 /// Rust host keeps it byte-identical so HTTP-parity tests cannot tell the two

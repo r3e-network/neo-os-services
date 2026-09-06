@@ -17,6 +17,9 @@
 #   NITRO_CLI_BLOBS         nitro-cli blobs dir (default /usr/share/nitro_enclaves/blobs)
 #   MORPHEUS_RELEASE        release id for the manifest (default custody-<UTC date>)
 #   MORPHEUS_NETWORK        network label for the manifest (default testnet)
+#   SIGNER_SERVICE_WORKLOAD_AUDIENCE
+#                           canonical origin NeoNexus/callers use for custody;
+#                           defaults to http://127.0.0.1:<custody host port>
 #   --verify-reproducible   rebuild the docker image FROM SCRATCH and require
 #                           identical PCRs. Costs a second full build (the Rust
 #                           stage compiles twice) — that is the check.
@@ -34,6 +37,8 @@ release="${MORPHEUS_RELEASE:-custody-$(date -u +%Y-%m-%d)}"
 dockerfile="$repo_root/deploy/nitro/Dockerfile.signer"
 measurements_dir="$repo_root/deploy/nitro/measurements"
 manifest="$measurements_dir/${release}.json"
+custody_host_port="${MORPHEUS_CUSTODY_HOST_PORT:-8789}"
+workload_audience="${SIGNER_SERVICE_WORKLOAD_AUDIENCE:-http://127.0.0.1:${custody_host_port}}"
 
 verify_reproducible=0
 build_eif=1
@@ -48,18 +53,20 @@ done
 git_commit="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo unknown)"
 
 # Extract a Measurements field (PCR0/1/2/HashAlgorithm) from a captured
-# `nitro-cli build-enclave` JSON blob. node is present on the box that runs
-# the host-side services; use it for robust parsing rather than fragile grep.
+# `nitro-cli build-enclave` JSON blob with the host's jq prerequisite.
 extract_measurement() { # $1=json blob  $2=field name
-  printf '%s' "$1" | FIELD="$2" node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);process.stdout.write((j.Measurements&&j.Measurements[process.env.FIELD])||"")}catch(e){process.stdout.write("")}})'
+  printf '%s' "$1" | jq -er --arg field "$2" '.Measurements[$field] // empty' 2>/dev/null || true
 }
 
 echo "==> building custody enclave image $image from $dockerfile"
+echo "==> workload audience: $workload_audience"
 # SOURCE_DATE_EPOCH is also set at the layer level for any builder that honors
 # it; the Rust build itself is reproducible in practice because cargo does not
 # embed timestamps, but the authoritative gate below compares PCRs, not ids.
 DOCKER_BUILDKIT=1 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1749859200}" \
-  docker build -f "$dockerfile" -t "$image" "$repo_root"
+  docker build \
+    --build-arg "SIGNER_SERVICE_WORKLOAD_AUDIENCE=$workload_audience" \
+    -f "$dockerfile" -t "$image" "$repo_root"
 
 image_id_1="$(docker image inspect --format '{{.Id}}' "$image")"
 echo "==> image id: $image_id_1"
@@ -78,7 +85,9 @@ if [ "$verify_reproducible" -eq 1 ]; then
   # Dockerfile.signer pull a resolved @sha256, so --no-cache covers everything
   # that varies and --pull would add nothing.
   DOCKER_BUILDKIT=1 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1749859200}" \
-    docker build --no-cache -f "$dockerfile" -t "$image2" "$repo_root"
+    docker build --no-cache \
+      --build-arg "SIGNER_SERVICE_WORKLOAD_AUDIENCE=$workload_audience" \
+      -f "$dockerfile" -t "$image2" "$repo_root"
   image_id_2="$(docker image inspect --format '{{.Id}}' "$image2")"
   echo "    build #1 image id: $image_id_1"
   echo "    build #2 image id: $image_id_2"
@@ -169,23 +178,21 @@ echo "==> writing manifest $manifest"
 RELEASE="$release" APP_ID="morpheus-custody" NETWORK="$network" \
 GIT_COMMIT="$git_commit" EIF_SHA256="$eif_sha256" HASH_ALGO="$hash_algo" \
 PCR0="$pcr0" PCR1="$pcr1" PCR2="$pcr2" BUILT_AT="$built_at" IMAGE_ID="$image_id_1" \
-node -e '
-const fs = require("node:fs");
-const m = {
-  release: process.env.RELEASE,
-  app_id: process.env.APP_ID,
-  network: process.env.NETWORK,
-  git_commit: process.env.GIT_COMMIT,
-  image_id: process.env.IMAGE_ID,
-  eif_sha256: process.env.EIF_SHA256 || null,
-  hash_algorithm: process.env.HASH_ALGO || "SHA384",
-  pcr0: process.env.PCR0,
-  pcr1: process.env.PCR1,
-  pcr2: process.env.PCR2,
-  built_at: process.env.BUILT_AT,
-};
-fs.writeFileSync(process.argv[1], JSON.stringify(m, null, 2) + "\n");
-' "$manifest"
+jq -n '
+  {
+    release: env.RELEASE,
+    app_id: env.APP_ID,
+    network: env.NETWORK,
+    git_commit: env.GIT_COMMIT,
+    image_id: env.IMAGE_ID,
+    eif_sha256: (if env.EIF_SHA256 == "" then null else env.EIF_SHA256 end),
+    hash_algorithm: (env.HASH_ALGO // "SHA384"),
+    pcr0: env.PCR0,
+    pcr1: env.PCR1,
+    pcr2: env.PCR2,
+    built_at: env.BUILT_AT
+  }
+' >"$manifest"
 
 echo "==> measurements captured:"
 cat "$manifest"

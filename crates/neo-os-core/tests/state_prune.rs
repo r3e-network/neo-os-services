@@ -4,8 +4,8 @@ use common::{canonical, load_family};
 use neo_os_core::js_value::{JsObject, JsValue};
 use neo_os_core::state::{
     build_event_key, collect_active_request_ids, create_empty_relayer_state,
-    enqueue_retry_item, enforce_retry_queue_limit, get_due_retry_items,
-    increment_labeled_failure, record_processed_event, schedule_retry, snapshot_metrics,
+    enforce_retry_queue_limit, enqueue_retry_item, get_due_retry_items, increment_labeled_failure,
+    record_processed_event, schedule_retry, snapshot_metrics,
 };
 
 fn event_value(op: &serde_json::Value) -> JsValue {
@@ -29,7 +29,9 @@ fn state_machine_ops_match_js_oracle() {
         let name = case["name"].as_str().unwrap_or("?").to_string();
         let mut state = create_empty_relayer_state();
         let ops = case["ops"].as_array().expect("ops");
-        let expected_returns = case["expected_returns"].as_array().expect("expected_returns");
+        let expected_returns = case["expected_returns"]
+            .as_array()
+            .expect("expected_returns");
         assert_eq!(
             ops.len(),
             expected_returns.len(),
@@ -48,21 +50,12 @@ fn state_machine_ops_match_js_oracle() {
                 "build_key" => JsValue::Str(build_event_key(&event_value(op))),
                 "enqueue_retry" => {
                     let options = object_field(op, "options");
-                    enqueue_retry_item(
-                        &mut state,
-                        &chain,
-                        &event_value(op),
-                        &options,
-                        now_ms,
-                    )
+                    enqueue_retry_item(&mut state, &chain, &event_value(op), &options, now_ms)
                 }
                 "enforce_limit" => {
                     let limits = object_field(op, "limits");
                     JsValue::Number(enforce_retry_queue_limit(
-                        &mut state,
-                        &chain,
-                        &limits,
-                        now_ms,
+                        &mut state, &chain, &limits, now_ms,
                     ))
                 }
                 "record_processed" => {

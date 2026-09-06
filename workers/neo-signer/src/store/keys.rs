@@ -26,9 +26,9 @@ impl Store {
         connection.execute(
             "INSERT INTO signer_keys (
                 id, label, network, public_key, nonce, ciphertext, created_at_unix, disabled,
-                network_magic
+                network_magic, chain_family, chain_id
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 &key.id,
                 &key.label,
@@ -39,6 +39,8 @@ impl Store {
                 key.created_at_unix,
                 key.disabled,
                 key.network_magic,
+                key.chain_family.to_string(),
+                i64::try_from(key.chain_id).context("chain id exceeds SQLite integer range")?,
             ],
         )?;
         Ok(())
@@ -48,7 +50,7 @@ impl Store {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
             "SELECT id, label, network, public_key, nonce, ciphertext, created_at_unix, disabled,
-                    network_magic
+                    network_magic, chain_family, chain_id
              FROM signer_keys
              ORDER BY label COLLATE NOCASE ASC, id ASC",
         )?;
@@ -73,7 +75,7 @@ impl Store {
         connection
             .query_row(
                 "SELECT id, label, network, public_key, nonce, ciphertext, created_at_unix, disabled,
-                        network_magic
+                        network_magic, chain_family, chain_id
                  FROM signer_keys
                  WHERE id = ?1",
                 params![id],

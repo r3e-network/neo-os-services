@@ -5,11 +5,20 @@ on:
   push:
     branches: [main]
     paths:
-      - 'workers/nitro-worker/**'
-      - 'workers/morpheus-relayer/**'
-      - 'packages/shared/**'
-      - 'scripts/**'
-      - 'config/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'vendor/**'
+      - 'crates/**'
+      - 'workers/neo-signer/**'
+      - 'workers/nitro-enclave-host/**'
+      - 'workers/neo-os-relayer/**'
+      - 'deploy/nitro/Dockerfile.enclave'
+      - 'deploy/nitro/Dockerfile.signer'
+      - 'deploy/nitro/Dockerfile.relayer'
+      - 'deploy/systemd/**'
+      - 'scripts/check-rust-production-topology.mjs'
+      - 'scripts/check-rust-production-topology.test.mjs'
+      - 'scripts/release-gating.test.mjs'
       - '.github/workflows/publish-images.yml'
       - 'package.json'
       - 'package-lock.json'
@@ -18,13 +27,8 @@ permissions:
   contents: read
 
 jobs:
-  # The release gate for the ghcr images. `needs:` cannot reach a job in ci.yml,
-  # so the suites covering the two workers that get baked into these images run
-  # here, on this same commit, and `build-and-push` blocks on them. Without this
-  # a push to main tags `:latest` regardless of whether ci.yml passed.
-  # This job deliberately does not hold `packages: write`.
-  # No timeout-minutes, matching ci.yml: a tighter budget here would be a way
-  # for the gate to fail that CI itself cannot reproduce.
+  # These are the exact Rust packages baked below. Compatibility Node worker
+  # suites remain in CI, but cannot authorize a Rust production artifact.
   test:
     runs-on: ubuntu-latest
     permissions:
@@ -35,11 +39,16 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.0
       - run: npm ci
-      - run: node --test scripts/release-gating.test.mjs
-      - run: npm --prefix packages/shared test
-      - run: npm --prefix workers/nitro-worker test
-      - run: npm --prefix workers/morpheus-relayer test
+      - run: node --test scripts/release-gating.test.mjs scripts/check-rust-production-topology.test.mjs
+      - run: npm run check:production-topology
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --all-targets -p neo-signer -p nitro-enclave-host -p neo-os-relayer -- -D warnings
+      - run: cargo test --locked --all-targets -p neo-signer -p nitro-enclave-host -p neo-os-relayer
 
   build-and-push:
     needs: [test]
@@ -51,14 +60,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: nitro-worker
-            dockerfile: workers/nitro-worker/Dockerfile
-            image: ghcr.io/${{ github.repository_owner }}/neo-os-services-nitro-worker
-            legacy_image: ghcr.io/${{ github.repository_owner }}/neo-morpheus-oracle-nitro-worker
-          - name: morpheus-relayer
-            dockerfile: workers/morpheus-relayer/Dockerfile
+          - name: nitro-host
+            dockerfile: deploy/nitro/Dockerfile.enclave
+            image: ghcr.io/${{ github.repository_owner }}/neo-os-services-nitro-host
+          - name: signer
+            dockerfile: deploy/nitro/Dockerfile.signer
+            image: ghcr.io/${{ github.repository_owner }}/neo-os-services-signer
+          - name: relayer
+            dockerfile: deploy/nitro/Dockerfile.relayer
             image: ghcr.io/${{ github.repository_owner }}/neo-os-services-relayer
-            legacy_image: ghcr.io/${{ github.repository_owner }}/neo-morpheus-oracle-relayer
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -70,13 +80,11 @@ jobs:
       - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         id: meta
         with:
-          images: |
-            ${{ matrix.image }}
-            ${{ matrix.legacy_image }}
-          tags: |
-            type=ref,event=branch
-            type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
+          images: ${{ matrix.image }}
+          flavor: latest=false
+          # Immutable commit tags only. Operators pin the exact image used to
+          # build/re-measure an EIF; neither branch names nor `latest` can move.
+          tags: type=sha,format=long,prefix=sha-
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .

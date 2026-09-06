@@ -1,28 +1,35 @@
-//! neo-os-relayer — orchestration shell (T01 skeleton).
+//! neo-os-relayer — Pure Rust orchestration shell for Neo-OS (T04).
 //!
-//! This crate restarts the relayer line after `morpheus-relayer-rs` was
-//! confirmed dead (521 lines, seven phantom modules, unused napi bridge).
-//!
-//! What already exists elsewhere — do NOT re-implement here:
-//! - consensus byte layer (kernel intents, fulfillment digests, result
-//!   envelopes, compact callbacks): `neo-os-core`, vector-locked;
-//! - Neo N3 / NeoX chain access: `neo-os-chain-n3` / `neo-os-chain-evm` (T03);
-//! - signing: the `neo-signer` service over HTTP, never in-process keys;
-//! - enclave calls: `nitro-enclave-host` over HTTP.
-//!
-//! What lands here (T02–T04), all state-machine logic testable without network:
-//! - `config`: declarative schema, 109 keys / 149 env names, alias chains
-//!   with documented precedence (env per-alias first, then
-//!   `MORPHEUS_RUNTIME_CONFIG_JSON`), redaction marks (T02);
-//! - `state`: on-disk state file (atomic tmp+rename writes), metric counters,
-//!   retry scheduling with backoff and queue caps (T02);
-//! - `scan`/`fulfill`: per-chain processing pipeline, fulfillment
-//!   coordinator/dispatch/delivery (T04);
-//! - `observe`: Prometheus exposition with byte-identical lines for the 25
-//!   top-level counters and `chain|module|operation` labeled counters,
-//!   JSON-line logs, Betterstack heartbeats (T04).
-//!
-//! External contracts this shell must keep byte-compatible are enumerated in
-//! docs/rust-migration/ARCHITECTURE.md §5 — metric names, `/health` shape,
-//! env alias precedence and CLI verbs are consumed by dashboards, alarms and
-//! ops runbooks. Empty in T01; `main.rs` refuses to run until T04.
+//! Replaces legacy `workers/morpheus-relayer`:
+//! - Multi-chain scanning (`neo_n3`, `neox`)
+//! - Event deduplication, fulfillment and delivery
+//! - Durable queue integration and optimistic concurrency claim
+//! - Periodic feed syncing & automation supervision
+//! - Cross-chain message (XCM) lane relaying arbitrary messages between N3 and NeoX
+//! - Prometheus exposition with 25 byte-identical counters
+//! - Full CLI subcommands (`loop`, `once`, `metrics`, `metrics:prom`, `serve:metrics`, `config:validate`, `config:dump`)
+
+pub mod automation;
+pub mod cli;
+pub mod config;
+pub mod config_introspect;
+pub mod delivery;
+pub mod durable;
+pub mod feed_sync;
+pub mod fulfillment;
+pub mod heartbeat;
+pub mod observe;
+pub mod relayer;
+pub mod scan;
+pub mod transport;
+pub mod xcm;
+pub mod xcm_lane;
+
+pub use config::{create_relayer_config, create_relayer_config_from_env, RelayerConfig};
+pub use observe::{render_prometheus_metrics, TOP_LEVEL_COUNTERS};
+pub use relayer::{run_relayer_loop, run_relayer_once};
+pub use xcm::CrossChainMessage;
+pub use xcm_lane::{
+    drain_xcm_lane, enqueue_xcm_message, relay_xcm_message, relay_xcm_to_neo_n3,
+    relay_xcm_to_neox, XcmDeliveryReceipt, XcmDrainConfig, XcmDrainOutcome,
+};

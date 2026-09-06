@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=deploy/nitro/lib/provisioning.sh
+source "$script_dir/lib/provisioning.sh"
+
 env_file="${MORPHEUS_NITRO_ENV:-/opt/morpheus/nitro/morpheus-nitro.env}"
 if [[ -f "$env_file" ]]; then
   set -a
@@ -58,158 +62,106 @@ cleanup() {
 }
 trap cleanup EXIT
 
+ready=0
 for _ in $(seq 1 30); do
   if curl -sS --max-time 2 "http://127.0.0.1:${host_port}/health" >/dev/null 2>&1; then
+    ready=1
     break
   fi
   sleep 1
 done
+if [[ "$ready" -ne 1 ]]; then
+  echo "Nitro frontier /health did not become reachable on 127.0.0.1:${host_port}" >&2
+  exit 1
+fi
 
 if [[ -r "$signer_env" ]]; then
-  MORPHEUS_NITRO_SIGNER_ENV="$signer_env" \
-  MORPHEUS_NITRO_WORKER_ENV="$worker_env" \
-  MORPHEUS_NITRO_FEED_ENV="$feed_env" \
-  MORPHEUS_NITRO_HOST_PORT="$host_port" \
-  node --input-type=module - <<'NODE'
-import fs from 'node:fs';
+  token="$(neoos_first_env_value "$signer_env" MORPHEUS_RUNTIME_TOKEN NITRO_SIGNER_TOKEN NITRO_API_TOKEN NITRO_SHARED_SECRET)"
+  runtime_token_ciphertext="$(neoos_env_value "$signer_env" MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64)"
+  signer_token_ciphertext="$(neoos_env_value "$signer_env" SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64)"
+  neoos_require_printable_token "$token" 'Nitro frontier provision'
+  neoos_require_base64 "$runtime_token_ciphertext" MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64
+  neoos_require_base64 "$signer_token_ciphertext" SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64
 
-const port = process.env.MORPHEUS_NITRO_HOST_PORT || '8787';
-function parseEnv(path) {
-  const values = {};
-  try {
-    for (const line of fs.readFileSync(path, 'utf8').split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const separator = trimmed.indexOf('=');
-      if (separator <= 0) continue;
-      const key = trimmed.slice(0, separator).trim();
-      const value = trimmed.slice(separator + 1).trim();
-      if (/^[A-Z0-9_]{1,96}$/.test(key) && value) values[key] = value;
-    }
-  } catch {}
-  return values;
-}
-const signer = parseEnv(process.env.MORPHEUS_NITRO_SIGNER_ENV);
-const worker = parseEnv(process.env.MORPHEUS_NITRO_WORKER_ENV);
-const feed = parseEnv(process.env.MORPHEUS_NITRO_FEED_ENV);
-// The first token is operator-sealed under the enclave CMK. The parent presents
-// the plaintext transport token, but the enclave accepts it only after KMS
-// releases a matching, purpose/network/version-bound envelope to the expected
-// PCR. Plaintext token fields are never copied into the provisioning body.
-const token =
-  signer.MORPHEUS_RUNTIME_TOKEN ||
-  signer.NITRO_SIGNER_TOKEN ||
-  signer.NITRO_API_TOKEN ||
-  signer.NITRO_SHARED_SECRET ||
-  '';
-if (!token) {
-  throw new Error(
-    'Nitro signer provision requires MORPHEUS_RUNTIME_TOKEN, NITRO_SIGNER_TOKEN, NITRO_API_TOKEN, or NITRO_SHARED_SECRET'
-  );
-}
-if (!signer.MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64) {
-  throw new Error(
-    'Nitro signer provision requires MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64'
-  );
-}
-if (!signer.SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64) {
-  throw new Error(
-    'Nitro signer provision requires SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64'
-  );
-}
+  oracle_ciphertext="$(neoos_env_value "$worker_env" MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64)"
+  if [[ -z "$oracle_ciphertext" ]]; then
+    oracle_ciphertext_path="$(neoos_env_value "$worker_env" MORPHEUS_ORACLE_KMS_CIPHERTEXT_PATH)"
+    oracle_ciphertext_path="${oracle_ciphertext_path:-/var/lib/morpheus/oracle-key-kms.b64}"
+    [[ ! -r "$oracle_ciphertext_path" ]] || oracle_ciphertext="$(<"$oracle_ciphertext_path")"
+  fi
+  neodid_ciphertext="$(neoos_env_value "$worker_env" MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64)"
+  if [[ -z "$neodid_ciphertext" ]]; then
+    neodid_ciphertext_path="$(neoos_env_value "$worker_env" MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_PATH)"
+    neodid_ciphertext_path="${neodid_ciphertext_path:-/var/lib/morpheus/neodid-salt-kms.b64}"
+    [[ ! -r "$neodid_ciphertext_path" ]] || neodid_ciphertext="$(<"$neodid_ciphertext_path")"
+  fi
 
-const provisionEnv = {
-  MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64:
-    signer.MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64,
-  SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64:
-    signer.SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64,
-};
-for (const key of [
-  'AWS_REGION',
-  'NITRO_AWS_REGION',
-  'MORPHEUS_ORACLE_KMS_DIAG_CIPHERTEXT',
-  'TWELVEDATA_API_KEY',
-]) {
-  if (worker[key]) provisionEnv[key] = worker[key];
-}
-if (feed.TD_KEY) provisionEnv.TD_KEY = feed.TD_KEY;
+  if ! neoos_fetch_imds_credentials; then
+    echo 'Nitro frontier provision: IMDSv2 credential fetch failed' >&2
+    exit 1
+  fi
 
-function projectCiphertext(target, pathKey, fallbackPath) {
-  if (worker[target]) {
-    provisionEnv[target] = worker[target];
-    return;
-  }
-  const path = worker[pathKey] || fallbackPath;
-  try {
-    const ciphertext = fs.readFileSync(path, 'utf8').trim();
-    if (ciphertext) provisionEnv[target] = ciphertext;
-  } catch {}
-}
-projectCiphertext(
-  'MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64',
-  'MORPHEUS_ORACLE_KMS_CIPHERTEXT_PATH',
-  '/var/lib/morpheus/oracle-key-kms.b64'
-);
-projectCiphertext(
-  'MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64',
-  'MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_PATH',
-  '/var/lib/morpheus/neodid-salt-kms.b64'
-);
+  export NEOOS_JSON_RUNTIME_TOKEN_CIPHERTEXT="$runtime_token_ciphertext"
+  export NEOOS_JSON_SIGNER_TOKEN_CIPHERTEXT="$signer_token_ciphertext"
+  export NEOOS_JSON_AWS_REGION="$(neoos_env_value "$worker_env" AWS_REGION)"
+  export NEOOS_JSON_NITRO_AWS_REGION="$(neoos_env_value "$worker_env" NITRO_AWS_REGION)"
+  export NEOOS_JSON_ORACLE_DIAG="$(neoos_env_value "$worker_env" MORPHEUS_ORACLE_KMS_DIAG_CIPHERTEXT)"
+  export NEOOS_JSON_TWELVEDATA_API_KEY="$(neoos_env_value "$worker_env" TWELVEDATA_API_KEY)"
+  export NEOOS_JSON_TD_KEY="$(neoos_env_value "$feed_env" TD_KEY)"
+  export NEOOS_JSON_ORACLE_CIPHERTEXT="$oracle_ciphertext"
+  export NEOOS_JSON_NEODID_CIPHERTEXT="$neodid_ciphertext"
+  payload="$(
+    jq -n '{env: ({
+      MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64: env.NEOOS_JSON_RUNTIME_TOKEN_CIPHERTEXT,
+      SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64: env.NEOOS_JSON_SIGNER_TOKEN_CIPHERTEXT,
+      AWS_REGION: env.NEOOS_JSON_AWS_REGION,
+      NITRO_AWS_REGION: env.NEOOS_JSON_NITRO_AWS_REGION,
+      MORPHEUS_ORACLE_KMS_DIAG_CIPHERTEXT: env.NEOOS_JSON_ORACLE_DIAG,
+      TWELVEDATA_API_KEY: env.NEOOS_JSON_TWELVEDATA_API_KEY,
+      TD_KEY: env.NEOOS_JSON_TD_KEY,
+      MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64: env.NEOOS_JSON_ORACLE_CIPHERTEXT,
+      MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64: env.NEOOS_JSON_NEODID_CIPHERTEXT,
+      AWS_ACCESS_KEY_ID: env.NEOOS_AWS_ACCESS_KEY_ID,
+      AWS_SECRET_ACCESS_KEY: env.NEOOS_AWS_SECRET_ACCESS_KEY,
+      AWS_SESSION_TOKEN: env.NEOOS_AWS_SESSION_TOKEN
+    } | with_entries(select(.value != "")))}'
+  )"
+  unset NEOOS_JSON_RUNTIME_TOKEN_CIPHERTEXT NEOOS_JSON_SIGNER_TOKEN_CIPHERTEXT
+  unset NEOOS_JSON_AWS_REGION NEOOS_JSON_NITRO_AWS_REGION NEOOS_JSON_ORACLE_DIAG
+  unset NEOOS_JSON_TWELVEDATA_API_KEY NEOOS_JSON_TD_KEY NEOOS_JSON_ORACLE_CIPHERTEXT
+  unset NEOOS_JSON_NEODID_CIPHERTEXT
+  unset NEOOS_AWS_ACCESS_KEY_ID NEOOS_AWS_SECRET_ACCESS_KEY NEOOS_AWS_SESSION_TOKEN
 
-// KMS needs AWS request credentials, while RecipientAttestation ensures the
-// returned plaintext is encrypted to an ephemeral key inside the enclave. Fetch
-// short-lived instance-role credentials without putting them in argv or logs.
-const metadataTokenResponse = await fetch('http://169.254.169.254/latest/api/token', {
-  method: 'PUT',
-  headers: { 'x-aws-ec2-metadata-token-ttl-seconds': '600' },
-  signal: AbortSignal.timeout(5000),
-});
-if (!metadataTokenResponse.ok) throw new Error('IMDSv2 token request failed');
-const metadataToken = await metadataTokenResponse.text();
-const metadataHeaders = { 'x-aws-ec2-metadata-token': metadataToken };
-const roleResponse = await fetch(
-  'http://169.254.169.254/latest/meta-data/iam/security-credentials/',
-  { headers: metadataHeaders, signal: AbortSignal.timeout(5000) }
-);
-if (!roleResponse.ok) throw new Error('IMDSv2 role lookup failed');
-const role = (await roleResponse.text()).trim();
-if (!role) throw new Error('IMDSv2 returned an empty role name');
-const credentialsResponse = await fetch(
-  `http://169.254.169.254/latest/meta-data/iam/security-credentials/${encodeURIComponent(role)}`,
-  { headers: metadataHeaders, signal: AbortSignal.timeout(5000) }
-);
-if (!credentialsResponse.ok) throw new Error('IMDSv2 credential lookup failed');
-const credentials = await credentialsResponse.json();
-provisionEnv.AWS_ACCESS_KEY_ID = credentials.AccessKeyId;
-provisionEnv.AWS_SECRET_ACCESS_KEY = credentials.SecretAccessKey;
-provisionEnv.AWS_SESSION_TOKEN = credentials.Token;
-
-const response = await fetch(`http://127.0.0.1:${port}/provision`, {
-  method: 'POST',
-  headers: {
-    'content-type': 'application/json',
-    authorization: `Bearer ${token}`,
-  },
-  body: JSON.stringify({env: provisionEnv}),
-});
-if (!response.ok) {
-  throw new Error(`Nitro signer provision failed: HTTP ${response.status}`);
-}
-const body = await response.json();
-console.log(JSON.stringify({
-  status: body.status,
-  runtime: body.runtime,
-  network: body.network,
-  provisioned: body.provisioned,
-  env_keys: body.env_keys,
-  roles: (body.roles || []).map((entry) => ({
-    role: entry.role,
-    ok: entry.ok,
-    identity: entry.identity,
-    issues: entry.issues,
-  })),
-}));
-NODE
+  neoos_post_json "http://127.0.0.1:${host_port}/provision" "$token" "$payload"
+  printf '%s' "$NEOOS_HTTP_BODY" | jq -c '{
+    status,
+    runtime,
+    network,
+    provisioned,
+    env_keys,
+    roles: ((.roles // []) | map({role, ok, identity, issues}))
+  }'
+  if ! printf '%s' "$NEOOS_HTTP_BODY" | jq -e '
+    (.roles // []) as $roles
+    | (($roles | map(.role) | sort) == [
+        "neox_updater",
+        "neox_verifier",
+        "oracle_verifier",
+        "relayer",
+        "updater",
+        "worker"
+      ])
+      and ($roles | all(.ok == true))
+  ' >/dev/null; then
+    echo "ERROR: enclave provisioning did not materialize all six distinct measured custody roles" >&2
+    unset token runtime_token_ciphertext signer_token_ciphertext
+    unset oracle_ciphertext oracle_ciphertext_path neodid_ciphertext neodid_ciphertext_path payload
+    unset NEOOS_HTTP_BODY NEOOS_HTTP_STATUS
+    exit 1
+  fi
+  unset token runtime_token_ciphertext signer_token_ciphertext
+  unset oracle_ciphertext oracle_ciphertext_path neodid_ciphertext neodid_ciphertext_path payload
+  unset NEOOS_HTTP_BODY NEOOS_HTTP_STATUS
 fi
 
 wait "$socat_pid"

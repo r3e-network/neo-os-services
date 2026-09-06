@@ -49,6 +49,7 @@ apply flag and network.
 npm run test:game-engine-sync
 npm run test:worker
 npm run test:relayer
+npm run test:relayer:compat
 ```
 
 `test:game-engine-sync` regenerates engines only when the sibling
@@ -60,10 +61,13 @@ checked-in engine parity goldens still run.
 ## Validation Suites
 
 - `npm run verify:repo`
+- `bash scripts/run-neo-nexus-signer-contract.sh` (requires a sibling
+  `neo-nexus` checkout or `NEO_NEXUS_DIR`; owns a disposable signer/vault)
 - `npm run check:audit:root`
 - `npm run test:game-engine-sync`
 - `npm run test:worker`
 - `npm run test:relayer`
+- `npm run test:relayer:compat` (frozen Node parity/compatibility evidence)
 - `npm run test:control-plane`
 - `npm run build:web`
 - `npm run examples:test:n3`
@@ -86,11 +90,14 @@ Root audit note:
 
 ## Relayer Operations
 
-- `npm run once:relayer`
-- `npm run start:relayer`
-- `npm run metrics:relayer`
-- `npm run metrics:relayer:prom`
-- `npm run start:relayer:metrics`
+- `npm run once:relayer` (Rust)
+- `npm run start:relayer` (Rust)
+- `npm run metrics:relayer` (Rust)
+- `npm run metrics:relayer:prom` (Rust)
+- `npm run start:relayer:metrics` (Rust)
+- Node parity commands are explicitly suffixed `:compat` and are never the
+  production authority: `start:relayer:compat`, `once:relayer:compat`,
+  `metrics:relayer:compat`, and `start:relayer:compat:metrics`.
 - `npm run stress:runtime`
 
 Important relayer notes:

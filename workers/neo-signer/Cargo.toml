@@ -1,17 +1,18 @@
 [package]
 name = "neo-signer"
 version = "0.1.0"
-edition = "2021"
-license = "MIT"
-description = "Neo N3 signer service: key custody, per-key policy, caller auth and audit"
+edition.workspace = true
+license.workspace = true
+description = "Neo N3 and NeoX signer service: chain-bound custody, policy, caller auth and audit"
 
 # This crate is a member of the repository-root cargo workspace (see the root
 # Cargo.toml) and is otherwise deliberate about its dependencies: no npm
-# workspace membership, and exactly two path dependencies, both on the
-# security-critical path — `neo-os-core` for the chain primitives the
-# attested identity binds, and `nitro-attest` for the NSM/KMS/CMS seam the
-# enclave boot and provision paths walk. See docs/SIGNER_SERVICE.md for the
-# ownership boundary it implements.
+# workspace membership, and exactly four path dependencies, all on the
+# service/security boundary — `neo-os-core` for the chain primitives the
+# attested identity binds, `neo-os-chain-evm` for semantic EIP-191 validation,
+# `nitro-attest` for the NSM/KMS/CMS seam the enclave boot and provision paths
+# walk, and `neo-os-service-runtime` for the shared shutdown/drain contract.
+# See docs/SIGNER_SERVICE.md for the ownership boundary it implements.
 #
 # It lives under `workers/` because that is where this repository keeps the
 # processes in the confidential plane, and npm's `workers/*` glob skips it for
@@ -43,8 +44,11 @@ hex = "0.4"
 hkdf = "0.12"
 k256 = { version = "0.13", features = ["ecdsa", "sha256"] }
 neo-os-core = { path = "../../crates/neo-os-core" }
+neo-os-chain-evm = { path = "../../crates/neo-os-chain-evm" }
+neo-os-service-runtime = { path = "../../crates/neo-os-service-runtime" }
 nitro-attest = { path = "../../crates/nitro-attest" }
 p256 = { version = "0.13", features = ["ecdsa"] }
+prost = "0.13"
 rlp = "0.5"
 ripemd = "0.1"
 rusqlite = { version = "0.37", features = ["bundled"] }
@@ -53,7 +57,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 sha3 = "0.10"
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync"] }
+tonic = { version = "0.12", features = ["transport"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 url = "2"
@@ -63,10 +68,17 @@ zeroize = "1"
 # Metrics and observability
 prometheus = "0.13"
 
+[build-dependencies]
+# Keep the checked-in Neo SignClient protocol reproducible on developer and CI
+# hosts that do not install protoc globally.
+protoc-bin-vendored = "3"
+tonic-build = "0.12"
+
 [dev-dependencies]
 # `util` for `ServiceExt::oneshot`, which is how the API tests reach the router
 # without binding a port: a custody service whose tests need a socket is a
 # service whose tests can be blocked by a firewall.
 http-body-util = "0.1"
+http-body = "1"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

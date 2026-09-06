@@ -17,7 +17,7 @@ the dispatch/orchestration layer for shared MiniApp OS module lanes.
 
 ## Current Delivery Model
 
-Implemented routes:
+Implemented ingress routes (authority status is explicit):
 
 - `POST /<network>/oracle/query`
 - `POST /<network>/oracle/smart-fetch`
@@ -25,9 +25,9 @@ Implemented routes:
 - `POST /<network>/neodid/bind`
 - `POST /<network>/neodid/action-ticket`
 - `POST /<network>/neodid/recovery-ticket`
-- `POST /<network>/feeds/tick`
-- `POST /<network>/callbacks/broadcast`
-- `POST /<network>/automation/execute`
+- `POST /<network>/feeds/tick` — retired `410 Gone`; Rust relayer owns feeds
+- `POST /<network>/callbacks/broadcast` — retired `200` no-op; Rust relayer owns delivery
+- `POST /<network>/automation/execute` — fail-closed `503`; no job/workflow is created
 - `GET /<network>/jobs/<job_id>`
 - `POST /<network>/jobs/recover`
 - `GET /<network>/health`
@@ -35,21 +35,18 @@ Implemented routes:
 This worker does **not** replace the AWS Nitro enclave. It only owns ingress,
 durability, orchestration, and dispatch.
 
-Current runtime split:
+Current authoritative runtime split:
 
 - queue-backed:
   - `oracle_request`: forwards supported execution routes to the
     existing confidential execution plane
     - kernel lane: `request_dispatch`
-  - `feed_tick`: forwards feed-sync execution to the confidential execution plane
-    - kernel lane: `shared_resource_sync`
-- workflow-backed:
-  - `callback_broadcast`: durable workflow around signed callback broadcast
-    - kernel lane: `callback_adapter_broadcast`
-  - `automation_execute`: durable workflow around automation queueing
-    - kernel lane: `automation_orchestration`
 
-The older queue-based callback and automation path is gone. These lanes now use native Workflows.
+Feed, callback-broadcast, and automation bindings/classes remain as migration and
+recovery artifacts, but ingress never dispatches them: feed returns `410`,
+callback is a no-op, and automation returns `503`. They are not a fallback
+authority for the Rust custody topology. Production automation therefore remains
+unavailable, not silently delegated to a Cloudflare Workflow.
 
 ## Recovery Model
 
@@ -100,9 +97,11 @@ ceiling).
 ## Required Bindings
 
 - `MORPHEUS_ORACLE_REQUEST_QUEUE`
-- `MORPHEUS_FEED_TICK_QUEUE`
-- `CALLBACK_BROADCAST_WORKFLOW`
-- `AUTOMATION_EXECUTE_WORKFLOW`
+
+Legacy deployments may still carry `MORPHEUS_FEED_TICK_QUEUE`,
+`CALLBACK_BROADCAST_WORKFLOW`, and `AUTOMATION_EXECUTE_WORKFLOW` for recovery
+metadata. They are not required for an authoritative request-only ingress and
+must not be treated as production feed/automation delivery.
 
 ## Required Secrets
 

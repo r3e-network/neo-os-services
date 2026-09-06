@@ -30,9 +30,10 @@ export async function POST(request: Request) {
 
   const network = resolveNetwork(body.network);
 
-  // No signer material is resolved or forwarded: the worker's oracle feed lane
-  // signs the update transaction through the custody service, so this route
-  // carries only feed parameters.
+  // No signer material is resolved or forwarded. This compatibility trigger
+  // can only call the host's observe/plan surface; production publication is
+  // self-scheduled by the Rust relayer and therefore this path fails closed
+  // whenever an on-chain update would be required.
   const result = await runFeedSyncJob({
     target_chain: trimString(body.target_chain || 'neo_n3'),
     project_slug: trimString(body.project_slug || '') || undefined,

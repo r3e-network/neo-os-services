@@ -7,7 +7,7 @@ use serde_json::Value;
 use super::*;
 use crate::crypto;
 use crate::model::{SealedPrivateKey, SignerKey};
-use crate::network::{network_magic, Network};
+use crate::network::{network_magic, ChainFamily, Network};
 
 fn key_with(label: &str, disabled: bool) -> SignerKey {
     let private = crypto::generate_private_key();
@@ -17,6 +17,8 @@ fn key_with(label: &str, disabled: bool) -> SignerKey {
         id: format!("key-{label}"),
         label: label.to_string(),
         network: Network::Testnet,
+        chain_family: ChainFamily::NeoN3,
+        chain_id: u64::from(network_magic(Network::Testnet)),
         network_magic: network_magic(Network::Testnet),
         public_key,
         sealed: SealedPrivateKey {

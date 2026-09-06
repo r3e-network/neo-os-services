@@ -1,6 +1,8 @@
+# NODE COMPATIBILITY ONLY. The production Rust relayer lives in
+# docker-compose.rust.yml; automation remains an explicit Rust refusal.
 services:
   morpheus-feed-relayer:
-    image: ${MORPHEUS_RELAYER_IMAGE:-ghcr.io/r3e-network/neo-os-services-relayer:latest}
+    image: '${MORPHEUS_COMPAT_RELAYER_IMAGE:?pin-explicit-node-compat-relayer-image}'
     container_name: morpheus-feed-relayer
     restart: unless-stopped
     depends_on:
@@ -18,7 +20,7 @@ services:
       - morpheus-data:/data
 
   morpheus-request-relayer:
-    image: ${MORPHEUS_RELAYER_IMAGE:-ghcr.io/r3e-network/neo-os-services-relayer:latest}
+    image: '${MORPHEUS_COMPAT_RELAYER_IMAGE:?pin-explicit-node-compat-relayer-image}'
     container_name: morpheus-request-relayer
     restart: unless-stopped
     depends_on:

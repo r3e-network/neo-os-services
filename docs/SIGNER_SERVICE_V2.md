@@ -273,14 +273,24 @@ reduced to its origin and is consulted only when `Origin` is absent.
 v2 also accepts a short-lived signed caller assertion. A caller record pins an Ed25519
 public key and optional subject. The request carries:
 
+- `X-NeoOS-Workload-Protocol: neoos-workload-v2`
+- `X-NeoOS-Audience`
 - `X-NeoOS-Caller`
 - `X-NeoOS-Timestamp`
 - `X-NeoOS-Nonce`
 - `X-NeoOS-Signature`
 
-The signature covers the protocol version, HTTP method, exact route, SHA-256 request
-body, timestamp, nonce, and Origin. The service enforces a bounded clock skew and stores
-the nonce before acting, so a captured request cannot be replayed. Bearer and workload
+The signature covers the protocol version, canonical signer audience, HTTP method,
+exact route, SHA-256 request body, timestamp, nonce, and Origin. The audience must be a
+path-free HTTP(S) origin and must exactly match `SIGNER_SERVICE_WORKLOAD_AUDIENCE`; this
+keeps a reverse-proxy path rewrite from making one assertion valid at another custody
+service. The service enforces a bounded clock skew and stores the nonce before acting,
+so a captured request cannot be replayed against the same signer database. One audience
+is one logical custody security domain: independent vaults or replicas with independent
+nonce stores require distinct origins and must not sit behind the same audience.
+Audience-less
+`neoos-workload-v1` is disabled by default and exists only behind the explicit temporary
+`SIGNER_SERVICE_ALLOW_LEGACY_WORKLOAD_V1=true` migration switch. Bearer and workload
 identity are alternative authenticators; supplying both is rejected.
 
 OIDC and mTLS terminate at an identity gateway only when that gateway uses its pinned
@@ -337,6 +347,7 @@ The v1 routes in `docs/SIGNER_SERVICE.md` remain available.
 ```text
 POST /signer/api/v1/sign/transaction
 POST /signer/api/v1/sign/consensus
+POST /signer/api/v1/sign/eip191-fulfillment
 POST /signer/api/v1/sign/raw
 GET  /signer/api/v1/keys/{key_id}
 ```
@@ -375,6 +386,7 @@ POST   /signer/api/v1/keys/{id}/policy
 POST   /signer/api/v1/keys/{id}/state
 DELETE /signer/api/v1/keys/{id}
 POST   /signer/api/v1/callers
+POST   /signer/api/v1/callers/workload
 GET    /signer/api/v1/callers
 POST   /signer/api/v1/callers/{id}/rotate
 POST   /signer/api/v1/callers/{id}/state
@@ -384,16 +396,25 @@ GET    /signer/api/v1/audit
 
 ### Enclave identity and state
 
+Implemented routes:
+
 ```text
 GET  /health
+GET  /metrics
 GET  /attestation?nonce=<hex>
 POST /provision
+```
+
+Planned v2 durable-state routes (not implemented by the current router):
+
+```text
 GET  /signer/api/v1/state
 POST /signer/api/v1/state/checkpoint
 ```
 
-`GET /state` returns public checkpoint metadata only. Ciphertext transport is separated
-from public metadata and requires the provision transport credential.
+The planned `GET /state` contract returns public checkpoint metadata only.
+Ciphertext transport remains separate from public metadata and requires the
+provision transport credential.
 
 Key creation and key-info responses include `network_magic`. The canonical
 `boundaries_json` returned beside `/attestation` includes it too, so changing only the
@@ -549,13 +570,15 @@ Required automated cases:
   public-key fields; custody readiness failures return 503;
 - blacklist precedence, method lists, fees, per-asset limits, and signature-rate limits;
 - browser Origin exact-match and server-to-server Origin rejection;
-- workload assertion expiry, body/path binding, nonce replay, and mixed-auth rejection;
+- workload assertion expiry, body/path/audience binding, cross-service replay, nonce
+  replay, legacy-v1 default rejection, and mixed-auth rejection;
 - remote cleartext import refusal in `neo-nexus`;
 - attestation nonce, root, PCR, runtime, vault, boundary digest, and state revision
   failures all prevent import;
 - tampered or rolled-back state snapshots keep the vault sealed;
-- the real `neo-nexus` client exercises every supported non-secret management
-  and signing route against a spawned Rust service; secret import and provision
+- the service-owned cross-repository harness spawns a disposable Rust signer
+  and the real `neo-nexus` client exercises every supported non-secret
+  management and signing route against it; secret import and attested provision
   remain signer-side ceremonies;
 - Cargo format, clippy with warnings denied, tests, secret scan, and EIF source-purity
   gates pass.

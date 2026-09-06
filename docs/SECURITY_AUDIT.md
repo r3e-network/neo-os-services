@@ -122,9 +122,9 @@ Before a production release, verify:
    suites, custody-plane E2E, the NeoNexus real-process contract, and gitleaks pass.
 10. External-only blockers in `docs/EXTERNAL_RELEASE_BLOCKERS.md` are cleared or
     explicitly accepted by operators (key rotation, on-chain upgrades, host installs).
-10. Production preflight confirms pairwise-distinct runtime/workflow/operator/
+11. Production preflight confirms pairwise-distinct runtime/workflow/operator/
     relayer/signing/relay credentials and includes both signing and relay admin keys.
-11. The release's PCR measurements are rebuilt, committed, and pinned by the KMS key
+12. The release's PCR measurements are rebuilt, committed, and pinned by the KMS key
     policy before ciphertext is provisioned.
 
 ## Public API Route Policy

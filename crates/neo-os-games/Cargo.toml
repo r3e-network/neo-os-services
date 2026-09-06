@@ -3,14 +3,16 @@ name = "neo-os-games"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "Game lane: 11 hash-pinned engines, registry, parity driver and session host (T01 skeleton; bodies migrate out of neo-os-compute in T05)"
+description = "Game lane: 11 hash-pinned engines, registry, parity driver and generic confidential session protocol"
 
-# T01 skeleton only — see docs/rust-migration/ARCHITECTURE.md §2.3 decision 1.
-# The engine bodies, registry, parity driver and (T05) the session host move
-# here from neo-os-compute/src/game. Rationale for the split: engines are
-# "content" (hash-pinned, parity-golden-backed, reviewed per game) while the
-# oracle lane is "protocol" (evolves with upstream providers). Mixing them
-# drowns parity drift signals in unrelated churn. Zero dependencies until the
-# split lands so the skeleton cannot drift from the real move.
+# Engines are content (hash-pinned and parity-golden-backed), while compute's
+# oracle/policy lanes are protocol. Keeping the crate boundary real prevents
+# unrelated provider churn from drowning engine drift signals.
 
 [dependencies]
+base64 = "0.22"
+hmac = "0.12"
+neo-os-core = { path = "../neo-os-core" }
+num-bigint = "0.4"
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"

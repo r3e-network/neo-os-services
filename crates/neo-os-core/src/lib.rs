@@ -24,8 +24,8 @@
 //!   order and ryu number styling would silently change hashes.
 //!
 //! Modules (T02 — relayer pure-logic sink):
-//! - `config_schema` / `config` — the generated CONFIG_SCHEMA table (109
-//!   entries / 152 aliases) and the alias-chain env resolution plus the pure
+//! - `config_schema` / `config` — the generated CONFIG_SCHEMA table (110
+//!   entries / 153 aliases) and the alias-chain env resolution plus the pure
 //!   field derivation of `createRelayerConfig()`, gate error strings included
 //! - `state` — the relayer state machine: cursors, the processed-record LRU,
 //!   retry queue with ceiling shed into dead letters, metrics snapshot

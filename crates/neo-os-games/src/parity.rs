@@ -380,7 +380,7 @@ fn frozen_js_parity_baseline_is_intact() {
     // parity driver would be testing a different corpus than the JS recorder.
     const MIRRORS: [(&str, &str); 1] = [(
         "workers/nitro-worker/src/game/engine-parity.goldens.json",
-        "crates/neo-os-compute/src/game/engine-parity.goldens.json",
+        "crates/neo-os-games/src/engine-parity.goldens.json",
     )];
     // The baseline assets this crate depends on, and where each was frozen from.
     const ASSETS: [(&str, &str); 13] = [
@@ -472,7 +472,11 @@ fn frozen_js_parity_baseline_is_intact() {
         let left_path = format!("{repo_root}{left}");
         let right_path = format!("{repo_root}{right}");
         if std::path::Path::new(&left_path).exists() && std::path::Path::new(&right_path).exists() {
-            assert_eq!(hash_file(left), hash_file(right), "{left} and {right} diverged");
+            assert_eq!(
+                hash_file(left),
+                hash_file(right),
+                "{left} and {right} diverged"
+            );
         }
     }
 }

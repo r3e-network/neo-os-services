@@ -32,6 +32,7 @@ use nitro_enclave_host::custody::{CustodySigner, ReqwestCustodyTransport};
 use nitro_enclave_host::dispatch::dispatch;
 use nitro_enclave_host::feed_sign::TwelveDataPrices;
 use nitro_enclave_host::kms_release::ProductionKms;
+use nitro_enclave_host::neodid::ReqwestJwksFetcher;
 use nitro_enclave_host::overlay::EnvOverlay;
 use nitro_enclave_host::state::{AppState, KmsDiag};
 use nitro_enclave_host::DispatchOutcome;
@@ -57,10 +58,7 @@ impl nitro_enclave_host::state::OracleIo for ProductionOracleIo {
         neo_os_compute::transport::reqwest_transport()(request)
     }
 
-    fn dns_lookup(
-        &self,
-        host: &str,
-    ) -> Result<Vec<neo_os_compute::ssrf::ResolvedAddress>, String> {
+    fn dns_lookup(&self, host: &str) -> Result<Vec<neo_os_compute::ssrf::ResolvedAddress>, String> {
         use std::net::ToSocketAddrs;
         Ok((host, 0u16)
             .to_socket_addrs()
@@ -111,6 +109,7 @@ fn main() {
         kms: Box::new(ProductionKms::new()),
         price: Box::new(TwelveDataPrices::new(overlay.clone())),
         oracle_io: Box::new(ProductionOracleIo),
+        jwks_fetcher: Box::new(ReqwestJwksFetcher),
         oracle_runtime: Mutex::new(neo_os_compute::oracle::providers::ProviderRuntime::default()),
         kms_diag: Mutex::new(KmsDiag::default()),
     });
@@ -145,6 +144,10 @@ fn main() {
             })
         );
         axum::serve(listener, router)
+            .with_graceful_shutdown(async {
+                let reason = neo_os_service_runtime::shutdown_signal().await;
+                eprintln!("nitro enclave host: {reason}");
+            })
             .await
             .expect("enclave host server");
     });

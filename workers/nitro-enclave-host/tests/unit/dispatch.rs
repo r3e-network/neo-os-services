@@ -174,6 +174,11 @@ fn sensitive_routes_fail_closed_without_any_configured_token() {
         ("POST", "/oracle/smart-fetch"),
         ("POST", "/oracle/decrypt"),
         ("POST", "/oracle/message-reveal"),
+        ("POST", "/session/start"),
+        ("POST", "/session/step"),
+        ("POST", "/session/finalize"),
+        ("POST", "/automation/execute"),
+        ("POST", "/oracle/feed"),
     ] {
         let outcome = dispatch_outcome(&harness, method, path, &plain(), "{}");
         assert_eq!(outcome.status, 401, "{path}");
@@ -203,6 +208,11 @@ fn sensitive_routes_require_a_matching_bearer() {
         ("POST", "/oracle/smart-fetch"),
         ("POST", "/oracle/decrypt"),
         ("POST", "/oracle/message-reveal"),
+        ("POST", "/session/start"),
+        ("POST", "/session/step"),
+        ("POST", "/session/finalize"),
+        ("POST", "/automation/execute"),
+        ("POST", "/oracle/feed"),
     ] {
         let outcome = dispatch_outcome(&harness, method, path, &plain(), "{}");
         assert_eq!(outcome.status, 401, "{path}");
@@ -370,7 +380,7 @@ fn the_first_provision_bootstraps_from_the_kms_envelope() {
         outcome.body["env_keys"],
         json!(["MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64", "TD_KEY"])
     );
-    assert_eq!(outcome.body["roles"].as_array().expect("roles").len(), 2);
+    assert_eq!(outcome.body["roles"].as_array().expect("roles").len(), 6);
 
     // The materialized token authorizes the NEXT request — the trusted set is
     // live.

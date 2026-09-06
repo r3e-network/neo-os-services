@@ -3,8 +3,8 @@
 //! retry-queue pruning below the floor, and the block-cursor start
 //! resolution that refuses to silently reset to genesis.
 
-use crate::js_number::number_of as js_number_of_value;
 use crate::js_json;
+use crate::js_number::number_of as js_number_of_value;
 use crate::js_value::JsValue;
 
 /// Port of `getRequestCursorFloor`: a configured start request id counts only
@@ -123,8 +123,14 @@ mod tests {
 
     #[test]
     fn floor_requires_finite_positive() {
-        assert_eq!(get_request_cursor_floor(&JsValue::Number(123.0)), Some(123.0));
-        assert_eq!(get_request_cursor_floor(&JsValue::Str("456".to_string())), Some(456.0));
+        assert_eq!(
+            get_request_cursor_floor(&JsValue::Number(123.0)),
+            Some(123.0)
+        );
+        assert_eq!(
+            get_request_cursor_floor(&JsValue::Str("456".to_string())),
+            Some(456.0)
+        );
         assert_eq!(get_request_cursor_floor(&JsValue::Null), None);
         assert_eq!(get_request_cursor_floor(&JsValue::Number(0.0)), None);
         assert_eq!(get_request_cursor_floor(&JsValue::Number(f64::NAN)), None);
@@ -143,18 +149,21 @@ mod tests {
         let mut obj = crate::js_value::JsObject::new();
         obj.set(
             "retry_queue",
-            JsValue::Array(vec![
-                make_item("abc"),
-                make_item("10"),
-                make_item("20"),
-            ]),
+            JsValue::Array(vec![make_item("abc"), make_item("10"), make_item("20")]),
         );
         let pruned = prune_retry_queue_below_request_floor(&mut obj, Some(15.0));
         assert_eq!(pruned, 1);
         let queue = obj.get("retry_queue").unwrap().as_array().unwrap();
         assert_eq!(queue.len(), 2);
         assert_eq!(
-            queue[0].as_object().unwrap().get("event").unwrap().as_object().unwrap().get("requestId"),
+            queue[0]
+                .as_object()
+                .unwrap()
+                .get("event")
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .get("requestId"),
             Some(&JsValue::Str("abc".to_string()))
         );
     }
@@ -169,25 +178,17 @@ mod tests {
 
     #[test]
     fn resolve_chain_starts_at_configured_when_cold() {
-        let start = resolve_chain_from_block(
-            "neo_n3",
-            &JsValue::Number(100.0),
-            &JsValue::Null,
-            999.0,
-        )
-        .unwrap();
+        let start =
+            resolve_chain_from_block("neo_n3", &JsValue::Number(100.0), &JsValue::Null, 999.0)
+                .unwrap();
         assert_eq!(start, 100.0);
     }
 
     #[test]
     fn resolve_chain_advances_past_checkpoint() {
-        let next = resolve_chain_from_block(
-            "neo_n3",
-            &JsValue::Null,
-            &JsValue::Number(499.0),
-            500.0,
-        )
-        .unwrap();
+        let next =
+            resolve_chain_from_block("neo_n3", &JsValue::Null, &JsValue::Number(499.0), 500.0)
+                .unwrap();
         assert_eq!(next, 500.0);
     }
 

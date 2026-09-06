@@ -36,7 +36,7 @@ use zeroize::Zeroizing;
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
 
-use k256::ecdsa::SigningKey as K256SigningKey;
+use k256::ecdsa::{SigningKey as K256SigningKey, VerifyingKey as K256VerifyingKey};
 
 type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
@@ -113,6 +113,14 @@ pub fn public_key_from_private(private_key: &[u8; 32]) -> Result<[u8; 33], Signe
     let mut out = [0u8; 33];
     out.copy_from_slice(bytes);
     Ok(out)
+}
+
+/// Decode either SEC1 compressed or uncompressed P-256 material and return the
+/// one canonical compressed representation used by custody records.
+pub fn compress_public_key(public_key: &[u8]) -> Option<[u8; 33]> {
+    let key = VerifyingKey::from_sec1_bytes(public_key).ok()?;
+    let encoded = key.to_encoded_point(true);
+    encoded.as_bytes().try_into().ok()
 }
 
 /// Mint a fresh custody private key from the OS CSPRNG.
@@ -413,6 +421,31 @@ pub fn evm_public_key_from_private(private_key: &[u8; 32]) -> Result<[u8; 65], S
     Ok(out)
 }
 
+/// Derive the compressed secp256k1 public key stored with a NeoX custody key.
+pub fn evm_compressed_public_key_from_private(
+    private_key: &[u8; 32],
+) -> Result<[u8; 33], SignerCryptoError> {
+    let sk = K256SigningKey::from_slice(private_key)
+        .map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
+    let point = sk.verifying_key().to_encoded_point(true);
+    let mut out = [0u8; 33];
+    out.copy_from_slice(point.as_bytes());
+    Ok(out)
+}
+
+/// Derive the natural-order EVM address from a compressed secp256k1 public key.
+pub fn evm_address_from_compressed_public_key(
+    public_key: &[u8; 33],
+) -> Result<[u8; 20], SignerCryptoError> {
+    let key = K256VerifyingKey::from_sec1_bytes(public_key)
+        .map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
+    let point = key.to_encoded_point(false);
+    let bytes = point.as_bytes();
+    let mut uncompressed = [0u8; 65];
+    uncompressed.copy_from_slice(bytes);
+    Ok(evm_address_from_public_key(&uncompressed))
+}
+
 /// Derive Ethereum address from secp256k1 public key.
 /// Address = last 20 bytes of keccak256(uncompressed_pubkey[1..65])
 pub fn evm_address_from_public_key(public_key: &[u8; 65]) -> [u8; 20] {
@@ -470,6 +503,26 @@ pub fn sign_evm_transaction(
     result[32..64].copy_from_slice(&s);
     result[64] = v as u8;
 
+    Ok(result)
+}
+
+/// Sign an already-domain-separated EIP-191 prehash and return the Ethereum
+/// `(r, s, v)` wire shape.  The caller must build the prehash from a structured
+/// semantic request; this primitive is intentionally not exposed by the raw
+/// signing HTTP route.
+pub fn sign_eip191_prehash(
+    private_key: &[u8; 32],
+    message_hash: &[u8; 32],
+) -> Result<[u8; 65], SignerCryptoError> {
+    let sk = K256SigningKey::from_slice(private_key)
+        .map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
+    let (signature, recovery_id) = sk
+        .sign_prehash_recoverable(message_hash)
+        .map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
+    let mut result = [0u8; 65];
+    result[..64].copy_from_slice(&signature.to_bytes());
+    // personal_sign/ecrecover uses the historical 27/28 convention.
+    result[64] = recovery_id.to_byte() + 27;
     Ok(result)
 }
 

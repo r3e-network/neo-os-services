@@ -21,6 +21,10 @@ const GOLDEN_MESSAGE_1SYM: &str =
 /// Harvested message for the all-zero-fields vector (nonce 0, fees 0).
 const GOLDEN_MESSAGE_ZERO_FIELDS: &str =
     "4e454f33e36db879e194fea51ebec92f15167c3d627d35f0e1df7bb624b13ed62a25d0da";
+/// The same one-symbol transaction under Testnet T5's magic and deployed
+/// MorpheusDataFeed contract.
+const TESTNET_MESSAGE_1SYM: &str =
+    "4e335435c557f35dc509d0a26c529dd3cddc72fbfb24e8159e982f858c9d02a2d4072954";
 
 fn plain() -> http::HeaderMap {
     let mut headers = http::HeaderMap::new();
@@ -40,6 +44,19 @@ fn bearer_headers() -> http::HeaderMap {
 fn harness() -> TestState {
     test_state(
         &healthy_overlay(),
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    )
+}
+
+fn mainnet_harness() -> TestState {
+    test_state(
+        &[
+            ("MORPHEUS_NETWORK", "mainnet"),
+            ("NITRO_API_TOKEN", "s3cret"),
+        ],
         FakeAttest::with_document(b"doc"),
         FakeSigner::healthy(),
         FakeBridge::new(),
@@ -76,7 +93,7 @@ fn error_body(message: &str) -> serde_json::Value {
 /// caller-supplied tx params honored verbatim.
 #[test]
 fn golden_single_symbol_end_to_end() {
-    let harness = harness();
+    let harness = mainnet_harness();
     harness.price.set_price("NEO-USD", 2.0);
     let body = json!({
         "symbols": ["NEO-USD"],
@@ -107,14 +124,18 @@ fn golden_single_symbol_end_to_end() {
     // No request freshness nonce → no trailing `nonce` key (JS spread).
     assert!(outcome.body.get("nonce").is_none());
 
-    // The message went to the custody plane's updater role, unhashed.
+    // The complete unsigned transaction went to custody's semantic
+    // transaction route. Its SHA-256 is exactly the message suffix the host
+    // returns for independent broadcaster verification.
+    let calls = harness.signer.n3_transaction_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "mainnet");
+    assert_eq!(calls[0].1, "updater");
+    assert!(calls[0].3.starts_with("n3-feed:"));
+    let unsigned = hex::decode(&calls[0].2).expect("unsigned transaction hex");
     assert_eq!(
-        harness.signer.sign_calls(),
-        vec![(
-            TEST_NETWORK.to_string(),
-            "updater".to_string(),
-            GOLDEN_MESSAGE_1SYM.to_string(),
-        )]
+        hex::encode(Sha256::digest(unsigned)),
+        &GOLDEN_MESSAGE_1SYM[8..]
     );
 }
 
@@ -122,7 +143,7 @@ fn golden_single_symbol_end_to_end() {
 /// fees, zero nonce, PUSHINT for a 10-digit round) through the fold.
 #[test]
 fn golden_zero_fields_end_to_end() {
-    let harness = harness();
+    let harness = mainnet_harness();
     harness.price.set_price("NEO-USD", 0.000001);
     let body = json!({
         "symbols": ["NEO-USD"],
@@ -137,6 +158,44 @@ fn golden_zero_fields_end_to_end() {
     assert_eq!(outcome.body["tx_nonce"], 0);
     assert_eq!(outcome.body["valid_until_block"], 500);
     assert_eq!(outcome.body["rounds"], json!([1756713601]));
+}
+
+#[test]
+fn testnet_selects_its_measured_magic_and_contract_despite_a_legacy_override() {
+    let harness = test_state(
+        &[
+            ("MORPHEUS_NETWORK", "testnet"),
+            ("NITRO_API_TOKEN", "s3cret"),
+            // This legacy knob used to let a parent redirect the signature to
+            // mainnet. It is deliberately ignored by the Rust authority.
+            ("FEED_MAGIC", "860833102"),
+        ],
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    harness.price.set_price("NEO-USD", 2.0);
+    let outcome = post_feed(
+        &harness,
+        &json!({
+            "symbols": ["NEO-USD"],
+            "onchain_state": { "NEO-USD": { "round": 1000, "price": 0, "ts": 1718352000 } },
+            "now": 1001,
+            "tx_params": { "nonce": 424242, "blockCount": 100000, "systemFee": 1000000000, "networkFee": 1234567 },
+        }),
+    );
+    assert_eq!(outcome.status, 200, "{:?}", outcome.body);
+    assert_eq!(outcome.body["tx_message_hex"], TESTNET_MESSAGE_1SYM);
+    let calls = harness.signer.n3_transaction_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "testnet");
+    assert_eq!(calls[0].1, "updater");
+    let unsigned = hex::decode(&calls[0].2).expect("unsigned transaction hex");
+    assert_eq!(
+        hex::encode(Sha256::digest(unsigned)),
+        &TESTNET_MESSAGE_1SYM[8..]
+    );
 }
 
 /// `legacy` is an alias of the N3 lane (the mjs treats it identically) and
@@ -159,18 +218,109 @@ fn legacy_chain_runs_the_n3_lane() {
 }
 
 #[test]
-fn neox_lane_refuses_until_the_evm_port_lands() {
+fn neox_lane_builds_vector_locked_calldata_and_uses_chain_bound_custody() {
     let harness = harness();
+    harness.price.set_price("NEO-USD", 5.25);
+    let outcome = post_feed(
+        &harness,
+        &json!({
+            "chain": "neox",
+            "symbols": ["NEO-USD"],
+            "onchain_state": {
+                "NEO-USD": { "round": 1_779_999_940, "price": 5.0, "timestamp": 1_779_999_940 }
+            },
+            "now": 1_780_000_000,
+            "tx_params": {
+                "to": "0x38DD6BCEBDD47f4234AE11760CEFB58f9ae6a3bB",
+                "from": "0x1111111111111111111111111111111111111111",
+                "chain_id": 12_227_332,
+                "nonce": 7,
+                "gas_limit": "2000000",
+                "max_fee_per_gas": "50000000000",
+                "max_priority_fee_per_gas": "1000000000"
+            }
+        }),
+    );
+    assert_eq!(outcome.status, 200, "{}", outcome.body);
+    assert_eq!(outcome.body["status"], "ok");
+    assert_eq!(outcome.body["chain"], "neox");
+    assert_eq!(outcome.body["chain_id"], 12_227_332);
+    assert_eq!(outcome.body["nonce"], 7);
+    assert_eq!(outcome.body["symbols"], json!(["TWELVEDATA:NEO-USD"]));
+    assert_eq!(outcome.body["prices_scaled"], json!(["5250000"]));
+    assert_eq!(outcome.body["timestamps"], json!(["1780000000"]));
+    assert_eq!(outcome.body["round_ids"], json!(["1780000000"]));
+    assert_eq!(
+        outcome.body["from"],
+        "0x1111111111111111111111111111111111111111"
+    );
+    assert_eq!(
+        outcome.body["to"],
+        "0x38dd6bcebdd47f4234ae11760cefb58f9ae6a3bb"
+    );
+    assert_eq!(
+        outcome.body["data"],
+        "0x8df5110100000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000014000000000000000000000000000000000000000000000000000000000000001800000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000125457454c5645444154413a4e454f2d555344000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000501bd00000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000006a18a5000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000006a18a500"
+    );
+    assert!(outcome.body["signed_tx"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("0x02")));
+    let calls = harness.signer.transaction_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, TEST_NETWORK);
+    assert_eq!(calls[0].1, "neox_updater");
+    assert_eq!(calls[0].2, 12_227_332);
+    assert!(calls[0].3.starts_with("0x02"));
+    assert!(calls[0].4.starts_with("feed-neox:"));
+}
+
+#[test]
+fn neox_lane_requires_pinned_transaction_fields() {
+    let harness = harness();
+    harness.price.set_price("NEO-USD", 5.25);
     let outcome = post_feed(
         &harness,
         &json!({ "chain": "neox", "symbols": ["NEO-USD"] }),
     );
-    assert_eq!(outcome.status, 503);
+    assert_eq!(outcome.status, 400);
     assert_eq!(
         outcome.body,
-        error_body(
-            "neox feed signing is not served by the Rust enclave host yet (pending the EVM lane port)"
-        )
+        error_body("neox tx_params.to (feed contract) is required")
+    );
+    assert!(harness.signer.transaction_calls().is_empty());
+}
+
+#[test]
+fn neox_lane_rejects_custody_transaction_substitution() {
+    let signer = FakeSigner::new(SignerConfig {
+        transaction_result: Some(Ok(json!({
+            "address": "0x1111111111111111111111111111111111111111",
+            "signed_transaction": "0x02c0"
+        }))),
+        ..SignerConfig::default()
+    });
+    let harness = harness_with_signer(signer);
+    harness.price.set_price("NEO-USD", 5.25);
+    let outcome = post_feed(
+        &harness,
+        &json!({
+            "chain": "neox",
+            "symbols": ["NEO-USD"],
+            "now": 1_780_000_000,
+            "tx_params": {
+                "to": "0x38DD6BCEBDD47f4234AE11760CEFB58f9ae6a3bB",
+                "chain_id": 12_227_332,
+                "nonce": 7,
+                "gas_limit": 2_000_000,
+                "max_fee_per_gas": 50_000_000_000u64,
+                "max_priority_fee_per_gas": 1_000_000_000u64
+            }
+        }),
+    );
+    assert_eq!(outcome.status, 502);
+    assert_eq!(
+        outcome.body,
+        error_body("neox custody returned a malformed signed EIP-1559 transaction")
     );
 }
 

@@ -87,10 +87,12 @@ fn resolve_attestation_public_key(
     payload: &serde_json::Value,
 ) -> (String, String) {
     let requested = truthy_string(payload, &["role", "key_role"]);
-    let role = if requested.trim().eq_ignore_ascii_case("updater") {
-        "updater"
-    } else {
-        "oracle_verifier"
+    let normalized = requested.trim().to_ascii_lowercase();
+    let role = match normalized.as_str() {
+        "updater" => "updater",
+        "neox_verifier" => "neox_verifier",
+        "neox_updater" => "neox_updater",
+        _ => "oracle_verifier",
     };
     let network = state.resolve_network();
     let public_key = normalize_hex(&state.signer.role_report(&network, role).public_key);

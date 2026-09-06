@@ -6,7 +6,7 @@
 //! the time window and undo bounds from the engine's descriptor, and builds the
 //! finalize result. All per-game behaviour lives behind this fixed ABI:
 //!
-//! * [`deal`](crate::game::registry::EngineHandle) `(problemSecret, difficulty)`
+//! * [`deal`](crate::registry::EngineHandle) `(problemSecret, difficulty)`
 //!   → `{state, startView}` — the start view never reveals future secrets.
 //! * `applyOp(state, op, opMeta)` → view or reject. `opMeta` carries the
 //!   enclave-derived timing the host owns. A returned `view.ok === false`

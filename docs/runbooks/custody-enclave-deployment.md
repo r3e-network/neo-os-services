@@ -120,8 +120,19 @@ On the Nitro host (node present — it runs the host-side services):
 
 ```sh
 MORPHEUS_RELEASE=custody-$(date -u +%F) \
+  SIGNER_SERVICE_WORKLOAD_AUDIENCE=http://127.0.0.1:8789 \
   deploy/nitro/build-custody-eif.sh --verify-reproducible
 ```
+
+`SIGNER_SERVICE_WORKLOAD_AUDIENCE` is the exact canonical origin NeoNexus puts
+in `X-NeoOS-Audience`. It names the caller-visible host bridge or TLS endpoint,
+not the enclave's private `127.0.0.1:8081` listener. The build script defaults it
+to `http://127.0.0.1:${MORPHEUS_CUSTODY_HOST_PORT:-8789}`; set it explicitly for
+an external TLS origin. It is baked into the EIF because Nitro cannot inject a
+process environment at `run-enclave`, so changing the origin or host port
+requires rebuilding, remeasuring, and repinning the KMS policy. Adding it to the
+later `/provision` body would be too late: the signer fixes its authentication
+policy before it accepts that request.
 
 `--verify-reproducible` rebuilds the image with `--no-cache` and asserts identical
 PCRs — the authoritative reproducibility gate (equal PCRs ⇔ reproducible enclave;

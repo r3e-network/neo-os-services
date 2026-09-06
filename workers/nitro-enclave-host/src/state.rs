@@ -44,6 +44,19 @@ impl RoleReport {
     }
 }
 
+/// One semantic NeoX fulfillment signing call. Grouping the complete policy
+/// context prevents implementations from accidentally swapping adjacent
+/// string arguments or accepting a partial signing intent.
+pub struct Eip191FulfillmentRequest<'a> {
+    pub network: &'a str,
+    pub role: &'a str,
+    pub chain_id: u64,
+    pub oracle_contract: &'a str,
+    pub fulfillment: &'a neo_os_chain_evm::Fulfillment,
+    pub result_bytes_hex: &'a str,
+    pub request_id: &'a str,
+}
+
 /// The signing plane: loopback custody in production, fakes in tests. The
 /// host NEVER holds keys — that is the property `lib.rs` promises — so
 /// everything here is a request to the custody service.
@@ -58,6 +71,57 @@ pub trait SignerPlane: Send + Sync {
         role: &str,
         data_hex: &str,
     ) -> Result<serde_json::Value, crate::RuntimeError>;
+
+    /// Sign a fully constructed unsigned EIP-1559 transaction with a
+    /// chain-bound custody key. The host constructs the transaction and the
+    /// custody service enforces the immutable NeoX chain id and policy before
+    /// returning the complete serialized transaction.
+    fn sign_transaction(
+        &self,
+        _network: &str,
+        role: &str,
+        _chain_id: u64,
+        _unsigned_hex: &str,
+        _request_id: &str,
+    ) -> Result<serde_json::Value, crate::RuntimeError> {
+        Err(crate::http_error(
+            503,
+            format!("{role} transaction signer is not configured"),
+        ))
+    }
+
+    /// Sign a complete Neo N3 unsigned transaction through custody's semantic
+    /// transaction route. Unlike `sign_payload`, this lets the signer parse
+    /// the invocation and enforce contract, recipient, asset, fee, and rate
+    /// policy before the updater witness exists.
+    fn sign_n3_transaction(
+        &self,
+        _network: &str,
+        role: &str,
+        _unsigned_hex: &str,
+        _request_id: &str,
+    ) -> Result<serde_json::Value, crate::RuntimeError> {
+        Err(crate::http_error(
+            503,
+            format!("{role} Neo N3 transaction signer is not configured"),
+        ))
+    }
+
+    /// Sign the canonical, chain-and-contract-bound NeoX fulfillment digest.
+    /// The host supplies structured fields, never a caller-selected digest;
+    /// custody independently re-encodes them before applying the key policy.
+    fn sign_eip191_fulfillment(
+        &self,
+        request: &Eip191FulfillmentRequest<'_>,
+    ) -> Result<serde_json::Value, crate::RuntimeError> {
+        Err(crate::http_error(
+            503,
+            format!(
+                "{} EIP-191 fulfillment signer is not configured",
+                request.role
+            ),
+        ))
+    }
 }
 
 /// `{ok, status, body}` — the historical `computeViaWorker` response shape
@@ -105,14 +169,18 @@ pub trait OracleIo: Send + Sync {
         request: &neo_os_compute::transport::HttpRequest,
     ) -> Result<neo_os_compute::transport::HttpResponse, String>;
 
-    fn dns_lookup(
-        &self,
-        host: &str,
-    ) -> Result<Vec<neo_os_compute::ssrf::ResolvedAddress>, String>;
+    fn dns_lookup(&self, host: &str) -> Result<Vec<neo_os_compute::ssrf::ResolvedAddress>, String>;
 
     fn now_ms(&self) -> u64;
 
     fn sleep_ms(&self, ms: u64);
+}
+
+/// Web3Auth trust-anchor transport. The cache and single-flight refresh policy
+/// live in `neodid`; this seam performs only one HTTP fetch so tests can prove
+/// refresh classification and concurrency without external network access.
+pub trait JwksFetcher: Send + Sync {
+    fn fetch_jwks(&self, url: &str) -> Result<serde_json::Value, String>;
 }
 
 /// The attestation-gated KMS release seam: decrypt a base64 ciphertext from
@@ -179,6 +247,9 @@ pub struct AppState {
     pub price: Box<dyn PriceSource>,
     /// The folded oracle lanes' egress/clock plane (`oracle_read.rs`).
     pub oracle_io: Box<dyn OracleIo>,
+    /// NeoDID Web3Auth JWKS egress. Cache ownership remains process-global in
+    /// `neodid`, matching the compatibility worker's remote-JWKS set.
+    pub jwks_fetcher: Box<dyn JwksFetcher>,
     /// The oracle provider caches (config TTL, response TTL, circuit
     /// breakers) — module-level Maps in the JS worker, shared across
     /// requests here.
@@ -199,9 +270,68 @@ impl AppState {
         )
     }
 
-    /// The two signing roles the enclave holds, in the order
-    /// `signerRolesHealth` emits them.
-    pub const SIGNING_ROLES: [&str; 2] = ["updater", "oracle_verifier"];
+    /// Resolve and cross-check every measured custody role. In addition to
+    /// each key's own immutable policy, the NeoX updater and verifier must
+    /// resolve to different on-chain identities. Distinct key ids alone are
+    /// insufficient because two records can still wrap the same key.
+    pub fn signing_role_reports(&self) -> Vec<(&'static str, RoleReport)> {
+        let network = self.resolve_network();
+        let mut reports: Vec<(&'static str, RoleReport)> = Self::SIGNING_ROLES
+            .iter()
+            .map(|role| (*role, self.signer.role_report(&network, role)))
+            .collect();
+
+        let updater_index = reports
+            .iter()
+            .position(|(role, _)| *role == "neox_updater")
+            .expect("NeoX updater is a measured signing role");
+        let verifier_index = reports
+            .iter()
+            .position(|(role, _)| *role == "neox_verifier")
+            .expect("NeoX verifier is a measured signing role");
+        let (before_verifier, verifier_and_after) = reports.split_at_mut(verifier_index);
+        let updater = &mut before_verifier[updater_index].1;
+        let verifier = &mut verifier_and_after[0].1;
+        let updater_address = evm_identity_address(updater);
+        let verifier_address = evm_identity_address(verifier);
+        if updater.ok
+            && updater.materialized
+            && verifier.ok
+            && verifier.materialized
+            && updater_address.is_some()
+            && updater_address == verifier_address
+        {
+            const ISSUE: &str = "NeoX updater and verifier resolve to the same custody identity";
+            updater.ok = false;
+            updater.issues.push(format!("neox_updater: {ISSUE}"));
+            verifier.ok = false;
+            verifier.issues.push(format!("neox_verifier: {ISSUE}"));
+        }
+        reports
+    }
+
+    /// Every custody identity pinned into the measured service topology, in
+    /// the order `/health` and `/provision` report them. Keeping this list in
+    /// one place prevents the image manifest, runtime readiness, and the
+    /// signing routes from silently disagreeing about which roles are
+    /// required.
+    pub const SIGNING_ROLES: [&str; 6] = [
+        "updater",
+        "oracle_verifier",
+        "relayer",
+        "worker",
+        "neox_updater",
+        "neox_verifier",
+    ];
+}
+
+fn evm_identity_address(report: &RoleReport) -> Option<String> {
+    let address = report.identity.get("address")?.as_str()?.trim();
+    let raw = address
+        .strip_prefix("0x")
+        .or_else(|| address.strip_prefix("0X"))?;
+    (raw.len() == 40 && raw.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| raw.to_ascii_lowercase())
 }
 
 #[cfg(test)]

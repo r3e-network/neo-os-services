@@ -21,8 +21,10 @@ The script **fails if any PCR is empty** so an empty/garbage manifest can never
 be committed.
 
 The manifest also records the public custody boundary baked into that PCR:
-service URL and all four role key ids. Independent rebuilds must supply those
-exact values; none is a secret.
+service URL and all six role key ids. Independent rebuilds must supply those
+exact values; none is a secret. The NeoX updater and verifier must be different
+keys because transaction submission and EIP-191 proof signing are separate
+authorities.
 
 ```
 # on the box, from the repo root:
@@ -32,6 +34,8 @@ MORPHEUS_RELEASE=oracle-2026-06-14 MORPHEUS_NETWORK=testnet \
   SIGNER_ROLE_UPDATER_KEY_ID=<raw-updater-key-id> \
   SIGNER_ROLE_RELAYER_KEY_ID=<raw-relayer-key-id> \
   SIGNER_ROLE_WORKER_KEY_ID=<raw-worker-key-id> \
+  SIGNER_ROLE_NEOX_UPDATER_KEY_ID=<neox-updater-key-id> \
+  SIGNER_ROLE_NEOX_VERIFIER_KEY_ID=<neox-verifier-key-id> \
   bash deploy/nitro/build-enclave-eif.sh
 git add deploy/nitro/measurements/oracle-2026-06-14.json   # review the PCRs, then commit
 ```
@@ -66,6 +70,8 @@ SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=<raw-verifier-key-id> \
 SIGNER_ROLE_UPDATER_KEY_ID=<raw-updater-key-id> \
 SIGNER_ROLE_RELAYER_KEY_ID=<raw-relayer-key-id> \
 SIGNER_ROLE_WORKER_KEY_ID=<raw-worker-key-id> \
+SIGNER_ROLE_NEOX_UPDATER_KEY_ID=<neox-updater-key-id> \
+SIGNER_ROLE_NEOX_VERIFIER_KEY_ID=<neox-verifier-key-id> \
   bash deploy/nitro/build-enclave-eif.sh --verify-reproducible --no-eif
 ```
 

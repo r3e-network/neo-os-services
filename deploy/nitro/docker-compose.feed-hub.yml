@@ -1,6 +1,8 @@
+# NODE COMPATIBILITY ONLY. This historical multi-network hub is not a Rust
+# production authority; pin both compatibility images explicitly.
 services:
   mainnet-feed-worker:
-    image: ${MORPHEUS_NITRO_WORKER_IMAGE}
+    image: '${MORPHEUS_COMPAT_NITRO_WORKER_IMAGE:?pin-explicit-node-compat-worker-image}'
     restart: unless-stopped
     environment:
       # Fail-closed: activates the child-process sandbox guard (permission-guard.js).
@@ -44,7 +46,7 @@ services:
       start_period: 15s
 
   testnet-feed-worker:
-    image: ${MORPHEUS_NITRO_WORKER_IMAGE}
+    image: '${MORPHEUS_COMPAT_NITRO_WORKER_IMAGE:?pin-explicit-node-compat-worker-image}'
     restart: unless-stopped
     environment:
       # Fail-closed: activates the child-process sandbox guard (permission-guard.js).
@@ -129,7 +131,7 @@ services:
         exec caddy run --config /etc/caddy/Caddyfile
 
   mainnet-feed-relayer:
-    image: ${MORPHEUS_RELAYER_IMAGE}
+    image: '${MORPHEUS_COMPAT_RELAYER_IMAGE:?pin-explicit-node-compat-relayer-image}'
     restart: unless-stopped
     depends_on:
       mainnet-feed-worker:
@@ -154,6 +156,8 @@ services:
       SIGNER_SERVICE_URL: ${SIGNER_SERVICE_URL:-}
       SIGNER_SERVICE_TOKEN: ${SIGNER_SERVICE_TOKEN:-}
       SIGNER_ROLE_UPDATER_KEY_ID: ${SIGNER_ROLE_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_NEOX_UPDATER_KEY_ID: ${SIGNER_ROLE_NEOX_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_NEOX_VERIFIER_KEY_ID: ${SIGNER_ROLE_NEOX_VERIFIER_KEY_ID:-}
       SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID: ${SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID:-}
       MORPHEUS_RELAYER_MODE: feed_only
       MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.feed_only.mainnet.json
@@ -169,7 +173,7 @@ services:
       start_period: 90s
 
   testnet-feed-relayer:
-    image: ${MORPHEUS_RELAYER_IMAGE}
+    image: '${MORPHEUS_COMPAT_RELAYER_IMAGE:?pin-explicit-node-compat-relayer-image}'
     restart: unless-stopped
     depends_on:
       testnet-feed-worker:
@@ -191,6 +195,8 @@ services:
       SIGNER_SERVICE_URL: ${SIGNER_SERVICE_URL:-}
       SIGNER_SERVICE_TOKEN: ${SIGNER_SERVICE_TOKEN:-}
       SIGNER_ROLE_UPDATER_KEY_ID: ${SIGNER_ROLE_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_NEOX_UPDATER_KEY_ID: ${SIGNER_ROLE_NEOX_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_NEOX_VERIFIER_KEY_ID: ${SIGNER_ROLE_NEOX_VERIFIER_KEY_ID:-}
       SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID: ${SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID:-}
       MORPHEUS_RELAYER_MODE: feed_only
       MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.feed_only.testnet.json

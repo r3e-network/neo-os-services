@@ -24,6 +24,10 @@ fn a_ready_host_is_ok_with_the_full_contract() {
     assert_eq!(body["network"], "testnet");
     assert_eq!(body["checks"]["compute"], true);
     assert_eq!(body["checks"]["signer"], true);
+    for role in AppState::SIGNING_ROLES {
+        assert_eq!(body["checks"][format!("{role}_ready")], true);
+        assert_eq!(body["key_source"][role], "kms_attested");
+    }
     assert_eq!(
         body["checks"]["oracle_verifier_public_key"],
         "02f8a5a1e0f3b6c9d2e5f8a1b4c7d0e3f6a9b2c5d8e1f4a7b0c3d6e9f2a5b8c1"
@@ -53,6 +57,10 @@ fn key_source_is_the_plane_s_report_not_an_env_guess() {
     let body = handle_health(&harness.state);
     assert_eq!(body["key_source"]["oracle_verifier"], "custody");
     assert_eq!(body["key_source"]["updater"], "custody");
+    assert_eq!(body["key_source"]["relayer"], "custody");
+    assert_eq!(body["key_source"]["worker"], "custody");
+    assert_eq!(body["key_source"]["neox_updater"], "custody");
+    assert_eq!(body["key_source"]["neox_verifier"], "custody");
 
     // A kms-materialized plane (the pre-custody shape) reports its own word,
     // and health renders it verbatim rather than second-guessing.
@@ -85,8 +93,54 @@ fn a_degraded_signer_degrades_health_and_names_the_issues() {
     assert_eq!(body["status"], "degraded");
     assert_eq!(body["ready"], false);
     assert_eq!(body["checks"]["signer"], false);
-    assert_eq!(body["signer_error"], "key missing; identity mismatch");
+    assert!(body["signer_error"]
+        .as_str()
+        .expect("signer error")
+        .contains("oracle_verifier: key missing; identity mismatch"));
     assert_eq!(body["key_source"]["oracle_verifier"], "none");
+}
+
+#[test]
+fn one_missing_neox_role_degrades_the_whole_measured_host() {
+    let harness = test_state(
+        &healthy_overlay(),
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::new(SignerConfig {
+            unhealthy_roles: vec!["neox_verifier".to_string()],
+            issues: vec!["key missing".to_string()],
+            ..SignerConfig::default()
+        }),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let body = handle_health(&harness.state);
+    assert_eq!(body["status"], "degraded");
+    assert_eq!(body["ready"], false);
+    assert_eq!(body["checks"]["neox_verifier_ready"], false);
+    assert_eq!(body["checks"]["oracle_verifier_ready"], true);
+    assert_eq!(body["signer_error"], "neox_verifier: key missing");
+}
+
+#[test]
+fn shared_neox_updater_and_verifier_identity_fails_readiness() {
+    let harness = test_state(
+        &healthy_overlay(),
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::new(SignerConfig {
+            shared_neox_identity: true,
+            ..SignerConfig::default()
+        }),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let body = handle_health(&harness.state);
+    assert_eq!(body["ready"], false);
+    assert_eq!(body["checks"]["neox_updater_ready"], false);
+    assert_eq!(body["checks"]["neox_verifier_ready"], false);
+    assert!(body["signer_error"]
+        .as_str()
+        .expect("signer error")
+        .contains("same custody identity"));
 }
 
 #[test]

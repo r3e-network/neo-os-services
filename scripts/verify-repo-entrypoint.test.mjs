@@ -18,11 +18,18 @@ test('repo verification script runs the canonical local validation stack', () =>
   const script = read(path.join('scripts', 'verify_repo.sh'));
 
   assert.match(script, /check:audit:root/);
+  assert.match(script, /check:rust-migration/);
+  assert.match(script, /check:production-topology/);
+  assert.match(script, /format:rust:check/);
+  assert.match(script, /check:rust/);
+  assert.match(script, /test:rust/);
   assert.match(script, /test:scripts/);
   assert.match(script, /test:game-engine-sync/);
   assert.match(script, /test:control-plane/);
   assert.match(script, /test:worker/);
   assert.match(script, /test:relayer/);
+  assert.match(script, /check:relayer:compat/);
+  assert.match(script, /test:relayer:compat/);
   assert.match(script, /check:brand/);
   assert.match(script, /build:web/);
   assert.match(script, /lint -- --max-warnings=0/);

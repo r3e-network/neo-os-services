@@ -4,8 +4,8 @@
 
 `neo-os-compute` is the keyless Rust execution library used by the Nitro
 enclave host. It ports deterministic compute, oracle-read, NeoDID, policy,
-game, routing, and sandbox behavior from the legacy JavaScript worker while
-keeping custody and HTTP serving outside the crate.
+routing, and sandbox behavior from the legacy JavaScript worker while keeping
+game content in `neo-os-games` and custody and HTTP serving outside the crate.
 
 ## API Reference
 
@@ -13,7 +13,8 @@ keeping custody and HTTP serving outside the crate.
 - `oracle` validates providers, confidential envelopes, message reveal, and
   outbound fetch policy.
 - `neodid` implements identity verification and ticket primitives.
-- `game` contains deterministic game engines and parity codecs.
+- `game` is a compatibility re-export of `neo-os-games`; new callers should
+  depend on that crate directly.
 - `policy`, `permission`, `risk`, `overload`, and `circuit_breaker` expose
   fail-closed runtime guards.
 - `capabilities` resolves the reviewed route surface.
@@ -56,6 +57,6 @@ separate signer-service boundary.
 ## Test Coverage
 
 `cargo test --workspace --all-targets` runs parity vectors, capability routing,
-SSRF policy, sandbox limits, compute/game behavior, and enclave-host
+SSRF policy, sandbox limits, compute behavior, game parity, and enclave-host
 integration. `cargo clippy --workspace --all-targets -- -D warnings` and
 `cargo fmt --all -- --check` are required quality gates.

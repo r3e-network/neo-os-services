@@ -677,7 +677,7 @@ pub static CONFIG_SCHEMA: &[ConfigSetting] = &[
         default: "(unset)",
         required: false,
         secret: false,
-        description: "Custody signer service base URL; all relayer Neo N3 signing goes through it. Required for the Neo N3 request lane.",
+        description: "Custody signer service base URL; every enabled Neo N3/NeoX request or feed submission signs through it.",
     },
     ConfigSetting {
         key: "nitro.custodyToken",
@@ -808,12 +808,44 @@ pub static CONFIG_SCHEMA: &[ConfigSetting] = &[
         description: "Neo X oracle contract address. Required for the Neo X lane.",
     },
     ConfigSetting {
+        key: "neox.datafeedContract",
+        aliases: &["MORPHEUS_RELAYER_NEOX_DATAFEED", "NEOX_DATAFEED"],
+        default: "registry neox.contracts.morpheus_datafeed",
+        required: false,
+        secret: false,
+        description: "Neo X datafeed contract address. Required when Neo X feed sync is enabled.",
+    },
+    ConfigSetting {
+        key: "neox.feedGasLimit",
+        aliases: &["MORPHEUS_RELAYER_NEOX_FEED_GAS_LIMIT"],
+        default: "2000000",
+        required: false,
+        secret: false,
+        description: "Neo X feed update gas ceiling; eth_estimateGas must fit below it.",
+    },
+    ConfigSetting {
         key: "neox.updaterPrivateKey",
         aliases: &["MORPHEUS_RELAYER_NEOX_UPDATER_PK", "NEOX_UPDATER_PK", "NEOX_FEED_PK"],
         default: "(unset)",
         required: false,
         secret: true,
-        description: "Neo X updater secp256k1 private key. Required for the Neo X submit path.",
+        description: "Legacy test-only Neo X updater private key. The Rust relayer never requires or consumes it.",
+    },
+    ConfigSetting {
+        key: "neox.custodyKeyIds.updater",
+        aliases: &["SIGNER_ROLE_NEOX_UPDATER_KEY_ID"],
+        default: "(unset)",
+        required: false,
+        secret: false,
+        description: "Neo X custody key id signing fulfillment and feed transactions. Required whenever an enabled Neo X lane can submit.",
+    },
+    ConfigSetting {
+        key: "neox.custodyKeyIds.verifier",
+        aliases: &["SIGNER_ROLE_NEOX_VERIFIER_KEY_ID"],
+        default: "(unset)",
+        required: false,
+        secret: false,
+        description: "Neo X custody key id signing chain-bound EIP-191 fulfillment digests. Must differ from the updater key.",
     },
     ConfigSetting {
         key: "neox.verifierPrivateKey",
@@ -821,7 +853,7 @@ pub static CONFIG_SCHEMA: &[ConfigSetting] = &[
         default: "(unset)",
         required: false,
         secret: true,
-        description: "Neo X verifier secp256k1 private key.",
+        description: "Forbidden legacy Neo X verifier private key; the Rust relayer accepts only a custody verifier key id.",
     },
     ConfigSetting {
         key: "neox.confirmTimeoutMs",
@@ -901,7 +933,7 @@ pub static CONFIG_SCHEMA: &[ConfigSetting] = &[
         default: "(unset)",
         required: false,
         secret: false,
-        description: "Custody key id signing fulfillRequest/queueAutomationRequest transactions. Required when neo_n3 is active AND mode is not feed_only.",
+        description: "Custody key id signing Neo N3 fulfillment and feed transactions. Required whenever an enabled Neo N3 lane can submit.",
     },
     ConfigSetting {
         key: "neo_n3.custodyKeyIds.oracle_verifier",
@@ -954,20 +986,20 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    /// Pinned against the JS oracle (node -e over config-schema.js): 109
-    /// logical keys, 152 alias references with zero duplicates, 7 secret
+    /// Pinned against the JS oracle (node -e over config-schema.js): 113
+    /// logical keys, 157 alias references with zero duplicates, 7 secret
     /// entries, 0 required. A drift here means the JS manifest changed and
     /// this table must be regenerated.
     #[test]
     fn manifest_shape_matches_js_oracle() {
-        assert_eq!(CONFIG_SCHEMA.len(), 109, "logical key count");
+        assert_eq!(CONFIG_SCHEMA.len(), 113, "logical key count");
         let alias_refs: Vec<&str> = CONFIG_SCHEMA
             .iter()
             .flat_map(|s| s.aliases.iter().copied())
             .collect();
-        assert_eq!(alias_refs.len(), 152, "alias reference count");
+        assert_eq!(alias_refs.len(), 157, "alias reference count");
         let unique: HashSet<&str> = alias_refs.iter().copied().collect();
-        assert_eq!(unique.len(), 152, "aliases must be globally unique");
+        assert_eq!(unique.len(), 157, "aliases must be globally unique");
         assert_eq!(
             CONFIG_SCHEMA.iter().filter(|s| s.secret).count(),
             7,
@@ -991,7 +1023,7 @@ mod tests {
     #[test]
     fn known_env_aliases_covers_all_schema_entries() {
         let known = known_env_aliases();
-        assert_eq!(known.len(), 152);
+        assert_eq!(known.len(), 157);
         for setting in CONFIG_SCHEMA {
             for alias in setting.aliases {
                 assert!(known.contains(alias), "missing alias {alias}");

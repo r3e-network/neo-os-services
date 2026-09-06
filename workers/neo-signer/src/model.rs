@@ -28,6 +28,16 @@ impl ScriptHash {
         ScriptHash(bytes)
     }
 
+    /// Wrap a natural-order EVM address while preserving this type's
+    /// operator-facing `0x…` display contract. Neo N3 UInt160 values are held
+    /// in wire order and therefore render reversed; EVM addresses are already
+    /// in display order, so their compatibility representation is reversed on
+    /// entry instead.
+    pub fn from_evm_address(mut address: [u8; HASH160_LEN]) -> Self {
+        address.reverse();
+        ScriptHash(address)
+    }
+
     /// The bytes as they appear on the wire.
     pub const fn as_bytes(self) -> [u8; HASH160_LEN] {
         self.0
@@ -409,6 +419,11 @@ pub struct SignerKey {
     /// network's real magic survives restarts and a caller can never ask for the
     /// same bytes to be signed on a different network.
     pub network: Network,
+    /// Immutable curve/chain binding. Existing rows migrate to Neo N3; a NeoX
+    /// request may never reinterpret a P-256 key as secp256k1.
+    pub chain_family: ChainFamily,
+    /// Immutable chain identifier: N3 network magic or NeoX EIP-155 chain id.
+    pub chain_id: u64,
     /// The network magic this key's signatures commit to, as it was bound when
     /// the key entered custody. Mainnet and testnet carry their canonical value;
     /// a private chain names its own, so two private chains that share the
@@ -425,10 +440,13 @@ pub struct SignerKey {
 }
 
 impl SignerKey {
-    /// The verification script of the single-signature account this key
-    /// controls: `0c21 <pubkey> 41 56e7b327`.
+    /// The N3 verification script of the single-signature account this key
+    /// controls: `0c21 <pubkey> 41 56e7b327`. NeoX has no N3 witness script.
     pub fn verification_script(&self) -> Vec<u8> {
-        crypto::verification_script(&self.public_key)
+        match self.chain_family {
+            ChainFamily::NeoN3 => crypto::verification_script(&self.public_key),
+            ChainFamily::NeoX => Vec::new(),
+        }
     }
 
     /// The account — `HASH160(verification_script)` — in wire order.
@@ -438,14 +456,28 @@ impl SignerKey {
     /// assertion so a corrupt row fails the request closed instead of being
     /// papered over with a zero hash that would silently match nothing.
     pub fn account(&self) -> Option<ScriptHash> {
-        <[u8; HASH160_LEN]>::try_from(crypto::script_hash(&self.public_key).as_slice())
-            .ok()
-            .map(ScriptHash::from_wire)
+        match self.chain_family {
+            ChainFamily::NeoN3 => {
+                <[u8; HASH160_LEN]>::try_from(crypto::script_hash(&self.public_key).as_slice())
+                    .ok()
+                    .map(ScriptHash::from_wire)
+            }
+            ChainFamily::NeoX => crypto::evm_address_from_compressed_public_key(&self.public_key)
+                .ok()
+                .map(ScriptHash::from_evm_address),
+        }
     }
 
-    /// The Neo address, as an operator reads it on an explorer.
+    /// The chain-native address, as an operator reads it on an explorer.
     pub fn address(&self) -> String {
-        crypto::address_from_script_hash(&crypto::script_hash(&self.public_key))
+        match self.chain_family {
+            ChainFamily::NeoN3 => {
+                crypto::address_from_script_hash(&crypto::script_hash(&self.public_key))
+            }
+            ChainFamily::NeoX => crypto::evm_address_from_compressed_public_key(&self.public_key)
+                .map(|address| format!("0x{}", hex::encode(address)))
+                .unwrap_or_default(),
+        }
     }
 
     /// The chain's network magic, as bound at custody time — not restated from
@@ -453,6 +485,10 @@ impl SignerKey {
     /// magic with its keys even after a restart.
     pub fn network_magic(&self) -> u32 {
         self.network_magic
+    }
+
+    pub fn chain_id(&self) -> u64 {
+        self.chain_id
     }
 }
 
@@ -637,13 +673,16 @@ pub enum SignerAuditAction {
     TransactionSigned,
     ConsensusSigned,
     RawSigned,
+    /// A chain/contract-bound NeoX oracle fulfillment digest was signed using
+    /// the structured EIP-191 route (never the raw-signing capability).
+    Eip191FulfillmentSigned,
     /// A token was presented that matches no caller. Recorded because it is
     /// the one event that shows someone probing the endpoint.
     UnknownToken,
 }
 
 impl SignerAuditAction {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         SignerAuditAction::KeyGenerated,
         SignerAuditAction::KeyImported,
         SignerAuditAction::KeyDisabled,
@@ -661,6 +700,7 @@ impl SignerAuditAction {
         SignerAuditAction::TransactionSigned,
         SignerAuditAction::ConsensusSigned,
         SignerAuditAction::RawSigned,
+        SignerAuditAction::Eip191FulfillmentSigned,
         SignerAuditAction::UnknownToken,
     ];
 
@@ -683,6 +723,7 @@ impl SignerAuditAction {
             SignerAuditAction::TransactionSigned => "signer-transaction-signed",
             SignerAuditAction::ConsensusSigned => "signer-consensus-signed",
             SignerAuditAction::RawSigned => "signer-raw-signed",
+            SignerAuditAction::Eip191FulfillmentSigned => "signer-eip191-fulfillment-signed",
             SignerAuditAction::UnknownToken => "signer-unknown-token",
         }
     }
@@ -790,6 +831,9 @@ pub struct SignerRequestCompletion {
     pub completed_at_unix: u64,
     pub audit_id: Option<i64>,
     pub chain_family: Option<ChainFamily>,
+    /// Complete signed EIP-1559 transaction (`0x02 || rlp(...)`), hex encoded.
+    /// N3 requests keep this absent and replay their witness scripts instead.
+    pub signed_transaction: Option<String>,
 }
 
 /// Value that left a custody key, recorded so the rolling window survives a
@@ -822,7 +866,8 @@ pub struct SignerConsensusReservation {
     pub public_key: [u8; 33],
     pub network_magic: u32,
     pub block_index: u32,
-    /// `0x20` for the shared prepare phase or `0x30` for commit.
+    /// `0x20` for the shared prepare phase, `0x30` for commit, or `0xff`
+    /// for the height-wide block-header commitment made by SignClient.
     pub phase: u8,
     pub validator_index: u8,
     /// Prepare keeps the view; commit normalizes it to zero.
@@ -855,9 +900,7 @@ pub enum SignPayload {
         tx_details: Option<EvmTxDetails>,
     },
     /// Raw bytes (chain-agnostic, requires explicit policy approval)
-    Raw {
-        data: Vec<u8>,
-    },
+    Raw { data: Vec<u8> },
 }
 
 /// Decoded EVM transaction details for policy evaluation.

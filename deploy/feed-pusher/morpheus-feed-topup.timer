@@ -1,8 +1,10 @@
 [Unit]
-Description=Check/topup feed updater GAS every 6h
+Description=Check/topup feed updater GAS every 6h (NODE COMPATIBILITY ONLY)
+ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_FEE_TOPUP_COMPAT
+Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
 [Timer]
 OnBootSec=10min
 OnUnitActiveSec=6h
 Persistent=true
-[Install]
-WantedBy=timers.target
+# Deliberately no [Install] section. This chain-writing helper is available only
+# during an explicit Node compatibility rollback with the Rust relayer stopped.

@@ -385,7 +385,7 @@ test('control plane enqueues oracle request jobs and persists dispatched status'
   assert.equal(state.jobs.get(body.id)?.status, 'dispatched');
 });
 
-test('feeds/tick is a retired no-op: returns 200 and never enqueues nor leaks the signer (CP-01)', async () => {
+test('feeds/tick reports retirement and never enqueues nor leaks the signer (CP-01)', async () => {
   const env = createEnv();
   const state = createState();
   global.fetch = createFetchMock(state);
@@ -402,9 +402,11 @@ test('feeds/tick is a retired no-op: returns 200 and never enqueues nor leaks th
     env
   );
 
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 410);
   const body = await response.json();
-  assert.equal(body.status, 'noop');
+  assert.equal(body.ok, false);
+  assert.equal(body.status, 'retired');
+  assert.equal(body.reason, 'feed_publication_owned_by_rust_relayer');
   // The whole point: nothing is enqueued, so the consumer never POSTs the signer
   // WIF + execution token to the retired feed runtime.
   assert.equal(env.MORPHEUS_FEED_TICK_QUEUE.sent.length, 0);
@@ -789,8 +791,7 @@ test('production confidential execution rejects multi-origin pools', () => {
       getExecutionPlaneConfig(
         createEnv({
           MORPHEUS_ENVIRONMENT: 'production',
-          MORPHEUS_TESTNET_EXECUTION_BASE_URL:
-            'https://exec-a.test,https://exec-b.test',
+          MORPHEUS_TESTNET_EXECUTION_BASE_URL: 'https://exec-a.test,https://exec-b.test',
         }),
         'testnet'
       ),
@@ -833,7 +834,7 @@ test('callbacks/broadcast is a redundant no-op: returns 200 and never enqueues a
   assert.equal(callbackWorkflow.created.length, 0);
 });
 
-test('automation/execute is a redundant no-op: returns 200 and never invokes the host-side signer', async () => {
+test('automation/execute fails closed and never invokes the legacy host-side signer', async () => {
   const automationWorkflow = createWorkflowBinding({ status: 'queued' });
   const env = createEnv({
     AUTOMATION_EXECUTE_WORKFLOW: automationWorkflow,
@@ -853,12 +854,13 @@ test('automation/execute is a redundant no-op: returns 200 and never invokes the
     env
   );
 
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 503);
   const body = await response.json();
-  assert.equal(body.status, 'noop');
-  assert.equal(body.reason, 'automation_executed_by_relayer');
-  // The box relayer executes automations in-TEE; the edge lane must not enqueue a
-  // host-signed queueAutomationRequest.
+  assert.equal(body.ok, false);
+  assert.equal(body.status, 'unavailable');
+  assert.equal(body.reason, 'rust_automation_delivery_unavailable');
+  // Until Rust owns the durable execution protocol, the edge lane must neither
+  // claim success nor enqueue a host-signed queueAutomationRequest.
   assert.equal(automationWorkflow.created.length, 0);
 });
 

@@ -1,5 +1,9 @@
 [Unit]
-Description=Auto-topup feed updater GAS from dedicated funding key
+Description=Node feed-updater GAS top-up (COMPATIBILITY ONLY)
+After=network-online.target morpheus-nitro-custody.service
+Wants=network-online.target morpheus-nitro-custody.service
+ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_FEE_TOPUP_COMPAT
+Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
 # A failing topup is the leading indicator of the updater running dry, which is
 # exactly what killed the mainnet feed on 2026-07-29.
 OnFailure=morpheus-alert@%n.service

@@ -1,0 +1,28 @@
+{
+  "name": "@neoswap/api-gateway",
+  "version": "2.0.0",
+  "description": "NeoSwap v2 API Gateway with Next.js 14",
+  "license": "MIT",
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@neoswap/routing-engine": "file:../routing-engine",
+    "@neosphere/sdk": "^1.0.0",
+    "redis": "^4.6.0",
+    "ioredis": "^5.3.0",
+    "express-rate-limit": "^7.1.0",
+    "helmet": "^7.1.0",
+    "prom-client": "^15.1.0",
+    "nanoid": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/express": "^4.17.0",
+    "typescript": "^5.3.0",
+    "next": "^14.0.0"
+  }
+}

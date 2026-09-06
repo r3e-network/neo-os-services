@@ -278,7 +278,8 @@ impl JsValue {
     }
     /// Re-encode into the exporter's tagged form so tests can deep-compare
     /// against the committed vectors.
-    pub fn to_tagged(&self) -> Json {        match self {
+    pub fn to_tagged(&self) -> Json {
+        match self {
             JsValue::Undefined => serde_json::json!({ "__t": "undefined" }),
             JsValue::Null => serde_json::json!({ "__t": "null" }),
             JsValue::Bool(b) => serde_json::json!({ "__t": "bool", "v": b }),

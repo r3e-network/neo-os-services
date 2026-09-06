@@ -1,8 +1,16 @@
-# NeoOS DataFeed price pusher — deployment & recovery runbook
+# NeoOS Node DataFeed pusher — compatibility rollback runbook
 
-Standalone price-feed writer that replaced the dead Phala compute worker for the
-**price feed only**. It does NOT need the compute worker. Runs on the Nitro oracle
-host (`i-0c52851f134db20ee`) as a systemd timer.
+> **Compatibility only — not a production authority.** Production Neo N3 and
+> NeoX feeds are delivered by the Rust `neo-os-relayer` in `feed_only` or
+> `combined` mode. The Node writers in this directory are frozen rollback/parity
+> assets. Their services require
+> `/opt/morpheus/nitro/ENABLE_NODE_FEED_PUSHER_COMPAT`, have no installable timer
+> target, and conflict with both Rust relayer units. Never run either writer at
+> the same time as a Rust feed lane: doing so creates a duplicate on-chain writer.
+
+This standalone writer historically replaced the dead Phala compute worker for
+the **price feed only**. The details below document the compatibility path and
+live-box recovery history; they are not the current production installation path.
 
 ## Architecture
 
@@ -43,20 +51,37 @@ host (`i-0c52851f134db20ee`) as a systemd timer.
 | `morpheus-db-prune.{service,timer}`     | `/etc/systemd/system/` (daily 03:30 UTC; retain 30d)                          |
 | `feed-pusher.env.example`               | template for `/opt/morpheus/nitro/feed-pusher.env` (chmod 600)                |
 
-## Recover from a host loss
+## Emergency compatibility rollback
+
+Use this only when an operator has deliberately stopped both Rust relayer units
+and accepted the temporary Node compatibility boundary. Normal host recovery
+must follow `deploy/nitro/README.md` and restore the Rust relayer instead.
 
 1. Provision the host; install Node 20+ and the `neo-os-services` repo at `/opt/neoos/services` (provides `node_modules/@cityofzion/neon-js`).
 2. Restore the Nitro enclave signer (serves `127.0.0.1:8787`) — see `deploy/nitro/`.
 3. Keep the scripts in `/opt/neoos/services/deploy/feed-pusher/`; copy the `*.service/*.timer` files to `/etc/systemd/system/`.
 4. Create `/opt/morpheus/nitro/feed-pusher.env` from `feed-pusher.env.example` (chmod 600):
    `TD_KEY` (TwelveData), `RUNTIME_TOKEN` = `MORPHEUS_RUNTIME_TOKEN` from `morpheus-relayer.env`.
-5. `systemctl daemon-reload && systemctl enable --now morpheus-feed-pusher.timer morpheus-feed-monitor.timer morpheus-feed-topup.timer morpheus-db-prune.timer`.
-   (`morpheus-feed-topup.timer` was missing from this list until 2026-08, so the
-   auto-topup may never have been installed on the live box — check
-   `systemctl list-timers --all | grep feed-topup` before assuming it runs.)
+5. Stop the Rust authority, create the explicit compatibility marker, reload
+   systemd, and start (do not enable) only the required compatibility timer:
+
+   ```bash
+   systemctl stop morpheus-relayer.service morpheus-relayer-nitro.service
+   install -m 0600 /dev/null /opt/morpheus/nitro/ENABLE_NODE_FEED_PUSHER_COMPAT
+   systemctl daemon-reload
+   systemctl start morpheus-feed-pusher.timer morpheus-feed-pusher-neox.timer
+   ```
+
+   Monitoring and DB-prune units do not write chain state and may be managed
+   separately. `morpheus-feed-topup` does submit a GAS transfer, so it is also a
+   compatibility-only chain writer: create
+   `/opt/morpheus/nitro/ENABLE_NODE_FEE_TOPUP_COMPAT` and start (never enable)
+   its timer only while the Rust relayer is stopped. Delete both markers before
+   restoring the Rust authority.
    Also install the alert target so unit failures reach a human:
    `cp ../systemd/morpheus-alert@.service /etc/systemd/system/` and create
    `/opt/morpheus/nitro/alert-notify.env` from `../systemd/alert-notify.env.example`.
+
 6. Verify: `node feed-pusher.mjs` once; check `getLatest("TWELVEDATA:NEO-USD")` roundId is fresh.
 
 ## Operations
@@ -66,8 +91,10 @@ host (`i-0c52851f134db20ee`) as a systemd timer.
   `NZFMvLj6mxTHEn8gRGrjZDeFCDMTm96p6R` holds 20 GAS against a `TOPUP_AMOUNT` of 40, so
   `morpheus-feed-topup.service` has been in the failed state since long before the
   2026-07-29 outage. Refill that key or the updater has no automatic refill at all. Top up from the deployer (it is the contract admin). Recommended
-  next step: a dedicated low-value funding key + a 6-hourly auto-topup timer (do NOT put the
-  pool-controlling deployer WIF on the box).
+  production Rust topology must use an operator-governed funding path until a
+  Rust-native top-up lane is implemented. The Node timer is permitted only in
+  an explicit compatibility rollback; do NOT put the pool-controlling deployer
+  WIF on the box.
 - **Feed is stale / dead:** see [`FEED-OUTAGE-RUNBOOK.md`](./FEED-OUTAGE-RUNBOOK.md) — reproduction
   commands, the exact wallet and GAS amount to restore, and the three checks that prove recovery.
 - **Monitor:** the monitor now routes its non-zero exit to `morpheus-alert@%n.service`
@@ -137,10 +164,12 @@ in the kernel (`runtimeVerificationPublicKey` / `updater`).
 
 ---
 
-# Multi-chain price feed (Neo N3 + Neo X)
+# Historical compatibility implementation: Neo N3 + Neo X
 
-The feed pusher (`feed-pusher.mjs`) reads TwelveData once per cycle and pushes to
-every configured chain. Currently two chains:
+The compatibility pusher (`feed-pusher.mjs`) reads TwelveData once per cycle and
+pushes to every configured chain. Production uses the Rust relayer and custody
+roles described in `deploy/nitro/neo-os-relayer.env.example`; the raw-key details
+below apply only to the frozen compatibility implementation.
 
 | Chain                         | Kind  | Contract                                                       | Signer                          |
 | ----------------------------- | ----- | -------------------------------------------------------------- | ------------------------------- |

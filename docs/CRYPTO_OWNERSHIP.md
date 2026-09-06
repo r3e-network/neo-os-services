@@ -88,10 +88,10 @@ Application services request Neo signatures from the signer API and never
 import its private-key module:
 
 ```text
-POST /signer/api/v1/keys/{key_id}/sign/transaction
+POST /signer/api/v1/sign/transaction
 Authorization: Bearer <sign-only credential>
 
-{"request_id":"order-2026-09-02-42","unsigned_hex":"..."}
+{"key_id":"key-...","request_id":"order-2026-09-02-42","unsigned_hex":"..."}
 ```
 
 ## Design Decisions

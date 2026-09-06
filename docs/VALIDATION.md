@@ -7,6 +7,7 @@ Run these checks after any meaningful change to runtime logic, deployment config
 ```bash
 npm run test:worker
 npm run test:relayer
+npm run test:relayer:compat
 npm run test:control-plane
 npm run build:web
 npm run smoke:control-plane

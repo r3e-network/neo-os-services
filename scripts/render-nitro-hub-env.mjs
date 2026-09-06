@@ -152,8 +152,14 @@ const requestHubDomain =
 
 const lines = [
   '# Generated from deploy/nitro/morpheus.mainnet.env and morpheus.testnet.env; do not edit.',
-  line('MORPHEUS_NITRO_WORKER_IMAGE', pick(envs, 'MORPHEUS_NITRO_WORKER_IMAGE')),
-  line('MORPHEUS_RELAYER_IMAGE', pick(envs, 'MORPHEUS_RELAYER_IMAGE')),
+  line(
+    'MORPHEUS_COMPAT_NITRO_WORKER_IMAGE',
+    pick(envs, 'MORPHEUS_COMPAT_NITRO_WORKER_IMAGE', 'MORPHEUS_NITRO_WORKER_IMAGE')
+  ),
+  line(
+    'MORPHEUS_COMPAT_RELAYER_IMAGE',
+    pick(envs, 'MORPHEUS_COMPAT_RELAYER_IMAGE', 'MORPHEUS_RELAYER_IMAGE')
+  ),
   '',
   line('MORPHEUS_PUBLIC_PORT', pick(envs, 'MORPHEUS_PUBLIC_PORT') || '3000'),
   line('MORPHEUS_RUNTIME_TOKEN', pick(envs, 'MORPHEUS_RUNTIME_TOKEN', 'NITRO_API_TOKEN')),

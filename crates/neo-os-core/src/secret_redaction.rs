@@ -121,9 +121,7 @@ mod tests {
 
     #[test]
     fn name_detection_covers_both_former_lists() {
-        assert!(!is_secret_name(
-            "NEOX_UPDATER_PK".to_lowercase().as_str()
-        ));
+        assert!(!is_secret_name("NEOX_UPDATER_PK".to_lowercase().as_str()));
         assert!(!is_secret_name("MORPHEUS_RELAYER_NEOX_UPDATER_PK"));
         assert!(is_secret_name("NEO_N3_WIF"));
         assert!(is_secret_name("MORPHEUS_N3_PRIVATE_KEY"));

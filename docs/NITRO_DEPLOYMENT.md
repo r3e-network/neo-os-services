@@ -1,5 +1,8 @@
 # AWS Nitro merged enclave deployment
 
+The current service authority and compatibility boundary is defined in
+[`PRODUCTION_RUST_TOPOLOGY.md`](./PRODUCTION_RUST_TOPOLOGY.md).
+
 This runbook deploys the merged NeoOS compute-and-sign runtime into AWS Nitro.
 The host relayer talks only to `127.0.0.1:8787`; that port is a vsock proxy into
 the enclave.
@@ -34,8 +37,10 @@ is custody-side.
   `deploy/systemd/morpheus-nitro-custody.service`.
 
 All maintained production relayer, feed, and NeoX Docker/systemd/Compose
-entries set `NODE_ENV=production` in the artifact or unit itself. An env file
-cannot silently downgrade the fail-closed production gates.
+entries set `NODE_ENV=production` in the artifact or unit itself. This is a
+legacy-named safety contract consumed by the Rust core/compute/host to reject
+ephemeral keys and unsafe overrides; it does not imply a Node runtime. An env
+file cannot silently downgrade the fail-closed production gates.
 
 ## Secret rendering
 
@@ -52,16 +57,24 @@ copies plaintext WIF/private-key fields into the provisioning artifact.
 The generated files are local-only transport/provisioning inputs:
 
 - `.secrets/nitro/morpheus-nitro-signer.env`
-- `.secrets/nitro/morpheus-relayer.env`
+- `.secrets/nitro/neo-os-relayer.env`
 
 `morpheus-nitro-signer.env` contains transport authentication plus KMS
 CiphertextBlob values, never a WIF/private key. KMS policy must require the
 published PCR measurement.
 
-`morpheus-relayer.env` carries the relayer's custody signer configuration —
-`SIGNER_SERVICE_URL`, `SIGNER_SERVICE_TOKEN`, and the per-role
-`SIGNER_ROLE_{UPDATER,ORACLE_VERIFIER,FEE_FUNDER}_KEY_ID` — sourced from the
-same inputs (set them in `deploy/nitro/morpheus.<network>.env` or `.env`).
+`neo-os-relayer.env` carries the relayer's custody signer configuration —
+`SIGNER_SERVICE_URL`, a dedicated bearer-caller `SIGNER_SERVICE_TOKEN`, and
+the lane-specific Neo N3 and NeoX role ids — sourced from the same inputs (set
+them in `deploy/nitro/morpheus.<network>.env` or `.env`). The measured frontier
+itself is built with all six mandatory roles: `UPDATER`, `ORACLE_VERIFIER`,
+`RELAYER`, `WORKER`, `NEOX_UPDATER`, and `NEOX_VERIFIER`; `FEE_FUNDER` remains an
+optional operational role outside that six-role readiness contract. A
+`workload-ed25519` caller has no bearer token and is not yet a Rust relayer
+authentication transport. The custody caller token must also remain distinct
+from `MORPHEUS_RUNTIME_TOKEN`, which authenticates the frontier call. NeoX
+updater and verifier roles are distinct authorities for EIP-1559 submission and
+semantic EIP-191 fulfillment-proof signing, respectively.
 Relayer Neo N3 signing is custody-only: the relayer reads no WIF, and
 `scripts/check-nitro-env.mjs` fails a runtime env file that lacks the custody
 provisioning. See `docs/SIGNER_SERVICE.md` §5 and §7.
@@ -139,6 +152,8 @@ sudo install -d -m 0700 /opt/morpheus/nitro
 sudo cp deploy/systemd/morpheus-nitro-signer.service /etc/systemd/system/
 sudo cp deploy/systemd/morpheus-nitro-custody.service /etc/systemd/system/
 sudo cp deploy/systemd/morpheus-nitro-egress.service /etc/systemd/system/
+sudo cp deploy/systemd/morpheus-nitro-provision.service /etc/systemd/system/
+sudo cp deploy/systemd/morpheus-nitro-provision.timer /etc/systemd/system/
 sudo cp deploy/systemd/morpheus-relayer-nitro.service /etc/systemd/system/
 sudo env MORPHEUS_NETWORK=mainnet \
   SIGNER_SERVICE_URL=https://custody.internal.example \
@@ -146,16 +161,46 @@ sudo env MORPHEUS_NETWORK=mainnet \
   SIGNER_ROLE_UPDATER_KEY_ID=<raw-updater-key-id> \
   SIGNER_ROLE_RELAYER_KEY_ID=<raw-relayer-key-id> \
   SIGNER_ROLE_WORKER_KEY_ID=<raw-worker-key-id> \
+  SIGNER_ROLE_NEOX_UPDATER_KEY_ID=<neox-updater-key-id> \
+  SIGNER_ROLE_NEOX_VERIFIER_KEY_ID=<neox-verifier-key-id> \
   deploy/nitro/build-enclave-eif.sh --verify-reproducible
-sudo deploy/nitro/build-custody-eif.sh --verify-reproducible
+sudo env SIGNER_SERVICE_WORKLOAD_AUDIENCE=http://127.0.0.1:8789 \
+  deploy/nitro/build-custody-eif.sh --verify-reproducible
 sudo systemctl daemon-reload
 sudo systemctl enable --now morpheus-nitro-egress
 sudo systemctl enable --now morpheus-nitro-signer
 curl -fsS http://127.0.0.1:8787/health
 sudo systemctl enable --now morpheus-nitro-custody
 curl -fsS http://127.0.0.1:8789/health
+sudo systemctl enable --now morpheus-nitro-provision.timer
+```
+
+The custody workload audience is measured into its EIF and must exactly match
+the canonical origin configured in NeoNexus. The loopback value above matches
+the default host bridge. Build with the external HTTPS origin instead when a
+TLS proxy is the caller-visible custody endpoint; changing it requires a new
+measurement and KMS policy pin.
+
+The Rust relayer is installed with the other Rust service artifacts as the
+production request/feed delivery authority:
+
+```bash
+cargo build --release --locked -p neo-os-relayer --bin neo-os-relayer
+sudo install -d -m 0755 /opt/neoos/services/bin
+sudo install -m 0755 target/release/neo-os-relayer /opt/neoos/services/bin/neo-os-relayer
+sudo install -m 0640 deploy/nitro/neo-os-relayer.env.example /opt/morpheus/nitro/neo-os-relayer.env
+sudoedit /opt/morpheus/nitro/neo-os-relayer.env
+
+sudo systemctl daemon-reload
 sudo systemctl enable --now morpheus-relayer-nitro
 ```
+
+Choose `neo_n3`, `neox`, or both in `MORPHEUS_ACTIVE_CHAINS`, and select
+`requests_only`, `feed_only`, or `combined`. Feed modes require
+`MORPHEUS_FEED_SYNC_ENABLED=true`, at least one symbol, and each active chain's
+datafeed contract. Request modes require the active chain's oracle contract.
+All modes use the measured host and separate custody service. Keep
+`MORPHEUS_AUTOMATION_ENABLED=false`; `config:validate` fails closed otherwise.
 
 The egress unit is not optional for custody: `morpheus-nitro-custody.service`
 orders itself after it, and a `Wants=` on a unit that was never installed is

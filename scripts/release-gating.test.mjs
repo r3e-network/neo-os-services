@@ -92,7 +92,7 @@ test('the Vercel production deploy is gated on a test job', async () => {
   );
 });
 
-test('the ghcr image publish is gated on the worker suites it ships', async () => {
+test('the ghcr image publish is gated on the Rust service suites it ships', async () => {
   const source = await fs.readFile(path.join(workflowDir, 'publish-images.yml'), 'utf8');
   const jobs = parseWorkflowJobs(source);
   const publish = jobs.find((job) => job.name === 'build-and-push');
@@ -102,17 +102,30 @@ test('the ghcr image publish is gated on the worker suites it ships', async () =
   const gate = jobs.find((job) => publish.needs.includes(job.name) && runsTests(job));
   assert.ok(gate, `build-and-push needs [${publish.needs.join(', ')}], none of which runs tests`);
 
-  // The images are built from these two workers; a gate that does not exercise
-  // them would be a gate in name only.
-  for (const workspace of ['workers/nitro-worker', 'workers/morpheus-relayer']) {
+  // The matrix ships these three Rust services. Compatibility Node suites run
+  // in CI, but cannot authorize a Rust production artifact.
+  for (const packageName of ['neo-signer', 'nitro-enclave-host', 'neo-os-relayer']) {
     assert.ok(
-      gate.body.includes(`npm --prefix ${workspace} test`),
-      `the publish-images gate does not run the ${workspace} suite`
+      gate.body.includes(`-p ${packageName}`),
+      `the publish-images gate does not run the ${packageName} suite`
     );
   }
+  assert.ok(
+    gate.body.includes('check:production-topology'),
+    'the publish-images gate does not audit the Rust/compatibility boundary'
+  );
+  assert.doesNotMatch(
+    publish.body,
+    /workers\/(?:nitro-worker|morpheus-relayer)\/Dockerfile/,
+    'the publish matrix still promotes a Node worker/relayer image'
+  );
+  assert.doesNotMatch(
+    publish.body,
+    /type=raw,value=latest|type=ref,event=branch/,
+    'the publish matrix still creates a mutable production tag'
+  );
 
-  // `packages: write` is what makes this job able to overwrite :latest. The
-  // gate job must not carry it.
+  // The gate job must never hold the permission that can publish packages.
   assert.ok(!gate.body.includes('packages: write'), 'the test gate holds packages: write');
   assert.ok(publish.body.includes('packages: write'), 'build-and-push lost its packages: write');
 });

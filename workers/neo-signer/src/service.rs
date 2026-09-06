@@ -43,6 +43,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use neo_os_chain_evm::{build_neox_digest, eip191_message_hash, Fulfillment};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -57,6 +58,7 @@ use crate::{
         SignerAuditRecord, SignerCaller, SignerConsensusReservation, SignerKey, SignerPolicy,
         SignerRequestCompletion, SignerValueEvent, WorkloadIdentity,
     },
+    neo_block::NeoBlock,
     network::{self, ChainFamily, Network},
     policy::{self, AssetWindowSpend, SigningRequest, WindowSpend},
     store::Store,
@@ -94,10 +96,39 @@ pub struct SignedWitness {
     pub invocation: Vec<u8>,
     /// Neo N3: `0c 21 <33B pubkey> 41 56e7b327`. NeoX: empty.
     pub verification: Vec<u8>,
-    /// EVM signature (r || s || v), 65 bytes hex-encoded. Only present for NeoX transactions.
+    /// Deprecated compatibility alias for [`Self::signed_transaction`].
     pub signature_hex: Option<String>,
+    /// Complete signed NeoX EIP-1559 transaction, hex encoded with a `0x` prefix.
+    pub signed_transaction: Option<String>,
     /// Chain family this signature is for.
     pub chain_family: Option<ChainFamily>,
+}
+
+/// Public result of the semantic NeoX verifier lane.  Unlike [`SignedWitness`]
+/// this is not a transaction witness: it is the 65-byte personal-signature the
+/// oracle contract verifies with `ecrecover`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignedEip191Fulfillment {
+    pub key_id: String,
+    pub address: String,
+    pub public_key: String,
+    pub digest: String,
+    pub message_hash: String,
+    pub signature: String,
+    pub chain_id: u64,
+    pub oracle_contract: String,
+}
+
+/// Structured input to the semantic NeoX verifier lane. Keeping the complete
+/// domain in one value makes it impossible for a call site to accidentally
+/// omit one of the chain-, contract-, payload-, or idempotency-binding fields.
+pub struct Eip191FulfillmentRequest<'a> {
+    pub key_id: &'a str,
+    pub chain_id: u64,
+    pub oracle_contract: &'a str,
+    pub fulfillment: &'a Fulfillment,
+    pub result_bytes_hex: &'a str,
+    pub request_id: &'a str,
 }
 
 /// What a caller may learn about a key it is granted.
@@ -111,6 +142,8 @@ pub struct KeyPublicInfo {
     pub key_id: String,
     pub label: String,
     pub network: Network,
+    pub chain_family: ChainFamily,
+    pub chain_id: u64,
     /// The magic the key's signatures commit to, as bound at custody time.
     /// Surfaced so an operator can confirm a private-network key carries its
     /// chain's real identity rather than the default.
@@ -126,6 +159,7 @@ pub struct KeyPublicInfo {
 }
 
 pub type SignResponse = Outcome<SignedWitness>;
+pub type Eip191FulfillmentResponse = Outcome<SignedEip191Fulfillment>;
 pub type InfoResponse = Outcome<KeyPublicInfo>;
 
 impl<T> Outcome<T> {
@@ -229,7 +263,20 @@ pub struct SignerService {
 enum RequestKind {
     Transaction,
     Consensus,
+    Block { block_index: u32 },
     Raw,
+}
+
+/// A phase outside Neo's dBFT message-type space, reserved solely for the
+/// height-wide block-header commitment made by `SignBlock`.
+const BLOCK_RESERVATION_PHASE: u8 = 0xff;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RequestedChain {
+    family: ChainFamily,
+    chain_id: Option<u64>,
+    network_magic: Option<u32>,
+    public_key: Option<[u8; 33]>,
 }
 
 /// Whether a caller got past identification and authorization.
@@ -262,6 +309,9 @@ enum Parsed {
     Consensus {
         payload: ConsensusPayload,
     },
+    Block {
+        block_index: u32,
+    },
     /// Raw bytes: nothing to decode, so the policy decides on the switch
     /// alone.
     Raw,
@@ -286,6 +336,7 @@ impl Parsed {
                 intent,
             },
             Parsed::Consensus { payload } => SigningRequest::Consensus { payload },
+            Parsed::Block { .. } => SigningRequest::Block,
             Parsed::Raw => SigningRequest::Raw,
         }
     }
@@ -296,6 +347,7 @@ struct Approved {
     witness: SignedWitness,
     kind: RequestKind,
     intents: Vec<Intent>,
+    evm_intent: Option<EvmIntent>,
     consensus: Option<SignerConsensusReservation>,
 }
 
@@ -352,6 +404,24 @@ impl SignerService {
         network: Network,
         network_magic: Option<u32>,
     ) -> Result<Outcome<KeyPublicInfo>> {
+        self.generate_key_for_chain(
+            credentials,
+            label,
+            network,
+            ChainFamily::NeoN3,
+            network_magic.map(u64::from),
+        )
+    }
+
+    /// Create a key whose curve is immutably bound to its chain family.
+    pub fn generate_key_for_chain(
+        &self,
+        credentials: &CallerCredentials,
+        label: &str,
+        network: Network,
+        chain_family: ChainFamily,
+        chain_id: Option<u64>,
+    ) -> Result<Outcome<KeyPublicInfo>> {
         let _decision = self.lock_decision()?;
         let caller = match self.admin_caller(credentials, SignerAuditAction::KeyGenerated, None)? {
             Ok(caller) => caller,
@@ -362,14 +432,18 @@ impl SignerService {
                 return Ok(Outcome::Refused(refusal));
             }
         };
-        let private_key = crypto::generate_private_key();
+        let private_key = match chain_family {
+            ChainFamily::NeoN3 => crypto::generate_private_key(),
+            ChainFamily::NeoX => crypto::generate_evm_private_key(),
+        };
         let result = self.store_key(
             credentials,
             &caller,
             KeyRequest {
                 label,
                 network,
-                requested_magic: network_magic,
+                chain_family,
+                requested_chain_id: chain_id,
                 action: SignerAuditAction::KeyGenerated,
             },
             &private_key,
@@ -401,6 +475,26 @@ impl SignerService {
         network_magic: Option<u32>,
         private_key: &str,
     ) -> Result<Outcome<KeyPublicInfo>> {
+        self.import_key_for_chain(
+            credentials,
+            label,
+            network,
+            ChainFamily::NeoN3,
+            network_magic.map(u64::from),
+            private_key,
+        )
+    }
+
+    /// Import a raw scalar under an explicit immutable curve/chain binding.
+    pub fn import_key_for_chain(
+        &self,
+        credentials: &CallerCredentials,
+        label: &str,
+        network: Network,
+        chain_family: ChainFamily,
+        chain_id: Option<u64>,
+        private_key: &str,
+    ) -> Result<Outcome<KeyPublicInfo>> {
         let _decision = self.lock_decision()?;
         let caller = match self.admin_caller(credentials, SignerAuditAction::KeyImported, None)? {
             Ok(caller) => caller,
@@ -424,7 +518,8 @@ impl SignerService {
             KeyRequest {
                 label,
                 network,
-                requested_magic: network_magic,
+                chain_family,
+                requested_chain_id: chain_id,
                 action: SignerAuditAction::KeyImported,
             },
             &parsed,
@@ -473,7 +568,8 @@ impl SignerService {
             KeyRequest {
                 label,
                 network,
-                requested_magic: network_magic,
+                chain_family: ChainFamily::NeoN3,
+                requested_chain_id: network_magic.map(u64::from),
                 action: SignerAuditAction::KeyImported,
             },
             &parsed,
@@ -573,15 +669,18 @@ impl SignerService {
                 Ok(caller) => caller,
                 Err(refusal) => return Ok(Outcome::Refused(refusal)),
             };
-        if self.custody_row(id)?.is_none() {
-            return self.deny(
-                credentials,
-                &caller,
-                SignerAuditAction::PolicySaved,
-                Some(id),
-                &unknown_key(id),
-            );
-        }
+        let key = match self.custody_row(id)? {
+            Some(key) => key,
+            None => {
+                return self.deny(
+                    credentials,
+                    &caller,
+                    SignerAuditAction::PolicySaved,
+                    Some(id),
+                    &unknown_key(id),
+                )
+            }
+        };
         if policy.mixes_raw_and_semantic_authority() {
             return self.reject_invalid(
                 credentials,
@@ -591,7 +690,37 @@ impl SignerService {
                 "allow_raw requires a dedicated raw-only key and cannot be combined with consensus, transfer, contract-call, or global authority",
             );
         }
-        let stored = policy.clone().normalized();
+        if policy
+            .chain_family
+            .is_some_and(|family| family != key.chain_family)
+            || (key.chain_family == ChainFamily::NeoX
+                && policy.chain_family != Some(ChainFamily::NeoX))
+        {
+            return self.reject_invalid(
+                credentials,
+                &caller,
+                SignerAuditAction::PolicySaved,
+                Some(id),
+                "policy chain_family must match the immutable custody key chain_family",
+            );
+        }
+        if policy
+            .evm_chain_id
+            .is_some_and(|chain_id| chain_id != key.chain_id)
+        {
+            return self.reject_invalid(
+                credentials,
+                &caller,
+                SignerAuditAction::PolicySaved,
+                Some(id),
+                "policy evm_chain_id must match the immutable custody key chain_id",
+            );
+        }
+        let mut stored = policy.clone().normalized();
+        if key.chain_family == ChainFamily::NeoX {
+            stored.chain_family = Some(ChainFamily::NeoX);
+            stored.evm_chain_id = Some(key.chain_id);
+        }
         self.repository
             .save_signer_policy(id, &stored, now_unix()?)?;
         self.record_entry(SignerAuditRecord {
@@ -1037,6 +1166,12 @@ impl SignerService {
             unsigned,
             RequestKind::Transaction,
             None,
+            Some(RequestedChain {
+                family: ChainFamily::NeoN3,
+                chain_id: None,
+                network_magic: None,
+                public_key: None,
+            }),
         )
     }
 
@@ -1053,6 +1188,38 @@ impl SignerService {
             unsigned,
             RequestKind::Transaction,
             request_id,
+            Some(RequestedChain {
+                family: ChainFamily::NeoN3,
+                chain_id: None,
+                network_magic: None,
+                public_key: None,
+            }),
+        )
+    }
+
+    /// Sign a transaction under the chain identity carried by the HTTP request.
+    /// The request may narrow, but never override, the immutable key binding.
+    pub fn sign_transaction_for_chain_with_request_id(
+        &self,
+        credentials: &CallerCredentials,
+        key_id: &str,
+        unsigned: &[u8],
+        chain_family: ChainFamily,
+        chain_id: Option<u64>,
+        request_id: Option<&str>,
+    ) -> Result<SignResponse> {
+        self.sign(
+            credentials,
+            key_id,
+            unsigned,
+            RequestKind::Transaction,
+            request_id,
+            Some(RequestedChain {
+                family: chain_family,
+                chain_id,
+                network_magic: None,
+                public_key: None,
+            }),
         )
     }
 
@@ -1063,7 +1230,14 @@ impl SignerService {
         key_id: &str,
         unsigned: &[u8],
     ) -> Result<SignResponse> {
-        self.sign(credentials, key_id, unsigned, RequestKind::Consensus, None)
+        self.sign(
+            credentials,
+            key_id,
+            unsigned,
+            RequestKind::Consensus,
+            None,
+            None,
+        )
     }
 
     pub fn sign_consensus_with_request_id(
@@ -1079,6 +1253,64 @@ impl SignerService {
             unsigned,
             RequestKind::Consensus,
             request_id,
+            None,
+        )
+    }
+
+    /// Sign an extensible payload only when the protocol-supplied network is
+    /// the immutable magic held by this custody key. The HTTP compatibility
+    /// route intentionally has no caller-supplied magic; the Neo SignClient
+    /// bridge uses this stricter form because its request does.
+    pub fn sign_consensus_for_network_with_request_id(
+        &self,
+        credentials: &CallerCredentials,
+        key_id: &str,
+        unsigned: &[u8],
+        network_magic: u32,
+        request_id: Option<&str>,
+    ) -> Result<SignResponse> {
+        self.sign(
+            credentials,
+            key_id,
+            unsigned,
+            RequestKind::Consensus,
+            request_id,
+            Some(RequestedChain {
+                family: ChainFamily::NeoN3,
+                chain_id: None,
+                network_magic: Some(network_magic),
+                public_key: None,
+            }),
+        )
+    }
+
+    /// Sign a fully validated Neo N3 block header through the consensus lane.
+    /// `NeoBlock` can only be constructed after its transaction hashes reproduce
+    /// the header Merkle root; the remaining network and public-key bindings are
+    /// checked under the service decision lock before key material is opened.
+    pub fn sign_block_with_request_id(
+        &self,
+        credentials: &CallerCredentials,
+        key_id: &str,
+        block: &NeoBlock,
+        network_magic: u32,
+        public_key: [u8; 33],
+        request_id: Option<&str>,
+    ) -> Result<SignResponse> {
+        self.sign(
+            credentials,
+            key_id,
+            block.unsigned(),
+            RequestKind::Block {
+                block_index: block.index(),
+            },
+            request_id,
+            Some(RequestedChain {
+                family: ChainFamily::NeoN3,
+                chain_id: None,
+                network_magic: Some(network_magic),
+                public_key: Some(public_key),
+            }),
         )
     }
 
@@ -1093,7 +1325,7 @@ impl SignerService {
         key_id: &str,
         data: &[u8],
     ) -> Result<SignResponse> {
-        self.sign(credentials, key_id, data, RequestKind::Raw, None)
+        self.sign(credentials, key_id, data, RequestKind::Raw, None, None)
     }
 
     pub fn sign_raw_with_request_id(
@@ -1103,7 +1335,329 @@ impl SignerService {
         data: &[u8],
         request_id: Option<&str>,
     ) -> Result<SignResponse> {
-        self.sign(credentials, key_id, data, RequestKind::Raw, request_id)
+        self.sign(
+            credentials,
+            key_id,
+            data,
+            RequestKind::Raw,
+            request_id,
+            None,
+        )
+    }
+
+    /// Sign the canonical NeoX oracle fulfillment digest through a semantic,
+    /// chain-bound lane.  The caller never supplies a digest or prehash: both
+    /// are recomputed here from the structured fields, and the same policy that
+    /// bounds the updater transaction must allow the oracle contract and
+    /// `fulfillRequest` selector.
+    pub fn sign_eip191_fulfillment(
+        &self,
+        credentials: &CallerCredentials,
+        request: Eip191FulfillmentRequest<'_>,
+    ) -> Result<Eip191FulfillmentResponse> {
+        let Eip191FulfillmentRequest {
+            key_id,
+            chain_id,
+            oracle_contract,
+            fulfillment,
+            result_bytes_hex,
+            request_id,
+        } = request;
+        let start = std::time::Instant::now();
+        let _decision = self.lock_decision()?;
+        let action = SignerAuditAction::Eip191FulfillmentSigned;
+        let caller = match self.resolved(
+            self.access(credentials, CallerCapability::Sign, Some(key_id)),
+            credentials,
+            action,
+            Some(key_id),
+        )? {
+            Ok(caller) => caller,
+            Err(refusal) => {
+                metrics::SIGN_REQUESTS_TOTAL
+                    .with_label_values(&["neox", "refused"])
+                    .inc();
+                return Ok(Outcome::Refused(refusal));
+            }
+        };
+
+        if !valid_request_id(request_id) {
+            let refusal = Refusal::request_id(
+                audit::REQUEST_ID_INVALID,
+                "request_id must be 1-128 safe ASCII characters",
+                format!("invalid request id presented: {request_id:?}"),
+            );
+            return Ok(Outcome::Refused(self.refuse(
+                action,
+                credentials,
+                Some(&caller),
+                Some(key_id),
+                &refusal,
+            )?));
+        }
+
+        let key = match self.custody(key_id) {
+            Ok(key) => key,
+            Err(refusal) => {
+                return Ok(Outcome::Refused(self.refuse(
+                    action,
+                    credentials,
+                    Some(&caller),
+                    Some(key_id),
+                    &refusal,
+                )?))
+            }
+        };
+        if key.chain_family != ChainFamily::NeoX {
+            let refusal = Refusal::denied(
+                "signer-chain-family-mismatch",
+                "EIP-191 fulfillment signing requires a NeoX custody key",
+                format!("key {} is bound to {}", key.id, key.chain_family),
+            );
+            return Ok(Outcome::Refused(self.refuse(
+                action,
+                credentials,
+                Some(&caller),
+                Some(key_id),
+                &refusal,
+            )?));
+        }
+        if key.chain_id != chain_id {
+            let refusal = Refusal::denied(
+                "signer-chain-id-mismatch",
+                "the requested chain id does not match this custody key",
+                format!(
+                    "key {} is bound to {}, request named {chain_id}",
+                    key.id, key.chain_id
+                ),
+            );
+            return Ok(Outcome::Refused(self.refuse(
+                action,
+                credentials,
+                Some(&caller),
+                Some(key_id),
+                &refusal,
+            )?));
+        }
+
+        let oracle_address = match parse_evm_address(oracle_contract) {
+            Some(address) => address,
+            None => {
+                let refusal = Refusal::denied(
+                    "signer-oracle-contract-invalid",
+                    "oracle_contract must be a 20-byte EVM address",
+                    format!("invalid oracle contract {oracle_contract:?}"),
+                );
+                return Ok(Outcome::Refused(self.refuse(
+                    action,
+                    credentials,
+                    Some(&caller),
+                    Some(key_id),
+                    &refusal,
+                )?));
+            }
+        };
+        let digest =
+            match build_neox_digest(chain_id, oracle_contract, fulfillment, result_bytes_hex) {
+                Ok(digest) => digest,
+                Err(error) => {
+                    let refusal = Refusal::denied(
+                        "signer-fulfillment-invalid",
+                        "the structured fulfillment could not be encoded",
+                        error.to_string(),
+                    );
+                    return Ok(Outcome::Refused(self.refuse(
+                        action,
+                        credentials,
+                        Some(&caller),
+                        Some(key_id),
+                        &refusal,
+                    )?));
+                }
+            };
+        let message_hash = eip191_message_hash(&digest);
+        let requested_chain = Some(RequestedChain {
+            family: ChainFamily::NeoX,
+            chain_id: Some(chain_id),
+            network_magic: None,
+            public_key: None,
+        });
+        let request_digest = idempotency_digest(action, key_id, &digest, requested_chain);
+        if let Some(completed) = self
+            .repository
+            .find_signer_request(&caller.id, request_id)?
+        {
+            if completed.request_digest != request_digest
+                || completed.key_id != key_id
+                || completed.action != action
+            {
+                let refusal = Refusal::request_id(
+                    audit::REQUEST_ID_CONFLICT,
+                    "request_id was already used for a different signing request",
+                    format!(
+                        "request id {request_id:?} for caller {} is already bound",
+                        caller.id
+                    ),
+                );
+                return Ok(Outcome::Refused(self.refuse(
+                    action,
+                    credentials,
+                    Some(&caller),
+                    Some(key_id),
+                    &refusal,
+                )?));
+            }
+            if completed.invocation.len() != 65 || completed.verification.len() != 32 {
+                anyhow::bail!("stored EIP-191 fulfillment completion is corrupt");
+            }
+            return Ok(Outcome::Allowed(SignedEip191Fulfillment {
+                key_id: completed.key_id,
+                address: completed.address,
+                public_key: format!("0x{}", hex::encode(key.public_key)),
+                digest: completed.result_digest,
+                message_hash: format!("0x{}", hex::encode(completed.verification)),
+                signature: format!("0x{}", hex::encode(completed.invocation)),
+                chain_id,
+                oracle_contract: normalized_evm_address(oracle_address),
+            }));
+        }
+
+        let account = key
+            .account()
+            .ok_or_else(|| anyhow::anyhow!("NeoX custody key has no usable public account"))?;
+        let boundary = self.repository.signer_policy_or_default(key_id)?;
+        if boundary.chain_family != Some(ChainFamily::NeoX)
+            || boundary.evm_chain_id != Some(chain_id)
+        {
+            let refusal = Refusal::failed(
+                "signer-policy-chain-mismatch",
+                "this NeoX key has no matching NeoX policy boundary",
+                format!("key {key_id} policy is not bound to NeoX chain {chain_id}"),
+            );
+            return Ok(Outcome::Refused(self.refuse(
+                action,
+                credentials,
+                Some(&caller),
+                Some(key_id),
+                &refusal,
+            )?));
+        }
+        let selector_hash =
+            neo_os_chain_evm::keccak256(b"fulfillRequest(uint256,bool,bytes,string,bytes)");
+        let selector: [u8; 4] = selector_hash[..4].try_into().expect("four-byte selector");
+        let semantic = SigningRequest::Eip191Fulfillment {
+            oracle_contract: ScriptHash::from_evm_address(oracle_address),
+            method_selector: selector,
+        };
+        if let policy::Verdict::Deny { reason, detail } =
+            policy::evaluate(&boundary, account, &semantic, &WindowSpend::new())
+        {
+            let refusal = Refusal::policy(reason, detail);
+            metrics::POLICY_VIOLATIONS_TOTAL
+                .with_label_values(&[refusal.code])
+                .inc();
+            return Ok(Outcome::Refused(self.refuse(
+                action,
+                credentials,
+                Some(&caller),
+                Some(key_id),
+                &refusal,
+            )?));
+        }
+        let signatures = match self.signature_count(key_id, &boundary) {
+            Ok(value) => value,
+            Err(refusal) => {
+                return Ok(Outcome::Refused(self.refuse(
+                    action,
+                    credentials,
+                    Some(&caller),
+                    Some(key_id),
+                    &refusal,
+                )?))
+            }
+        };
+        if let policy::Verdict::Deny { reason, detail } =
+            policy::evaluate_signature_rate(&boundary, signatures)
+        {
+            let refusal = Refusal::policy(reason, detail);
+            return Ok(Outcome::Refused(self.refuse(
+                action,
+                credentials,
+                Some(&caller),
+                Some(key_id),
+                &refusal,
+            )?));
+        }
+
+        let private_key = match self.open_key(&key) {
+            Ok(key) => key,
+            Err(refusal) => {
+                return Ok(Outcome::Refused(self.refuse(
+                    action,
+                    credentials,
+                    Some(&caller),
+                    Some(key_id),
+                    &refusal,
+                )?))
+            }
+        };
+        let signature = crypto::sign_eip191_prehash(&private_key, &message_hash)
+            .map_err(|error| anyhow::anyhow!("EIP-191 fulfillment signature failed: {error}"))?;
+        let digest_hex = format!("0x{}", hex::encode(digest));
+        let record = SignerAuditRecord {
+            caller_id: Some(caller.id.clone()),
+            key_id: Some(key_id.to_string()),
+            origin: credentials.origin_label(),
+            tx_id: Some(digest_hex.clone()),
+            ..entry(
+                action,
+                format!(
+                    "NeoX fulfillment {} for contract {} on chain {}",
+                    fulfillment.request_id,
+                    normalized_evm_address(oracle_address),
+                    chain_id
+                ),
+            )?
+        };
+        let completion = SignerRequestCompletion {
+            caller_id: caller.id,
+            request_id: request_id.to_string(),
+            key_id: key_id.to_string(),
+            action,
+            request_digest,
+            result_digest: digest_hex.clone(),
+            script_hash: account,
+            address: key.address(),
+            invocation: signature.to_vec(),
+            verification: message_hash.to_vec(),
+            completed_at_unix: record.recorded_at_unix,
+            audit_id: None,
+            chain_family: Some(ChainFamily::NeoX),
+            signed_transaction: None,
+        };
+        self.repository
+            .record_signer_decision(&record, &[], None, Some(&completion))?;
+
+        metrics::SIGN_REQUESTS_TOTAL
+            .with_label_values(&["neox", "success"])
+            .inc();
+        metrics::SIGN_DURATION_SECONDS
+            .with_label_values(&["neox"])
+            .observe(start.elapsed().as_secs_f64());
+        metrics::SIGN_BYTES_TOTAL
+            .with_label_values(&["neox"])
+            .inc_by(32.0);
+
+        Ok(Outcome::Allowed(SignedEip191Fulfillment {
+            key_id: key_id.to_string(),
+            address: key.address(),
+            public_key: format!("0x{}", hex::encode(key.public_key)),
+            digest: digest_hex,
+            message_hash: format!("0x{}", hex::encode(message_hash)),
+            signature: format!("0x{}", hex::encode(signature)),
+            chain_id,
+            oracle_contract: normalized_evm_address(oracle_address),
+        }))
     }
 
     /// The account details a caller needs in order to build a transaction for
@@ -1166,6 +1720,7 @@ impl SignerService {
         unsigned: &[u8],
         kind: RequestKind,
         request_id: Option<&str>,
+        requested_chain: Option<RequestedChain>,
     ) -> Result<SignResponse> {
         let start = std::time::Instant::now();
         let _decision = self.lock_decision()?;
@@ -1204,7 +1759,7 @@ impl SignerService {
                     &refusal,
                 )?));
             }
-            let request_digest = idempotency_digest(action, key_id, unsigned);
+            let request_digest = idempotency_digest(action, key_id, unsigned, requested_chain);
             if let Some(completed) = self
                 .repository
                 .find_signer_request(&caller.id, request_id)?
@@ -1229,6 +1784,7 @@ impl SignerService {
                         &refusal,
                     )?));
                 }
+                let signed_transaction = completed.signed_transaction;
                 return Ok(Outcome::Allowed(SignedWitness {
                     key_id: completed.key_id,
                     script_hash: completed.script_hash,
@@ -1237,14 +1793,15 @@ impl SignerService {
                     invocation: completed.invocation,
                     verification: completed.verification,
                     chain_family: completed.chain_family,
-                    signature_hex: None, // Not used for Neo N3
+                    signature_hex: signed_transaction.clone(),
+                    signed_transaction,
                 }));
             }
             Some((request_id.to_string(), request_digest))
         } else {
             None
         };
-        match self.attempt(key_id, unsigned, kind) {
+        match self.attempt(key_id, unsigned, kind, requested_chain) {
             Err(refusal) => {
                 metrics::SIGN_REQUESTS_TOTAL
                     .with_label_values(&["unknown", "refused"])
@@ -1268,10 +1825,21 @@ impl SignerService {
                     key_id: Some(key_id.to_string()),
                     origin: credentials.origin_label(),
                     tx_id: Some(approved.witness.digest.clone()),
-                    ..entry(action, intent_summary(&approved.intents))?
+                    ..entry(
+                        action,
+                        match approved.kind {
+                            RequestKind::Block { block_index } => {
+                                format!("Neo block header at height {block_index}")
+                            }
+                            _ => request_intent_summary(
+                                &approved.intents,
+                                approved.evm_intent.as_ref(),
+                            ),
+                        },
+                    )?
                 };
                 let recorded_at_unix = record.recorded_at_unix;
-                let events = if approved.kind == RequestKind::Transaction {
+                let mut events = if approved.kind == RequestKind::Transaction {
                     value_events(
                         key_id,
                         recorded_at_unix,
@@ -1282,6 +1850,9 @@ impl SignerService {
                 } else {
                     Vec::new()
                 };
+                if let Some(intent) = approved.evm_intent.as_ref() {
+                    events.extend(evm_value_events(key_id, recorded_at_unix, intent, None)?);
+                }
                 let request =
                     idempotency.map(|(request_id, request_digest)| SignerRequestCompletion {
                         caller_id: caller.id,
@@ -1297,6 +1868,7 @@ impl SignerService {
                         completed_at_unix: recorded_at_unix,
                         audit_id: None,
                         chain_family: approved.witness.chain_family,
+                        signed_transaction: approved.witness.signed_transaction.clone(),
                     });
                 self.repository.record_signer_decision(
                     &record,
@@ -1306,7 +1878,9 @@ impl SignerService {
                 )?;
 
                 // Record metrics
-                let chain_family_label = approved.witness.chain_family
+                let chain_family_label = approved
+                    .witness
+                    .chain_family
                     .map(|cf| match cf {
                         ChainFamily::NeoN3 => "neo_n3",
                         ChainFamily::NeoX => "neox",
@@ -1338,6 +1912,7 @@ impl SignerService {
         key_id: &str,
         unsigned: &[u8],
         kind: RequestKind,
+        requested_chain: Option<RequestedChain>,
     ) -> Result<Approved, Refusal> {
         let key = self.custody(key_id)?;
         let account = key.account().ok_or_else(|| {
@@ -1356,14 +1931,16 @@ impl SignerService {
                     format!("{key_id}: {error:?}"),
                 )
             })?;
-        let parsed = self.parse(unsigned, kind, &key, &boundary)?;
+        let parsed = self.parse(unsigned, kind, &key, &boundary, requested_chain)?;
         let spent = self.window_spend(key_id, &boundary)?;
         let request = parsed.request();
         let intents = match request {
             SigningRequest::Transaction { intents, .. } => intents,
             SigningRequest::Consensus { .. }
+            | SigningRequest::Block
             | SigningRequest::Raw
-            | SigningRequest::EvmTransaction { .. } => &[],
+            | SigningRequest::EvmTransaction { .. }
+            | SigningRequest::Eip191Fulfillment { .. } => &[],
         };
         match policy::evaluate(&boundary, account, &request, &spent) {
             policy::Verdict::Allow => {}
@@ -1390,36 +1967,36 @@ impl SignerService {
         // anti-equivocation check has passed.
         let private_key = self.open_key(&key)?;
 
-        let (digest, invocation, verification, signature_hex, chain_family) = match kind {
+        let (digest, invocation, verification, signed_transaction, chain_family) = match kind {
             RequestKind::Transaction => match &parsed {
                 Parsed::EvmTransaction { transaction, .. } => {
-                    let signed_raw = evm_tx::sign_evm_tx(transaction, &private_key).map_err(|error| {
-                        Refusal::failed(
-                            "signer-signature-failed",
-                            "the EVM transaction signature could not be produced",
-                            error.to_string(),
-                        )
-                    })?;
+                    let signed_raw =
+                        evm_tx::sign_evm_tx(transaction, &private_key).map_err(|error| {
+                            Refusal::failed(
+                                "signer-signature-failed",
+                                "the EVM transaction signature could not be produced",
+                                error.to_string(),
+                            )
+                        })?;
                     let tx_hash = format!("0x{}", hex::encode(Keccak256::digest(&signed_raw)));
-                    let sig_hex = format!("0x{}", hex::encode(&signed_raw));
+                    let signed_transaction = format!("0x{}", hex::encode(&signed_raw));
                     (
                         tx_hash,
                         Vec::new(),
                         Vec::new(),
-                        Some(sig_hex),
+                        Some(signed_transaction),
                         Some(ChainFamily::NeoX),
                     )
                 }
                 Parsed::Transaction { .. } => {
-                    let sig = crypto::sign_transaction(&private_key, unsigned, key.network_magic()).map_err(
-                        |error| {
+                    let sig = crypto::sign_transaction(&private_key, unsigned, key.network_magic())
+                        .map_err(|error| {
                             Refusal::failed(
                                 "signer-signature-failed",
                                 "the signature could not be produced",
                                 error.to_string(),
                             )
-                        },
-                    )?;
+                        })?;
                     (
                         tx::script_hash_to_display(&crypto::transaction_hash(unsigned)),
                         crypto::invocation_script(&sig),
@@ -1430,16 +2007,15 @@ impl SignerService {
                 }
                 _ => unreachable!(),
             },
-            RequestKind::Consensus => {
-                let sig = crypto::sign_transaction(&private_key, unsigned, key.network_magic()).map_err(
-                    |error| {
+            RequestKind::Consensus | RequestKind::Block { .. } => {
+                let sig = crypto::sign_transaction(&private_key, unsigned, key.network_magic())
+                    .map_err(|error| {
                         Refusal::failed(
                             "signer-signature-failed",
                             "the signature could not be produced",
                             error.to_string(),
                         )
-                    },
-                )?;
+                    })?;
                 (
                     tx::script_hash_to_display(&crypto::transaction_hash(unsigned)),
                     crypto::invocation_script(&sig),
@@ -1473,35 +2049,36 @@ impl SignerService {
                 digest,
                 invocation,
                 verification,
-                signature_hex,
+                signature_hex: signed_transaction.clone(),
+                signed_transaction,
                 chain_family,
             },
             kind,
-            intents: match parsed {
-                Parsed::Transaction { intents, .. } => intents,
-                Parsed::EvmTransaction { .. } | Parsed::Consensus { .. } | Parsed::Raw => Vec::new(),
+            intents: match &parsed {
+                Parsed::Transaction { intents, .. } => intents.clone(),
+                Parsed::EvmTransaction { .. }
+                | Parsed::Consensus { .. }
+                | Parsed::Block { .. }
+                | Parsed::Raw => Vec::new(),
+            },
+            evm_intent: match parsed {
+                Parsed::EvmTransaction { intent, .. } => Some(intent),
+                Parsed::Transaction { .. }
+                | Parsed::Consensus { .. }
+                | Parsed::Block { .. }
+                | Parsed::Raw => None,
             },
             consensus,
         })
     }
 
-    /// Build and preflight the durable dBFT slot this request would occupy.
+    /// Build and preflight the durable consensus slot this request would occupy.
     fn consensus_reservation(
         &self,
         key: &SignerKey,
         parsed: &Parsed,
         unsigned: &[u8],
     ) -> Result<Option<SignerConsensusReservation>, Refusal> {
-        let Parsed::Consensus { payload } = parsed else {
-            return Ok(None);
-        };
-        let message = payload.dbft_message().map_err(|error| {
-            Refusal::failed(
-                "signer-payload-unparsable",
-                "the consensus payload could not be read",
-                error.to_string(),
-            )
-        })?;
         let checkpoint_digest = |bytes: &[u8]| {
             <[u8; 32]>::try_from(crypto::sha256(bytes)).map_err(|_| {
                 Refusal::failed(
@@ -1511,30 +2088,56 @@ impl SignerService {
                 )
             })
         };
-        let (phase, view_number, checkpoint) = match message.commitment {
-            DbftCommitment::None => return Ok(None),
-            DbftCommitment::PrepareRequest => (
-                tx::DbftMessageType::PrepareRequest as u8,
-                message.header.view_number,
+        let (block_index, phase, validator_index, view_number, checkpoint) = match parsed {
+            Parsed::Block { block_index } => (
+                *block_index,
+                BLOCK_RESERVATION_PHASE,
+                0,
+                0,
                 checkpoint_digest(unsigned)?,
             ),
-            DbftCommitment::PrepareResponse(preparation_hash) => (
-                tx::DbftMessageType::PrepareRequest as u8,
-                message.header.view_number,
-                preparation_hash,
-            ),
-            DbftCommitment::Commit(signature) => (
-                tx::DbftMessageType::Commit as u8,
-                0,
-                checkpoint_digest(&signature)?,
-            ),
+            Parsed::Consensus { payload } => {
+                let message = payload.dbft_message().map_err(|error| {
+                    Refusal::failed(
+                        "signer-payload-unparsable",
+                        "the consensus payload could not be read",
+                        error.to_string(),
+                    )
+                })?;
+                let (phase, view_number, checkpoint) = match message.commitment {
+                    DbftCommitment::None => return Ok(None),
+                    DbftCommitment::PrepareRequest => (
+                        tx::DbftMessageType::PrepareRequest as u8,
+                        message.header.view_number,
+                        checkpoint_digest(unsigned)?,
+                    ),
+                    DbftCommitment::PrepareResponse(preparation_hash) => (
+                        tx::DbftMessageType::PrepareRequest as u8,
+                        message.header.view_number,
+                        preparation_hash,
+                    ),
+                    DbftCommitment::Commit(signature) => (
+                        tx::DbftMessageType::Commit as u8,
+                        0,
+                        checkpoint_digest(&signature)?,
+                    ),
+                };
+                (
+                    message.header.block_index,
+                    phase,
+                    message.header.validator_index,
+                    view_number,
+                    checkpoint,
+                )
+            }
+            _ => return Ok(None),
         };
         let candidate = SignerConsensusReservation {
             public_key: key.public_key,
             network_magic: key.network_magic(),
-            block_index: message.header.block_index,
+            block_index,
             phase,
-            validator_index: message.header.validator_index,
+            validator_index,
             view_number,
             checkpoint,
             recorded_at_unix: now_unix().map_err(|error| {
@@ -1563,7 +2166,7 @@ impl SignerService {
                 return Err(Refusal::guard(
                     GuardRejection::ConsensusEquivocation,
                     format!(
-                        "public key {} already reserved dBFT phase 0x{:02x} at height {}, validator {}, view {} with checkpoint 0x{}; refused 0x{}",
+                        "public key {} already reserved consensus phase 0x{:02x} at height {}, validator {}, view {} with checkpoint 0x{}; refused 0x{}",
                         hex::encode(key.public_key),
                         candidate.phase,
                         candidate.block_index,
@@ -1579,23 +2182,154 @@ impl SignerService {
     }
 
     /// Read and decode the bytes a signature is about to cover.
+    fn validate_neo_binding(
+        key: &SignerKey,
+        requested_chain: Option<RequestedChain>,
+        require_public_key: bool,
+    ) -> Result<(), Refusal> {
+        if key.chain_family != ChainFamily::NeoN3 {
+            return Err(Refusal::denied(
+                "signer-chain-family-mismatch",
+                "consensus signing is available only to Neo N3 keys",
+                format!("key {} is bound to {}", key.id, key.chain_family),
+            ));
+        }
+        let Some(requested) = requested_chain else {
+            return if require_public_key {
+                Err(Refusal::failed(
+                    "signer-block-binding-missing",
+                    "the block signing identity was not provided",
+                    "block signing requires network and public-key bindings",
+                ))
+            } else {
+                Ok(())
+            };
+        };
+        if requested.family != ChainFamily::NeoN3 || requested.chain_id.is_some() {
+            return Err(Refusal::denied(
+                "signer-chain-family-mismatch",
+                "consensus signing is available only to Neo N3 keys",
+                format!(
+                    "key {} received family {} and chain id {:?}",
+                    key.id, requested.family, requested.chain_id
+                ),
+            ));
+        }
+        match requested.network_magic {
+            Some(network_magic) if network_magic != key.network_magic() => {
+                return Err(Refusal::denied(
+                    "signer-network-mismatch",
+                    "the requested network does not match this custody key",
+                    format!(
+                        "key {} is bound to {}, request named {}",
+                        key.id,
+                        key.network_magic(),
+                        network_magic
+                    ),
+                ));
+            }
+            None if require_public_key => {
+                return Err(Refusal::failed(
+                    "signer-block-network-missing",
+                    "the block signing network was not provided",
+                    format!("key {} received no network magic", key.id),
+                ));
+            }
+            _ => {}
+        }
+        match requested.public_key {
+            Some(public_key) if public_key != key.public_key => {
+                return Err(Refusal::denied(
+                    "signer-public-key-mismatch",
+                    "the requested public key does not match this custody key",
+                    format!(
+                        "key {} received public key {}",
+                        key.id,
+                        hex::encode(public_key)
+                    ),
+                ));
+            }
+            None if require_public_key => {
+                return Err(Refusal::failed(
+                    "signer-block-public-key-missing",
+                    "the block signing public key was not provided",
+                    format!("key {} received no public key", key.id),
+                ));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Read and decode the bytes a signature is about to cover.
     fn parse(
         &self,
         unsigned: &[u8],
         kind: RequestKind,
         key: &SignerKey,
         boundary: &SignerPolicy,
+        requested_chain: Option<RequestedChain>,
     ) -> Result<Parsed, Refusal> {
         match kind {
             RequestKind::Transaction => {
-                let is_neox = boundary.chain_family == Some(ChainFamily::NeoX)
-                    || unsigned.first() == Some(&evm_tx::EIP1559_TX_TYPE);
-                if is_neox {
-                    let chain_id = boundary
+                let requested_chain = requested_chain.ok_or_else(|| {
+                    Refusal::failed(
+                        "signer-chain-family-missing",
+                        "the transaction chain family was not provided",
+                        "transaction signing requires an explicit chain family".to_string(),
+                    )
+                })?;
+                if requested_chain.family != key.chain_family {
+                    return Err(Refusal::denied(
+                        "signer-chain-family-mismatch",
+                        "the requested chain family does not match this custody key",
+                        format!(
+                            "key {} is bound to {}, request named {}",
+                            key.id, key.chain_family, requested_chain.family
+                        ),
+                    ));
+                }
+                if requested_chain.family == ChainFamily::NeoX && requested_chain.chain_id.is_none()
+                {
+                    return Err(Refusal::denied(
+                        "signer-chain-id-missing",
+                        "NeoX transaction signing requires an explicit chain id",
+                        format!("key {} is bound to {}", key.id, key.chain_id),
+                    ));
+                }
+                if requested_chain
+                    .chain_id
+                    .is_some_and(|chain_id| chain_id != key.chain_id)
+                {
+                    return Err(Refusal::denied(
+                        "signer-chain-id-mismatch",
+                        "the requested chain id does not match this custody key",
+                        format!(
+                            "key {} is bound to {}, request named {:?}",
+                            key.id, key.chain_id, requested_chain.chain_id
+                        ),
+                    ));
+                }
+                if key.chain_family == ChainFamily::NeoX {
+                    if boundary.chain_family != Some(ChainFamily::NeoX) {
+                        return Err(Refusal::failed(
+                            "signer-policy-chain-mismatch",
+                            "this NeoX key has no NeoX policy boundary",
+                            format!("key {} policy is not explicitly bound to NeoX", key.id),
+                        ));
+                    }
+                    if boundary
                         .evm_chain_id
-                        .unwrap_or_else(|| network::neox_chain_id(key.network));
-                    let transaction =
-                        UnsignedEvmTransaction::parse(unsigned, chain_id).map_err(|error| {
+                        .is_some_and(|chain_id| chain_id != key.chain_id)
+                    {
+                        return Err(Refusal::failed(
+                            "signer-policy-chain-mismatch",
+                            "the policy chain id does not match this custody key",
+                            format!("key {} policy chain id drifted", key.id),
+                        ));
+                    }
+                    let transaction = UnsignedEvmTransaction::parse(unsigned, key.chain_id)
+                        .map_err(|error| {
                             Refusal::failed(
                                 "signer-transaction-unparsable",
                                 "the EVM transaction could not be read",
@@ -1608,6 +2342,13 @@ impl SignerService {
                         intent,
                     })
                 } else {
+                    if boundary.chain_family == Some(ChainFamily::NeoX) {
+                        return Err(Refusal::failed(
+                            "signer-policy-chain-mismatch",
+                            "the policy chain family does not match this custody key",
+                            format!("key {} is Neo N3 but its policy says NeoX", key.id),
+                        ));
+                    }
                     let transaction = UnsignedTransaction::parse(unsigned).map_err(|error| {
                         Refusal::failed(
                             "signer-transaction-unparsable",
@@ -1629,6 +2370,7 @@ impl SignerService {
                 }
             }
             RequestKind::Consensus => {
+                Self::validate_neo_binding(key, requested_chain, false)?;
                 let payload = ConsensusPayload::parse(unsigned).map_err(|error| {
                     Refusal::failed(
                         "signer-payload-unparsable",
@@ -1638,7 +2380,44 @@ impl SignerService {
                 })?;
                 Ok(Parsed::Consensus { payload })
             }
-            RequestKind::Raw => Ok(Parsed::Raw),
+            RequestKind::Block { block_index } => {
+                Self::validate_neo_binding(key, requested_chain, true)?;
+                if !matches!(unsigned.len(), 109 | 141) {
+                    return Err(Refusal::failed(
+                        "signer-block-unparsable",
+                        "the block header could not be read",
+                        format!(
+                            "validated block header was {} bytes, expected 109 or 141",
+                            unsigned.len()
+                        ),
+                    ));
+                }
+                let encoded_index = u32::from_le_bytes(
+                    unsigned[84..88]
+                        .try_into()
+                        .expect("a 109-byte header always contains its index"),
+                );
+                if encoded_index != block_index {
+                    return Err(Refusal::failed(
+                        "signer-block-index-mismatch",
+                        "the block header index was inconsistent",
+                        format!(
+                            "validated block index {block_index}, serialized index {encoded_index}"
+                        ),
+                    ));
+                }
+                Ok(Parsed::Block { block_index })
+            }
+            RequestKind::Raw => {
+                if key.chain_family != ChainFamily::NeoN3 {
+                    return Err(Refusal::denied(
+                        "signer-chain-family-mismatch",
+                        "raw witness signing is available only to Neo N3 keys",
+                        format!("key {} is bound to {}", key.id, key.chain_family),
+                    ));
+                }
+                Ok(Parsed::Raw)
+            }
         }
     }
 
@@ -1773,7 +2552,9 @@ impl SignerService {
     ) -> Access {
         let required = match kind {
             RequestKind::Raw => CallerCapability::RawSign,
-            RequestKind::Transaction | RequestKind::Consensus => CallerCapability::Sign,
+            RequestKind::Transaction | RequestKind::Consensus | RequestKind::Block { .. } => {
+                CallerCapability::Sign
+            }
         };
         self.access(credentials, required, Some(key_id))
     }
@@ -1853,7 +2634,11 @@ impl SignerService {
                 format!("{} opened to the wrong length", key.id),
             )
         })?;
-        let public_key = crypto::public_key_from_private(&private_key).map_err(|_| {
+        let public_key = match key.chain_family {
+            ChainFamily::NeoN3 => crypto::public_key_from_private(&private_key),
+            ChainFamily::NeoX => crypto::evm_compressed_public_key_from_private(&private_key),
+        }
+        .map_err(|_| {
             Refusal::guard(
                 GuardRejection::PublicKeyUnusable,
                 format!("{} opened to an unusable key", key.id),
@@ -2051,7 +2836,8 @@ impl SignerService {
         let KeyRequest {
             label,
             network,
-            requested_magic,
+            chain_family,
+            requested_chain_id,
             action,
         } = request;
         let label = match operator_label(label) {
@@ -2068,34 +2854,55 @@ impl SignerService {
         // identity. Mainnet and testnet have exactly one magic each: accepting
         // another would seal a key whose signatures no node verifies, which is
         // discovered only after real value is on the line.
-        let network_magic = match requested_magic {
-            None => network::network_magic(network),
-            Some(magic) if magic == network::network_magic(network) => magic,
+        let canonical_chain_id = match chain_family {
+            ChainFamily::NeoN3 => u64::from(network::network_magic(network)),
+            ChainFamily::NeoX => network::neox_chain_id(network),
+        };
+        let chain_id = match requested_chain_id {
+            None => canonical_chain_id,
+            Some(value) if value == canonical_chain_id => value,
             Some(0) => {
                 return self.reject_invalid(
                     credentials,
                     caller,
                     action,
                     None,
-                    "network magic 0 is not a usable chain identity",
+                    "chain id 0 is not a usable chain identity",
                 )
             }
-            Some(magic) if network == Network::Private => magic,
-            Some(magic) => {
+            Some(value) if network == Network::Private => value,
+            Some(value) => {
+                let identity_name = match chain_family {
+                    ChainFamily::NeoN3 => "magic",
+                    ChainFamily::NeoX => "chain id",
+                };
                 return self.reject_invalid(
                     credentials,
                     caller,
                     action,
                     None,
                     &format!(
-                        "{network} signs under magic {} only; a key bound to {magic} would \
+                        "{chain_family}/{network} signs under {identity_name} {canonical_chain_id} only; \
+                         a key bound to {value} would \
                          produce signatures no node of that chain accepts",
-                        network::network_magic(network)
                     ),
-                )
+                );
             }
         };
-        let public_key = match crypto::public_key_from_private(private_key) {
+        if i64::try_from(chain_id).is_err() {
+            return self.reject_invalid(
+                credentials,
+                caller,
+                action,
+                None,
+                "chain id exceeds the durable SQLite integer range",
+            );
+        }
+        let public_key = match chain_family {
+            ChainFamily::NeoN3 => crypto::public_key_from_private(private_key),
+            ChainFamily::NeoX => crypto::evm_compressed_public_key_from_private(private_key),
+        };
+        let public_key = match public_key {
             Ok(public_key) => public_key,
             Err(_) => {
                 return self.reject_invalid(
@@ -2103,7 +2910,10 @@ impl SignerService {
                     caller,
                     action,
                     None,
-                    "the value is not a usable P-256 private key",
+                    match chain_family {
+                        ChainFamily::NeoN3 => "the value is not a usable P-256 private key",
+                        ChainFamily::NeoX => "the value is not a usable secp256k1 private key",
+                    },
                 )
             }
         };
@@ -2122,10 +2932,18 @@ impl SignerService {
             );
         }
         let sealed = self.master_key.seal(private_key)?;
+        let network_magic = match chain_family {
+            ChainFamily::NeoN3 => u32::try_from(chain_id).map_err(|_| {
+                anyhow::anyhow!("Neo N3 chain id {chain_id} does not fit a network magic")
+            })?,
+            ChainFamily::NeoX => network::network_magic(network),
+        };
         let key = SignerKey {
             id: format!("key-{}", Uuid::new_v4()),
             label,
             network,
+            chain_family,
+            chain_id,
             network_magic,
             public_key,
             sealed,
@@ -2157,7 +2975,8 @@ impl SignerService {
 struct KeyRequest<'a> {
     label: &'a str,
     network: Network,
-    requested_magic: Option<u32>,
+    chain_family: ChainFamily,
+    requested_chain_id: Option<u64>,
     action: SignerAuditAction,
 }
 
@@ -2166,7 +2985,9 @@ impl RequestKind {
     fn action(kind: Self) -> SignerAuditAction {
         match kind {
             RequestKind::Transaction => SignerAuditAction::TransactionSigned,
-            RequestKind::Consensus => SignerAuditAction::ConsensusSigned,
+            RequestKind::Consensus | RequestKind::Block { .. } => {
+                SignerAuditAction::ConsensusSigned
+            }
             RequestKind::Raw => SignerAuditAction::RawSigned,
         }
     }
@@ -2245,6 +3066,43 @@ fn value_events(
         .collect()
 }
 
+/// Ledger rows for the EVM value movements the policy engine accepted.
+fn evm_value_events(
+    key_id: &str,
+    recorded_at_unix: u64,
+    intent: &EvmIntent,
+    audit_id: Option<i64>,
+) -> Result<Vec<SignerValueEvent>> {
+    let movement = match intent {
+        EvmIntent::NativeTransfer { value, .. } => Some(([0u8; 20], value)),
+        EvmIntent::Erc20Transfer { token, amount, .. } => Some((*token, amount)),
+        EvmIntent::ContractCall { value, .. } if value.iter().any(|byte| *byte != 0) => {
+            Some(([0u8; 20], value))
+        }
+        EvmIntent::ContractCall { .. } => None,
+    };
+    let Some((asset, amount)) = movement else {
+        return Ok(Vec::new());
+    };
+    let amount = unsigned_256_to_i128(amount)
+        .context("an EVM amount accepted by policy no longer fits the durable i128 ledger")?;
+    Ok(vec![SignerValueEvent {
+        id: 0,
+        key_id: key_id.to_string(),
+        recorded_at_unix,
+        asset: ScriptHash::from_evm_address(asset),
+        amount,
+        audit_id,
+    }])
+}
+
+fn unsigned_256_to_i128(bytes: &[u8; 32]) -> Option<i128> {
+    if bytes[..16].iter().any(|byte| *byte != 0) {
+        return None;
+    }
+    i128::try_from(u128::from_be_bytes(bytes[16..].try_into().ok()?)).ok()
+}
+
 /// Seed the first admin credential into a vault that has none.
 ///
 /// The one write path in this module with no [`CallerCredentials`], and it has
@@ -2314,6 +3172,8 @@ fn identity(key: &SignerKey) -> Result<KeyPublicInfo, Refusal> {
         key_id: key.id.clone(),
         label: key.label.clone(),
         network: key.network,
+        chain_family: key.chain_family,
+        chain_id: key.chain_id,
         network_magic: key.network_magic,
         public_key: key.public_key,
         script_hash,
@@ -2517,6 +3377,32 @@ fn intent_summary(intents: &[Intent]) -> String {
     format!("{transfers} transfer(s) totalling {moved}, {calls} other call(s)")
 }
 
+fn request_intent_summary(intents: &[Intent], evm_intent: Option<&EvmIntent>) -> String {
+    let Some(intent) = evm_intent else {
+        return intent_summary(intents);
+    };
+    match intent {
+        EvmIntent::NativeTransfer { value, .. } => format!(
+            "NeoX native transfer of {}",
+            unsigned_256_to_i128(value)
+                .map(|amount| amount.to_string())
+                .unwrap_or_else(|| "an out-of-range amount".to_string())
+        ),
+        EvmIntent::Erc20Transfer { token, amount, .. } => format!(
+            "NeoX token 0x{} transfer of {}",
+            hex::encode(token),
+            unsigned_256_to_i128(amount)
+                .map(|amount| amount.to_string())
+                .unwrap_or_else(|| "an out-of-range amount".to_string())
+        ),
+        EvmIntent::ContractCall { to, data, .. } => format!(
+            "NeoX contract call to 0x{} with {} calldata byte(s)",
+            hex::encode(to),
+            data.len()
+        ),
+    }
+}
+
 fn valid_request_id(request_id: &str) -> bool {
     !request_id.is_empty()
         && request_id.len() <= 128
@@ -2525,13 +3411,56 @@ fn valid_request_id(request_id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
 }
 
-fn idempotency_digest(action: SignerAuditAction, key_id: &str, unsigned: &[u8]) -> [u8; 32] {
+fn parse_evm_address(value: &str) -> Option<[u8; 20]> {
+    let raw = value
+        .trim()
+        .strip_prefix("0x")
+        .or_else(|| value.trim().strip_prefix("0X"))
+        .unwrap_or(value.trim());
+    if raw.len() != 40 || !raw.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let bytes = hex::decode(raw).ok()?;
+    bytes.try_into().ok()
+}
+
+fn normalized_evm_address(address: [u8; 20]) -> String {
+    format!("0x{}", hex::encode(address))
+}
+
+fn idempotency_digest(
+    action: SignerAuditAction,
+    key_id: &str,
+    unsigned: &[u8],
+    requested_chain: Option<RequestedChain>,
+) -> [u8; 32] {
     let mut framed = Vec::with_capacity(32 + key_id.len() + unsigned.len());
     framed.extend_from_slice(b"neoos-signer-request-v1\0");
     framed.extend_from_slice(action.label().as_bytes());
     framed.push(0);
     framed.extend_from_slice(key_id.as_bytes());
     framed.push(0);
+    if let Some(chain) = requested_chain.filter(|chain| {
+        chain.family != ChainFamily::NeoN3
+            || chain.chain_id.is_some()
+            || chain.network_magic.is_some()
+            || chain.public_key.is_some()
+    }) {
+        framed.extend_from_slice(chain.family.to_string().as_bytes());
+        framed.push(0);
+        if let Some(chain_id) = chain.chain_id {
+            framed.extend_from_slice(&chain_id.to_le_bytes());
+        }
+        framed.push(0);
+        if let Some(network_magic) = chain.network_magic {
+            framed.extend_from_slice(&network_magic.to_le_bytes());
+        }
+        framed.push(0);
+        if let Some(public_key) = chain.public_key {
+            framed.extend_from_slice(&public_key);
+        }
+        framed.push(0);
+    }
     framed.extend_from_slice(unsigned);
     crypto::sha256(&framed)
         .try_into()

@@ -11,7 +11,7 @@ repo keep proving (and disproving) its own parity pins after
 |---|---|---|
 | `engine-parity.goldens.json` | `workers/nitro-worker/src/game/` | 112KB of recorded per-op view/state hashes, replay hashes and canonical score outcomes for all 11 engines. The only proof the Rust engines equal the JS engines. |
 | `stable-stringify-vectors.mjs` | `packages/shared/src/` | The pinned `stableStringify` golden vectors that gate the ICU `'en'` collation port. |
-| `wrappers/*.wrapper.js` (11) | `workers/nitro-worker/src/game/wrappers/` | `sha256(source, CRLF-normalized)` **is** the `engineHash` literal pinned in `crates/neo-os-compute/src/game/registry.rs`. Delete these files and those 11 hashes can never be re-derived by anyone, ever. |
+| `wrappers/*.wrapper.js` (11) | `workers/nitro-worker/src/game/wrappers/` | `sha256(source, CRLF-normalized)` **is** the `engineHash` literal pinned in `crates/neo-os-games/src/registry.rs`. Delete these files and those 11 hashes can never be re-derived by anyone, ever. |
 | `oracle/router.js` | `workers/morpheus-relayer/src/` | JS oracle for the `fulfillment_digest`, `fulfillment_envelope` and `worker_payload` vector families. |
 | `oracle/neox.js` | `workers/morpheus-relayer/src/` | JS oracle for the `neox_digest` vector family. |
 | `oracle/lib/strings.js` | `workers/morpheus-relayer/src/lib/` | The relative import that closes `router.js`'s dependency graph (`trimString` / `normalizeRequestType` / `strip0x`), so the oracle can still be imported with no relayer tree present. |
@@ -27,7 +27,7 @@ cd baselines/js-parity && sha256sum -c MANIFEST.sha256
 
 1. **Permanent** — every frozen asset still hashes to its `MANIFEST.sha256`
    entry. This holds forever, including after T05. Asserted by
-   `crates/neo-os-compute/src/game/parity.rs::frozen_js_parity_baseline_is_intact`
+   `crates/neo-os-games/src/parity.rs::frozen_js_parity_baseline_is_intact`
    and by `node scripts/freeze-js-parity-baseline.mjs --check`.
 2. **Until T05** — every frozen asset is byte-identical to its live source.
    This is the drift alarm: edit a game wrapper or `router.js` without
@@ -62,4 +62,4 @@ cd baselines/js-parity && sha256sum -c MANIFEST.sha256
 The 11 `engineHash` literals in `registry.rs` are **unchanged** and now mean
 "engine behaviour version pin" rather than "sha256 of a JS file". The frozen
 wrapper sources are the anchor that makes the pin auditable; see the comment on
-`EngineHandle::engine_hash` in `crates/neo-os-compute/src/game/registry.rs`.
+`EngineHandle::engine_hash` in `crates/neo-os-games/src/registry.rs`.

@@ -1556,7 +1556,7 @@ test('createRelayerConfig rejects Neo N3 host keys even outside production', () 
   }
 });
 
-test('createRelayerConfig fails closed for the Neo X lane in production', () => {
+test('createRelayerConfig exposes the custody-backed Neo X lane in production', () => {
   const keys = [
     'NODE_ENV',
     'MORPHEUS_ACTIVE_CHAINS',
@@ -1572,10 +1572,8 @@ test('createRelayerConfig fails closed for the Neo X lane in production', () => 
   delete process.env.NEOX_FEED_PK;
 
   try {
-    assert.throws(
-      () => withIsolatedRelayerSigner(() => createRelayerConfig()),
-      /Neo X production signing is unavailable.*secp256k1 signer/i
-    );
+    const config = withIsolatedRelayerSigner(() => createRelayerConfig());
+    assert.deepEqual(config.activeChains, ['neox']);
   } finally {
     for (const [key, value] of previous) {
       if (value === undefined) delete process.env[key];

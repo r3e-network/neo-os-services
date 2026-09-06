@@ -147,14 +147,13 @@ export default {
       return json(405, { error: 'method_not_allowed' }, rid);
     }
 
-    // Feeds are pushed on-chain in-TEE by the box feed-pusher; the control-plane
-    // feed lane is RETIRED. Short-circuit /feeds/tick to a no-op so it never
-    // enqueues a job nor POSTs the Neo N3 signer WIF + execution token to the
-    // (retired, externally-hosted) feed runtime. See AA-EDGE-MIGRATION-RUNBOOK.md.
+    // Feed publication is owned by the self-scheduling Rust relayer. This edge
+    // trigger is retired: return Gone rather than a success no-op so cron
+    // monitoring cannot claim that an on-chain update occurred.
     if (routing.routePath === '/feeds/tick') {
       return json(
-        200,
-        { ok: true, status: 'noop', reason: 'feed_lane_retired_feeds_pushed_in_tee' },
+        410,
+        { ok: false, status: 'retired', reason: 'feed_publication_owned_by_rust_relayer' },
         rid
       );
     }
@@ -176,15 +175,17 @@ export default {
       );
     }
 
-    // Automations are executed by the box relayer (processAutomationJobs polls the
-    // same Supabase jobs every tick, gates on due-ness, signs IN-TEE). The
-    // control-plane automation/execute lane reads the SAME Supabase rows, gates on
-    // the same due-ness (it cannot even force an early run), and signs host-side with
-    // neon-js — a strict subset of the relayer with no in-repo scheduler driving it.
-    // Short-circuit it so the host-side signer is never invoked. automation_register
-    // / automation_cancel are different routes (Supabase-only) and are unaffected.
+    // The legacy edge workflow signs host-side and must never become a fallback for
+    // the Rust custody architecture. Rust automation delivery is deliberately
+    // fail-closed until its durable claim/execute/commit protocol ships, so this
+    // route must report unavailability rather than falsely acknowledging execution.
+    // automation_register / automation_cancel are Supabase-only and unaffected.
     if (routing.routePath === '/automation/execute') {
-      return json(200, { ok: true, status: 'noop', reason: 'automation_executed_by_relayer' }, rid);
+      return json(
+        503,
+        { ok: false, status: 'unavailable', reason: 'rust_automation_delivery_unavailable' },
+        rid
+      );
     }
 
     const rateLimited = await applyRateLimit(request, env, jobConfig.queue);

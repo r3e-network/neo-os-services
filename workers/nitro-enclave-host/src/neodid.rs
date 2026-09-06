@@ -24,8 +24,8 @@
 //!     provider values cannot smuggle key-material literals into the 400.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -37,7 +37,8 @@ use sha2::Sha256;
 use neo_os_compute::core::{sanitize_error_message, EnvReader};
 use neo_os_compute::js::{js_first_truthy, js_trim_string};
 use neo_os_compute::neodid::{
-    neodid_action_ticket, neodid_bind, neodid_recovery_ticket, NeoDidIo, Web3AuthVerifyRequest,
+    neodid_action_ticket, neodid_bind, neodid_recovery_ticket, neodid_zklogin_ticket, NeoDidIo,
+    Web3AuthVerifyRequest,
 };
 use neo_os_compute::stable_stringify::stable_stringify;
 
@@ -46,7 +47,7 @@ use crate::compute_execute::{
     resolve_payload_network, sign_worker_hex,
 };
 use crate::http_error;
-use crate::state::AppState;
+use crate::state::{AppState, JwksFetcher};
 use crate::RuntimeError;
 
 /// `handleNeoDidBind` — the low-assurance binding ticket.
@@ -76,6 +77,16 @@ pub fn handle_neo_did_recovery_ticket(
         "neodid_recovery_ticket",
         neodid_recovery_ticket,
     )
+}
+
+/// `handleNeoDidZkLoginTicket` — the high-assurance Web3Auth operation
+/// ticket. It uses the same confidential-payload, custody-signing and
+/// attestation envelope boundary as every other NeoDID route.
+pub fn handle_neo_did_zklogin_ticket(
+    state: &AppState,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value, RuntimeError> {
+    handle_ticket(state, body, "neodid_zklogin_ticket", neodid_zklogin_ticket)
 }
 
 /// One ticket flow end to end: confidential resolution, the ported flow,
@@ -108,9 +119,12 @@ fn handle_ticket(
     let resolved = resolve_confidential_payload(body, &overlay_map, &env_trim)?;
 
     let env_reader: EnvReader = &|name: &str| overlay_map.get(name).cloned();
+    let verify_id_token = |request: &Web3AuthVerifyRequest<'_>| {
+        verify_id_token_web3auth(state.jwks_fetcher.as_ref(), request)
+    };
     let io = NeoDidIo {
         env: env_reader,
-        verify_id_token: &verify_id_token_web3auth,
+        verify_id_token: &verify_id_token,
         derive_key_bytes: &refuse_derive_key_bytes,
     };
     let result = flow(&io, &resolved)
@@ -274,61 +288,207 @@ fn refuse_derive_key_bytes(_path: &str, _purpose: &str) -> Result<Vec<u8>, Strin
 // web3auth id_token verification (the `jwtVerify` closure)
 // ---------------------------------------------------------------------------
 
+const JWKS_NO_MATCHING_KEY: &str = "no applicable key found in the JSON Web Key Set";
+const JWKS_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
+const JWKS_REFRESH_COOLDOWN: Duration = Duration::from_secs(30);
+const JWKS_FAILURE_COOLDOWN: Duration = Duration::from_secs(30);
+
+#[derive(Clone)]
+struct JwksSnapshot {
+    document: serde_json::Value,
+    fetched_at: Instant,
+    generation: u64,
+    attempt: u64,
+}
+
+#[derive(Default)]
+struct JwksCacheEntry {
+    cached: Option<JwksSnapshot>,
+    refreshing: bool,
+    attempt: u64,
+    last_failure: Option<(Instant, String)>,
+}
+
+struct JwksCache {
+    entries: Mutex<HashMap<String, JwksCacheEntry>>,
+    refreshed: Condvar,
+}
+
 /// `getWeb3AuthJwks`'s cache — module-global in the child too
-/// (`WEB3AUTH_JWKS_CACHE`), keyed by the resolved JWKS URL.
-static JWKS_CACHE: OnceLock<Mutex<HashMap<String, serde_json::Value>>> = OnceLock::new();
+/// (`WEB3AUTH_JWKS_CACHE`), keyed by the resolved JWKS URL. Fetches and forced
+/// rotations are single-flight per URL; a failed fetch is cooled down so a
+/// burst of unknown-kid tokens cannot turn into an outbound request storm.
+static JWKS_CACHE: OnceLock<JwksCache> = OnceLock::new();
+
+fn jwks_cache() -> &'static JwksCache {
+    JWKS_CACHE.get_or_init(|| JwksCache {
+        entries: Mutex::new(HashMap::new()),
+        refreshed: Condvar::new(),
+    })
+}
 
 fn verify_id_token_web3auth(
+    fetcher: &dyn JwksFetcher,
     request: &Web3AuthVerifyRequest<'_>,
 ) -> Result<serde_json::Value, String> {
-    let jwks = fetch_jwks(request.jwks_url)?;
-    match verify_rs256_token(request.id_token, &jwks, request.audience, request.issuer) {
+    let cached = fetch_jwks(fetcher, request.jwks_url)?;
+    match verify_rs256_token(
+        request.id_token,
+        &cached.document,
+        request.audience,
+        request.issuer,
+    ) {
         Ok(claims) => Ok(claims),
-        Err(error) => {
+        Err(error) if error == JWKS_NO_MATCHING_KEY => {
             // jose's createRemoteJWKSet refetches once when the token's kid is
-            // absent from the cached set (key rotation mid-flight).
-            let refreshed = fetch_jwks_uncached(request.jwks_url)?;
+            // absent from the cached set (key rotation mid-flight). Signature
+            // and claim failures never enter this branch.
+            let refreshed = refresh_jwks_after_key_miss(fetcher, request.jwks_url, &cached)?;
             verify_rs256_token(
                 request.id_token,
-                &refreshed,
+                &refreshed.document,
                 request.audience,
                 request.issuer,
             )
-            .map_err(|_| error)
+            .map_err(|refreshed_error| {
+                if refreshed_error == JWKS_NO_MATCHING_KEY {
+                    error
+                } else {
+                    refreshed_error
+                }
+            })
         }
+        Err(error) => Err(error),
     }
 }
 
-fn fetch_jwks(url: &str) -> Result<serde_json::Value, String> {
-    let cache = JWKS_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(hit) = cache.lock().expect("jwks cache lock").get(url) {
-        return Ok(hit.clone());
-    }
-    let fresh = fetch_jwks_uncached(url)?;
-    cache
-        .lock()
-        .expect("jwks cache lock")
-        .insert(url.to_string(), fresh.clone());
-    Ok(fresh)
+fn fetch_jwks(fetcher: &dyn JwksFetcher, url: &str) -> Result<JwksSnapshot, String> {
+    load_jwks(fetcher, url, None)
 }
 
-fn fetch_jwks_uncached(url: &str) -> Result<serde_json::Value, String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|error| format!("JWKS client build failed: {error}"))?;
-    let response = client
-        .get(url)
-        .send()
-        .map_err(|error| format!("JWKS fetch failed: {error}"))?;
-    let status = response.status().as_u16();
-    let text = response
-        .text()
-        .map_err(|error| format!("JWKS fetch failed: {error}"))?;
-    if !(200..300).contains(&status) {
-        return Err(format!("JWKS fetch failed (HTTP {status})"));
+fn refresh_jwks_after_key_miss(
+    fetcher: &dyn JwksFetcher,
+    url: &str,
+    observed: &JwksSnapshot,
+) -> Result<JwksSnapshot, String> {
+    // A just-fetched set already represents the endpoint's current answer.
+    // Fetching it again for every attacker-controlled unknown `kid` would turn
+    // otherwise cheap rejected JWTs into an outbound-request storm. This also
+    // matches a remote-JWKS cooldown: an older cached set may refresh once,
+    // while a cold load or recent rotation is reused until the cooldown ends.
+    if Instant::now().duration_since(observed.fetched_at) < JWKS_REFRESH_COOLDOWN {
+        return Ok(observed.clone());
     }
-    serde_json::from_str(&text).map_err(|_| "JWKS endpoint returned non-JSON".to_string())
+    load_jwks(fetcher, url, Some(observed))
+}
+
+fn load_jwks(
+    fetcher: &dyn JwksFetcher,
+    url: &str,
+    observed: Option<&JwksSnapshot>,
+) -> Result<JwksSnapshot, String> {
+    let cache = jwks_cache();
+    loop {
+        let now = Instant::now();
+        let mut entries = cache.entries.lock().expect("jwks cache lock");
+        let entry = entries.entry(url.to_string()).or_default();
+
+        if let Some(observed) = observed {
+            if let Some(current) = &entry.cached {
+                if current.generation > observed.generation {
+                    return Ok(current.clone());
+                }
+            }
+            if entry.attempt > observed.attempt {
+                if let Some((_, error)) = &entry.last_failure {
+                    return Err(error.clone());
+                }
+            }
+        } else if let Some(current) = &entry.cached {
+            if now.duration_since(current.fetched_at) < JWKS_CACHE_TTL {
+                return Ok(current.clone());
+            }
+        }
+
+        if let Some((failed_at, error)) = &entry.last_failure {
+            if now.duration_since(*failed_at) < JWKS_FAILURE_COOLDOWN {
+                return Err(error.clone());
+            }
+        }
+
+        if entry.refreshing {
+            let entries = cache.refreshed.wait(entries).expect("jwks cache wait lock");
+            drop(entries);
+            continue;
+        }
+        entry.refreshing = true;
+        drop(entries);
+
+        let fetched = fetcher.fetch_jwks(url).and_then(validate_jwks_document);
+        let mut entries = cache.entries.lock().expect("jwks cache lock");
+        let entry = entries.entry(url.to_string()).or_default();
+        entry.refreshing = false;
+        entry.attempt = entry.attempt.saturating_add(1);
+        let result = match fetched {
+            Ok(document) => {
+                let generation = entry
+                    .cached
+                    .as_ref()
+                    .map(|cached| cached.generation.saturating_add(1))
+                    .unwrap_or(1);
+                let snapshot = JwksSnapshot {
+                    document,
+                    fetched_at: Instant::now(),
+                    generation,
+                    attempt: entry.attempt,
+                };
+                entry.cached = Some(snapshot.clone());
+                entry.last_failure = None;
+                Ok(snapshot)
+            }
+            Err(error) => {
+                entry.last_failure = Some((Instant::now(), error.clone()));
+                Err(error)
+            }
+        };
+        cache.refreshed.notify_all();
+        return result;
+    }
+}
+
+fn validate_jwks_document(document: serde_json::Value) -> Result<serde_json::Value, String> {
+    if document
+        .get("keys")
+        .and_then(|keys| keys.as_array())
+        .is_none()
+    {
+        Err("JWKS document has no keys array".to_string())
+    } else {
+        Ok(document)
+    }
+}
+
+pub struct ReqwestJwksFetcher;
+
+impl JwksFetcher for ReqwestJwksFetcher {
+    fn fetch_jwks(&self, url: &str) -> Result<serde_json::Value, String> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|error| format!("JWKS client build failed: {error}"))?;
+        let response = client
+            .get(url)
+            .send()
+            .map_err(|error| format!("JWKS fetch failed: {error}"))?;
+        let status = response.status().as_u16();
+        let text = response
+            .text()
+            .map_err(|error| format!("JWKS fetch failed: {error}"))?;
+        if !(200..300).contains(&status) {
+            return Err(format!("JWKS fetch failed (HTTP {status})"));
+        }
+        serde_json::from_str(&text).map_err(|_| "JWKS endpoint returned non-JSON".to_string())
+    }
 }
 
 /// `jwtVerify(idToken, JWKS, { audience, issuer })` — RS256 signature over
@@ -455,7 +615,7 @@ fn select_signing_keys(
             let pinned = candidates
                 .iter()
                 .find(|key| key.get("kid").and_then(|value| value.as_str()) == Some(kid))
-                .ok_or_else(|| "no applicable key found in the JSON Web Key Set".to_string())?;
+                .ok_or_else(|| JWKS_NO_MATCHING_KEY.to_string())?;
             std::slice::from_ref(pinned)
         }
         None => &candidates[..],
@@ -501,7 +661,8 @@ fn b64url_decode(segment: &str) -> Result<Vec<u8>, String> {
 #[doc(hidden)]
 pub fn reset_jwks_cache_for_tests() {
     if let Some(cache) = JWKS_CACHE.get() {
-        cache.lock().expect("jwks cache lock").clear();
+        cache.entries.lock().expect("jwks cache lock").clear();
+        cache.refreshed.notify_all();
     }
 }
 

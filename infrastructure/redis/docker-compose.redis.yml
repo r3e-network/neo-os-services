@@ -1,0 +1,281 @@
+# Redis Cluster for NeoOS - Local Development Setup
+# Production K8s manifests: infrastructure/redis/k8s/redis-cluster.yaml
+
+version: '3.8'
+
+services:
+  # Redis Master Node 0
+  redis-master-0:
+    image: redis:7.2-alpine
+    container_name: neoos-redis-master-0
+    ports:
+      - "6379:6379"
+      - "16379:16379"
+    command: >
+      bash -c 'redis-server --port 6379 \
+        --cluster-enabled yes \
+        --cluster-config-file nodes.conf \
+        --cluster-node-timeout 5000 \
+        --appendonly yes \
+        --appendfsync everysec \
+        --save RDB 900 1 \
+        --save RDB 300 10 \
+        --maxmemory 256mb \
+        --maxmemory-policy allkeys-lru'
+    volumes:
+      - redis-data-master-0:/data
+    networks:
+      - redis-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # Redis Replica Node 0 (stands by master-0)
+  redis-replica-0:
+    image: redis:7.2-alpine
+    container_name: neoos-redis-replica-0
+    ports:
+      - "6380:6379"
+      - "16380:16379"
+    command: >
+      bash -c 'redis-server --port 6379 \
+        --replicaof redis-master-0 6379 \
+        --cluster-enabled yes \
+        --cluster-config-file nodes.conf \
+        --cluster-node-timeout 5000 \
+        --appendonly yes \
+        --appendfsync everysec \
+        --maxmemory 256mb \
+        --maxmemory-policy allkeys-lru'
+    volumes:
+      - redis-data-replica-0:/data
+    depends_on:
+      redis-master-0:
+        condition: service_healthy
+    networks:
+      - redis-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # Redis Master Node 1
+  redis-master-1:
+    image: redis:7.2-alpine
+    container_name: neoos-redis-master-1
+    ports:
+      - "6381:6379"
+      - "16381:16379"
+    command: >
+      bash -c 'redis-server --port 6379 \
+        --cluster-enabled yes \
+        --cluster-config-file nodes.conf \
+        --cluster-node-timeout 5000 \
+        --appendonly yes \
+        --appendfsync everysec \
+        --save RDB 900 1 \
+        --save RDB 300 10 \
+        --maxmemory 256mb \
+        --maxmemory-policy allkeys-lru'
+    volumes:
+      - redis-data-master-1:/data
+    networks:
+      - redis-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # Redis Replica Node 1 (stands by master-1)
+  redis-replica-1:
+    image: redis:7.2-alpine
+    container_name: neoos-redis-replica-1
+    ports:
+      - "6382:6379"
+      - "16382:16379"
+    command: >
+      bash -c 'redis-server --port 6379 \
+        --replicaof redis-master-1 6379 \
+        --cluster-enabled yes \
+        --cluster-config-file nodes.conf \
+        --cluster-node-timeout 5000 \
+        --appendonly yes \
+        --appendfsync everysec \
+        --maxmemory 256mb \
+        --maxmemory-policy allkeys-lru'
+    volumes:
+      - redis-data-replica-1:/data
+    depends_on:
+      redis-master-1:
+        condition: service_healthy
+    networks:
+      - redis-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # Redis Master Node 2
+  redis-master-2:
+    image: redis:7.2-alpine
+    container_name: neoos-redis-master-2
+    ports:
+      - "6383:6379"
+      - "16383:16379"
+    command: >
+      bash -c 'redis-server --port 6379 \
+        --cluster-enabled yes \
+        --cluster-config-file nodes.conf \
+        --cluster-node-timeout 5000 \
+        --appendonly yes \
+        --appendfsync everysec \
+        --save RDB 900 1 \
+        --save RDB 300 10 \
+        --maxmemory 256mb \
+        --maxmemory-policy allkeys-lru'
+    volumes:
+      - redis-data-master-2:/data
+    networks:
+      - redis-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # Redis Replica Node 2 (stands by master-2)
+  redis-replica-2:
+    image: redis:7.2-alpine
+    container_name: neoos-redis-replica-2
+    ports:
+      - "6384:6379"
+      - "16384:16379"
+    command: >
+      bash -c 'redis-server --port 6379 \
+        --replicaof redis-master-2 6379 \
+        --cluster-enabled yes \
+        --cluster-config-file nodes.conf \
+        --cluster-node-timeout 5000 \
+        --appendonly yes \
+        --appendfsync everysec \
+        --maxmemory 256mb \
+        --maxmemory-policy allkeys-lru'
+    volumes:
+      - redis-data-replica-2:/data
+    depends_on:
+      redis-master-2:
+        condition: service_healthy
+    networks:
+      - redis-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # Redis Sentinel 0 (High Availability Manager)
+  redis-sentinel-0:
+    image: redis:7.2-alpine
+    container_name: neoos-redis-sentinel-0
+    ports:
+      - "26379:26379"
+    command: >
+      bash -c 'redis-sentinel --port 26379 \
+        /etc/redis/sentinel.conf'
+    volumes:
+      - ./sentinel.conf:/etc/redis/sentinel.conf
+    depends_on:
+      redis-master-0:
+        condition: service_healthy
+      redis-master-1:
+        condition: service_healthy
+      redis-master-2:
+        condition: service_healthy
+    networks:
+      - redis-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "26379", "sentinel", "master", "neoos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Redis Sentinel 1
+  redis-sentinel-1:
+    image: redis:7.2-alpine
+    container_name: neoos-redis-sentinel-1
+    ports:
+      - "26380:26379"
+    command: >
+      bash -c 'redis-sentinel --port 26379 \
+        /etc/redis/sentinel.conf'
+    volumes:
+      - ./sentinel.conf:/etc/redis/sentinel.conf
+    depends_on:
+      redis-master-0:
+        condition: service_healthy
+      redis-master-1:
+        condition: service_healthy
+      redis-master-2:
+        condition: service_healthy
+    networks:
+      - redis-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "26379", "sentinel", "master", "neoos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Redis Sentinel 2
+  redis-sentinel-2:
+    image: redis:7.2-alpine
+    container_name: neoos-redis-sentinel-2
+    ports:
+      - "26381:26379"
+    command: >
+      bash -c 'redis-sentinel --port 26379 \
+        /etc/redis/sentinel.conf'
+    volumes:
+      - ./sentinel.conf:/etc/redis/sentinel.conf
+    depends_on:
+      redis-master-0:
+        condition: service_healthy
+      redis-master-1:
+        condition: service_healthy
+      redis-master-2:
+        condition: service_healthy
+    networks:
+      - redis-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "26379", "sentinel", "master", "neoos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  redis-data-master-0:
+  redis-data-master-1:
+  redis-data-master-2:
+  redis-data-replica-0:
+  redis-data-replica-1:
+  redis-data-replica-2:
+
+networks:
+  redis-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

@@ -31,9 +31,10 @@ export async function runFeedSyncJob(options: FeedSyncOptions = {}) {
       : appConfig.nitroApiUrl
         ? [appConfig.nitroApiUrl]
         : [];
-  // Feed publication is mutating/signing work. A production retry against
-  // another host would silently move the trust boundary, so only the primary
-  // explicit endpoint is eligible.
+  // This compatibility call reaches the host's observe/plan surface; actual
+  // publication is owned by the Rust relayer. Even observation can disclose
+  // provider configuration, so production never fails over across trust
+  // boundaries and a pending update remains a non-2xx result.
   const candidateUrls =
     process.env.NODE_ENV === 'production'
       ? configuredCandidateUrls.slice(0, 1)

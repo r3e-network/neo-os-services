@@ -1,5 +1,9 @@
 # Nitro / CVM Deployment
 
+Production service authority, immutable image publication, and the explicit
+Rust-authority/Node-compatibility boundary are documented in
+[`docs/PRODUCTION_RUST_TOPOLOGY.md`](../../docs/PRODUCTION_RUST_TOPOLOGY.md).
+
 This directory contains the canonical Morpheus deployment layout for the confidential
 execution plane (AWS Nitro signer plus the worker runtime).
 
@@ -78,15 +82,27 @@ Use explicit relayer mode per CVM:
 
 - Oracle CVM: `MORPHEUS_RELAYER_MODE=requests_only`
 - DataFeed CVM: `MORPHEUS_RELAYER_MODE=feed_only`
+- Co-located request + feed delivery: `MORPHEUS_RELAYER_MODE=combined`
+
+Each mode may select `neo_n3`, `neox`, or both through
+`MORPHEUS_ACTIVE_CHAINS`. Feed modes require feed sync, symbols, and the active
+chain datafeed contracts. Automation remains disabled and fails configuration
+validation if enabled.
 
 For mainnet request fulfillment, provision the custody signer roles instead of
 any WIF (no signing key material is provisioned to relayers or workers):
 
 - `SIGNER_SERVICE_URL` / `SIGNER_SERVICE_TOKEN`
-- `SIGNER_ROLE_UPDATER_KEY_ID` (dedicated raw-only feed compatibility role;
-  not the relayer's semantic transaction authority)
-- `SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID` (dedicated raw-only result role)
+- `SIGNER_ROLE_UPDATER_KEY_ID` (Neo N3 transaction authority used by Rust
+  request and feed delivery through custody)
+- `SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID` (Neo N3 fulfillment-proof authority)
+- `SIGNER_ROLE_RELAYER_KEY_ID` (dedicated relayer custody role measured into
+  the frontier even when a selected lane does not consume it)
 - `SIGNER_ROLE_WORKER_KEY_ID` (dedicated raw-only signed-result role)
+- `SIGNER_ROLE_NEOX_UPDATER_KEY_ID` (EIP-1559 transaction authority used by
+  Rust NeoX request and feed delivery; it is not a host private key)
+- `SIGNER_ROLE_NEOX_VERIFIER_KEY_ID` (semantic EIP-191 fulfillment-proof
+  authority; it must be a different custody key from the NeoX updater)
 
 The custody caller used by raw lanes needs `raw_sign`; semantic transaction and
 consensus callers need `sign`. A key policy cannot combine `allow_raw` with
@@ -115,6 +131,8 @@ SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=<raw-verifier-key-id> \
 SIGNER_ROLE_UPDATER_KEY_ID=<raw-updater-key-id> \
 SIGNER_ROLE_RELAYER_KEY_ID=<raw-relayer-key-id> \
 SIGNER_ROLE_WORKER_KEY_ID=<raw-worker-key-id> \
+SIGNER_ROLE_NEOX_UPDATER_KEY_ID=<neox-updater-key-id> \
+SIGNER_ROLE_NEOX_VERIFIER_KEY_ID=<neox-verifier-key-id> \
   ./deploy/nitro/build-enclave-eif.sh
 
 # On the Nitro-capable host: launch the signer enclave, then provision the

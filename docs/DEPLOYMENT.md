@@ -232,24 +232,38 @@ Notes:
 - role: feed publication only
 - baseline size: `Small TDX`
 
-Tracked launchers:
+Historical CVM launchers (Node compatibility only; not production authority):
 
 - `nitro.request-hub.toml`
 - `nitro.feed-hub.toml`
 
-Deployment files:
+Compatibility Compose files require explicitly pinned `MORPHEUS_COMPAT_*`
+images and contain no default or `latest` tag:
 
 - `deploy/nitro/docker-compose.request-hub.yml`
 - `deploy/nitro/docker-compose.feed-hub.yml`
-- `workers/nitro-worker/Dockerfile`
-- `workers/morpheus-relayer/Dockerfile`
+
+The production Rust service artifacts are:
+
+- `deploy/nitro/Dockerfile.enclave`
+- `deploy/nitro/Dockerfile.signer`
+- `deploy/nitro/Dockerfile.relayer` (production Rust authority; immutable SHA tag only)
+
+See [`PRODUCTION_RUST_TOPOLOGY.md`](./PRODUCTION_RUST_TOPOLOGY.md) before
+deploying any compatibility launcher.
 
 ## Step 7: Configure The Relayer Modes
 
-The relayer is split by role:
+The Rust relayer is authoritative for Neo N3 and NeoX request/feed delivery:
 
-- Oracle CVM: `MORPHEUS_RELAYER_MODE=requests_only`
-- DataFeed CVM: `MORPHEUS_RELAYER_MODE=feed_only`
+- `MORPHEUS_ACTIVE_CHAINS=neo_n3`, `neox`, or both
+- `MORPHEUS_RELAYER_MODE=requests_only`, `feed_only`, or `combined`
+- `MORPHEUS_FEED_SYNC_ENABLED=true` plus symbols/contracts for a feed lane
+- `MORPHEUS_AUTOMATION_ENABLED=false` (enforced fail-closed)
+
+Every successful request or feed update is custody-signed, broadcast, confirmed
+as HALT/receipt status 1, and durably recorded before state advances. Automation
+does not yet have that commit protocol and configuration validation refuses it.
 
 Important relayer durability settings:
 

@@ -85,6 +85,7 @@ if [[ $run_relayer -eq 1 ]]; then
   echo ""
   echo "=== Relayer Local Gates ==="
   npm run test:relayer
+  npm run test:relayer:compat
 fi
 
 if [[ $run_control_plane -eq 1 ]]; then

@@ -109,11 +109,7 @@ pub fn parse_js_number(raw: &str) -> f64 {
         ("0B", 2),
     ] {
         if let Some(digits) = s.strip_prefix(prefix) {
-            if !digits.is_empty()
-                && digits
-                    .bytes()
-                    .all(|b| (b as char).is_digit(radix))
-            {
+            if !digits.is_empty() && digits.bytes().all(|b| (b as char).is_digit(radix)) {
                 // u128 covers every literal the vectors exercise; larger
                 // literals would need bignum rounding (documented gap).
                 return u128::from_str_radix(digits, radix)

@@ -1,6 +1,6 @@
 use prometheus::{
-    register_counter_vec, register_histogram_vec, register_int_counter_vec,
-    register_int_gauge, CounterVec, HistogramVec, IntCounterVec, IntGauge,
+    register_counter_vec, register_histogram_vec, register_int_counter_vec, register_int_gauge,
+    CounterVec, HistogramVec, IntCounterVec, IntGauge,
 };
 use std::sync::LazyLock;
 

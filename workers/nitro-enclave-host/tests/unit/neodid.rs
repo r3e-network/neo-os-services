@@ -13,6 +13,10 @@ use rsa::traits::PublicKeyParts;
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde_json::json;
 use sha2::Digest as _;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Barrier, Mutex};
+use std::time::{Duration, Instant};
 
 #[path = "support.rs"]
 #[allow(clippy::duplicate_mod)] // intentional: one shared doubles file per test module
@@ -115,10 +119,7 @@ fn bind_ticket_flows_in_process_with_both_custody_signatures() {
     );
     assert_eq!(
         response["metadata_hash"],
-        format!(
-            "0x{}",
-            neo_os_compute::neodid::compute_metadata_hash(None)
-        )
+        format!("0x{}", neo_os_compute::neodid::compute_metadata_hash(None))
     );
     let digest = response["digest"].as_str().expect("digest").to_string();
     assert!(
@@ -292,6 +293,30 @@ fn recovery_ticket_fails_closed_for_unverified_providers() {
 }
 
 #[test]
+fn zklogin_route_is_folded_and_requires_a_verified_web3auth_token() {
+    let harness = neodid_harness(&salted_overlay());
+    let (status, message) = error_body(
+        &harness.state,
+        "/neodid/zklogin-ticket",
+        &json!({
+            "provider": "web3auth",
+            "provider_uid": "user@example.com",
+            "verifier_contract": "0x11223344556677889900aabbccddeeff00112233",
+            "account_id_hash": "0xaabbccddeeff00112233445566778899aabbccdd",
+            "target_contract": "0x00112233445566778899aabbccddeeff00112233",
+            "method": "transfer",
+            "args_hash": format!("0x{}", "11".repeat(32)),
+            "nonce": "1",
+            "deadline": "2000000000",
+        }),
+    );
+
+    assert_eq!(status, 400);
+    assert_eq!(message, "web3auth id_token is required");
+    assert!(harness.signer.sign_calls().is_empty());
+}
+
+#[test]
 fn missing_salt_renders_the_child_message() {
     let harness = neodid_harness(&[
         ("MORPHEUS_NETWORK", TEST_NETWORK),
@@ -415,6 +440,75 @@ fn get_is_not_a_neodid_route() {
 // ---------------------------------------------------------------------------
 // The RS256 verifier
 // ---------------------------------------------------------------------------
+
+struct ScriptedJwksFetcher {
+    replies: Mutex<VecDeque<Result<serde_json::Value, String>>>,
+    calls: AtomicUsize,
+    delay: Duration,
+}
+
+impl ScriptedJwksFetcher {
+    fn new(replies: Vec<Result<serde_json::Value, String>>) -> Self {
+        Self {
+            replies: Mutex::new(replies.into()),
+            calls: AtomicUsize::new(0),
+            delay: Duration::ZERO,
+        }
+    }
+
+    fn delayed(replies: Vec<Result<serde_json::Value, String>>) -> Self {
+        Self {
+            replies: Mutex::new(replies.into()),
+            calls: AtomicUsize::new(0),
+            delay: Duration::from_millis(40),
+        }
+    }
+
+    fn call_count(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl JwksFetcher for ScriptedJwksFetcher {
+    fn fetch_jwks(&self, _url: &str) -> Result<serde_json::Value, String> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if !self.delay.is_zero() {
+            std::thread::sleep(self.delay);
+        }
+        self.replies
+            .lock()
+            .expect("JWKS replies lock")
+            .pop_front()
+            .unwrap_or_else(|| Err("unexpected extra JWKS fetch".to_string()))
+    }
+}
+
+fn verify_web3auth_fixture(
+    fetcher: &dyn JwksFetcher,
+    url: &str,
+    token: &str,
+) -> Result<serde_json::Value, String> {
+    verify_id_token_web3auth(
+        fetcher,
+        &Web3AuthVerifyRequest {
+            id_token: token,
+            jwks_url: url,
+            audience: "client-id",
+            issuer: None,
+        },
+    )
+}
+
+fn age_cached_jwks(url: &str) {
+    let mut entries = jwks_cache().entries.lock().expect("JWKS cache lock");
+    let snapshot = entries
+        .get_mut(url)
+        .and_then(|entry| entry.cached.as_mut())
+        .expect("the test primed this JWKS URL");
+    snapshot.fetched_at = Instant::now()
+        .checked_sub(JWKS_REFRESH_COOLDOWN + Duration::from_secs(1))
+        .expect("representable test instant");
+}
 
 struct KeyFixture {
     jwks: serde_json::Value,
@@ -545,9 +639,10 @@ fn an_unsigned_alg_is_refused_before_any_key_lookup() {
 
 #[test]
 fn a_token_with_an_unknown_kid_is_the_jwks_no_matching_key_error() {
-    // The token pins kid "k1"; the JWKS only carries "k2". jose's
-    // createRemoteJWKSet refetches once, still finds nothing, and surfaces
-    // JWKSNoMatchingKey — its exact message, not the JWS verification one.
+    // The token pins kid "k1" while this concrete JWKS only carries "k2".
+    // The remote wrapper decides whether its refresh cooldown permits another
+    // fetch; the pure verifier surfaces JWKSNoMatchingKey's exact message,
+    // rather than turning a missing key into a signature error.
     let fixture = signed_token(&base_claims(), "k1");
     let other = signed_token(&base_claims(), "k2");
     let error = verify_rs256_token(&fixture.token, &other.jwks, "client-id", None)
@@ -567,4 +662,149 @@ fn a_kidless_token_is_verified_against_every_candidate_key() {
     let error = verify_rs256_token(&foreign_token, &jwks, "client-id", None)
         .expect_err("signature from another key");
     assert_eq!(error, "signature verification failed");
+}
+
+#[test]
+fn unknown_kid_refreshes_once_and_caches_the_rotated_set() {
+    let current = signed_token(&base_claims(), "rotation-kid");
+    let stale = signed_token(&base_claims(), "stale-kid");
+    let fetcher = ScriptedJwksFetcher::new(vec![Ok(stale.jwks), Ok(current.jwks)]);
+    let url = "https://jwks.example.test/rotation";
+
+    fetch_jwks(&fetcher, url).expect("prime stale cache");
+    age_cached_jwks(url);
+
+    let claims = verify_web3auth_fixture(&fetcher, url, &current.token)
+        .expect("unknown kid should verify after one refresh");
+    assert_eq!(claims["sub"], "user-1");
+    assert_eq!(fetcher.call_count(), 2);
+
+    verify_web3auth_fixture(&fetcher, url, &current.token).expect("rotated set should be cached");
+    assert_eq!(
+        fetcher.call_count(),
+        2,
+        "cached rotation must avoid refetch"
+    );
+}
+
+#[test]
+fn a_fresh_unknown_kid_does_not_cause_repeated_outbound_refreshes() {
+    let current = signed_token(&base_claims(), "missing-fresh-kid");
+    let stale = signed_token(&base_claims(), "fresh-set-kid");
+    let fetcher = ScriptedJwksFetcher::new(vec![Ok(stale.jwks)]);
+    let url = "https://jwks.example.test/fresh-unknown-kid";
+
+    for _ in 0..2 {
+        let error = verify_web3auth_fixture(&fetcher, url, &current.token)
+            .expect_err("the fresh set does not contain the requested key");
+        assert_eq!(error, JWKS_NO_MATCHING_KEY);
+    }
+    assert_eq!(
+        fetcher.call_count(),
+        1,
+        "a cold load and repeated unknown kid must share the fresh endpoint answer"
+    );
+}
+
+#[test]
+fn bad_signature_does_not_refresh_jwks() {
+    let trusted = signed_token(&base_claims(), "same-kid");
+    let attacker = signed_token(&base_claims(), "same-kid");
+    let fetcher = ScriptedJwksFetcher::new(vec![Ok(trusted.jwks)]);
+
+    let error = verify_web3auth_fixture(
+        &fetcher,
+        "https://jwks.example.test/bad-signature",
+        &attacker.token,
+    )
+    .expect_err("foreign signature must fail");
+    assert_eq!(error, "signature verification failed");
+    assert_eq!(
+        fetcher.call_count(),
+        1,
+        "signature failure must not refresh"
+    );
+}
+
+#[test]
+fn invalid_claims_do_not_refresh_jwks() {
+    let mut claims = base_claims();
+    claims["aud"] = json!("another-client");
+    let invalid = signed_token(&claims, "claim-kid");
+    let fetcher = ScriptedJwksFetcher::new(vec![Ok(invalid.jwks)]);
+
+    let error = verify_web3auth_fixture(
+        &fetcher,
+        "https://jwks.example.test/invalid-claim",
+        &invalid.token,
+    )
+    .expect_err("invalid claim must fail");
+    assert_eq!(error, "\"aud\" claim value check failed");
+    assert_eq!(fetcher.call_count(), 1, "claim failure must not refresh");
+}
+
+#[test]
+fn failed_rotation_is_fail_closed_and_cooled_down() {
+    let current = signed_token(&base_claims(), "missing-kid");
+    let stale = signed_token(&base_claims(), "old-kid");
+    let fetcher = ScriptedJwksFetcher::new(vec![
+        Ok(stale.jwks),
+        Err("JWKS refresh unavailable".to_string()),
+    ]);
+    let url = "https://jwks.example.test/failed-rotation";
+
+    fetch_jwks(&fetcher, url).expect("prime stale cache");
+    age_cached_jwks(url);
+
+    let error = verify_web3auth_fixture(&fetcher, url, &current.token)
+        .expect_err("failed rotation must fail closed");
+    assert_eq!(error, "JWKS refresh unavailable");
+    assert_eq!(fetcher.call_count(), 2);
+
+    let repeated = verify_web3auth_fixture(&fetcher, url, &current.token)
+        .expect_err("cooldown must keep the failure closed");
+    assert_eq!(repeated, "JWKS refresh unavailable");
+    assert_eq!(
+        fetcher.call_count(),
+        2,
+        "failure cooldown must suppress storms"
+    );
+}
+
+#[test]
+fn concurrent_unknown_kid_requests_share_one_refresh() {
+    let current = signed_token(&base_claims(), "concurrent-kid");
+    let stale = signed_token(&base_claims(), "concurrent-old-kid");
+    let fetcher = Arc::new(ScriptedJwksFetcher::delayed(vec![
+        Ok(stale.jwks),
+        Ok(current.jwks),
+    ]));
+    let url = "https://jwks.example.test/concurrent-rotation";
+    fetch_jwks(fetcher.as_ref(), url).expect("prime stale cache");
+    age_cached_jwks(url);
+
+    let threads = 8;
+    let barrier = Arc::new(Barrier::new(threads));
+    let mut joins = Vec::new();
+    for _ in 0..threads {
+        let fetcher = fetcher.clone();
+        let barrier = barrier.clone();
+        let token = current.token.clone();
+        joins.push(std::thread::spawn(move || {
+            barrier.wait();
+            verify_web3auth_fixture(fetcher.as_ref(), url, &token)
+        }));
+    }
+    for join in joins {
+        let claims = join
+            .join()
+            .expect("verification thread")
+            .expect("rotated key");
+        assert_eq!(claims["sub"], "user-1");
+    }
+    assert_eq!(
+        fetcher.call_count(),
+        2,
+        "initial load plus exactly one shared forced refresh"
+    );
 }

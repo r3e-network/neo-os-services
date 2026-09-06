@@ -3,17 +3,35 @@ name = "neo-os-chain-n3"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "Neo N3 chain adapter: JSON-RPC client, script/tx assembly over neo-os-core, n3index cursors, SSRF-guarded transports (T01 skeleton)"
+description = "Neo N3 chain adapter: JSON-RPC client, script/tx assembly over neo-os-core, n3index cursors, SSRF-guarded transports (T03)"
 
-# T01 skeleton — bodies land in T03 (see docs/rust-migration/ARCHITECTURE.md §1.1).
-# Scope, ported from workers/morpheus-relayer/src/neo-n3.js (1130 LOC):
+# T03 bodies ported from workers/morpheus-relayer/src/neo-n3.js (1130 LOC):
 # block-window scans, n3index request cursors, invokefunction/getapplicationlog
 # reads, tx assembly/sign/broadcast (script assembly reuses neo-os-core::n3_tx,
-# which is already vector-locked), feed record reads.
+# which is already vector-locked), feed record reads, fee top-up.
 #
-# Transport discipline: every HTTP call goes through an injected transport so
-# `cargo test` never touches the network. RPC surface is only the five methods
-# getblockcount / invokefunction / getapplicationlog / sendrawtransaction /
-# getcontractstate — no heavyweight SDK. EVM counterpart is neo-os-chain-evm.
+# Transport discipline: every HTTP call goes through an injected sync transport
+# (`HttpTransport`), so `cargo test` never touches the network — the same
+# blocking-transport house style as nitro-enclave-host's custody client.
+# RPC surface: getblockcount / getblock / getapplicationlog / invokefunction /
+# sendrawtransaction / calculatenetworkfee / getcontractstate — no SDK.
 
 [dependencies]
+neo-os-core = { path = "../neo-os-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+url = "2"
+reqwest = { version = "0.12", default-features = false, features = [
+    "blocking",
+    "charset",
+    "http2",
+    "rustls-tls",
+], optional = true }
+getrandom = { version = "0.2", optional = true }
+
+[features]
+default = ["http"]
+http = ["dep:reqwest", "dep:getrandom"]
+
+[dev-dependencies]
+hex = "0.4"

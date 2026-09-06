@@ -1,7 +1,9 @@
 [Unit]
-Description=NeoOS Neo X oracle fulfiller (watch MorpheusOracleEVM -> work -> sign -> fulfill)
+Description=NeoOS Node NeoX fulfiller (NON-PRODUCTION COMPATIBILITY ONLY)
 After=network-online.target morpheus-nitro-worker.service
 Wants=network-online.target
+ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_NEOX_FULFILLER_COMPAT
+Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
 
 [Service]
 Type=simple
@@ -13,5 +15,5 @@ ExecStart=/usr/bin/node deploy/evm/neox-fulfiller.mjs
 Restart=always
 RestartSec=5
 
-[Install]
-WantedBy=multi-user.target
+# Deliberately no [Install] section. With NODE_ENV=production this compatibility
+# binary exits 78 by design; it is never a production fallback for the Rust relayer.

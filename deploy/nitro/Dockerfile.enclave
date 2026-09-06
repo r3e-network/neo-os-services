@@ -5,8 +5,9 @@
 # readiness gate, the fail-stop watch) and the Rust trusted frontier it starts
 # (workers/nitro-enclave-host → /app/bin/enclave_host). Migrated lanes are
 # folded in-process — /health, /attestation,
-# /provision's KMS state machine, /oracle/fulfill, /feed/sign, /sign/payload,
-# /keys/derived, /compute/execute, /neodid/{bind,action-ticket,recovery-ticket},
+# /provision's KMS state machine, /oracle/fulfill, Neo N3/NeoX /feed/sign, /sign/payload,
+# /keys/derived, /compute/execute, /vrf/random, /paymaster/authorize,
+# /neodid/{bind,action-ticket,recovery-ticket,zklogin-ticket},
 # and the four oracle read lanes (/oracle/query, /oracle/smart-fetch,
 # /oracle/decrypt, /oracle/message-reveal). Fulfillment request types whose
 # Rust fold has not landed receive an explicit no-IO refusal; there is no
@@ -65,26 +66,45 @@ COPY crates/neo-os-core/Cargo.toml crates/neo-os-core/Cargo.toml
 COPY crates/nitro-attest/Cargo.toml crates/nitro-attest/Cargo.toml
 COPY crates/nitro-init/Cargo.toml crates/nitro-init/Cargo.toml
 COPY crates/neo-os-compute/Cargo.toml crates/neo-os-compute/Cargo.toml
+COPY crates/neo-os-games/Cargo.toml crates/neo-os-games/Cargo.toml
+COPY crates/neo-os-chain-n3/Cargo.toml crates/neo-os-chain-n3/Cargo.toml
+COPY crates/neo-os-chain-evm/Cargo.toml crates/neo-os-chain-evm/Cargo.toml
+COPY crates/neo-os-relayer-store/Cargo.toml crates/neo-os-relayer-store/Cargo.toml
+COPY crates/neo-os-service-runtime/Cargo.toml crates/neo-os-service-runtime/Cargo.toml
 COPY workers/neo-signer/Cargo.toml workers/neo-signer/Cargo.toml
 COPY workers/nitro-enclave-host/Cargo.toml workers/nitro-enclave-host/Cargo.toml
+COPY workers/neo-os-relayer/Cargo.toml workers/neo-os-relayer/Cargo.toml
 # Stub sources so `cargo build --locked` can resolve the graph before the real
 # sources land (the classic dummy-main pre-compile trick; manifests are the
 # resolution input, the stubs just let the fetch layer cache).
 RUN mkdir -p crates/neo-os-core/src crates/nitro-attest/src crates/nitro-init/src \
-      crates/neo-os-compute/src \
-      workers/neo-signer/src workers/nitro-enclave-host/src \
+      crates/neo-os-compute/src crates/neo-os-games/src \
+      crates/neo-os-chain-n3/src crates/neo-os-chain-evm/src \
+      crates/neo-os-relayer-store/src crates/neo-os-service-runtime/src \
+      workers/neo-signer/src workers/nitro-enclave-host/src workers/neo-os-relayer/src \
   && echo "pub fn placeholder() {}" > crates/neo-os-core/src/lib.rs \
   && echo "pub fn placeholder() {}" > crates/nitro-attest/src/lib.rs \
   && echo "pub fn placeholder() {}" > crates/nitro-init/src/lib.rs \
   && echo "pub fn placeholder() {}" > crates/neo-os-compute/src/lib.rs \
+  && echo "pub fn placeholder() {}" > crates/neo-os-games/src/lib.rs \
+  && echo "pub fn placeholder() {}" > crates/neo-os-chain-n3/src/lib.rs \
+  && echo "pub fn placeholder() {}" > crates/neo-os-chain-evm/src/lib.rs \
+  && echo "pub fn placeholder() {}" > crates/neo-os-relayer-store/src/lib.rs \
+  && echo "pub fn placeholder() {}" > crates/neo-os-service-runtime/src/lib.rs \
   && echo "pub fn placeholder() {}" > workers/neo-signer/src/lib.rs \
-  && echo "fn main() {}" > workers/nitro-enclave-host/src/main.rs
+  && echo "pub fn placeholder() {}" > workers/nitro-enclave-host/src/lib.rs \
+  && echo "fn main() {}" > workers/nitro-enclave-host/src/main.rs \
+  && echo "pub fn placeholder() {}" > workers/neo-os-relayer/src/lib.rs \
+  && echo "fn main() {}" > workers/neo-os-relayer/src/main.rs
 RUN cargo fetch --locked
 
 COPY crates/neo-os-core/src crates/neo-os-core/src
 COPY crates/nitro-attest/src crates/nitro-attest/src
 COPY crates/nitro-init/src crates/nitro-init/src
 COPY crates/neo-os-compute/src crates/neo-os-compute/src
+COPY crates/neo-os-games/src crates/neo-os-games/src
+COPY crates/neo-os-chain-evm/src crates/neo-os-chain-evm/src
+COPY crates/neo-os-service-runtime/src crates/neo-os-service-runtime/src
 COPY workers/neo-signer/src workers/neo-signer/src
 COPY workers/nitro-enclave-host/src workers/nitro-enclave-host/src
 # Release build of the two binaries this image runs: the frontier and its PID 1
@@ -168,6 +188,8 @@ ARG SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=
 ARG SIGNER_ROLE_UPDATER_KEY_ID=
 ARG SIGNER_ROLE_RELAYER_KEY_ID=
 ARG SIGNER_ROLE_WORKER_KEY_ID=
+ARG SIGNER_ROLE_NEOX_UPDATER_KEY_ID=
+ARG SIGNER_ROLE_NEOX_VERIFIER_KEY_ID=
 ENV NODE_ENV=production
 ENV MORPHEUS_NETWORK=${MORPHEUS_NETWORK}
 ENV SIGNER_SERVICE_URL=${SIGNER_SERVICE_URL}
@@ -175,6 +197,8 @@ ENV SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=${SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID}
 ENV SIGNER_ROLE_UPDATER_KEY_ID=${SIGNER_ROLE_UPDATER_KEY_ID}
 ENV SIGNER_ROLE_RELAYER_KEY_ID=${SIGNER_ROLE_RELAYER_KEY_ID}
 ENV SIGNER_ROLE_WORKER_KEY_ID=${SIGNER_ROLE_WORKER_KEY_ID}
+ENV SIGNER_ROLE_NEOX_UPDATER_KEY_ID=${SIGNER_ROLE_NEOX_UPDATER_KEY_ID}
+ENV SIGNER_ROLE_NEOX_VERIFIER_KEY_ID=${SIGNER_ROLE_NEOX_VERIFIER_KEY_ID}
 # Public vsock port the host bridges to (nitro_init forwards it to the internal
 # port the frontier binds).
 ENV NITRO_SIGNER_VSOCK_PORT=8787

@@ -1,6 +1,7 @@
+# NODE COMPATIBILITY ONLY. Production uses the measured Rust Nitro topology.
 services:
   nitro-worker:
-    image: ${MORPHEUS_NITRO_WORKER_IMAGE}
+    image: '${MORPHEUS_COMPAT_NITRO_WORKER_IMAGE:?pin-explicit-node-compat-worker-image}'
     restart: unless-stopped
     environment:
       # Fail-closed: activates the child-process sandbox guard (permission-guard.js).
@@ -45,7 +46,7 @@ services:
       caddy reverse-proxy --from :80 --to nitro-worker:${NITRO_WORKER_PORT}
 
   morpheus-relayer:
-    image: ${MORPHEUS_RELAYER_IMAGE}
+    image: '${MORPHEUS_COMPAT_RELAYER_IMAGE:?pin-explicit-node-compat-relayer-image}'
     restart: unless-stopped
     depends_on:
       nitro-worker:

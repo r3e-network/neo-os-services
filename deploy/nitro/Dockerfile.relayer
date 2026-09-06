@@ -1,0 +1,88 @@
+# NeoOS relayer container -- Rust-only runtime.
+#
+# This is the production authority for Neo N3 and NeoX request/feed delivery.
+# Its safe default remains `config:validate`; operators explicitly select
+# `once`, `loop`, or a metrics command. Automation is a separate lane and the
+# binary refuses it before chain I/O while that commit protocol is unavailable.
+
+FROM rust:1.98.0-bookworm@sha256:82150a52ec202c1b14d7817e14516c392bb7f5cfebd88f1ed531cb37ebd39922 AS relayerbuild
+WORKDIR /build
+ENV CARGO_TERM_COLOR=never
+
+# Cargo loads every workspace member and every local patch even when only one
+# package is built. Copy all manifests plus the vendored patches first, then
+# provide stubs so dependency download remains cacheable across source edits.
+COPY Cargo.toml Cargo.lock ./
+COPY vendor ./vendor
+COPY crates/neo-os-core/Cargo.toml crates/neo-os-core/Cargo.toml
+COPY crates/neo-os-compute/Cargo.toml crates/neo-os-compute/Cargo.toml
+COPY crates/nitro-attest/Cargo.toml crates/nitro-attest/Cargo.toml
+COPY crates/nitro-init/Cargo.toml crates/nitro-init/Cargo.toml
+COPY crates/neo-os-games/Cargo.toml crates/neo-os-games/Cargo.toml
+COPY crates/neo-os-chain-n3/Cargo.toml crates/neo-os-chain-n3/Cargo.toml
+COPY crates/neo-os-chain-evm/Cargo.toml crates/neo-os-chain-evm/Cargo.toml
+COPY crates/neo-os-relayer-store/Cargo.toml crates/neo-os-relayer-store/Cargo.toml
+COPY crates/neo-os-service-runtime/Cargo.toml crates/neo-os-service-runtime/Cargo.toml
+COPY workers/neo-signer/Cargo.toml workers/neo-signer/Cargo.toml
+COPY workers/nitro-enclave-host/Cargo.toml workers/nitro-enclave-host/Cargo.toml
+COPY workers/neo-os-relayer/Cargo.toml workers/neo-os-relayer/Cargo.toml
+RUN mkdir -p \
+      crates/neo-os-core/src crates/neo-os-compute/src crates/nitro-attest/src/bin \
+      crates/nitro-init/src crates/neo-os-games/src crates/neo-os-chain-n3/src \
+      crates/neo-os-chain-evm/src crates/neo-os-relayer-store/src \
+      crates/neo-os-service-runtime/src workers/neo-signer/src/bin \
+      workers/nitro-enclave-host/src workers/neo-os-relayer/src \
+  && printf '' > crates/neo-os-core/src/lib.rs \
+  && printf '' > crates/neo-os-compute/src/lib.rs \
+  && printf '' > crates/nitro-attest/src/lib.rs \
+  && printf 'fn main() {}\n' > crates/nitro-attest/src/bin/nsm-attest-rs.rs \
+  && printf '' > crates/nitro-init/src/lib.rs \
+  && printf 'fn main() {}\n' > crates/nitro-init/src/main.rs \
+  && printf '' > crates/neo-os-games/src/lib.rs \
+  && printf '' > crates/neo-os-chain-n3/src/lib.rs \
+  && printf '' > crates/neo-os-chain-evm/src/lib.rs \
+  && printf '' > crates/neo-os-relayer-store/src/lib.rs \
+  && printf '' > crates/neo-os-service-runtime/src/lib.rs \
+  && printf '' > workers/neo-signer/src/lib.rs \
+  && printf 'fn main() {}\n' > workers/neo-signer/src/bin/signer_service.rs \
+  && printf '' > workers/nitro-enclave-host/src/lib.rs \
+  && printf 'fn main() {}\n' > workers/nitro-enclave-host/src/main.rs \
+  && printf '' > workers/neo-os-relayer/src/lib.rs \
+  && printf 'fn main() {}\n' > workers/neo-os-relayer/src/main.rs \
+  && cargo fetch --locked
+
+COPY crates/neo-os-core ./crates/neo-os-core
+COPY crates/nitro-attest ./crates/nitro-attest
+COPY crates/neo-os-chain-n3 ./crates/neo-os-chain-n3
+COPY crates/neo-os-chain-evm ./crates/neo-os-chain-evm
+COPY crates/neo-os-relayer-store ./crates/neo-os-relayer-store
+COPY crates/neo-os-service-runtime ./crates/neo-os-service-runtime
+COPY workers/neo-os-relayer ./workers/neo-os-relayer
+RUN cargo build --locked --release -p neo-os-relayer --bin neo-os-relayer
+
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates=20230311+deb12u1 \
+  && useradd --system --uid 8022 --create-home --home-dir /var/lib/neo-os-relayer relayer \
+  && install -d -o relayer -g relayer /var/lib/neo-os-relayer \
+  && rm -rf /var/lib/apt/lists/* /var/log/* /var/cache/* /var/lib/dpkg/*-old
+
+COPY --from=relayerbuild /build/target/release/neo-os-relayer /app/bin/neo-os-relayer
+RUN chmod 0555 /app/bin/neo-os-relayer
+
+LABEL org.opencontainers.image.title="NeoOS Rust Relayer" \
+      org.opencontainers.image.description="Authoritative Rust relayer for Neo N3 and NeoX request/feed delivery" \
+      org.neoos.runtime="rust" \
+      org.neoos.authority="production" \
+      org.neoos.release-channel="production"
+
+# Legacy-named Rust safety posture: core/config treats production as
+# fail-closed (no development endpoint/private-key fallbacks). This does not
+# add a Node runtime dependency.
+ENV NODE_ENV=production
+ENV HOME=/var/lib/neo-os-relayer
+WORKDIR /var/lib/neo-os-relayer
+USER relayer
+ENTRYPOINT ["/app/bin/neo-os-relayer"]
+CMD ["config:validate"]

@@ -9,6 +9,13 @@ use super::*;
 use crate::model::{CallerCapability, KeyGrant, SignerCaller, WorkloadIdentity};
 use ed25519_dalek::{Signer as _, SigningKey};
 
+const WORKLOAD_AUDIENCE: &str = "https://custody.test.example";
+
+fn workload_policy(allow_legacy_v1: bool) -> WorkloadAuthPolicy {
+    WorkloadAuthPolicy::new(WORKLOAD_AUDIENCE, allow_legacy_v1)
+        .expect("the test audience is canonical")
+}
+
 fn caller(token: &str) -> SignerCaller {
     SignerCaller {
         id: "caller-1".to_string(),
@@ -54,6 +61,7 @@ fn workload_credentials(
 ) -> CallerCredentials {
     let body_digest = body_sha256(body);
     let message = WorkloadMessage {
+        audience: Some(WORKLOAD_AUDIENCE),
         caller_id: "caller-1",
         subject: Some("neo-nexus:test"),
         timestamp,
@@ -70,11 +78,14 @@ fn workload_credentials(
         None,
         None,
         WorkloadRequestHeaders {
+            protocol: Some(WORKLOAD_PROTOCOL_V2),
+            audience: Some(WORKLOAD_AUDIENCE),
             caller_id: Some("caller-1"),
             timestamp: Some(&timestamp.to_string()),
             nonce: Some(nonce),
             signature: Some(&signature),
         },
+        &workload_policy(false),
         "POST",
         route,
     )
@@ -449,6 +460,8 @@ fn every_rejection_has_a_unique_code() {
         AccessRejection::UnknownWorkload,
         AccessRejection::WorkloadStale,
         AccessRejection::WorkloadSignatureInvalid,
+        AccessRejection::WorkloadProtocolUnsupported,
+        AccessRejection::WorkloadAudienceMismatch,
         AccessRejection::WorkloadReplay,
     ];
     for (index, reason) in reasons.iter().enumerate() {
@@ -509,11 +522,14 @@ fn a_workload_assertion_binds_identity_route_body_and_time() {
         None,
         None,
         WorkloadRequestHeaders {
+            protocol: Some(WORKLOAD_PROTOCOL_V2),
+            audience: Some(WORKLOAD_AUDIENCE),
             caller_id: Some("caller-1"),
             timestamp: Some("1900000000"),
             nonce: Some("nonce-0000000001"),
             signature: Some("00"),
         },
+        &workload_policy(false),
         "POST",
         "/signer/api/v1/sign/transaction",
     );
@@ -527,6 +543,151 @@ fn a_workload_assertion_binds_identity_route_body_and_time() {
         ),
         Err(AccessRejection::AmbiguousCredential)
     );
+}
+
+#[test]
+fn a_v2_workload_assertion_is_bound_to_one_canonical_signer_audience() {
+    let signing_key = SigningKey::from_bytes(&[8u8; 32]);
+    let callers = [workload_caller(&signing_key)];
+    let timestamp = 1_900_000_000;
+    let credentials = workload_credentials(
+        &signing_key,
+        timestamp,
+        "nonce-0000000002",
+        "/signer/api/v1/sign/transaction",
+        br#"{"key_id":"key-1"}"#,
+    );
+    assert!(authenticate_at(
+        &callers,
+        &credentials,
+        CallerCapability::Sign,
+        Some("key-1"),
+        timestamp,
+    )
+    .is_ok());
+
+    let wrong_policy = WorkloadAuthPolicy::new("https://other-custody.test.example", false)
+        .expect("canonical test audience");
+    let body = br#"{"key_id":"key-1"}"#;
+    let body_digest = body_sha256(body);
+    let message = WorkloadMessage {
+        audience: Some(WORKLOAD_AUDIENCE),
+        caller_id: "caller-1",
+        subject: Some("neo-nexus:test"),
+        timestamp,
+        nonce: "nonce-0000000003",
+        method: "POST",
+        route: "/signer/api/v1/sign/transaction",
+        body_digest: &body_digest,
+        origin: None,
+    }
+    .to_bytes();
+    let signature = hex::encode(signing_key.sign(&message).to_bytes());
+    let timestamp_text = timestamp.to_string();
+    let wrong_audience = CallerCredentials::request(
+        None,
+        None,
+        None,
+        WorkloadRequestHeaders {
+            protocol: Some(WORKLOAD_PROTOCOL_V2),
+            audience: Some(WORKLOAD_AUDIENCE),
+            caller_id: Some("caller-1"),
+            timestamp: Some(&timestamp_text),
+            nonce: Some("nonce-0000000003"),
+            signature: Some(&signature),
+        },
+        &wrong_policy,
+        "POST",
+        "/signer/api/v1/sign/transaction",
+    )
+    .with_body_digest(body_digest);
+    assert_eq!(
+        authenticate_at(
+            &callers,
+            &wrong_audience,
+            CallerCapability::Sign,
+            Some("key-1"),
+            timestamp,
+        ),
+        Err(AccessRejection::WorkloadAudienceMismatch)
+    );
+
+    for invalid in [
+        "https://custody.test.example/proxy-a",
+        "https://custody.test.example?route=proxy-a",
+        "https://user@custody.test.example",
+    ] {
+        assert!(
+            WorkloadAuthPolicy::new(invalid, false).is_err(),
+            "{invalid}"
+        );
+    }
+    assert_eq!(
+        WorkloadAuthPolicy::new("HTTPS://CUSTODY.TEST.EXAMPLE:443/", false)
+            .expect("equivalent origin")
+            .audience(),
+        WORKLOAD_AUDIENCE
+    );
+}
+
+#[test]
+fn audience_less_v1_is_rejected_by_default_and_requires_explicit_compatibility() {
+    let signing_key = SigningKey::from_bytes(&[9u8; 32]);
+    let callers = [workload_caller(&signing_key)];
+    let timestamp = 1_900_000_000;
+    let body = br#"{"key_id":"key-1"}"#;
+    let body_digest = body_sha256(body);
+    let message = WorkloadMessage {
+        audience: None,
+        caller_id: "caller-1",
+        subject: Some("neo-nexus:test"),
+        timestamp,
+        nonce: "nonce-0000000004",
+        method: "POST",
+        route: "/signer/api/v1/sign/transaction",
+        body_digest: &body_digest,
+        origin: None,
+    }
+    .to_bytes();
+    let signature = hex::encode(signing_key.sign(&message).to_bytes());
+    let timestamp_text = timestamp.to_string();
+    let request = |allow_legacy_v1| {
+        CallerCredentials::request(
+            None,
+            None,
+            None,
+            WorkloadRequestHeaders {
+                protocol: None,
+                audience: None,
+                caller_id: Some("caller-1"),
+                timestamp: Some(&timestamp_text),
+                nonce: Some("nonce-0000000004"),
+                signature: Some(&signature),
+            },
+            &workload_policy(allow_legacy_v1),
+            "POST",
+            "/signer/api/v1/sign/transaction",
+        )
+        .with_body_digest(body_digest)
+    };
+    assert_eq!(
+        authenticate_at(
+            &callers,
+            &request(false),
+            CallerCapability::Sign,
+            Some("key-1"),
+            timestamp,
+        ),
+        Err(AccessRejection::WorkloadProtocolUnsupported)
+    );
+    assert!(authenticate_at(
+        &callers,
+        &request(true),
+        CallerCapability::Sign,
+        Some("key-1"),
+        timestamp,
+    )
+    .is_ok());
 }
 
 // -- capabilities ------------------------------------------------------------

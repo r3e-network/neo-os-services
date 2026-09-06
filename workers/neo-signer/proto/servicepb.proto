@@ -1,0 +1,44 @@
+// Copyright (C) 2015-2026 The Neo Project.
+//
+// This protocol is kept wire-identical to the official Neo SignClient plugin.
+// It is distributed by the Neo project under the MIT license.
+
+syntax = "proto3";
+
+import "signpb.proto";
+
+package servicepb;
+
+message SignExtensiblePayloadRequest {
+    signpb.ExtensiblePayload payload = 1;
+    repeated bytes script_hashes = 2;
+    uint32 network = 3;
+}
+
+message SignExtensiblePayloadResponse {
+    repeated signpb.AccountSigns signs = 1;
+}
+
+message SignBlockRequest {
+    signpb.TrimmedBlock block = 1;
+    bytes public_key = 2;
+    uint32 network = 3;
+}
+
+message SignBlockResponse {
+    bytes signature = 1;
+}
+
+message GetAccountStatusRequest {
+    bytes public_key = 1;
+}
+
+message GetAccountStatusResponse {
+    signpb.AccountStatus status = 1;
+}
+
+service SecureSign {
+    rpc SignExtensiblePayload(SignExtensiblePayloadRequest) returns (SignExtensiblePayloadResponse) {}
+    rpc SignBlock(SignBlockRequest) returns (SignBlockResponse) {}
+    rpc GetAccountStatus(GetAccountStatusRequest) returns (GetAccountStatusResponse) {}
+}

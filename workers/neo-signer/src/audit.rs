@@ -159,6 +159,19 @@ impl Refusal {
         }
     }
 
+    /// A deliberate request-level refusal that is neither access control nor a
+    /// parsed policy verdict. Chain/key identity mismatches belong here: the
+    /// service understood the request and intentionally refused to use a key
+    /// outside its immutable chain binding.
+    pub fn denied(code: &'static str, message: &str, detail: impl Into<String>) -> Self {
+        Refusal {
+            code,
+            message: message.to_string(),
+            detail: bounded(&detail.into()),
+            outcome: SignerAuditOutcome::Denied,
+        }
+    }
+
     /// A policy engine refusal, with the specifics it produced.
     pub fn policy(reason: DenyReason, detail: impl Into<String>) -> Self {
         Refusal {

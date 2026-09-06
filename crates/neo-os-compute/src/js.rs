@@ -1,9 +1,10 @@
 //! The JavaScript value-model edges the ported guards are defined against:
 //! `trimString`, truthiness, `String(value)` coercion and `Number(value)`.
 //!
-//! Mirrors `neo-os-core`'s `js_value`/`js_number` (same ECMA-262 facts) but
-//! stays a local copy — the workspace rule forbids path dependencies between
-//! members, and this crate needs only the small slice below.
+//! Mirrors `neo-os-core`'s `js_value`/`js_number` (same ECMA-262 facts). This
+//! compatibility copy remains for compute protocol lanes that have not yet
+//! adopted the shared value model; new crates should use `neo-os-core`
+//! directly, as `neo-os-games` does.
 
 use serde_json::Value as Json;
 

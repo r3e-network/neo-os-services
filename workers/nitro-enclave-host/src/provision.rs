@@ -39,12 +39,14 @@ pub const NEODID_KMS_CIPHERTEXT_ENV: &str = "MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT
 pub const NEODID_KMS_PURPOSE: &str = "neoos/neodid-salt/v1";
 pub const CUSTODY_TOKEN_KMS_CIPHERTEXT_ENV: &str = "SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64";
 pub const CUSTODY_TOKEN_KMS_PURPOSE: &str = "neoos/custody-caller-token/v1";
+pub const GAME_SECRET_KMS_CIPHERTEXT_ENV: &str = "MORPHEUS_GAME_SECRET_KMS_CIPHERTEXT_BASE64";
+pub const GAME_SECRET_KMS_PURPOSE: &str = "neoos/game-secret/v1";
 
 /// Plaintext signing-key env vars a host could otherwise inject via /provision
 /// to bypass the KMS-attested path. The `*_KMS_CIPHERTEXT_BASE64` variants are
 /// accepted because the host only ever holds ciphertext. Ported verbatim from
 /// `PLAINTEXT_KEY_ENV_KEYS`.
-pub const PLAINTEXT_KEY_ENV_KEYS: [&str; 21] = [
+pub const PLAINTEXT_KEY_ENV_KEYS: [&str; 22] = [
     // Neo N3 (secp256r1) WIFs / raw keys.
     "MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET",
     "MORPHEUS_ORACLE_VERIFIER_WIF_TESTNET",
@@ -70,6 +72,8 @@ pub const PLAINTEXT_KEY_ENV_KEYS: [&str; 21] = [
     "MORPHEUS_ORACLE_KEY_MATERIAL_BASE64",
     // NeoDID nullifier/ticket salt.
     "NEODID_SECRET_SALT",
+    // Game-session HMAC root (non-signing, but just as confidential).
+    "MORPHEUS_GAME_SECRET_ROOT_HEX",
 ];
 
 /// `resolveProvisionEnv`: the body's env map, or empty when absent/misshaped.
@@ -346,6 +350,33 @@ fn materialize_custody_token(
     Ok(Some(token.to_string()))
 }
 
+fn materialize_game_secret_root(
+    state: &AppState,
+    env: &serde_json::Map<String, Value>,
+) -> Result<Option<String>, RuntimeError> {
+    let Some(envelope) = release_context_envelope(
+        state,
+        env,
+        GAME_SECRET_KMS_CIPHERTEXT_ENV,
+        GAME_SECRET_KMS_PURPOSE,
+    )?
+    else {
+        return Ok(None);
+    };
+    let root = envelope
+        .get("secret_root_hex")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|root| root.len() == 64 && root.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or_else(|| {
+            http_error(
+                400,
+                format!("{GAME_SECRET_KMS_CIPHERTEXT_ENV} KMS envelope secret_root_hex is invalid"),
+            )
+        })?;
+    Ok(Some(root.to_ascii_lowercase()))
+}
+
 /// Validate the complete provisioning object before any KMS or state effect.
 fn validate_provision_env(env: &serde_json::Map<String, Value>) -> Result<(), RuntimeError> {
     let mut plaintext: Vec<&str> = env
@@ -434,10 +465,10 @@ pub fn assert_provision_authorized(
 
 /// The per-role health the provision response carries (`signerRolesHealth`).
 pub fn signer_roles_health(state: &AppState) -> Vec<Value> {
-    let network = state.resolve_network();
-    AppState::SIGNING_ROLES
-        .iter()
-        .map(|role| {
+    state
+        .signing_role_reports()
+        .into_iter()
+        .map(|(role, report)| {
             let RoleReport {
                 ok,
                 materialized,
@@ -445,7 +476,7 @@ pub fn signer_roles_health(state: &AppState) -> Vec<Value> {
                 issues,
                 key_source,
                 ..
-            } = state.signer.role_report(&network, role);
+            } = report;
             serde_json::json!({
                 "role": role,
                 "ok": ok && materialized,
@@ -525,6 +556,7 @@ pub fn handle_provision(
     let oracle_key = materialize_oracle_key(state, env)?;
     let neodid_salt = materialize_neodid_salt(state, env)?;
     let custody_token = materialize_custody_token(state, env)?;
+    let game_secret_root = materialize_game_secret_root(state, env)?;
 
     let mut applied: Vec<String> = Vec::new();
     {
@@ -543,6 +575,9 @@ pub fn handle_provision(
         }
         if let Some(salt) = &neodid_salt {
             overlay.set_neodid_salt(salt);
+        }
+        if let Some(secret_root) = &game_secret_root {
+            overlay.set_game_secret_root(secret_root);
         }
     }
     state.runtime_token_kms_version.store(

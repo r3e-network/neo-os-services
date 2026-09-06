@@ -1,0 +1,17 @@
+[package]
+name = "neo-os-relayer-store"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Supabase REST persistence, durable queue state machine, and atomic state file management (T03)"
+
+[dependencies]
+neo-os-core = { path = "../neo-os-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+url = "2"
+
+[dev-dependencies]

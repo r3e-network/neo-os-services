@@ -1,6 +1,7 @@
+# NODE COMPATIBILITY ONLY. Production uses the measured Rust Nitro topology.
 services:
   nitro-worker:
-    image: ${MORPHEUS_NITRO_WORKER_IMAGE}
+    image: '${MORPHEUS_COMPAT_NITRO_WORKER_IMAGE:?pin-explicit-node-compat-worker-image}'
     restart: unless-stopped
     environment:
       # Fail-closed: activates the child-process sandbox guard (permission-guard.js).
@@ -51,7 +52,7 @@ services:
       - cert-data:/etc/letsencrypt
 
   morpheus-feed-relayer:
-    image: ${MORPHEUS_RELAYER_IMAGE}
+    image: '${MORPHEUS_COMPAT_RELAYER_IMAGE:?pin-explicit-node-compat-relayer-image}'
     restart: unless-stopped
     depends_on:
       nitro-worker:
@@ -68,6 +69,8 @@ services:
       SIGNER_SERVICE_URL: ${SIGNER_SERVICE_URL:-}
       SIGNER_SERVICE_TOKEN: ${SIGNER_SERVICE_TOKEN:-}
       SIGNER_ROLE_UPDATER_KEY_ID: ${SIGNER_ROLE_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_NEOX_UPDATER_KEY_ID: ${SIGNER_ROLE_NEOX_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_NEOX_VERIFIER_KEY_ID: ${SIGNER_ROLE_NEOX_VERIFIER_KEY_ID:-}
       SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID: ${SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID:-}
       MORPHEUS_RELAYER_MODE: feed_only
       MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.feed_only.${MORPHEUS_NETWORK}.${MORPHEUS_RELAYER_NEO_N3_START_BLOCK}.json
@@ -76,7 +79,7 @@ services:
       - morpheus-data:/data
 
   morpheus-request-relayer:
-    image: ${MORPHEUS_RELAYER_IMAGE}
+    image: '${MORPHEUS_COMPAT_RELAYER_IMAGE:?pin-explicit-node-compat-relayer-image}'
     restart: unless-stopped
     depends_on:
       nitro-worker:
@@ -93,6 +96,8 @@ services:
       SIGNER_SERVICE_URL: ${SIGNER_SERVICE_URL:-}
       SIGNER_SERVICE_TOKEN: ${SIGNER_SERVICE_TOKEN:-}
       SIGNER_ROLE_UPDATER_KEY_ID: ${SIGNER_ROLE_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_NEOX_UPDATER_KEY_ID: ${SIGNER_ROLE_NEOX_UPDATER_KEY_ID:-}
+      SIGNER_ROLE_NEOX_VERIFIER_KEY_ID: ${SIGNER_ROLE_NEOX_VERIFIER_KEY_ID:-}
       SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID: ${SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID:-}
       MORPHEUS_RELAYER_MODE: requests_only
       MORPHEUS_RELAYER_STATE_FILE: /data/.morpheus-relayer-state.requests_only.${MORPHEUS_NETWORK}.${MORPHEUS_RELAYER_NEO_N3_START_BLOCK}.json

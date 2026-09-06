@@ -19,10 +19,33 @@ use rusqlite::Connection;
 
 use super::*;
 use crate::{
+    evm_tx::UnsignedEvmTransaction,
     model::{AssetLimit, SignatureRateLimit, WindowLimit},
+    neo_block::{NeoBlock, NeoBlockHeader},
     network,
     tx::HASH160_LEN,
 };
+
+fn evm_amount(value: u128) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[16..].copy_from_slice(&value.to_be_bytes());
+    out
+}
+
+fn neox_transfer(nonce: u64, value: u128) -> Vec<u8> {
+    UnsignedEvmTransaction {
+        chain_id: network::neox_chain_id(Network::Testnet),
+        nonce,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 2,
+        gas_limit: 21_000,
+        to: Some(RECIPIENT),
+        value: evm_amount(value),
+        data: Vec::new(),
+        access_list: Vec::new(),
+    }
+    .encode_unsigned()
+}
 
 /// A recipient, an asset-agnostic account: nothing in these tests depends on it
 /// being a real wallet, only on it being an account that is not the key's own.
@@ -294,6 +317,7 @@ fn workload_credentials(
     nonce: &str,
     body: &[u8],
 ) -> CallerCredentials {
+    const AUDIENCE: &str = "https://custody.test.example";
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
@@ -301,6 +325,7 @@ fn workload_credentials(
     let route = "/signer/api/v1/sign/transaction";
     let body_digest = auth::body_sha256(body);
     let message = auth::WorkloadMessage {
+        audience: Some(AUDIENCE),
         caller_id,
         subject,
         timestamp,
@@ -317,11 +342,14 @@ fn workload_credentials(
         None,
         None,
         auth::WorkloadRequestHeaders {
+            protocol: Some(auth::WORKLOAD_PROTOCOL_V2),
+            audience: Some(AUDIENCE),
             caller_id: Some(caller_id),
             timestamp: Some(&timestamp.to_string()),
             nonce: Some(nonce),
             signature: Some(&signature),
         },
+        &auth::WorkloadAuthPolicy::new(AUDIENCE, false).expect("canonical test audience"),
         "POST",
         route,
     )
@@ -503,6 +531,114 @@ fn an_unnamed_magic_takes_the_canonical_value_for_the_network() -> Result<()> {
         "absent means the canonical table, which is what every pre-existing \
          consumer sends"
     );
+    Ok(())
+}
+
+#[test]
+fn neox_keys_are_curve_bound_and_replay_the_complete_result_without_double_spend() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let repository = Store::open(dir.path().join("signer.db"))?;
+    let service = SignerService::new(repository, MasterKey::from_bytes([19u8; 32]));
+    let (_, admin_token) = provision_admin_caller(service.repository(), "bootstrap")?;
+    let admin = CallerCredentials::server_to_server(&admin_token);
+    let key = allowed(service.generate_key_for_chain(
+        &admin,
+        "neox-treasury",
+        Network::Testnet,
+        network::ChainFamily::NeoX,
+        Some(network::neox_chain_id(Network::Testnet)),
+    )?);
+    assert_eq!(key.chain_family, network::ChainFamily::NeoX);
+    assert_eq!(key.chain_id, 12_227_332);
+    assert!(key.address.starts_with("0x"), "{}", key.address);
+    assert!(key.verification_script.is_empty());
+
+    let stored = allowed(service.save_policy(
+        &admin,
+        &key.key_id,
+        &SignerPolicy {
+            chain_family: Some(network::ChainFamily::NeoX),
+            evm_chain_id: Some(12_227_332),
+            allow_transfer: true,
+            window_limit: Some(WindowLimit {
+                seconds: 3_600,
+                max_amount: 100,
+            }),
+            evm_max_gas_price: Some(2),
+            evm_max_gas_limit: Some(21_000),
+            evm_method_whitelist: vec!["a9059cbb".to_string()],
+            ..SignerPolicy::default()
+        },
+    )?);
+    assert_eq!(stored.evm_chain_id, Some(12_227_332));
+    assert_eq!(
+        service.repository().signer_policy_or_default(&key.key_id)?,
+        stored,
+        "all EVM policy fields must survive the store round trip"
+    );
+
+    let (_, token) = allowed(service.create_caller(
+        &admin,
+        "neox-relayer",
+        KeyGrant::Only(vec![key.key_id.clone()]),
+        &[CallerCapability::Sign],
+        &[],
+    )?);
+    let credentials = CallerCredentials::server_to_server(&token);
+    let unsigned = neox_transfer(1, 60);
+    let first = allowed(service.sign_transaction_for_chain_with_request_id(
+        &credentials,
+        &key.key_id,
+        &unsigned,
+        network::ChainFamily::NeoX,
+        Some(12_227_332),
+        Some("neox-request-1"),
+    )?);
+    assert_eq!(first.chain_family, Some(network::ChainFamily::NeoX));
+    let signed = first
+        .signed_transaction
+        .as_deref()
+        .expect("NeoX returns the complete signed transaction");
+    assert!(signed.starts_with("0x02"), "{signed}");
+    assert_eq!(first.signature_hex.as_deref(), Some(signed));
+
+    let replay = allowed(service.sign_transaction_for_chain_with_request_id(
+        &credentials,
+        &key.key_id,
+        &unsigned,
+        network::ChainFamily::NeoX,
+        Some(12_227_332),
+        Some("neox-request-1"),
+    )?);
+    assert_eq!(
+        replay, first,
+        "idempotent replay must be byte-for-byte complete"
+    );
+    let events = service
+        .repository()
+        .signer_value_events_since(&key.key_id, 0)?;
+    assert_eq!(events.len(), 1, "replay must not reserve value twice");
+    assert_eq!(events[0].amount, 60);
+
+    let over_window = refused(service.sign_transaction_for_chain_with_request_id(
+        &credentials,
+        &key.key_id,
+        &neox_transfer(2, 50),
+        network::ChainFamily::NeoX,
+        Some(12_227_332),
+        Some("neox-request-2"),
+    )?);
+    assert_eq!(over_window.code, "window-amount-exceeded");
+
+    let wrong_family = refused(service.sign_transaction_for_chain_with_request_id(
+        &credentials,
+        &key.key_id,
+        &unsigned,
+        network::ChainFamily::NeoN3,
+        None,
+        None,
+    )?);
+    assert_eq!(wrong_family.code, "signer-chain-family-mismatch");
     Ok(())
 }
 
@@ -1427,6 +1563,107 @@ fn an_admin_granted_one_key_cannot_read_the_vault() -> Result<()> {
 }
 
 // -- consensus --------------------------------------------------------------
+
+fn empty_block(index: u32, marker: u8) -> NeoBlock {
+    NeoBlock::new(
+        NeoBlockHeader::from_wire(
+            0,
+            [marker; 32],
+            [0; 32],
+            1_700_000_000_000 + u64::from(marker),
+            u64::from(marker),
+            index,
+            0,
+            [marker; 20],
+        )
+        .expect("the test header widths are valid"),
+        Vec::new(),
+    )
+    .expect("an empty block has the zero Merkle root")
+}
+
+#[test]
+fn block_signing_is_bound_idempotent_and_height_wide_anti_equivocating() -> Result<()> {
+    let custody = Custody::open()?;
+    custody.save(&SignerPolicy {
+        allow_consensus: true,
+        ..Default::default()
+    })?;
+    let magic = custody.key.network_magic;
+    let first_block = empty_block(700, 1);
+    let first = allowed(custody.service.sign_block_with_request_id(
+        &custody.credentials(),
+        &custody.key.key_id,
+        &first_block,
+        magic,
+        custody.key.public_key,
+        Some("block-700-a"),
+    )?);
+    assert!(crypto::verify_signature(
+        &custody.key.public_key,
+        &preimage(first_block.unsigned(), magic),
+        &signature_of(&first),
+    ));
+
+    let replay = allowed(custody.service.sign_block_with_request_id(
+        &custody.credentials(),
+        &custody.key.key_id,
+        &first_block,
+        magic,
+        custody.key.public_key,
+        Some("block-700-a"),
+    )?);
+    assert_eq!(
+        replay, first,
+        "the node's retry must replay one durable result"
+    );
+
+    assert_eq!(
+        refused(custody.service.sign_block_with_request_id(
+            &custody.credentials(),
+            &custody.key.key_id,
+            &empty_block(701, 1),
+            magic ^ 1,
+            custody.key.public_key,
+            None,
+        )?)
+        .code,
+        "signer-network-mismatch"
+    );
+    let mut other_key = custody.key.public_key;
+    other_key[1] ^= 1;
+    assert_eq!(
+        refused(custody.service.sign_block_with_request_id(
+            &custody.credentials(),
+            &custody.key.key_id,
+            &empty_block(701, 1),
+            magic,
+            other_key,
+            None,
+        )?)
+        .code,
+        "signer-public-key-mismatch"
+    );
+
+    let restarted = SignerService::new(
+        Store::open(custody.service.repository().db_path())?,
+        MasterKey::from_bytes([9u8; 32]),
+    );
+    assert_eq!(
+        refused(restarted.sign_block_with_request_id(
+            &custody.credentials(),
+            &custody.key.key_id,
+            &empty_block(700, 2),
+            magic,
+            custody.key.public_key,
+            Some("block-700-b"),
+        )?)
+        .code,
+        "consensus-equivocation",
+        "a restart must not reopen a validator's block slot at the same height"
+    );
+    Ok(())
+}
 
 #[test]
 fn consensus_signing_needs_its_own_permission_and_its_own_sender() -> Result<()> {

@@ -12,6 +12,8 @@ serde = { version = "1", features = ["derive"] }
 # silently sort keys and change every hash.
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
+# hash160 (script-hash derivation for custody identities) — same version neo-signer pins.
+ripemd = "0.1"
 # secret_redaction: JS RegExp port (secret-name / secret-value patterns).
 regex = "1"
 icu_collator = { version = "2", features = ["compiled_data"] }

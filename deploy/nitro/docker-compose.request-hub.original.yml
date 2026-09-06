@@ -1,6 +1,8 @@
+# FROZEN NODE COMPATIBILITY BASELINE. Kept for parity/reference only; it is not
+# a production authority. Pin compatibility images explicitly when replaying.
 services:
   request-worker:
-    image: ${MORPHEUS_NITRO_WORKER_IMAGE}
+    image: '${MORPHEUS_COMPAT_NITRO_WORKER_IMAGE:?pin-explicit-node-compat-worker-image}'
     restart: unless-stopped
     environment:
       # Fail-closed: activates the child-process sandbox guard (permission-guard.js).
@@ -119,7 +121,7 @@ services:
         exec caddy run --config /etc/caddy/Caddyfile
 
   mainnet-request-relayer:
-    image: ${MORPHEUS_RELAYER_IMAGE}
+    image: '${MORPHEUS_COMPAT_RELAYER_IMAGE:?pin-explicit-node-compat-relayer-image}'
     restart: unless-stopped
     depends_on:
       request-worker:
@@ -141,7 +143,7 @@ services:
       - morpheus-request-data:/data
 
   testnet-request-relayer:
-    image: ${MORPHEUS_RELAYER_IMAGE}
+    image: '${MORPHEUS_COMPAT_RELAYER_IMAGE:?pin-explicit-node-compat-relayer-image}'
     restart: unless-stopped
     depends_on:
       request-worker:

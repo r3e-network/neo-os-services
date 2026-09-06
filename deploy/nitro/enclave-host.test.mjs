@@ -170,7 +170,17 @@ test('GET /health answers the degraded readiness body with no-store', async () =
   // compute itself, so the loopback port is not on the readiness path.
   assert.equal(body.checks.compute, true);
   assert.equal(body.checks.signer, false);
-  assert.deepEqual(body.key_source, { oracle_verifier: 'none', updater: 'none' });
+  assert.deepEqual(body.key_source, {
+    updater: 'none',
+    oracle_verifier: 'none',
+    relayer: 'none',
+    worker: 'none',
+    neox_updater: 'none',
+    neox_verifier: 'none',
+  });
+  for (const role of Object.keys(body.key_source)) {
+    assert.equal(body.checks[`${role}_ready`], false);
+  }
   assert.equal(body.plaintext_key_provision_allowed, false);
 });
 

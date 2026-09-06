@@ -44,11 +44,21 @@ COPY crates/neo-os-core/Cargo.toml crates/neo-os-core/Cargo.toml
 COPY crates/nitro-attest/Cargo.toml crates/nitro-attest/Cargo.toml
 COPY crates/nitro-init/Cargo.toml crates/nitro-init/Cargo.toml
 COPY crates/neo-os-compute/Cargo.toml crates/neo-os-compute/Cargo.toml
+COPY crates/neo-os-games/Cargo.toml crates/neo-os-games/Cargo.toml
+COPY crates/neo-os-chain-n3/Cargo.toml crates/neo-os-chain-n3/Cargo.toml
+COPY crates/neo-os-chain-evm/Cargo.toml crates/neo-os-chain-evm/Cargo.toml
+COPY crates/neo-os-relayer-store/Cargo.toml crates/neo-os-relayer-store/Cargo.toml
+COPY crates/neo-os-service-runtime/Cargo.toml crates/neo-os-service-runtime/Cargo.toml
+COPY workers/neo-os-relayer/Cargo.toml workers/neo-os-relayer/Cargo.toml
 RUN mkdir -p workers/neo-signer/src/bin workers/nitro-enclave-host/src \
       crates/neo-os-core/src crates/nitro-attest/src/bin crates/nitro-init/src \
-      crates/neo-os-compute/src \
+      crates/neo-os-compute/src crates/neo-os-games/src \
+      crates/neo-os-chain-n3/src crates/neo-os-chain-evm/src \
+      crates/neo-os-relayer-store/src crates/neo-os-service-runtime/src \
+      workers/neo-os-relayer/src \
   && printf '' > workers/neo-signer/src/lib.rs \
   && printf 'fn main() {}\n' > workers/neo-signer/src/bin/signer_service.rs \
+  && printf '' > workers/nitro-enclave-host/src/lib.rs \
   && printf 'fn main() {}\n' > workers/nitro-enclave-host/src/main.rs \
   && printf '' > crates/neo-os-core/src/lib.rs \
   && printf '' > crates/nitro-attest/src/lib.rs \
@@ -56,16 +66,25 @@ RUN mkdir -p workers/neo-signer/src/bin workers/nitro-enclave-host/src \
   && printf '' > crates/nitro-init/src/lib.rs \
   && printf 'fn main() {}\n' > crates/nitro-init/src/main.rs \
   && printf '' > crates/neo-os-compute/src/lib.rs \
+  && printf '' > crates/neo-os-games/src/lib.rs \
+  && printf '' > crates/neo-os-chain-n3/src/lib.rs \
+  && printf '' > crates/neo-os-chain-evm/src/lib.rs \
+  && printf '' > crates/neo-os-relayer-store/src/lib.rs \
+  && printf '' > crates/neo-os-service-runtime/src/lib.rs \
+  && printf '' > workers/neo-os-relayer/src/lib.rs \
+  && printf 'fn main() {}\n' > workers/neo-os-relayer/src/main.rs \
   && cargo fetch --locked
 
-# Real sources for the members this image compiles: custody, its attestation
-# helper, the neo-os-core library they share, and the PID 1 supervisor that
-# starts it. The other members keep their stubs — they resolve the graph and
-# are never built.
+# Real sources for the members this image compiles: custody, its EVM semantic
+# verification dependency, its attestation helper, the neo-os-core library
+# they share, and the PID 1 supervisor that starts it. The other members keep
+# their stubs — they resolve the graph and are never built.
 COPY workers/neo-signer ./workers/neo-signer
 COPY crates/neo-os-core ./crates/neo-os-core
+COPY crates/neo-os-chain-evm ./crates/neo-os-chain-evm
 COPY crates/nitro-attest ./crates/nitro-attest
 COPY crates/nitro-init ./crates/nitro-init
+COPY crates/neo-os-service-runtime ./crates/neo-os-service-runtime
 RUN cargo build --locked --release \
       --bin signer_service --bin nsm-attest-rs --bin nitro_init
 
@@ -134,7 +153,7 @@ RUN apt-get update \
        socat=1.7.4.4-2 \
        iproute2=6.1.0-3 \
        libcap2-bin=1:2.66-4+deb12u3+b1 \
-  && setcap cap_net_admin+ep "$(command -v ip)" \
+  && setcap cap_net_admin+ep "$(readlink -f "$(command -v ip)")" \
   && rm -rf /var/lib/apt/lists/* /var/log/* /var/cache/* /var/lib/dpkg/*-old
 
 COPY --from=custodybuild /build/target/release/signer_service /app/bin/signer_service
@@ -161,6 +180,12 @@ ENV SIGNER_SERVICE_DATA_DIR=/var/lib/morpheus-signer
 # forwards to this address. There is no other interface to reach it on.
 ENV SIGNER_SERVICE_HOST=127.0.0.1
 ENV SIGNER_SERVICE_PORT=8081
+# Workload assertions name the caller-visible custody origin, not this private
+# listener. The default matches start-nitro-custody.sh's loopback host bridge;
+# an external TLS origin or non-default host port is supplied at image build
+# time and therefore becomes part of the measured enclave identity.
+ARG SIGNER_SERVICE_WORKLOAD_AUDIENCE=http://127.0.0.1:8789
+ENV SIGNER_SERVICE_WORKLOAD_AUDIENCE=${SIGNER_SERVICE_WORKLOAD_AUDIENCE}
 # The image's identity, not a deployment option: without an NSM device this
 # process refuses to start at all.
 ENV SIGNER_SERVICE_ATTESTED_BOOT=require

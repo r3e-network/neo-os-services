@@ -12,16 +12,29 @@
 
 use anyhow::Result;
 use axum::{
-    body::Body,
+    body::{Body, Bytes},
     http::{Method, StatusCode},
 };
 use ed25519_dalek::{Signer as _, SigningKey};
+use http_body::Frame;
 use serde_json::{json, Value};
+use std::{
+    convert::Infallible,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex,
+    },
+    task::{Context, Poll},
+    time::Duration,
+};
 use tower::ServiceExt;
 
 use super::*;
 use crate::{
     auth::AccessRejection,
+    evm_tx::UnsignedEvmTransaction,
+    network::{self, ChainFamily},
     policy::{self, DenyReason},
     service::provision_admin_caller,
     store::Store,
@@ -29,13 +42,53 @@ use crate::{
     vault::MasterKey,
 };
 
+fn neox_unsigned(nonce: u64, value: u128) -> Vec<u8> {
+    let mut amount = [0u8; 32];
+    amount[16..].copy_from_slice(&value.to_be_bytes());
+    UnsignedEvmTransaction {
+        chain_id: network::neox_chain_id(Network::Testnet),
+        nonce,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 2,
+        gas_limit: 21_000,
+        to: Some(RECIPIENT),
+        value: amount,
+        data: Vec::new(),
+        access_list: Vec::new(),
+    }
+    .encode_unsigned()
+}
+
 /// A recipient, an account that is not the harness key's.
 const RECIPIENT: [u8; tx::HASH160_LEN] = [0x22u8; tx::HASH160_LEN];
+const WORKLOAD_AUDIENCE: &str = "https://custody.test.example";
+
+fn workload_auth() -> crate::auth::WorkloadAuthPolicy {
+    crate::auth::WorkloadAuthPolicy::new(WORKLOAD_AUDIENCE, false)
+        .expect("the test workload audience is canonical")
+}
 
 /// A 32-byte scalar above the curve's order, so no path can turn it into a key:
 /// a caller's mistake that must be refused, and one whose text can be looked for
 /// in a response without a false alarm.
 const NOT_A_SECRET: &str = "ffffffffffffffffffffffffffffffff00112233445566778899aabbccddeeff";
+
+/// A caller that begins a body and never finishes it. The overload test uses
+/// this to hold one real router admission without relying on a slow disk or a
+/// timing-sensitive cryptographic operation.
+struct PendingBody;
+
+impl http_body::Body for PendingBody {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _context: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        Poll::Pending
+    }
+}
 
 // -- harness --------------------------------------------------------------
 
@@ -70,7 +123,7 @@ impl Api {
         let service = SignerService::new(repository, MasterKey::from_bytes([9u8; 32]));
         let (bootstrap, admin_token) = provision_admin_caller(service.repository(), "bootstrap")?;
         let mut api = Api {
-            router: router(ApiState::new(service.clone())),
+            router: router(ApiState::new(service.clone()).with_workload_auth(workload_auth())),
             service,
             admin: admin_token,
             signer: String::new(),
@@ -191,7 +244,11 @@ impl Api {
     /// The same vault behind a lower body ceiling, for the case that has to
     /// prove the ceiling is a real number and not documentation.
     async fn send_with_limit(&self, max_body_bytes: usize, request: Request) -> Reply {
-        let router = router(ApiState::new(self.service.clone()).with_body_limit(max_body_bytes));
+        let router = router(
+            ApiState::new(self.service.clone())
+                .with_workload_auth(workload_auth())
+                .with_body_limit(max_body_bytes),
+        );
         self.send_on(router, request).await
     }
 
@@ -213,10 +270,24 @@ impl Api {
         nonce: &str,
         body: Value,
     ) -> Reply {
+        self.send(self.workload_request(path, identity, timestamp, nonce, WORKLOAD_AUDIENCE, body))
+            .await
+    }
+
+    fn workload_request(
+        &self,
+        path: &str,
+        identity: &WorkloadClient,
+        timestamp: u64,
+        nonce: &str,
+        audience: &str,
+        body: Value,
+    ) -> Request {
         let route = format!("{API_PREFIX}{path}");
         let body = body.to_string();
         let body_digest = crate::auth::body_sha256(body.as_bytes());
         let message = crate::auth::WorkloadMessage {
+            audience: Some(audience),
             caller_id: &identity.caller_id,
             subject: identity.subject.as_deref(),
             timestamp,
@@ -228,17 +299,18 @@ impl Api {
         }
         .to_bytes();
         let signature = hex::encode(identity.signing_key.sign(&message).to_bytes());
-        let request = Request::builder()
+        Request::builder()
             .method(Method::POST)
             .uri(&route)
             .header("content-type", "application/json")
+            .header(WORKLOAD_PROTOCOL_HEADER, crate::auth::WORKLOAD_PROTOCOL_V2)
+            .header(WORKLOAD_AUDIENCE_HEADER, audience)
             .header(WORKLOAD_CALLER_HEADER, &identity.caller_id)
             .header(WORKLOAD_TIMESTAMP_HEADER, timestamp.to_string())
             .header(WORKLOAD_NONCE_HEADER, nonce)
             .header(WORKLOAD_SIGNATURE_HEADER, signature)
             .body(Body::from(body))
-            .expect("the workload request should build");
-        self.send(request).await
+            .expect("the workload request should build")
     }
 
     async fn delete(&self, path: &str, token: Option<&str>) -> Reply {
@@ -485,6 +557,7 @@ async fn a_signed_transaction_answers_with_a_witness() {
         [
             "address",
             "allowed",
+            "chain_family",
             "digest",
             "invocation_script",
             "key_id",
@@ -494,6 +567,7 @@ async fn a_signed_transaction_answers_with_a_witness() {
         "§5's success body, flattened, and nothing beside it"
     );
     assert!(reply.json()["allowed"].as_bool().expect("allowed"));
+    assert_eq!(reply.field("chain_family"), "neo-n3");
     assert_eq!(reply.field("key_id"), api.key_id);
     // Two hex conventions on one body, and both are worth pinning: a client that
     // stripped a prefix it did not expect to find would send back bytes that are
@@ -513,6 +587,354 @@ async fn a_signed_transaction_answers_with_a_witness() {
         ScriptHash::from(api.account).to_display(),
         "the witness is for the account the key is for, and the route says so"
     );
+}
+
+#[tokio::test]
+async fn neox_key_identity_and_complete_signed_transaction_survive_the_http_boundary() {
+    let api = Api::open().await.expect("vault");
+    let key = api
+        .post(
+            "/keys",
+            Some(&api.admin),
+            json!({
+                "label": "neox-treasury",
+                "network": "testnet",
+                "chain_family": "neox",
+                "chain_id": 12_227_332,
+            }),
+        )
+        .await;
+    assert_eq!(key.status, StatusCode::OK, "{key:?}");
+    assert_eq!(key.field("chain_family"), "neox");
+    assert_eq!(key.json()["chain_id"], 12_227_332);
+    assert!(key.field("address").starts_with("0x"));
+    assert_eq!(key.field("address"), key.field("script_hash"));
+    assert_eq!(key.field("public_key").len(), 66);
+    assert_eq!(key.field("verification_script"), "");
+    let key_id = key.field("key_id");
+
+    let stored_key = api
+        .service
+        .repository()
+        .get_signer_key(&key_id)
+        .expect("stored NeoX key");
+    assert_eq!(stored_key.chain_family, ChainFamily::NeoX);
+    assert_eq!(stored_key.chain_id, 12_227_332);
+
+    let policy = api
+        .post(
+            &format!("/keys/{key_id}/policy"),
+            Some(&api.admin),
+            json!({
+                "chain_family": "neox",
+                "allow_transfer": true,
+                "window_limit": {"seconds": 3600, "max_amount": "100"},
+                "evm_max_gas_price": "2",
+                "evm_max_gas_limit": 21_000,
+                "evm_method_whitelist": ["a9059cbb"],
+                "evm_method_blacklist": ["deadbeef"],
+                "evm_chain_id": 12_227_332,
+            }),
+        )
+        .await;
+    assert_eq!(policy.status, StatusCode::OK, "{policy:?}");
+    assert_eq!(policy.json()["policy"]["chain_family"], "neox");
+    assert_eq!(policy.json()["policy"]["evm_max_gas_price"], "2");
+    assert_eq!(policy.json()["policy"]["evm_max_gas_limit"], 21_000);
+    assert_eq!(
+        policy.json()["policy"]["evm_method_whitelist"],
+        json!(["a9059cbb"])
+    );
+    assert_eq!(
+        policy.json()["policy"]["evm_method_blacklist"],
+        json!(["deadbeef"])
+    );
+    assert_eq!(policy.json()["policy"]["evm_chain_id"], 12_227_332);
+
+    let body = json!({
+        "key_id": key_id,
+        "unsigned_hex": hex::encode(neox_unsigned(1, 60)),
+        "chain_family": "neox",
+        "chain_id": 12_227_332,
+        "request_id": "api-neox-1",
+    });
+    let first = api
+        .post("/sign/transaction", Some(&api.signer), body.clone())
+        .await;
+    assert_eq!(first.status, StatusCode::OK, "{first:?}");
+    assert_eq!(first.field("chain_family"), "neox");
+    let signed = first.field("signed_transaction");
+    assert!(signed.starts_with("0x02"), "{signed}");
+    assert_eq!(first.field("signature_hex"), signed);
+    assert_eq!(first.field("invocation_script"), "");
+    assert_eq!(first.field("verification_script"), "");
+
+    let replay = api
+        .post("/sign/transaction", Some(&api.signer), body.clone())
+        .await;
+    assert_eq!(replay.status, StatusCode::OK, "{replay:?}");
+    assert_eq!(replay.json(), first.json());
+
+    let mut wrong_chain = body;
+    wrong_chain["request_id"] = json!("api-neox-wrong-chain");
+    wrong_chain["chain_id"] = json!(12_227_331);
+    let refused = api
+        .post("/sign/transaction", Some(&api.signer), wrong_chain)
+        .await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{refused:?}");
+    assert_eq!(refused.code(), "signer-chain-id-mismatch");
+}
+
+#[tokio::test]
+async fn structured_eip191_fulfillment_is_vector_locked_policy_bound_and_idempotent() {
+    let api = Api::open().await.expect("vault");
+    let chain_id = 12_227_330u64;
+    let oracle = "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B";
+    let key = api
+        .post(
+            "/keys",
+            Some(&api.admin),
+            json!({
+                "label": "neox-verifier",
+                "network": "private",
+                "chain_family": "neox",
+                "chain_id": chain_id,
+            }),
+        )
+        .await;
+    assert_eq!(key.status, StatusCode::OK, "{key:?}");
+    let key_id = key.field("key_id");
+    let selector = hex::encode(
+        &neo_os_chain_evm::keccak256(b"fulfillRequest(uint256,bool,bytes,string,bytes)")[..4],
+    );
+    let policy = api
+        .post(
+            &format!("/keys/{key_id}/policy"),
+            Some(&api.admin),
+            json!({
+                "chain_family": "neox",
+                "allow_contract_call": true,
+                "contract_whitelist": [oracle],
+                "evm_method_whitelist": [selector],
+                "evm_chain_id": chain_id,
+            }),
+        )
+        .await;
+    assert_eq!(policy.status, StatusCode::OK, "{policy:?}");
+
+    let body = json!({
+        "key_id": key_id,
+        "request_id": "fulfill:minimal:7",
+        "chain_id": chain_id,
+        "oracle_contract": oracle,
+        "fulfillment": {
+            "request_id": "7",
+            "app_id": "app:1",
+            "module_id": "oracle.fetch",
+            "operation": "privacy_oracle",
+            "success": true,
+            "error": "",
+        },
+        "result_bytes_hex": "0x68656c6c6f",
+    });
+    let first = api
+        .post("/sign/eip191-fulfillment", Some(&api.signer), body.clone())
+        .await;
+    assert_eq!(first.status, StatusCode::OK, "{first:?}");
+    assert_eq!(
+        first.field("digest"),
+        "0x0241615a24f31aba60cf4323dac9d6ebd35eb3451b367c070e17184f08e4a5a3"
+    );
+    assert_eq!(first.field("chain_family"), "neox");
+    assert_eq!(first.json()["chain_id"], chain_id);
+    assert_eq!(first.field("oracle_contract"), oracle.to_ascii_lowercase());
+    let signature = first.field("signature");
+    assert_eq!(signature.len(), 132);
+    assert!(matches!(&signature[130..], "1b" | "1c"));
+    assert_eq!(first.field("message_hash").len(), 66);
+
+    // Lock the wire shape to personal_sign/ecrecover semantics, not merely to
+    // a 65-byte blob with a plausible recovery byte.
+    let signature_bytes = hex::decode(signature.trim_start_matches("0x")).unwrap();
+    let ecdsa_signature = k256::ecdsa::Signature::from_slice(&signature_bytes[..64]).unwrap();
+    let recovery_id = k256::ecdsa::RecoveryId::from_byte(signature_bytes[64] - 27).unwrap();
+    let message_hash = hex::decode(first.field("message_hash").trim_start_matches("0x")).unwrap();
+    let recovered = k256::ecdsa::VerifyingKey::recover_from_prehash(
+        &message_hash,
+        &ecdsa_signature,
+        recovery_id,
+    )
+    .unwrap();
+    assert_eq!(
+        format!(
+            "0x{}",
+            hex::encode(recovered.to_encoded_point(true).as_bytes())
+        ),
+        first.field("public_key")
+    );
+    let uncompressed = recovered.to_encoded_point(false);
+    let recovered_address = &neo_os_chain_evm::keccak256(&uncompressed.as_bytes()[1..])[12..];
+    assert_eq!(
+        format!("0x{}", hex::encode(recovered_address)),
+        first.field("address")
+    );
+
+    let replay = api
+        .post("/sign/eip191-fulfillment", Some(&api.signer), body.clone())
+        .await;
+    assert_eq!(replay.status, StatusCode::OK, "{replay:?}");
+    assert_eq!(replay.json(), first.json());
+    assert_eq!(
+        api.audit_for(SignerAuditAction::Eip191FulfillmentSigned)
+            .len(),
+        1,
+        "idempotent replay must not append a second allowed signature row"
+    );
+
+    let mut conflict = body;
+    conflict["result_bytes_hex"] = json!("0x00");
+    let conflict = api
+        .post("/sign/eip191-fulfillment", Some(&api.signer), conflict)
+        .await;
+    assert_eq!(conflict.status, StatusCode::CONFLICT, "{conflict:?}");
+    assert_eq!(conflict.code(), audit::REQUEST_ID_CONFLICT);
+}
+
+#[tokio::test]
+async fn eip191_fulfillment_refuses_every_unbounded_policy_dimension() {
+    let api = Api::open().await.expect("vault");
+    let chain_id = 12_227_330u64;
+    let oracle = "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B";
+    let key = api
+        .post(
+            "/keys",
+            Some(&api.admin),
+            json!({
+                "label": "neox-verifier-boundary-test",
+                "network": "private",
+                "chain_family": "neox",
+                "chain_id": chain_id,
+            }),
+        )
+        .await;
+    assert_eq!(key.status, StatusCode::OK, "{key:?}");
+    let key_id = key.field("key_id");
+    let selector = hex::encode(
+        &neo_os_chain_evm::keccak256(b"fulfillRequest(uint256,bool,bytes,string,bytes)")[..4],
+    );
+    let body = |request_id: &str| {
+        json!({
+            "key_id": key_id,
+            "request_id": request_id,
+            "chain_id": chain_id,
+            "oracle_contract": oracle,
+            "fulfillment": {
+                "request_id": "8",
+                "app_id": "app:1",
+                "module_id": "oracle.fetch",
+                "operation": "privacy_oracle",
+                "success": true,
+                "error": "",
+            },
+            "result_bytes_hex": "0x01",
+        })
+    };
+
+    let missing_chain = api
+        .post(
+            &format!("/keys/{key_id}/policy"),
+            Some(&api.admin),
+            json!({
+                "chain_family": "neox",
+                "allow_contract_call": true,
+                "contract_whitelist": [oracle],
+                "evm_method_whitelist": [selector],
+            }),
+        )
+        .await;
+    assert_eq!(missing_chain.status, StatusCode::OK, "{missing_chain:?}");
+    assert_eq!(
+        missing_chain.json()["policy"]["evm_chain_id"],
+        chain_id,
+        "policy writes pin NeoX custody keys even when the operator omits the field"
+    );
+    // Simulate a legacy/corrupt pre-hardening row. The semantic signing path
+    // must still refuse it instead of treating a missing binding as a wildcard.
+    let mut unbound = api
+        .service
+        .repository()
+        .signer_policy_or_default(&key_id)
+        .unwrap();
+    unbound.evm_chain_id = None;
+    api.service
+        .repository()
+        .save_signer_policy(&key_id, &unbound, 1)
+        .unwrap();
+    let refused = api
+        .post(
+            "/sign/eip191-fulfillment",
+            Some(&api.signer),
+            body("fulfill-boundary-missing-chain"),
+        )
+        .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{refused:?}"
+    );
+    assert_eq!(refused.code(), "signer-policy-chain-mismatch");
+
+    let empty_contracts = api
+        .post(
+            &format!("/keys/{key_id}/policy"),
+            Some(&api.admin),
+            json!({
+                "chain_family": "neox",
+                "allow_contract_call": true,
+                "contract_whitelist": [],
+                "evm_method_whitelist": [selector],
+                "evm_chain_id": chain_id,
+            }),
+        )
+        .await;
+    assert_eq!(
+        empty_contracts.status,
+        StatusCode::OK,
+        "{empty_contracts:?}"
+    );
+    let refused = api
+        .post(
+            "/sign/eip191-fulfillment",
+            Some(&api.signer),
+            body("fulfill-boundary-empty-contracts"),
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{refused:?}");
+    assert_eq!(refused.code(), "contract-not-whitelisted");
+
+    let empty_methods = api
+        .post(
+            &format!("/keys/{key_id}/policy"),
+            Some(&api.admin),
+            json!({
+                "chain_family": "neox",
+                "allow_contract_call": true,
+                "contract_whitelist": [oracle],
+                "evm_method_whitelist": [],
+                "evm_chain_id": chain_id,
+            }),
+        )
+        .await;
+    assert_eq!(empty_methods.status, StatusCode::OK, "{empty_methods:?}");
+    let refused = api
+        .post(
+            "/sign/eip191-fulfillment",
+            Some(&api.signer),
+            body("fulfill-boundary-empty-methods"),
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{refused:?}");
+    assert_eq!(refused.code(), "evm-method-not-whitelisted");
 }
 
 #[tokio::test]
@@ -755,6 +1177,81 @@ async fn a_consensus_payload_is_refused_by_the_default_boundary() {
         "the route is wired to the consensus decision, not to the transaction one"
     );
     assert_eq!(api.audit_for(SignerAuditAction::ConsensusSigned).len(), 1);
+}
+
+#[tokio::test]
+async fn a_structured_block_route_validates_merkle_and_uses_consensus_policy() {
+    let api = Api::open().await.expect("vault");
+    let key = api
+        .service
+        .repository()
+        .find_signer_key(&api.key_id)
+        .expect("key lookup")
+        .expect("harness key");
+    let body = json!({
+        "key_id": api.key_id.clone(),
+        "network": key.network_magic(),
+        "public_key": hex::encode(key.public_key),
+        "request_id": "http-block-42",
+        "block": {
+            "header": {
+                "version": 0,
+                "prev_hash": hex::encode([1u8; 32]),
+                "merkle_root": hex::encode([0u8; 32]),
+                "timestamp": 1_700_000_000_000u64,
+                "nonce": 7,
+                "index": 42,
+                "primary_index": 0,
+                "next_consensus": hex::encode([2u8; 20])
+            },
+            "tx_hashes": []
+        }
+    });
+
+    let refused = api
+        .post("/sign/block", Some(&api.signer), body.clone())
+        .await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{refused:?}");
+    assert_eq!(refused.code(), DenyReason::ConsensusForbidden.code());
+
+    let policy = api
+        .post(
+            &format!("/keys/{}/policy", api.key_id),
+            Some(&api.admin),
+            json!({"allow_transfer": true, "allow_consensus": true}),
+        )
+        .await;
+    assert_eq!(policy.status, StatusCode::OK, "{policy:?}");
+    let signed = api.post("/sign/block", Some(&api.signer), body).await;
+    assert_eq!(signed.status, StatusCode::OK, "{signed:?}");
+    assert!(signed.field("invocation_script").starts_with("0c40"));
+
+    let invalid = api
+        .post(
+            "/sign/block",
+            Some(&api.signer),
+            json!({
+                "key_id": api.key_id,
+                "network": key.network_magic(),
+                "public_key": hex::encode(key.public_key),
+                "block": {
+                    "header": {
+                        "version": 0,
+                        "prev_hash": hex::encode([1u8; 32]),
+                        "merkle_root": hex::encode([9u8; 32]),
+                        "timestamp": 1_700_000_000_001u64,
+                        "nonce": 8,
+                        "index": 43,
+                        "primary_index": 0,
+                        "next_consensus": hex::encode([2u8; 20])
+                    },
+                    "tx_hashes": []
+                }
+            }),
+        )
+        .await;
+    assert_eq!(invalid.status, StatusCode::BAD_REQUEST, "{invalid:?}");
+    assert_eq!(invalid.code(), REQUEST_UNREADABLE);
 }
 
 #[tokio::test]
@@ -1113,6 +1610,220 @@ async fn a_body_over_the_ceiling_is_refused_before_it_is_buffered() {
 }
 
 #[tokio::test]
+async fn unauthenticated_saturation_is_shed_before_body_auth_or_blocking_work() {
+    let api = Api::open().await.expect("vault");
+    let state = ApiState::new(api.service.clone())
+        .with_workload_auth(workload_auth())
+        .with_max_in_flight_requests(1);
+    let bounded_router = router(state.clone());
+
+    // This unauthenticated caller occupies the single admission while waiting
+    // for its body. Because the permit is a router boundary, it covers body
+    // buffering as well as every later authentication and spawn_blocking path.
+    let pending_request = Request::builder()
+        .method(Method::POST)
+        .uri(format!("{API_PREFIX}/sign/transaction"))
+        .header("content-type", "application/json")
+        .body(Body::new(PendingBody))
+        .expect("pending request");
+    let pending_router = bounded_router.clone();
+    let pending = tokio::spawn(async move { pending_router.oneshot(pending_request).await });
+    for _ in 0..100 {
+        if state.request_slots.available_permits() == 0 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        state.request_slots.available_permits(),
+        0,
+        "the first request must hold the sole router admission"
+    );
+
+    // A second unauthenticated request is answered immediately and never gets
+    // a permit with which to read a body, authenticate, or submit blocking work.
+    let rejected = bounded_router
+        .clone()
+        .oneshot(api.request(
+            Method::POST,
+            "/sign/transaction",
+            None,
+            Some(json!({"key_id": api.key_id.clone(), "unsigned_hex": "00"})),
+        ))
+        .await
+        .expect("the router response");
+    assert_eq!(rejected.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        rejected
+            .headers()
+            .get(header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok()),
+        Some(BUSY_RETRY_AFTER_SECONDS)
+    );
+    let body = to_bytes(rejected.into_body(), usize::MAX)
+        .await
+        .expect("overload body");
+    let body: Value = serde_json::from_slice(&body).expect("overload JSON");
+    assert_eq!(body["allowed"], false);
+    assert_eq!(body["code"], SERVICE_BUSY);
+    assert_eq!(
+        body.as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["allowed", "code", "message"]
+    );
+    assert_eq!(state.request_slots.available_permits(), 0);
+
+    // Saturation must not blind the operator's liveness path.
+    let health = send_raw(
+        bounded_router.clone(),
+        root_request(Method::GET, "/health", None, None),
+    )
+    .await;
+    assert_eq!(health.status, StatusCode::OK, "{health:?}");
+
+    pending.abort();
+    let _ = pending.await;
+    assert_eq!(
+        state.request_slots.available_permits(),
+        1,
+        "cancelling a request must release its admission"
+    );
+
+    // Once capacity returns, the same ordinary unauthenticated request reaches
+    // the existing service guard and preserves its audited refusal contract.
+    let ordinary = api
+        .send_on(
+            bounded_router,
+            api.request(
+                Method::POST,
+                "/sign/transaction",
+                None,
+                Some(json!({
+                    "key_id": api.key_id.clone(),
+                    "unsigned_hex": api.transfer(1, 991),
+                })),
+            ),
+        )
+        .await;
+    assert_eq!(ordinary.status, StatusCode::FORBIDDEN, "{ordinary:?}");
+    assert_eq!(ordinary.code(), "missing-token");
+}
+
+#[tokio::test]
+async fn cancelled_requests_cannot_release_still_running_blocking_capacity() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let repository = Store::open(directory.path().join("signer.db")).expect("store");
+    let started = Arc::new(AtomicBool::new(false));
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let releaser: provision::EnvelopeReleaser = {
+        let started = Arc::clone(&started);
+        let release = Arc::clone(&release);
+        Arc::new(move |_env: &ProvisionEnv, ciphertext: &str| {
+            started.store(true, Ordering::SeqCst);
+            let (lock, wake) = &*release;
+            let released = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let (released, _) = wake
+                .wait_timeout_while(released, Duration::from_secs(5), |released| !*released)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !*released {
+                return Err("the test did not release the blocking operation".to_string());
+            }
+            match ciphertext {
+                "token-cipher" => Ok(ENCLAVE_TOKEN.as_bytes().to_vec()),
+                "master-cipher" => Ok([0x6b; 32].to_vec()),
+                other => Err(format!("the canned KMS has no envelope for {other}")),
+            }
+        })
+    };
+    let state = ApiState::attested_pending(repository, directory.path().to_path_buf(), releaser)
+        .with_workload_auth(workload_auth())
+        .with_max_in_flight_requests(1);
+    let bounded_router = router(state.clone());
+
+    // This unauthenticated provision reaches the blocking KMS seam and waits.
+    let request = root_request(
+        Method::POST,
+        "/provision",
+        None,
+        Some(enclave_provision_body()),
+    );
+    let request_router = bounded_router.clone();
+    let request = tokio::spawn(async move { request_router.oneshot(request).await });
+    for _ in 0..1_000 {
+        if started.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(started.load(Ordering::SeqCst), "blocking work must start");
+    assert_eq!(state.request_slots.available_permits(), 0);
+    assert_eq!(state.blocking_slots.available_permits(), 0);
+
+    // Dropping the HTTP future releases only its request/body admission. Tokio
+    // cannot cancel the running closure, whose separate permit must remain held.
+    request.abort();
+    let _ = request.await;
+    assert_eq!(state.request_slots.available_permits(), 1);
+    assert_eq!(
+        state.blocking_slots.available_permits(),
+        0,
+        "a disconnected client must not free still-running blocking capacity"
+    );
+
+    let rejected = bounded_router
+        .clone()
+        .oneshot(root_request(
+            Method::POST,
+            "/provision",
+            None,
+            Some(enclave_provision_body()),
+        ))
+        .await
+        .expect("overload response");
+    assert_eq!(rejected.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        rejected
+            .headers()
+            .get(header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok()),
+        Some(BUSY_RETRY_AFTER_SECONDS)
+    );
+
+    let (lock, wake) = &*release;
+    *lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = true;
+    wake.notify_all();
+    for _ in 0..1_000 {
+        if state.blocking_slots.available_permits() == 1 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        state.blocking_slots.available_permits(),
+        1,
+        "blocking capacity returns only after the closure finishes"
+    );
+
+    // The ordinary unauthenticated provisioning contract is unchanged after
+    // capacity returns; the released token still rejects a missing credential.
+    let ordinary = send_raw(
+        bounded_router,
+        root_request(
+            Method::POST,
+            "/provision",
+            None,
+            Some(enclave_provision_body()),
+        ),
+    )
+    .await;
+    assert_eq!(ordinary.status, StatusCode::UNAUTHORIZED, "{ordinary:?}");
+    assert_eq!(ordinary.code(), "signer-provision-unauthorized");
+}
+
+#[tokio::test]
 async fn an_unmatched_path_answers_in_the_same_shape() {
     let api = Api::open().await.expect("vault");
     for path in [
@@ -1253,6 +1964,62 @@ async fn a_workload_caller_signs_without_a_bearer_secret_and_cannot_replay() {
         .await;
     assert_eq!(replay.status, StatusCode::FORBIDDEN, "{replay:?}");
     assert_eq!(replay.code(), AccessRejection::WorkloadReplay.code());
+}
+
+#[tokio::test]
+async fn a_captured_v2_assertion_is_rejected_by_another_signer_audience() {
+    let api = Api::open().await.expect("vault");
+    let signing_key = SigningKey::from_bytes(&[18u8; 32]);
+    let created = api
+        .post(
+            "/callers/workload",
+            Some(&api.admin),
+            json!({
+                "label": "audience-bound workload",
+                "capabilities": ["sign"],
+                "key_grant": {"mode": "only", "key_ids": [api.key_id.clone()]},
+                "workload_public_key": hex::encode(signing_key.verifying_key().to_bytes()),
+                "workload_subject": "neo-nexus:test",
+            }),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::OK, "{created:?}");
+    let identity = WorkloadClient {
+        caller_id: created.json()["caller"]["id"]
+            .as_str()
+            .expect("caller id")
+            .to_string(),
+        subject: Some("neo-nexus:test".to_string()),
+        signing_key,
+    };
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    let captured = api.workload_request(
+        "/sign/transaction",
+        &identity,
+        timestamp,
+        "nonce-0000000092",
+        WORKLOAD_AUDIENCE,
+        json!({
+            "key_id": api.key_id.clone(),
+            "unsigned_hex": api.transfer(1, 92),
+        }),
+    );
+    let other = crate::auth::WorkloadAuthPolicy::new("https://other-custody.test.example", false)
+        .expect("canonical other audience");
+    let reply = api
+        .send_on(
+            router(ApiState::new(api.service.clone()).with_workload_auth(other)),
+            captured,
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::FORBIDDEN, "{reply:?}");
+    assert_eq!(
+        reply.code(),
+        AccessRejection::WorkloadAudienceMismatch.code()
+    );
 }
 
 #[tokio::test]
@@ -1771,7 +2538,8 @@ fn sealed_router() -> (Router, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
     let repository = Store::open(dir.path().join("signer.db")).expect("store");
     let state =
-        ApiState::attested_pending(repository, dir.path().to_path_buf(), enclave_releaser());
+        ApiState::attested_pending(repository, dir.path().to_path_buf(), enclave_releaser())
+            .with_workload_auth(workload_auth());
     (router(state), dir)
 }
 
@@ -2008,7 +2776,7 @@ async fn the_attestation_binds_the_vault_fingerprint_and_the_boundaries() {
 async fn a_bad_attestation_nonce_answers_in_the_refusal_shape() {
     let api = Api::open().await.expect("harness");
     let reply = send_raw(
-        router(ApiState::new(api.service.clone())),
+        router(ApiState::new(api.service.clone()).with_workload_auth(workload_auth())),
         root_request(Method::GET, "/attestation?nonce=not-hex", None, None),
     )
     .await;
@@ -2016,7 +2784,7 @@ async fn a_bad_attestation_nonce_answers_in_the_refusal_shape() {
     assert_eq!(reply.json()["code"], REQUEST_UNREADABLE);
 
     let empty = send_raw(
-        router(ApiState::new(api.service.clone())),
+        router(ApiState::new(api.service.clone()).with_workload_auth(workload_auth())),
         root_request(Method::GET, "/attestation?nonce=", None, None),
     )
     .await;
@@ -2027,7 +2795,7 @@ async fn a_bad_attestation_nonce_answers_in_the_refusal_shape() {
 async fn metrics_endpoint_returns_prometheus_metrics() {
     let api = Api::open().await.expect("harness");
     let reply = send_raw(
-        router(ApiState::new(api.service.clone())),
+        router(ApiState::new(api.service.clone()).with_workload_auth(workload_auth())),
         root_request(Method::GET, "/metrics", None, None),
     )
     .await;

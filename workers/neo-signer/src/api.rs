@@ -67,6 +67,7 @@ use axum::{
     body::to_bytes,
     extract::{FromRequest, FromRequestParts, OriginalUri, Path, Request, State},
     http::{header, request::Parts, StatusCode, Uri},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
@@ -74,20 +75,23 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::json;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use zeroize::Zeroize;
 
 use crate::{
     attested_identity::{self, KeyBoundary},
     audit::{self, bounded, Refusal},
-    auth::{CallerCredentials, WorkloadRequestHeaders},
+    auth::{CallerCredentials, WorkloadAuthPolicy, WorkloadRequestHeaders},
     model::{
         AssetLimit, CallerCapability, ContractMethod, KeyGrant, ScriptHash, SignatureRateLimit,
         SignerAuditAction, SignerAuditOutcome, SignerAuditRecord, SignerPolicy, WindowLimit,
     },
+    neo_block::{NeoBlock, NeoBlockHeader},
     network::{ChainFamily, Network},
     provision::{self, ProvisionBody, ProvisionEnv, ProvisionGate},
     service::{
-        CallerInfo, KeyPublicInfo, Outcome, SignedWitness, SignerService, WorkloadCallerSpec,
+        CallerInfo, Eip191FulfillmentRequest, KeyPublicInfo, Outcome, SignedEip191Fulfillment,
+        SignedWitness, SignerService, WorkloadCallerSpec,
     },
 };
 
@@ -101,6 +105,9 @@ const WORKLOAD_CALLER_HEADER: &str = "x-neoos-caller";
 const WORKLOAD_TIMESTAMP_HEADER: &str = "x-neoos-timestamp";
 const WORKLOAD_NONCE_HEADER: &str = "x-neoos-nonce";
 const WORKLOAD_SIGNATURE_HEADER: &str = "x-neoos-signature";
+const WORKLOAD_PROTOCOL_HEADER: &str = "x-neoos-workload-protocol";
+const WORKLOAD_AUDIENCE_HEADER: &str = "x-neoos-audience";
+const DEFAULT_WORKLOAD_AUDIENCE: &str = "http://127.0.0.1:8081";
 
 /// Longest request body the transport reads.
 ///
@@ -111,6 +118,16 @@ const WORKLOAD_SIGNATURE_HEADER: &str = "x-neoos-signature";
 /// the memory the process agrees to spend, not just the response it eventually
 /// sends.
 pub const DEFAULT_BODY_LIMIT: usize = 256 * 1024;
+
+/// Maximum custody requests admitted past the router at once.
+///
+/// The permit is taken before a request body is read and is held until its
+/// handler returns. This caps both buffered request bodies (at roughly 8 MiB
+/// under the default body ceiling) and the SQLite/cryptographic work submitted
+/// to Tokio's blocking pool. Requests are shed rather than queued so a caller
+/// cannot turn the queue itself into unbounded memory. Health and metrics are
+/// deliberately outside this boundary so operators can observe saturation.
+pub const DEFAULT_MAX_IN_FLIGHT_REQUESTS: usize = 32;
 
 /// Audit rows a single `GET /audit` returns when it asks for no number.
 const AUDIT_LIMIT_DEFAULT: usize = 100;
@@ -127,6 +144,14 @@ const REQUEST_UNREADABLE: &str = "signer-request-unreadable";
 /// A body larger than [`DEFAULT_BODY_LIMIT`]. `413`, and the only status outside
 /// §5's four because it is a transport answer, not a decision about an intent.
 const REQUEST_TOO_LARGE: &str = "signer-request-too-large";
+
+/// The process-wide custody request budget is occupied. `503` with a short
+/// `Retry-After`; no live count is exposed to an unauthenticated caller.
+const SERVICE_BUSY: &str = "signer-service-busy";
+
+/// A deliberately small, fixed retry hint. The router has no information about
+/// how long the in-flight cryptographic or durable-write operations will take.
+const BUSY_RETRY_AFTER_SECONDS: &str = "1";
 
 /// `unsigned_hex` was not hexadecimal. Its own code rather than
 /// [`REQUEST_UNREADABLE`] because §5 names it, and naming it is right: it is the
@@ -169,7 +194,10 @@ const NETWORK_PROBLEM: &str = "network must be mainnet, testnet or private";
 #[derive(Clone)]
 pub struct ApiState {
     inner: Arc<Inner>,
+    workload_auth: WorkloadAuthPolicy,
     max_body_bytes: usize,
+    request_slots: Arc<Semaphore>,
+    blocking_slots: Arc<Semaphore>,
 }
 
 struct Inner {
@@ -195,7 +223,11 @@ impl ApiState {
                 vault: RwLock::new(Vault::Ready(service)),
                 attested_boot: false,
             }),
+            workload_auth: WorkloadAuthPolicy::new(DEFAULT_WORKLOAD_AUDIENCE, false)
+                .expect("the built-in loopback workload audience is canonical"),
             max_body_bytes: DEFAULT_BODY_LIMIT,
+            request_slots: Arc::new(Semaphore::new(DEFAULT_MAX_IN_FLIGHT_REQUESTS)),
+            blocking_slots: Arc::new(Semaphore::new(DEFAULT_MAX_IN_FLIGHT_REQUESTS)),
         }
     }
 
@@ -215,8 +247,19 @@ impl ApiState {
                 }))),
                 attested_boot: true,
             }),
+            workload_auth: WorkloadAuthPolicy::new(DEFAULT_WORKLOAD_AUDIENCE, false)
+                .expect("the built-in loopback workload audience is canonical"),
             max_body_bytes: DEFAULT_BODY_LIMIT,
+            request_slots: Arc::new(Semaphore::new(DEFAULT_MAX_IN_FLIGHT_REQUESTS)),
+            blocking_slots: Arc::new(Semaphore::new(DEFAULT_MAX_IN_FLIGHT_REQUESTS)),
         }
+    }
+
+    /// Replace the fail-closed loopback default with this deployment's one
+    /// canonical public signer audience.
+    pub fn with_workload_auth(mut self, workload_auth: WorkloadAuthPolicy) -> Self {
+        self.workload_auth = workload_auth;
+        self
     }
 
     /// Lower [`DEFAULT_BODY_LIMIT`] for a deployment that wants to, or for a
@@ -224,6 +267,35 @@ impl ApiState {
     pub fn with_body_limit(mut self, max_body_bytes: usize) -> Self {
         self.max_body_bytes = max_body_bytes;
         self
+    }
+
+    /// Override the process-wide custody request budget.
+    ///
+    /// Call this while assembling the process state, before cloning it into the
+    /// router. A zero-sized budget could never serve a request and is therefore
+    /// rejected at configuration parsing rather than represented here.
+    pub fn with_max_in_flight_requests(mut self, max_in_flight_requests: usize) -> Self {
+        assert!(
+            max_in_flight_requests > 0,
+            "the signer in-flight request budget must be positive"
+        );
+        self.request_slots = Arc::new(Semaphore::new(max_in_flight_requests));
+        self.blocking_slots = Arc::new(Semaphore::new(max_in_flight_requests));
+        self
+    }
+
+    /// Reserve one blocking operation. This second hold is intentional: Tokio
+    /// cannot abort a `spawn_blocking` closure after it starts, so a disconnected
+    /// client may release the outer request permit while its durable operation
+    /// is still finishing. Moving this permit into the closure keeps that work
+    /// bounded under cancellation as well as under ordinary request load.
+    pub(crate) fn try_blocking_slot(&self) -> Option<OwnedSemaphorePermit> {
+        self.blocking_slots.clone().try_acquire_owned().ok()
+    }
+
+    /// Share the outer custody admission budget with non-HTTP adapters.
+    pub(crate) fn try_request_slot(&self) -> Option<OwnedSemaphorePermit> {
+        self.request_slots.clone().try_acquire_owned().ok()
     }
 
     /// The open vault, when there is one. `None` is the sealed window between
@@ -273,23 +345,31 @@ impl ApiState {
     }
 }
 
-/// The router: §5's three caller-facing routes, §5.1's fourteen management
-/// routes, the three enclave routes this file owns — `/health`, `/provision`,
-/// `/attestation`, §6's recorded §5 change — and a fallback so an unmatched path
-/// answers in the same shape as a matched one.
+/// The router: §5's caller-facing routes, §5.1's management routes, the four
+/// process routes this file owns — `/health`, `/metrics`, `/provision`, and
+/// `/attestation` — and a fallback so an unmatched path answers in the same
+/// shape as a matched one.
 ///
-/// No middleware layer at all, on purpose — see the module docs. In particular
-/// there is no CORS layer: an origin is an *authentication input* this service
-/// reads from a caller's headers, and a permissive CORS configuration would turn
-/// a browser on the operator's network into a signing client with the console's
-/// token.
+/// The only middleware is the bounded admission layer below. There is no logging
+/// or CORS layer: an origin is an *authentication input* this service reads from
+/// a caller's headers, and a permissive CORS configuration would turn a browser
+/// on the operator's network into a signing client with the console's token.
 pub fn router(state: ApiState) -> Router {
-    Router::new()
-        .route("/health", get(health_route))
-        .route("/metrics", get(metrics_route))
+    let custody_routes = Router::new()
         .route("/provision", post(provision_route))
         .route("/attestation", get(attestation_route))
         .nest(API_PREFIX, api_routes())
+        // `route_layer` applies to the registered custody route tree, while the
+        // observability endpoints below remain usable during saturation.
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            shed_when_busy,
+        ));
+
+    Router::new()
+        .route("/health", get(health_route))
+        .route("/metrics", get(metrics_route))
+        .merge(custody_routes)
         .fallback(route_unknown)
         .with_state(state)
 }
@@ -302,7 +382,12 @@ pub fn router(state: ApiState) -> Router {
 fn api_routes() -> Router<ApiState> {
     Router::new()
         .route("/sign/transaction", post(sign_transaction_route))
+        .route(
+            "/sign/eip191-fulfillment",
+            post(sign_eip191_fulfillment_route),
+        )
         .route("/sign/consensus", post(sign_consensus_route))
+        .route("/sign/block", post(sign_block_route))
         .route("/sign/raw", post(sign_raw_route))
         .route("/keys", post(generate_key_route).get(list_keys_route))
         .route("/keys/import", post(import_key_route))
@@ -326,6 +411,15 @@ fn api_routes() -> Router<ApiState> {
 }
 
 // -- plumbing -------------------------------------------------------------
+
+/// Admit one bounded custody request or fail fast before body parsing,
+/// authentication, database access, or `spawn_blocking` submission.
+async fn shed_when_busy(State(state): State<ApiState>, request: Request, next: Next) -> Response {
+    let Ok(_permit) = state.request_slots.clone().try_acquire_owned() else {
+        return service_busy();
+    };
+    next.run(request).await
+}
 
 /// Run one custody call off the request thread and answer it.
 ///
@@ -353,9 +447,16 @@ where
     let Some(service) = state.service_snapshot() else {
         return not_provisioned();
     };
+    let Some(blocking_slot) = state.try_blocking_slot() else {
+        return service_busy();
+    };
     // The task only stops reporting if the process is already unhealthy, but the
     // answer still has to be a refusal rather than a hung connection.
-    let outcome = tokio::task::spawn_blocking(move || call(service)).await;
+    let outcome = tokio::task::spawn_blocking(move || {
+        let _blocking_slot = blocking_slot;
+        call(service)
+    })
+    .await;
     match outcome {
         Ok(Ok(Outcome::Allowed(body))) => allowed(body).into_response(),
         Ok(Ok(Outcome::Refused(refusal))) => refused(&refusal).into_response(),
@@ -413,6 +514,8 @@ fn status_for(refusal: &Refusal) -> StatusCode {
         "signer-transaction-unparsable"
         | "signer-script-unparsable"
         | "signer-payload-unparsable"
+        | "signer-oracle-contract-invalid"
+        | "signer-fulfillment-invalid"
         | UNSIGNED_HEX_UNREADABLE
         | REQUEST_UNREADABLE
         | audit::ADMIN_REQUEST_INVALID
@@ -511,6 +614,21 @@ fn too_large() -> Response {
     )
 }
 
+/// A bounded, refusal-shaped overload response. Counts and route details stay
+/// private because this answer can be reached before authentication.
+fn service_busy() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, BUSY_RETRY_AFTER_SECONDS)],
+        Json(RefusalReply {
+            allowed: false,
+            code: SERVICE_BUSY,
+            message: "the signer is temporarily busy; retry later".to_string(),
+        }),
+    )
+        .into_response()
+}
+
 /// The `503` for every custody route while the vault is still sealed.
 fn not_provisioned() -> Response {
     refusal(
@@ -550,12 +668,12 @@ fn refusal_owned(code: &'static str, message: String, status: StatusCode) -> Res
 /// chose, and an origin an authorizer believed would be one an attacker picked.
 pub struct Credentials(CallerCredentials);
 
-impl<S: Send + Sync> FromRequestParts<S> for Credentials {
+impl FromRequestParts<ApiState> for Credentials {
     type Rejection = Infallible;
 
     async fn from_request_parts(
         parts: &mut Parts,
-        _state: &S,
+        state: &ApiState,
     ) -> std::result::Result<Self, Self::Rejection> {
         let request_uri = parts
             .extensions
@@ -571,11 +689,14 @@ impl<S: Send + Sync> FromRequestParts<S> for Credentials {
             header_value(parts, header::ORIGIN),
             header_value(parts, header::REFERER),
             WorkloadRequestHeaders {
+                protocol: text_header(parts, WORKLOAD_PROTOCOL_HEADER),
+                audience: text_header(parts, WORKLOAD_AUDIENCE_HEADER),
                 caller_id: text_header(parts, WORKLOAD_CALLER_HEADER),
                 timestamp: text_header(parts, WORKLOAD_TIMESTAMP_HEADER),
                 nonce: text_header(parts, WORKLOAD_NONCE_HEADER),
                 signature: text_header(parts, WORKLOAD_SIGNATURE_HEADER),
             },
+            &state.workload_auth,
             parts.method.as_str(),
             route,
         )))
@@ -710,21 +831,76 @@ async fn sign_transaction_route(
         Ok(unsigned) => unsigned,
         Err(refusal) => return *refusal,
     };
+    let chain_family = match ChainFamily::from_str(request.chain_family.trim()) {
+        Ok(family) => family,
+        Err(_) => return unreadable(Some("chain_family must be 'neo-n3' or 'neox'")),
+    };
+    if chain_family == ChainFamily::NeoN3 && request.chain_id.is_some() {
+        return unreadable(Some("chain_id is valid only when chain_family is 'neox'"));
+    }
+    if chain_family == ChainFamily::NeoX && request.chain_id.is_none() {
+        return unreadable(Some("chain_id is required when chain_family is 'neox'"));
+    }
     let key_id = request.key_id;
     let request_id = request.request_id;
+    let chain_id = request.chain_id;
     decide(
         &state,
         SignerAuditAction::TransactionSigned,
         Some(key_id.clone()),
         move |service| {
             service
-                .sign_transaction_with_request_id(
+                .sign_transaction_for_chain_with_request_id(
                     &credentials,
                     &key_id,
                     &unsigned,
+                    chain_family,
+                    chain_id,
                     request_id.as_deref(),
                 )
                 .map(|outcome| outcome.map(signature_body))
+        },
+    )
+    .await
+}
+
+async fn sign_eip191_fulfillment_route(
+    State(state): State<ApiState>,
+    credentials: Credentials,
+    body: JsonBody<Eip191FulfillmentCall>,
+) -> Response {
+    let (request, credentials) = body.bind(credentials);
+    let key_id = request.key_id;
+    let request_id = request.request_id;
+    let chain_id = request.chain_id;
+    let oracle_contract = request.oracle_contract;
+    let result_bytes_hex = request.result_bytes_hex;
+    let fulfillment = neo_os_chain_evm::Fulfillment {
+        request_id: request.fulfillment.request_id,
+        app_id: request.fulfillment.app_id,
+        module_id: request.fulfillment.module_id,
+        operation: request.fulfillment.operation,
+        success: request.fulfillment.success,
+        error: request.fulfillment.error,
+    };
+    decide(
+        &state,
+        SignerAuditAction::Eip191FulfillmentSigned,
+        Some(key_id.clone()),
+        move |service| {
+            service
+                .sign_eip191_fulfillment(
+                    &credentials,
+                    Eip191FulfillmentRequest {
+                        key_id: &key_id,
+                        chain_id,
+                        oracle_contract: &oracle_contract,
+                        fulfillment: &fulfillment,
+                        result_bytes_hex: &result_bytes_hex,
+                        request_id: &request_id,
+                    },
+                )
+                .map(|outcome| outcome.map(eip191_fulfillment_body))
         },
     )
     .await
@@ -740,6 +916,11 @@ async fn sign_consensus_route(
         Ok(unsigned) => unsigned,
         Err(refusal) => return *refusal,
     };
+    if request.chain_family != default_chain_family() || request.chain_id.is_some() {
+        return unreadable(Some(
+            "consensus signing supports only chain_family 'neo-n3'",
+        ));
+    }
     let key_id = request.key_id;
     let request_id = request.request_id;
     decide(
@@ -752,6 +933,94 @@ async fn sign_consensus_route(
                     &credentials,
                     &key_id,
                     &unsigned,
+                    request_id.as_deref(),
+                )
+                .map(|outcome| outcome.map(signature_body))
+        },
+    )
+    .await
+}
+
+/// `POST /sign/block` accepts the same structured block material as Neo's
+/// SignClient protocol. It validates the Merkle root before entering the
+/// service and then uses the dedicated block lane, whose durable reservation
+/// prevents a second header at the same key/network/height.
+async fn sign_block_route(
+    State(state): State<ApiState>,
+    credentials: Credentials,
+    body: JsonBody<BlockSignCall>,
+) -> Response {
+    let (request, credentials) = body.bind(credentials);
+    let public_key_bytes = match hex::decode(request.public_key.trim()) {
+        Ok(bytes) => bytes,
+        Err(_) => return unreadable(Some("public_key must be SEC1 hexadecimal")),
+    };
+    let public_key = match crate::crypto::compress_public_key(&public_key_bytes) {
+        Some(public_key) => public_key,
+        None => return unreadable(Some("public_key must be a P-256 public key")),
+    };
+    let prev_hash = match decode_fixed_hex::<32>(&request.block.header.prev_hash, "prev_hash") {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let merkle_root = match decode_fixed_hex::<32>(&request.block.header.merkle_root, "merkle_root")
+    {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    let next_consensus =
+        match decode_fixed_hex::<20>(&request.block.header.next_consensus, "next_consensus") {
+            Ok(value) => value,
+            Err(response) => return *response,
+        };
+    let prev_state_root = match request.block.header.prev_state_root.as_deref() {
+        Some(value) => match decode_fixed_hex::<32>(value, "prev_state_root") {
+            Ok(value) => Some(value),
+            Err(response) => return *response,
+        },
+        None => None,
+    };
+    let mut tx_hashes = Vec::with_capacity(request.block.tx_hashes.len());
+    for hash in &request.block.tx_hashes {
+        match decode_fixed_hex::<32>(hash, "transaction hash") {
+            Ok(value) => tx_hashes.push(value),
+            Err(response) => return *response,
+        }
+    }
+    let header = match NeoBlockHeader::from_wire_with_state_root(
+        request.block.header.version,
+        prev_hash,
+        merkle_root,
+        request.block.header.timestamp,
+        request.block.header.nonce,
+        request.block.header.index,
+        request.block.header.primary_index,
+        next_consensus,
+        prev_state_root,
+        request.block.header.state_root_enabled,
+    ) {
+        Ok(header) => header,
+        Err(error) => return unreadable(Some(&error.to_string())),
+    };
+    let block = match NeoBlock::new(header, tx_hashes) {
+        Ok(block) => block,
+        Err(error) => return unreadable(Some(&error.to_string())),
+    };
+    let key_id = request.key_id;
+    let request_id = request.request_id;
+    let network = request.network;
+    decide(
+        &state,
+        SignerAuditAction::ConsensusSigned,
+        Some(key_id.clone()),
+        move |service| {
+            service
+                .sign_block_with_request_id(
+                    &credentials,
+                    &key_id,
+                    &block,
+                    network,
+                    public_key,
                     request_id.as_deref(),
                 )
                 .map(|outcome| outcome.map(signature_body))
@@ -823,6 +1092,20 @@ fn decode_unsigned(unsigned_hex: &str) -> std::result::Result<Vec<u8>, Box<Respo
     hex::decode(unsigned_hex.trim()).map_err(|_| Box::new(unsigned_hex_unreadable()))
 }
 
+fn decode_fixed_hex<const N: usize>(
+    value: &str,
+    field: &str,
+) -> std::result::Result<[u8; N], Box<Response>> {
+    let decoded = hex::decode(value.trim())
+        .map_err(|_| Box::new(unreadable(Some(&format!("{field} must be hexadecimal")))))?;
+    decoded.try_into().map_err(|bytes: Vec<u8>| {
+        Box::new(unreadable(Some(&format!(
+            "{field} must be {N} bytes, got {}",
+            bytes.len()
+        ))))
+    })
+}
+
 // -- management routes: keys (§5.1) --------------------------------------
 
 async fn generate_key_route(
@@ -835,15 +1118,23 @@ async fn generate_key_route(
         Ok(network) => network,
         Err(refusal) => return *refusal,
     };
+    let chain_family = match parse_chain_family(&request.chain_family) {
+        Ok(family) => family,
+        Err(refusal) => return *refusal,
+    };
+    let chain_id =
+        match requested_key_chain_id(chain_family, request.chain_id, request.network_magic) {
+            Ok(chain_id) => chain_id,
+            Err(refusal) => return *refusal,
+        };
     let label = request.label;
-    let network_magic = request.network_magic;
     decide(
         &state,
         SignerAuditAction::KeyGenerated,
         None,
         move |service| {
             service
-                .generate_key(&credentials, &label, network, network_magic)
+                .generate_key_for_chain(&credentials, &label, network, chain_family, chain_id)
                 .map(|outcome| outcome.map(key_body))
         },
     )
@@ -860,20 +1151,29 @@ async fn import_key_route(
         Ok(network) => network,
         Err(refusal) => return *refusal,
     };
+    let chain_family = match parse_chain_family(&request.chain_family) {
+        Ok(family) => family,
+        Err(refusal) => return *refusal,
+    };
+    let chain_id =
+        match requested_key_chain_id(chain_family, request.chain_id, request.network_magic) {
+            Ok(chain_id) => chain_id,
+            Err(refusal) => return *refusal,
+        };
     let label = request.label;
     let private_key = request.private_key;
-    let network_magic = request.network_magic;
     decide(
         &state,
         SignerAuditAction::KeyImported,
         None,
         move |service| {
             service
-                .import_key(
+                .import_key_for_chain(
                     &credentials,
                     &label,
                     network,
-                    network_magic,
+                    chain_family,
+                    chain_id,
                     private_key.as_str(),
                 )
                 .map(|outcome| outcome.map(key_body))
@@ -1302,9 +1602,14 @@ async fn provision_route(
         );
     };
     let presented = credentials.token().map(str::to_owned);
-    let attempted =
-        tokio::task::spawn_blocking(move || provision::run(&gate, &env, presented.as_deref()))
-            .await;
+    let Some(blocking_slot) = state.try_blocking_slot() else {
+        return service_busy();
+    };
+    let attempted = tokio::task::spawn_blocking(move || {
+        let _blocking_slot = blocking_slot;
+        provision::run(&gate, &env, presented.as_deref())
+    })
+    .await;
     match attempted {
         Ok(Ok(service)) => {
             // Two provisions can both pass `pending_gate` and run; the gate's
@@ -1358,7 +1663,11 @@ async fn attestation_route(State(state): State<ApiState>, uri: Uri) -> Response 
         Ok(nonce) => nonce,
         Err(response) => return *response,
     };
+    let Some(blocking_slot) = state.try_blocking_slot() else {
+        return service_busy();
+    };
     let built = tokio::task::spawn_blocking(move || {
+        let _blocking_slot = blocking_slot;
         build_attestation(&service, &NsmAttestation, nonce.as_deref())
     })
     .await;
@@ -1461,6 +1770,44 @@ pub struct SignCall {
     pub chain_id: Option<u64>,
 }
 
+/// Structured Neo N3 block signing. Hash strings are wire-order bytes, matching
+/// the official protobuf `bytes` fields rather than explorer display order.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockSignCall {
+    pub key_id: String,
+    pub network: u32,
+    pub public_key: String,
+    pub block: BlockFields,
+    #[serde(default)]
+    pub request_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockFields {
+    pub header: BlockHeaderFields,
+    #[serde(default)]
+    pub tx_hashes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockHeaderFields {
+    pub version: u32,
+    pub prev_hash: String,
+    pub merkle_root: String,
+    pub timestamp: u64,
+    pub nonce: u64,
+    pub index: u32,
+    pub primary_index: u32,
+    pub next_consensus: String,
+    #[serde(default)]
+    pub prev_state_root: Option<String>,
+    #[serde(default)]
+    pub state_root_enabled: bool,
+}
+
 fn default_chain_family() -> String {
     "neo-n3".to_string()
 }
@@ -1476,12 +1823,42 @@ pub struct RawSignCall {
     pub request_id: Option<String>,
 }
 
+/// A semantic NeoX oracle-verifier request.  There is deliberately no
+/// caller-supplied digest/prehash field: the signer derives both from these
+/// exact chain and fulfillment fields.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Eip191FulfillmentCall {
+    pub key_id: String,
+    pub request_id: String,
+    pub chain_id: u64,
+    pub oracle_contract: String,
+    pub fulfillment: Eip191FulfillmentFields,
+    pub result_bytes_hex: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Eip191FulfillmentFields {
+    pub request_id: String,
+    pub app_id: String,
+    pub module_id: String,
+    pub operation: String,
+    pub success: bool,
+    #[serde(default)]
+    pub error: String,
+}
+
 /// A label and the chain to hold the key for.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KeyKindCall {
     pub label: String,
     pub network: String,
+    #[serde(default = "default_chain_family")]
+    pub chain_family: String,
+    #[serde(default)]
+    pub chain_id: Option<u64>,
     /// The real magic of a private network, when the default does not match the
     /// deployment. Absent — every pre-existing consumer — means the canonical
     /// value for `network`.
@@ -1503,6 +1880,10 @@ pub struct KeyKindCall {
 pub struct ImportCall {
     pub label: String,
     pub network: String,
+    #[serde(default = "default_chain_family")]
+    pub chain_family: String,
+    #[serde(default)]
+    pub chain_id: Option<u64>,
     /// The real magic of a private network, when the default does not match the
     /// deployment. Absent — every pre-existing consumer — means the canonical
     /// value for `network`.
@@ -1737,9 +2118,11 @@ impl PolicyBody {
                     count: limit.count,
                 }),
             chain_family: match self.chain_family.as_deref() {
-                Some("neo_n3") | Some("NeoN3") => Some(ChainFamily::NeoN3),
+                Some("neo-n3") | Some("neo_n3") | Some("n3") | Some("NeoN3") => {
+                    Some(ChainFamily::NeoN3)
+                }
                 Some("neox") | Some("NeoX") => Some(ChainFamily::NeoX),
-                Some(_) => return Err("invalid chain_family: must be 'neo_n3' or 'neox'"),
+                Some(_) => return Err("invalid chain_family: must be 'neo-n3' or 'neox'"),
                 None => None,
             },
             evm_max_gas_price: match &self.evm_max_gas_price {
@@ -1782,7 +2165,7 @@ impl PolicyBody {
                 count: limit.count,
             }),
             chain_family: policy.chain_family.map(|cf| match cf {
-                ChainFamily::NeoN3 => "neo_n3".to_string(),
+                ChainFamily::NeoN3 => "neo-n3".to_string(),
                 ChainFamily::NeoX => "neox".to_string(),
             }),
             evm_max_gas_price: policy.evm_max_gas_price.map(|p| p.to_string()),
@@ -1903,6 +2286,28 @@ fn parse_network(value: &str) -> std::result::Result<Network, Box<Response>> {
     Network::from_str(value).map_err(|_| Box::new(unreadable(Some(NETWORK_PROBLEM))))
 }
 
+fn parse_chain_family(value: &str) -> std::result::Result<ChainFamily, Box<Response>> {
+    ChainFamily::from_str(value.trim())
+        .map_err(|_| Box::new(unreadable(Some("chain_family must be 'neo-n3' or 'neox'"))))
+}
+
+fn requested_key_chain_id(
+    chain_family: ChainFamily,
+    chain_id: Option<u64>,
+    network_magic: Option<u32>,
+) -> std::result::Result<Option<u64>, Box<Response>> {
+    match chain_family {
+        ChainFamily::NeoN3 if chain_id.is_some() => Err(Box::new(unreadable(Some(
+            "chain_id is valid only when chain_family is 'neox'",
+        )))),
+        ChainFamily::NeoN3 => Ok(network_magic.map(u64::from)),
+        ChainFamily::NeoX if network_magic.is_some() => Err(Box::new(unreadable(Some(
+            "network_magic is valid only when chain_family is 'neo-n3'",
+        )))),
+        ChainFamily::NeoX => Ok(chain_id),
+    }
+}
+
 fn parse_capabilities(
     values: &[String],
 ) -> std::result::Result<Vec<CallerCapability>, &'static str> {
@@ -1939,6 +2344,13 @@ struct SignatureBody {
     digest: String,
     invocation_script: String,
     verification_script: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chain_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signed_transaction: Option<String>,
+    /// Deprecated compatibility alias for `signed_transaction`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature_hex: Option<String>,
 }
 
 /// `/sign/raw`'s witness: the §5 fields plus the bare signature and the
@@ -1957,10 +2369,25 @@ struct RawSignatureBody {
 }
 
 #[derive(Serialize)]
+struct Eip191FulfillmentBody {
+    key_id: String,
+    address: String,
+    public_key: String,
+    digest: String,
+    message_hash: String,
+    signature: String,
+    chain_family: &'static str,
+    chain_id: u64,
+    oracle_contract: String,
+}
+
+#[derive(Serialize)]
 struct KeyBody {
     key_id: String,
     label: String,
     network: String,
+    chain_family: String,
+    chain_id: u64,
     network_magic: u32,
     public_key: String,
     script_hash: String,
@@ -2072,6 +2499,7 @@ struct AuditRow {
 }
 
 fn signature_body(witness: SignedWitness) -> SignatureBody {
+    let signed_transaction = witness.signed_transaction.clone();
     SignatureBody {
         key_id: witness.key_id.clone(),
         script_hash: witness.script_hash.to_string(),
@@ -2079,6 +2507,9 @@ fn signature_body(witness: SignedWitness) -> SignatureBody {
         digest: witness.digest.clone(),
         invocation_script: hex::encode(&witness.invocation),
         verification_script: hex::encode(&witness.verification),
+        chain_family: witness.chain_family.map(|family| family.to_string()),
+        signed_transaction,
+        signature_hex: witness.signature_hex.clone(),
     }
 }
 
@@ -2107,6 +2538,20 @@ fn raw_signature_body(witness: SignedWitness) -> RawSignatureBody {
     }
 }
 
+fn eip191_fulfillment_body(signature: SignedEip191Fulfillment) -> Eip191FulfillmentBody {
+    Eip191FulfillmentBody {
+        key_id: signature.key_id,
+        address: signature.address,
+        public_key: signature.public_key,
+        digest: signature.digest,
+        message_hash: signature.message_hash,
+        signature: signature.signature,
+        chain_family: "neox",
+        chain_id: signature.chain_id,
+        oracle_contract: signature.oracle_contract,
+    }
+}
+
 /// The shapes a stored boundary can have that are legal and still weaker than
 /// they look.
 ///
@@ -2132,6 +2577,8 @@ fn key_body(info: KeyPublicInfo) -> KeyBody {
         key_id: info.key_id.clone(),
         label: info.label.clone(),
         network: info.network.to_string(),
+        chain_family: info.chain_family.to_string(),
+        chain_id: info.chain_id,
         network_magic: info.network_magic,
         public_key: hex::encode(info.public_key),
         script_hash: info.script_hash.to_string(),

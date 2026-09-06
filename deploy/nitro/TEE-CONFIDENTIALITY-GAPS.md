@@ -4,10 +4,11 @@
 enclave; no private key or confidential plaintext ever exists on the host or the edge.
 
 **Source:** adversarial map 2026-06-15 (workflow wg25kfuea, 40 agents) →
-28 confirmed gaps, updated by the 2026-09 production fail-closed audit.
-Status: Neo N3 custody is in the current migration; the shipped Rust frontier
-keeps confidential compute in-TEE, but the complete _EVM signing path_ is not
-implemented in that measured runtime.
+28 confirmed gaps, updated by the 2026-09 Rust custody and production-topology
+cutover. Status: the current Rust frontier keeps confidential compute in-TEE,
+and the separate measured Rust custody EIF implements both Neo N3/P-256 and
+NeoX/secp256k1 signing. Deployment assurance still requires the matching EIF
+measurements, KMS policy, and provisioned chain-bound roles.
 
 ## ✅ Already in-TEE (verified clean)
 
@@ -15,35 +16,34 @@ implemented in that measured runtime.
 - X25519 decrypt **logic**, neodid nullifiers/tickets — run in the enclave.
 - Encrypted-ref ciphertext fetch from Supabase — in-enclave over the egress proxy.
 - Neo N3 signing — happens in-TEE in the recommended derived-keys topology.
+- NeoX EIP-1559 transaction and semantic EIP-191 fulfillment signing — happen
+  in the separate Rust custody enclave under distinct updater and verifier roles.
 - **Oracle X25519 key is KMS-attested in-TEE (2026-06-15).** Materialized in-enclave from a KMS
   ciphertext via `nsm-attest kms-decrypt` (fixed CMS BER parse, exec-9); host keystores shredded,
   zero host-resident confidential plaintext. See RC2.
 
 ## ✗ Gaps, by root cause
 
-### RC1 — No shipped in-TEE EVM (secp256k1) signer (CRITICAL/HIGH)
+### RC1 — Rust custody-backed EVM (secp256k1) signer (CLOSED)
 
-The measured Rust frontier does **not** expose a complete Neo X signer:
-`workers/nitro-enclave-host` returns `503` for Neo X `/oracle/fulfill` and
-`/feed/sign`, and the Rust custody service currently stores Neo N3 P-256 keys
-only. `crates/neo-os-compute` contains secp256k1 verification/recovery for the
-message-reveal lane; that is not a signing or custody implementation.
+The production topology now separates the measured Rust frontier from the
+measured Rust custody EIF. `neo-signer` stores immutable, chain-bound K256/NeoX
+keys. `/sign/transaction` validates the requested family and chain ID and
+returns the complete typed `signed_transaction`; `/sign/eip191-fulfillment`
+accepts structured oracle semantics so callers cannot request an arbitrary
+digest under the NeoX verifier role.
 
-The older Node `enclave-server.mjs` contains an EVM signing prototype and KMS
-materialization code, but `Dockerfile.enclave` no longer ships Node. Those
-tests are compatibility/golden vectors and must not be cited as evidence that
-the production EIF can sign Neo X.
+The frontier and relayer use separate `SIGNER_ROLE_NEOX_UPDATER_KEY_ID` and
+`SIGNER_ROLE_NEOX_VERIFIER_KEY_ID` identities. Before accepting a custody
+response, the frontier independently verifies the signed transaction's sender,
+chain, digest, and calldata or recovers and checks the semantic signature's
+public identity. Host-supplied EVM private keys remain forbidden in production.
 
-Without a production gate, the remaining EVM signatures are host-side:
-relayer fulfillment (`neox.js`, `source: 'relayer_local_evm'`), relayer
-transaction submission (`updaterSigner`), feed-pusher `pushNeoX`
-(`NEOX_FEED_PK`), and `deploy/evm/neox-fulfiller.mjs`. Production now treats
-that configuration as unavailable: activating the relayer Neo X lane or
-supplying a host EVM private key fails before signing/broadcast. The feed
-pusher exposes an explicit future enclave-route gate, but the current Rust EIF
-returns `503` until a measured secp256k1 signer is shipped. Development can exercise the
-legacy path only through an explicit unsafe opt-in. This closes the exposure by
-disabling the lane; it does **not** claim Phase D is implemented.
+The older Node `enclave-server.mjs` is compatibility/golden-vector evidence,
+not an authority. The standalone `deploy/evm/neox-fulfiller.mjs` is
+development-only and exits in production. The Node feed-pusher may still
+schedule and broadcast a custody-signed transaction, but it neither receives
+nor holds the NeoX private key.
 
 ### RC2 — Keys are host-injected / host-unsealed, not enclave-born (PARTIALLY RESOLVED 2026-06-15)
 
@@ -70,12 +70,20 @@ custody signer service inside the enclave (`SIGNER_SERVICE_URL` +
 registry-mismatched leftover WIF as a hard failure. No
 `materializeNeoN3RoleKeyFromKms` is needed.
 
+**✓ NeoX signer keys — CLOSED by the same custody boundary.** Updater and
+verifier are distinct K256 identities with immutable chain family and chain ID.
+The updater returns complete signed EIP-1559 transactions; the verifier accepts
+only the structured EIP-191 fulfillment contract. Neither role exposes private
+material to the frontier, relayer, feed-pusher, or NeoNexus.
+
 ### RC3 — CP-01 + custody migration (CLOSED)
 
-The feed-lane leak was retired by CP-01; the `callback-broadcast` +
-`automation-execute` workflow lanes were subsequently moved to the
-custody-backed worker relay (no WIF is resolved from the edge env, forwarded
-to the Vercel backend, or signed host-side — `apps/web` reads no signer env).
+The feed-lane leak was retired by CP-01. The production callback authority is
+the Rust relayer, while the control-plane callback route is retained only as a
+manual recovery primitive. The control-plane automation route is currently a
+no-op because the durable Rust automation scheduler is still fail-closed. No
+WIF is resolved from the edge env, forwarded to the Vercel backend, or signed
+host-side — `apps/web` reads no signer env.
 
 The authorization boundary is now separate too. `MORPHEUS_RUNTIME_TOKEN` is a
 Nitro data-plane bearer and cannot authorize callback broadcast, feed tick,
@@ -101,12 +109,14 @@ endpoint only. The public URLs remain valid explicit destinations for
 non-confidential health/status/catalog probes; they are no longer synthesized
 as confidential failover.
 
-### RC5 — Host-side compute + signing fast-paths (MEDIUM)
+### RC5 — Historical host-side signing fast-paths (CLOSED; compatibility risk remains)
 
-Feed VALUE aggregation runs on the host then blind-signs in-TEE unless
-`MORPHEUS_FEED_PUSHER_ENCLAVE_SIGN` is on. The relayer has a `resolveLocalVerifierAccount`
-host-signing fast-path for Neo N3 that fires if any verifier key is in the relayer env. The
-derived-keys path derives the Neo N3 key in host memory on the primary path.
+The Rust authority has no local verifier account or private-key fallback. Feed
+planning and signing use the measured `/feed/sign` path and custody roles; a
+host-side pusher can only verify and broadcast the returned transaction.
+Production validation rejects raw host signing keys. The residual risk is an
+operator explicitly enabling a historical compatibility service, not a hidden
+fallback inside the Rust frontier or relayer.
 
 ## Remediation roadmap (each enclave-code phase = an EIF rebuild + cutover)
 
@@ -115,13 +125,13 @@ derived-keys path derives the Neo N3 key in host memory on the primary path.
   `MORPHEUS_FEED_PUSHER_ENCLAVE_SIGN` (feed compute in-TEE); pin relayer
   `MORPHEUS_RUNTIME_URL/NITRO_API_URL` to the vsock bridge; production code now forces
   single-endpoint confidential routing and refuses synthesized public fallbacks. Decommission
-  `morpheus-nitro-worker.service`; `/oracle/message-reveal` is already in the Rust route set and
-  gateway. Before enabling enclave fulfillment for every request type, validate the migrated
-  compute/oracle/NeoDID routes and keep session, VRF, automation, paymaster, feed, and zkLogin
-  request types on the compatibility topology until their Rust adapters land.
-- **Phase B — finish CP-01:** make `callback-broadcast` + `automation-execute` sign in-TEE (call the
-  enclave `/sign/payload`), delete `resolveNeoN3*Signer` + the `...signer` spreads, remove the WIF
-  from the control-plane + Vercel envs. Rotate that WIF (see RC3).
+  `morpheus-nitro-worker.service`; `/oracle/message-reveal`, session, VRF,
+  paymaster, feed observation, and zkLogin now have Rust adapters. Automation
+  execution also has a Rust host adapter, but its separate durable scheduler and
+  on-chain commit protocol remain disabled until they pass their own cutover gate.
+- **Phase B — CP-01 (DONE):** callback broadcast is relayer-owned and the
+  control-plane automation lane is disabled/no-op; neither path resolves or
+  forwards a WIF. Historical host signer configuration must remain removed.
 - **Phase C — enclave-self-sufficient key sealing (the structural fix for RC2):**
   - **DONE + committed (enclave-side foundation):** the enclave AWS SDK now egresses via the vsock
     proxy (`a90122b`), and `loadStableOracleKeyMaterial` unseals a ciphertext keystore from env
@@ -140,16 +150,17 @@ derived-keys path derives the Neo N3 key in host memory on the primary path.
     - IAM change (infra access + design decision).
   - **Rotate** the X25519 key after the switch (it was host-exposed) — with old-key retention for
     payloads already encrypted to the old pubkey.
-- **Phase D — in-TEE EVM signing (RC1, NOT IMPLEMENTED in the shipped Rust EIF):** add a
-  secp256k1 signing role to the Rust custody service/frontier; generate+seal
-  the EVM verifier key in-TEE; route all Neo X feed + fulfillment signing through the enclave; keep
-  only a low-privilege gas/submission key on the host (or move it in-TEE too).
+- **Phase D — in-TEE EVM signing (RC1, DONE in the current Rust artifacts):**
+  chain-bound secp256k1 updater and verifier roles live in the separate custody
+  EIF. NeoX feed and fulfillment signing use the semantic custody APIs, while
+  the host/relayer independently validate every returned identity and signature
+  before broadcast.
 
 ## Honest framing
 
-The user requirement "all computation secure + confidential inside the TEE" is
-met for the current Rust confidential-compute lanes and Neo N3 custody
-migration. It is **not** met for Neo X signing. The production guard makes that
-gap fail closed by disabling host signing; completing Phase D still requires a
-measured Rust secp256k1 custody/signing API, EIF rebuild, attestation/KMS policy
-cutover, key rotation, and live on-chain validation.
+The current Rust artifacts provide in-TEE confidential compute plus separate
+Neo N3 and NeoX custody. This is a code and artifact property, not proof that an
+arbitrary running host has the right release: production assurance still
+depends on rebuilding and measuring both EIFs, pinning the matching PCR/KMS
+policy, provisioning distinct chain-bound roles, rotating any historical
+host-exposed keys, and validating the release on-chain.

@@ -1514,14 +1514,32 @@ test('first provision and rotation require versioned attestation-gated KMS runti
 
 test('start-nitro-signer requires a KMS-sealed runtime token bootstrap', () => {
   const source = readFileSync(new URL('./start-nitro-signer.sh', import.meta.url), 'utf8');
-  assert.match(source, /signer\.MORPHEUS_RUNTIME_TOKEN/);
-  assert.match(source, /signer\.NITRO_SIGNER_TOKEN/);
+  const helper = readFileSync(new URL('./lib/provisioning.sh', import.meta.url), 'utf8');
+  assert.match(
+    source,
+    /neoos_first_env_value "\$signer_env" MORPHEUS_RUNTIME_TOKEN NITRO_SIGNER_TOKEN/
+  );
   assert.match(source, /MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64/);
   assert.match(source, /SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64/);
   assert.match(source, /MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64/);
   assert.match(source, /MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64/);
-  assert.match(source, /if \(!token\)/);
-  assert.match(source, /authorization:\s*`Bearer \$\{token\}`/);
+  assert.match(source, /neoos_require_printable_token "\$token"/);
+  assert.match(source, /neoos_fetch_imds_credentials/);
+  assert.match(source, /neoos_post_json .*\/provision" "\$token" "\$payload"/);
+  for (const role of [
+    'updater',
+    'oracle_verifier',
+    'relayer',
+    'worker',
+    'neox_updater',
+    'neox_verifier',
+  ]) {
+    assert.match(source, new RegExp(`"${role}"`));
+  }
+  assert.match(source, /\$roles \| all\(\.ok == true\)/);
+  assert.match(source, /did not materialize all six distinct measured custody roles/);
+  assert.match(helper, /Authorization: Bearer %s/);
+  assert.doesNotMatch(source, /\bnode\b|\bnpm\b/);
 });
 
 test('credential rotation cannot replay confidential or runtime provisioning', () => {

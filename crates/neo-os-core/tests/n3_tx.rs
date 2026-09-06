@@ -72,7 +72,8 @@ fn single_symbol_script_is_byte_exact() {
             &[1718352000],
             &["0d85465d97521b3659a2de0b338eb032"],
         ),
-    );
+    )
+    .expect("valid fixture");
     assert_eq!(
         hex(&script),
         "1011c00c18d1df39e3ae5df7be76d5bdfae7d6b675ed1bdf7f1e6f4df611c00280f86b6611c00280841e0011c001e90311c00c125457454c5645444154413a4e454f2d55534411c016c01f0c0b75706461746546656564730c14abcc7f51c334d4f958be8b6c54142ac4493f010341627d5b52"
@@ -94,7 +95,8 @@ fn two_symbol_script_is_byte_exact() {
                 "23662a9f13a96656641ddf9aa56e5f60",
             ],
         ),
-    );
+    )
+    .expect("valid fixture");
     assert_eq!(
         hex(&script),
         "101012c00c18db7ebad9af5fd776bdebae7aeb8d5d75ff5a6b9e9ee5feb40c18d1df39e3ae5df7be76d5bdfae7d6b675ed1bdf7f1e6f4df612c0028052b5680280f86b6612c003412c4f220f0000000280841e0012c002c1340e3501e90312c00c125457454c5645444154413a4254432d5553440c125457454c5645444154413a4e454f2d55534412c016c01f0c0b75706461746546656564730c14abcc7f51c334d4f958be8b6c54142ac4493f010341627d5b52"
@@ -127,7 +129,8 @@ fn integer_encoding_matches_the_per_param_vectors() {
             &FEED_N3_CONTRACT,
             "updateFeeds",
             &[ContractParam::Array(vec![ContractParam::Integer(value)])],
-        );
+        )
+        .expect("valid fixture");
         let encoded = hex(&script);
         // The integer emission is the prefix before `11c0` (count+PACK).
         let prefix = expected.split("11c0").next().unwrap().to_string();
@@ -148,7 +151,8 @@ fn base64_bytes_decode_not_hex_decode() {
         &[ContractParam::Array(vec![ContractParam::Base64Bytes(
             "e3b0c44298fc1c149afbf4c8996fb924".to_string(),
         )])],
-    );
+    )
+    .expect("valid fixture");
     assert!(hex(&script).starts_with("0c187b76f4738e36f7c7dcd5cd78f5a7db7f873cf7de9f6fddb8"));
 }
 
@@ -160,7 +164,8 @@ fn empty_byte_array_and_multi_string_arrays_match() {
         &[ContractParam::Array(vec![ContractParam::Base64Bytes(
             String::new(),
         )])],
-    );
+    )
+    .expect("valid fixture");
     assert!(hex(&empty).starts_with("0c00"));
 
     let two = create_invoke_script(
@@ -170,7 +175,8 @@ fn empty_byte_array_and_multi_string_arrays_match() {
             ContractParam::String("A".to_string()),
             ContractParam::String("B".to_string()),
         ])],
-    );
+    )
+    .expect("valid fixture");
     assert!(hex(&two).starts_with("0c01420c014112c0"));
 }
 
@@ -188,7 +194,8 @@ fn tx_serialization_and_message_are_byte_exact() {
             &[1718352000],
             &["0d85465d97521b3659a2de0b338eb032"],
         ),
-    );
+    )
+    .expect("valid fixture");
     let feed_tx = FeedTx {
         nonce: 424242,
         valid_until_block: 100500,
@@ -224,7 +231,8 @@ fn two_symbol_tx_message_is_byte_exact() {
                 "23662a9f13a96656641ddf9aa56e5f60",
             ],
         ),
-    );
+    )
+    .expect("valid fixture");
     let feed_tx = FeedTx {
         nonce: 424242,
         valid_until_block: 100500,
@@ -255,7 +263,8 @@ fn zeroed_tx_message_is_byte_exact() {
             &[1],
             &["4de81354d10d128f1d26e20cd2981161"],
         ),
-    );
+    )
+    .expect("valid fixture");
     let feed_tx = FeedTx {
         nonce: 0,
         valid_until_block: 500,

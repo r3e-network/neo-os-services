@@ -28,31 +28,34 @@ pub const SUPPORTED_CHAINS: &[&str] = &["neo_n3", "neox"];
 /// Last-resort fallback RPC URLs used ONLY when the network registry is
 /// absent or its rpc_urls list is empty (port of DEFAULT_NEO_N3_RPC_URLS,
 /// mirrored from config/networks/*.json on 2026-06-25).
-pub static DEFAULT_NEO_N3_RPC_URLS: &[(&str, &[&str])] = &[(
-    "mainnet",
-    &[
-        "https://api.n3index.dev/mainnet",
-        "https://mainnet1.neo.coz.io:443",
-        "https://mainnet2.neo.coz.io:443",
-        "http://seed1.neo.org:10332",
-        "http://seed2.neo.org:10332",
-        "http://seed3.neo.org:10332",
-    ],
-), (
-    "testnet",
-    &[
-        "https://api.n3index.dev/testnet",
-        "https://testnet1.neo.coz.io:443",
-        "http://seed1t5.neo.org:20332",
-        "http://seed2t5.neo.org:20332",
-        "http://seed3t5.neo.org:20332",
-        "http://seed4t5.neo.org:20332",
-        "http://seed5t5.neo.org:20332",
-        "http://seed3.neo.org:20332",
-        "http://seed4.neo.org:20332",
-        "http://seed5.neo.org:20332",
-    ],
-)];
+pub static DEFAULT_NEO_N3_RPC_URLS: &[(&str, &[&str])] = &[
+    (
+        "mainnet",
+        &[
+            "https://api.n3index.dev/mainnet",
+            "https://mainnet1.neo.coz.io:443",
+            "https://mainnet2.neo.coz.io:443",
+            "http://seed1.neo.org:10332",
+            "http://seed2.neo.org:10332",
+            "http://seed3.neo.org:10332",
+        ],
+    ),
+    (
+        "testnet",
+        &[
+            "https://api.n3index.dev/testnet",
+            "https://testnet1.neo.coz.io:443",
+            "http://seed1t5.neo.org:20332",
+            "http://seed2t5.neo.org:20332",
+            "http://seed3t5.neo.org:20332",
+            "http://seed4t5.neo.org:20332",
+            "http://seed5t5.neo.org:20332",
+            "http://seed3.neo.org:20332",
+            "http://seed4.neo.org:20332",
+            "http://seed5.neo.org:20332",
+        ],
+    ),
+];
 
 const MAX_FEED_SYNC_TIMEOUT_MS: f64 = 30_000.0;
 const MAX_RETRY_MAX_DELAY_MS: f64 = 600_000.0;
@@ -298,7 +301,11 @@ impl EnvSource {
     /// Port of config.js `envNetworkScoped`: `<KEY>_<MAINNET|TESTNET>` wins
     /// over the generic `<KEY>`.
     pub fn env_network_scoped(&self, network: &str, generic_key: &str) -> String {
-        let suffix = if network == "mainnet" { "MAINNET" } else { "TESTNET" };
+        let suffix = if network == "mainnet" {
+            "MAINNET"
+        } else {
+            "TESTNET"
+        };
         let scoped = self.env(&[&format!("{generic_key}_{suffix}")]);
         if !scoped.is_empty() {
             return scoped;
@@ -368,7 +375,11 @@ pub fn resolve_nitro_api_urls(
 /// Port of config.js `resolveNeoN3RpcUrls`: scoped aliases, registry list,
 /// registry single URL, generic aliases (when allowed), then the built-in
 /// seeds — de-duplicated and HTTPS-first ranked.
-pub fn resolve_neo_n3_rpc_urls(network: &str, source: &EnvSource, registry: &JsValue) -> Vec<String> {
+pub fn resolve_neo_n3_rpc_urls(
+    network: &str,
+    source: &EnvSource,
+    registry: &JsValue,
+) -> Vec<String> {
     let (scoped_aliases, generic_default) = if network == "mainnet" {
         (
             [
@@ -395,7 +406,8 @@ pub fn resolve_neo_n3_rpc_urls(network: &str, source: &EnvSource, registry: &JsV
         )
     };
     let scoped_rpc_urls = parse_url_list(&JsValue::Str(source.env(&scoped_aliases)));
-    let generic_rpc_urls = parse_url_list(&JsValue::Str(source.env(&["NEO_RPC_URLS", "NEO_RPC_URL"])));
+    let generic_rpc_urls =
+        parse_url_list(&JsValue::Str(source.env(&["NEO_RPC_URLS", "NEO_RPC_URL"])));
 
     let neo_n3 = registry.get("neo_n3");
     let registry_urls = match neo_n3 {
@@ -440,11 +452,7 @@ pub fn resolve_neo_n3_rpc_urls(network: &str, source: &EnvSource, registry: &JsV
 /// Port of config.js `resolveNeoN3NetworkMagic`: scoped magic, registry
 /// value, generic magic (only when allowed), then the per-network default —
 /// coerced with Number() over the truthiness chain.
-pub fn resolve_neo_n3_network_magic(
-    network: &str,
-    source: &EnvSource,
-    registry: &JsValue,
-) -> f64 {
+pub fn resolve_neo_n3_network_magic(network: &str, source: &EnvSource, registry: &JsValue) -> f64 {
     let scoped = if network == "mainnet" {
         source.env(&["NEO_MAINNET_MAGIC", "MAINNET_NETWORK_MAGIC"])
     } else {
@@ -499,10 +507,7 @@ pub fn resolve_start_ref(raw_env: &str) -> JsValue {
 /// RELAYER_NEO_N3_HOST_KEY_ENV_NAMES): the two legacy WIF names plus
 /// MORPHEUS_<ROLE>_NEO_N3_{WIF,PRIVATE_KEY}[<_MAINNET|_TESTNET>].
 pub fn relayer_neo_n3_host_key_env_names() -> Vec<String> {
-    let mut names = vec![
-        "NEO_N3_WIF".to_string(),
-        "NEO_TESTNET_WIF".to_string(),
-    ];
+    let mut names = vec!["NEO_N3_WIF".to_string(), "NEO_TESTNET_WIF".to_string()];
     for role in ["WORKER", "RELAYER", "UPDATER", "ORACLE_VERIFIER", "FEED"] {
         for suffix in ["", "_MAINNET", "_TESTNET"] {
             names.push(format!("MORPHEUS_{role}_NEO_N3_WIF{suffix}"));
@@ -643,20 +648,24 @@ pub fn derive_pure_fields(
                 .unwrap_or_default()
         }
     };
-    let mode = resolve_relayer_mode(&JsValue::Str(
-        {
-            let e = source.env(&["MORPHEUS_RELAYER_MODE"]);
-            if e.is_empty() {
-                "combined".to_string()
-            } else {
-                e
-            }
-        },
-    ));
-    let use_derived_keys =
-        parse_boolean_env(&JsValue::Str(source.env(&["NITRO_USE_DERIVED_KEYS"])), false);
+    let mode = resolve_relayer_mode(&JsValue::Str({
+        let e = source.env(&["MORPHEUS_RELAYER_MODE"]);
+        if e.is_empty() {
+            "combined".to_string()
+        } else {
+            e
+        }
+    }));
+    let use_derived_keys = parse_boolean_env(
+        &JsValue::Str(source.env(&["NITRO_USE_DERIVED_KEYS"])),
+        false,
+    );
     let has_supabase_url = !source
-        .env(&["SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL", "morpheus_SUPABASE_URL"])
+        .env(&[
+            "SUPABASE_URL",
+            "NEXT_PUBLIC_SUPABASE_URL",
+            "morpheus_SUPABASE_URL",
+        ])
         .is_empty();
     let has_supabase_key = !source
         .env(&[
@@ -680,7 +689,10 @@ pub fn derive_pure_fields(
         }
     }));
     let max_retries = js_max(
-        parse_numeric_env(&JsValue::Str(source.env(&["MORPHEUS_RELAYER_MAX_RETRIES"])), 5.0),
+        parse_numeric_env(
+            &JsValue::Str(source.env(&["MORPHEUS_RELAYER_MAX_RETRIES"])),
+            5.0,
+        ),
         0.0,
     );
     let host_signer_env_names = configured_host_signer_env_names(source);
@@ -724,14 +736,6 @@ pub fn derive_pure_fields(
              MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER=true for an explicit non-production test",
         ));
     }
-    if production && active_chains.iter().any(|chain| chain == "neox") {
-        return Err(crate::CoreError::new(
-            "Neo X production signing is unavailable: the shipped Rust enclave/custody runtime has no \
-             complete secp256k1 signer. Remove neox from MORPHEUS_ACTIVE_CHAINS until the measured \
-             custody/enclave signer and transaction relay are implemented.",
-        ));
-    }
-
     let neo_n3_rpc_urls = resolve_neo_n3_rpc_urls(&network, source, registry);
     let allow_fallback_value = !production
         && parse_boolean_env(
@@ -740,7 +744,8 @@ pub fn derive_pure_fields(
         );
     let nitro_api_url = resolve_nitro_api_urls(&network, source, registry, !production);
     let signer_url = {
-        let explicit = js_trim(&source.env(&["NITRO_SIGNER_URL", "MORPHEUS_SIGNER_URL"])).to_string();
+        let explicit =
+            js_trim(&source.env(&["NITRO_SIGNER_URL", "MORPHEUS_SIGNER_URL"])).to_string();
         if explicit.is_empty() {
             resolve_nitro_api_urls(&network, source, registry, !production)
         } else {
@@ -748,12 +753,12 @@ pub fn derive_pure_fields(
         }
     };
     let enclave_fulfill_url = {
-        let direct =
-            js_trim(&source.env(&["MORPHEUS_RELAYER_ENCLAVE_FULFILL_URL"])).to_string();
+        let direct = js_trim(&source.env(&["MORPHEUS_RELAYER_ENCLAVE_FULFILL_URL"])).to_string();
         if !direct.is_empty() {
             direct
         } else {
-            let signer = js_trim(&source.env(&["NITRO_SIGNER_URL", "MORPHEUS_SIGNER_URL"])).to_string();
+            let signer =
+                js_trim(&source.env(&["NITRO_SIGNER_URL", "MORPHEUS_SIGNER_URL"])).to_string();
             if !signer.is_empty() {
                 signer
             } else {
@@ -770,7 +775,8 @@ pub fn derive_pure_fields(
         if !direct.is_empty() {
             direct
         } else {
-            let fulfill = js_trim(&source.env(&["MORPHEUS_RELAYER_ENCLAVE_FULFILL_URL"])).to_string();
+            let fulfill =
+                js_trim(&source.env(&["MORPHEUS_RELAYER_ENCLAVE_FULFILL_URL"])).to_string();
             if !fulfill.is_empty() {
                 fulfill
             } else {
@@ -827,7 +833,10 @@ pub fn derive_pure_fields(
     cfg.set(
         "concurrency",
         JsValue::Number(js_max(
-            parse_numeric_env(&JsValue::Str(source.env(&["MORPHEUS_RELAYER_CONCURRENCY"])), 4.0),
+            parse_numeric_env(
+                &JsValue::Str(source.env(&["MORPHEUS_RELAYER_CONCURRENCY"])),
+                4.0,
+            ),
             1.0,
         )),
     );
@@ -934,7 +943,9 @@ pub fn derive_pure_fields(
         JsValue::Bool(resolve_allow_local_claim_during_backoff(
             &node_env_raw_for_resolvers,
             parse_boolean_env(
-                &JsValue::Str(source.env(&["MORPHEUS_DURABLE_QUEUE_ALLOW_LOCAL_CLAIM_DURING_BACKOFF"])),
+                &JsValue::Str(
+                    source.env(&["MORPHEUS_DURABLE_QUEUE_ALLOW_LOCAL_CLAIM_DURING_BACKOFF"]),
+                ),
                 false,
             ),
         )),
@@ -1327,7 +1338,11 @@ pub fn derive_pure_fields(
     );
     nitro.set(
         "token",
-        JsValue::Str(source.env(&["MORPHEUS_RUNTIME_TOKEN", "NITRO_API_TOKEN", "NITRO_SHARED_SECRET"])),
+        JsValue::Str(source.env(&[
+            "MORPHEUS_RUNTIME_TOKEN",
+            "NITRO_API_TOKEN",
+            "NITRO_SHARED_SECRET",
+        ])),
     );
     nitro.set(
         "timeoutMs",
@@ -1369,7 +1384,9 @@ pub fn derive_pure_fields(
     neo_n3_obj.set(
         "fulfillConfirmThrowOnTimeout",
         JsValue::Bool(parse_boolean_env(
-            &JsValue::Str(source.env(&["MORPHEUS_RELAYER_NEO_N3_FULFILL_CONFIRM_THROW_ON_TIMEOUT"])),
+            &JsValue::Str(
+                source.env(&["MORPHEUS_RELAYER_NEO_N3_FULFILL_CONFIRM_THROW_ON_TIMEOUT"]),
+            ),
             true,
         )),
     );
@@ -1485,7 +1502,8 @@ pub fn derive_pure_fields(
 
     // neox
     let neox_primary_rpc = {
-        let explicit = js_trim(&source.env(&["MORPHEUS_RELAYER_NEOX_RPC_URL", "NEOX_RPC"])).to_string();
+        let explicit =
+            js_trim(&source.env(&["MORPHEUS_RELAYER_NEOX_RPC_URL", "NEOX_RPC"])).to_string();
         if !explicit.is_empty() {
             explicit
         } else {
@@ -1504,87 +1522,151 @@ pub fn derive_pure_fields(
         }
     };
     let mut neox_obj = JsObject::new();
-    neox_obj.set("scanMode", JsValue::Str({
-        let e = js_trim(&source.env(&["MORPHEUS_RELAYER_NEOX_SCAN_MODE"])).to_string();
-        if e.is_empty() {
-            "request_cursor".to_string()
-        } else {
-            e
-        }
-    }));
-    neox_obj.set("rpcUrl", JsValue::Str(neox_primary_rpc.clone()));
-    neox_obj.set("rpcUrls", JsValue::Array({
-        let mut list = vec![neox_primary_rpc.clone()];
-        list.extend(parse_url_list(&JsValue::Str(source.env(&[
-            "MORPHEUS_RELAYER_NEOX_RPC_URLS",
-            "NEOX_RPC_URLS",
-        ]))));
-        if let Some(neox_reg) = registry.get("neox") {
-            let raw = neox_reg.get("rpc_urls").cloned().unwrap_or(JsValue::Undefined);
-            let val = if raw.truthy() { raw } else { JsValue::Array(Vec::new()) };
-            list.extend(parse_url_list(&val));
-        }
-        if network == "mainnet" {
-            list.push("https://mainnet-1.rpc.banelabs.org".to_string());
-            list.push("https://mainnet-2.rpc.banelabs.org".to_string());
-        } else {
-            list.push("https://neoxt4seed1.ngd.network".to_string());
-            list.push("https://neoxt4seed2.ngd.network".to_string());
-        }
-        unique_ordered(list)
-            .into_iter()
-            .map(JsValue::Str)
-            .collect()
-    }));
-    neox_obj.set("chainId", JsValue::Number({
-        let explicit = source.env(&["MORPHEUS_RELAYER_NEOX_CHAIN_ID", "NEOX_CHAIN_ID"]);
-        let candidate: JsValue = if !explicit.is_empty() {
-            JsValue::Str(explicit)
-        } else {
-            let registry_chain = registry
-                .get("neox")
-                .and_then(|n| n.get("chain_id"))
-                .cloned()
-                .unwrap_or(JsValue::Undefined);
-            if registry_chain.truthy() {
-                registry_chain
-            } else if network == "mainnet" {
-                JsValue::Number(47763.0)
+    neox_obj.set(
+        "scanMode",
+        JsValue::Str({
+            let e = js_trim(&source.env(&["MORPHEUS_RELAYER_NEOX_SCAN_MODE"])).to_string();
+            if e.is_empty() {
+                "request_cursor".to_string()
             } else {
-                JsValue::Number(12_227_332.0)
+                e
             }
-        };
-        number_of(&candidate)
-    }));
-    neox_obj.set("oracleContract", JsValue::Str({
-        let explicit = js_trim(&source.env(&["MORPHEUS_RELAYER_NEOX_ORACLE", "NEOX_ORACLE"])).to_string();
-        if !explicit.is_empty() {
-            explicit
+        }),
+    );
+    neox_obj.set("rpcUrl", JsValue::Str(neox_primary_rpc.clone()));
+    neox_obj.set(
+        "rpcUrls",
+        JsValue::Array({
+            let mut list = vec![neox_primary_rpc.clone()];
+            list.extend(parse_url_list(&JsValue::Str(
+                source.env(&["MORPHEUS_RELAYER_NEOX_RPC_URLS", "NEOX_RPC_URLS"]),
+            )));
+            if let Some(neox_reg) = registry.get("neox") {
+                let raw = neox_reg
+                    .get("rpc_urls")
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined);
+                let val = if raw.truthy() {
+                    raw
+                } else {
+                    JsValue::Array(Vec::new())
+                };
+                list.extend(parse_url_list(&val));
+            }
+            if network == "mainnet" {
+                list.push("https://mainnet-1.rpc.banelabs.org".to_string());
+                list.push("https://mainnet-2.rpc.banelabs.org".to_string());
+            } else {
+                list.push("https://neoxt4seed1.ngd.network".to_string());
+                list.push("https://neoxt4seed2.ngd.network".to_string());
+            }
+            unique_ordered(list).into_iter().map(JsValue::Str).collect()
+        }),
+    );
+    neox_obj.set(
+        "chainId",
+        JsValue::Number({
+            let explicit = source.env(&["MORPHEUS_RELAYER_NEOX_CHAIN_ID", "NEOX_CHAIN_ID"]);
+            let candidate: JsValue = if !explicit.is_empty() {
+                JsValue::Str(explicit)
+            } else {
+                let registry_chain = registry
+                    .get("neox")
+                    .and_then(|n| n.get("chain_id"))
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined);
+                if registry_chain.truthy() {
+                    registry_chain
+                } else if network == "mainnet" {
+                    JsValue::Number(47763.0)
+                } else {
+                    JsValue::Number(12_227_332.0)
+                }
+            };
+            number_of(&candidate)
+        }),
+    );
+    neox_obj.set(
+        "oracleContract",
+        JsValue::Str({
+            let explicit =
+                js_trim(&source.env(&["MORPHEUS_RELAYER_NEOX_ORACLE", "NEOX_ORACLE"])).to_string();
+            if !explicit.is_empty() {
+                explicit
+            } else {
+                registry
+                    .get("neox")
+                    .and_then(|n| n.get("contracts"))
+                    .and_then(|c| c.get("morpheus_oracle"))
+                    .map(trim_string)
+                    .unwrap_or_default()
+            }
+        }),
+    );
+    neox_obj.set(
+        "datafeedContract",
+        JsValue::Str({
+            let explicit =
+                js_trim(&source.env(&["MORPHEUS_RELAYER_NEOX_DATAFEED", "NEOX_DATAFEED"]))
+                    .to_string();
+            if !explicit.is_empty() {
+                explicit
+            } else {
+                registry
+                    .get("neox")
+                    .and_then(|n| n.get("contracts"))
+                    .and_then(|c| c.get("morpheus_datafeed"))
+                    .map(trim_string)
+                    .unwrap_or_default()
+            }
+        }),
+    );
+    neox_obj.set(
+        "feedGasLimit",
+        JsValue::Number(js_max(
+            parse_numeric_env(
+                &JsValue::Str(source.env(&["MORPHEUS_RELAYER_NEOX_FEED_GAS_LIMIT"])),
+                2_000_000.0,
+            ),
+            21_000.0,
+        )),
+    );
+    neox_obj.set(
+        "allowHostSigner",
+        JsValue::Bool(allow_insecure_host_evm_signer),
+    );
+    let mut neox_custody_key_ids = JsObject::new();
+    neox_custody_key_ids.set(
+        "updater",
+        JsValue::Str(js_trim(&source.env(&["SIGNER_ROLE_NEOX_UPDATER_KEY_ID"])).to_string()),
+    );
+    neox_custody_key_ids.set(
+        "verifier",
+        JsValue::Str(js_trim(&source.env(&["SIGNER_ROLE_NEOX_VERIFIER_KEY_ID"])).to_string()),
+    );
+    neox_obj.set("custodyKeyIds", JsValue::Object(neox_custody_key_ids));
+    neox_obj.set(
+        "updaterPrivateKey",
+        JsValue::Str(if allow_insecure_host_evm_signer {
+            js_trim(&source.env(&[
+                "MORPHEUS_RELAYER_NEOX_UPDATER_PK",
+                "NEOX_UPDATER_PK",
+                "NEOX_FEED_PK",
+            ]))
+            .to_string()
         } else {
-            registry
-                .get("neox")
-                .and_then(|n| n.get("contracts"))
-                .and_then(|c| c.get("morpheus_oracle"))
-                .map(trim_string)
-                .unwrap_or_default()
-        }
-    }));
-    neox_obj.set("allowHostSigner", JsValue::Bool(allow_insecure_host_evm_signer));
-    neox_obj.set("updaterPrivateKey", JsValue::Str(if allow_insecure_host_evm_signer {
-        js_trim(&source.env(&[
-            "MORPHEUS_RELAYER_NEOX_UPDATER_PK",
-            "NEOX_UPDATER_PK",
-            "NEOX_FEED_PK",
-        ]))
-        .to_string()
-    } else {
-        String::new()
-    }));
-    neox_obj.set("verifierPrivateKey", JsValue::Str(if allow_insecure_host_evm_signer {
-        js_trim(&source.env(&["MORPHEUS_RELAYER_NEOX_VERIFIER_PK", "NEOX_VERIFIER_PK"])).to_string()
-    } else {
-        String::new()
-    }));
+            String::new()
+        }),
+    );
+    neox_obj.set(
+        "verifierPrivateKey",
+        JsValue::Str(if allow_insecure_host_evm_signer {
+            js_trim(&source.env(&["MORPHEUS_RELAYER_NEOX_VERIFIER_PK", "NEOX_VERIFIER_PK"]))
+                .to_string()
+        } else {
+            String::new()
+        }),
+    );
     neox_obj.set(
         "confirmTimeoutMs",
         JsValue::Number(js_max(
@@ -1595,33 +1677,49 @@ pub fn derive_pure_fields(
             1000.0,
         )),
     );
-    neox_obj.set("workerUrl", JsValue::Str({
-        js_trim(&source.env(&["MORPHEUS_RELAYER_NEOX_WORKER_URL", "NEOX_WORKER_URL"])).to_string()
-    }));
+    neox_obj.set(
+        "workerUrl",
+        JsValue::Str({
+            js_trim(&source.env(&["MORPHEUS_RELAYER_NEOX_WORKER_URL", "NEOX_WORKER_URL"]))
+                .to_string()
+        }),
+    );
     cfg.set("neox", JsValue::Object(neox_obj));
 
     // metricsServer
     let mut metrics_server = JsObject::new();
-    metrics_server.set("host", JsValue::Str({
-        let e = source.env(&["MORPHEUS_RELAYER_METRICS_HOST"]);
-        if e.is_empty() {
-            "127.0.0.1".to_string()
-        } else {
-            e
-        }
-    }));
-    metrics_server.set("port", JsValue::Number(js_max(
-        parse_numeric_env(&JsValue::Str(source.env(&["MORPHEUS_RELAYER_METRICS_PORT"])), 9464.0),
-        1.0,
-    )));
-    metrics_server.set("path", JsValue::Str({
-        let e = source.env(&["MORPHEUS_RELAYER_METRICS_PATH"]);
-        if e.is_empty() {
-            "/metrics".to_string()
-        } else {
-            e
-        }
-    }));
+    metrics_server.set(
+        "host",
+        JsValue::Str({
+            let e = source.env(&["MORPHEUS_RELAYER_METRICS_HOST"]);
+            if e.is_empty() {
+                "127.0.0.1".to_string()
+            } else {
+                e
+            }
+        }),
+    );
+    metrics_server.set(
+        "port",
+        JsValue::Number(js_max(
+            parse_numeric_env(
+                &JsValue::Str(source.env(&["MORPHEUS_RELAYER_METRICS_PORT"])),
+                9464.0,
+            ),
+            1.0,
+        )),
+    );
+    metrics_server.set(
+        "path",
+        JsValue::Str({
+            let e = source.env(&["MORPHEUS_RELAYER_METRICS_PATH"]);
+            if e.is_empty() {
+                "/metrics".to_string()
+            } else {
+                e
+            }
+        }),
+    );
     cfg.set("metricsServer", JsValue::Object(metrics_server));
 
     // heartbeats
@@ -1748,7 +1846,10 @@ mod tests {
             parse_integer_string(&JsValue::Str("12.5".to_string()), "50"),
             "50"
         );
-        assert_eq!(parse_integer_string(&JsValue::Str("".to_string()), "50"), "50");
+        assert_eq!(
+            parse_integer_string(&JsValue::Str("".to_string()), "50"),
+            "50"
+        );
     }
 
     #[test]
@@ -1809,9 +1910,18 @@ mod tests {
 
     #[test]
     fn durable_queue_resolvers_flip_in_production() {
-        assert!(!resolve_allow_local_claim_during_backoff("production", true));
-        assert!(resolve_allow_local_claim_during_backoff("development", true));
-        assert!(!resolve_allow_local_claim_during_backoff("development", false));
+        assert!(!resolve_allow_local_claim_during_backoff(
+            "production",
+            true
+        ));
+        assert!(resolve_allow_local_claim_during_backoff(
+            "development",
+            true
+        ));
+        assert!(!resolve_allow_local_claim_during_backoff(
+            "development",
+            false
+        ));
         assert!(resolve_durable_queue_fail_closed("production", false));
         assert!(!resolve_durable_queue_fail_closed("development", false));
     }
@@ -1819,7 +1929,10 @@ mod tests {
     #[test]
     fn network_magic_truthiness_chain() {
         let mut source = EnvSource::empty();
-        assert_eq!(resolve_neo_n3_network_magic("mainnet", &source, &JsValue::Undefined), 860833102.0);
+        assert_eq!(
+            resolve_neo_n3_network_magic("mainnet", &source, &JsValue::Undefined),
+            860833102.0
+        );
         let mut registry = JsObject::new();
         let mut n3 = JsObject::new();
         n3.set("network_magic", JsValue::Number(0.0));
@@ -1839,7 +1952,10 @@ mod tests {
         let mut process_env = JsObject::new();
         process_env.set("NEO_TESTNET_MAGIC", JsValue::Str("123".to_string()));
         source = EnvSource::new(process_env, JsObject::new());
-        assert_eq!(resolve_neo_n3_network_magic("testnet", &source, &JsValue::Undefined), 123.0);
+        assert_eq!(
+            resolve_neo_n3_network_magic("testnet", &source, &JsValue::Undefined),
+            123.0
+        );
     }
 
     #[test]
@@ -1864,17 +1980,63 @@ mod tests {
     }
 
     #[test]
-    fn production_neox_lane_is_refused() {
-        let source = env_from(&[("NODE_ENV", "production"), ("MORPHEUS_ACTIVE_CHAINS", "neox")]);
-        let err = derive_pure_fields(&source, &JsValue::Undefined, "").unwrap_err();
-        assert!(err
-            .to_string()
-            .starts_with("Neo X production signing is unavailable:"));
+    fn production_neox_lanes_are_configurable_without_host_keys() {
+        let source = env_from(&[
+            ("NODE_ENV", "production"),
+            ("MORPHEUS_ACTIVE_CHAINS", "neox"),
+        ]);
+        derive_pure_fields(&source, &JsValue::Undefined, "")
+            .expect("the authoritative NeoX request lane is production-configurable");
+
+        let feed_source = env_from(&[
+            ("NODE_ENV", "production"),
+            ("MORPHEUS_ACTIVE_CHAINS", "neox"),
+            ("MORPHEUS_RELAYER_MODE", "feed_only"),
+        ]);
+        derive_pure_fields(&feed_source, &JsValue::Undefined, "")
+            .expect("the authoritative NeoX feed lane is production-configurable");
+    }
+
+    #[test]
+    fn neox_custody_updater_key_is_chain_specific() {
+        let source = env_from(&[
+            ("SIGNER_ROLE_NEOX_UPDATER_KEY_ID", "neox-updater"),
+            ("SIGNER_ROLE_UPDATER_KEY_ID", "n3-updater"),
+        ]);
+        let config = derive_pure_fields(&source, &JsValue::Undefined, "")
+            .expect("chain-specific custody ids should derive");
+        let neox = config
+            .get("neox")
+            .and_then(JsValue::as_object)
+            .expect("neox config");
+        let neox_key_ids = neox
+            .get("custodyKeyIds")
+            .and_then(JsValue::as_object)
+            .expect("neox custody key ids");
+        assert_eq!(
+            neox_key_ids.get("updater"),
+            Some(&JsValue::Str("neox-updater".to_string()))
+        );
+        let n3 = config
+            .get("neo_n3")
+            .and_then(JsValue::as_object)
+            .expect("Neo N3 config");
+        let n3_key_ids = n3
+            .get("custodyKeyIds")
+            .and_then(JsValue::as_object)
+            .expect("Neo N3 custody key ids");
+        assert_eq!(
+            n3_key_ids.get("updater"),
+            Some(&JsValue::Str("n3-updater".to_string()))
+        );
     }
 
     #[test]
     fn default_state_file_name_by_mode() {
-        assert_eq!(default_state_file_name("combined"), ".morpheus-relayer-state.json");
+        assert_eq!(
+            default_state_file_name("combined"),
+            ".morpheus-relayer-state.json"
+        );
         assert_eq!(
             default_state_file_name("feed_only"),
             ".morpheus-relayer-state.feed_only.json"

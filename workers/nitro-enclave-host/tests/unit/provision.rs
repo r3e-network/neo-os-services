@@ -16,11 +16,14 @@ const RUNTIME_CIPHERTEXT: &str = "runtime-token-ciphertext";
 const ORACLE_CIPHERTEXT: &str = "oracle-key-ciphertext";
 const NEODID_CIPHERTEXT: &str = "neodid-salt-ciphertext";
 const CUSTODY_TOKEN_CIPHERTEXT: &str = "custody-token-ciphertext";
+const GAME_SECRET_CIPHERTEXT: &str = "game-secret-ciphertext";
 const RELEASED_TOKEN: &str = "released-runtime-token-0123456789abcdef";
 const CUSTODY_TOKEN: &str = "released-custody-token-0123456789abcdef";
 const ORACLE_PUBLIC_KEY: &str = "vAB/ripK5xzT1PT+KGbSvEEPfGQoxQliNWjSFjDfuhU=";
 const ORACLE_PRIVATE_KEY: &str = "MC4CAQAwBQYDK2VuBCIEIEgdmKz6RqTG40pP8SVY+7XPGOUXAIbmI4alIH3uMYZ8";
 const NEODID_SALT: &str = "0123456789abcdef0123456789abcdef";
+const GAME_SECRET_ROOT_HEX: &str =
+    "0707070707070707070707070707070707070707070707070707070707070707";
 // The mjs provision suite authenticates static-token requests with the
 // module-load NITRO_API_TOKEN; this is its Rust stand-in for the tests that do
 // NOT exercise first-boot bootstrap.
@@ -73,6 +76,16 @@ fn custody_token_envelope(network: &str) -> Vec<u8> {
     .expect("custody token envelope")
 }
 
+fn game_secret_envelope(network: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "purpose": "neoos/game-secret/v1",
+        "network": network,
+        "version": 1,
+        "secret_root_hex": GAME_SECRET_ROOT_HEX,
+    }))
+    .expect("game secret envelope")
+}
+
 fn bootstrap(pairs: &[(&str, &str)], kms: FakeKms) -> TestState {
     test_state(
         pairs,
@@ -115,6 +128,7 @@ fn plaintext_signing_keys_are_refused_with_a_sorted_list() {
             "MORPHEUS_UPDATER_NEO_N3_WIF": "fixture",
             "NEOX_FEED_PK": "0xdeadbeef",
             "MORPHEUS_ORACLE_KEY_MATERIAL_JSON": "{}",
+            "MORPHEUS_GAME_SECRET_ROOT_HEX": GAME_SECRET_ROOT_HEX,
             "HARMLESS_NAME": "fine",
         }),
     );
@@ -125,7 +139,7 @@ fn plaintext_signing_keys_are_refused_with_a_sorted_list() {
     ), "{message}");
     assert!(
         message.contains(
-            "MORPHEUS_ORACLE_KEY_MATERIAL_JSON, MORPHEUS_UPDATER_NEO_N3_WIF, NEOX_FEED_PK"
+            "MORPHEUS_GAME_SECRET_ROOT_HEX, MORPHEUS_ORACLE_KEY_MATERIAL_JSON, MORPHEUS_UPDATER_NEO_N3_WIF, NEOX_FEED_PK"
         ),
         "{message}"
     );
@@ -314,6 +328,7 @@ fn direct_confidential_ciphertexts_materialize_only_inside_memory() {
         CUSTODY_TOKEN_CIPHERTEXT,
         Ok(custody_token_envelope("testnet")),
     );
+    kms.set_result(GAME_SECRET_CIPHERTEXT, Ok(game_secret_envelope("testnet")));
     let harness = bootstrap(AWS_PAIRS, kms);
     let outcome = provision_outcome(
         &harness,
@@ -323,6 +338,7 @@ fn direct_confidential_ciphertexts_materialize_only_inside_memory() {
             "MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64": ORACLE_CIPHERTEXT,
             "MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64": NEODID_CIPHERTEXT,
             "SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64": CUSTODY_TOKEN_CIPHERTEXT,
+            "MORPHEUS_GAME_SECRET_KMS_CIPHERTEXT_BASE64": GAME_SECRET_CIPHERTEXT,
         }),
     );
     assert_eq!(outcome.status, 200, "{:?}", outcome.body);
@@ -349,6 +365,18 @@ fn direct_confidential_ciphertexts_materialize_only_inside_memory() {
             .as_deref(),
         Some("nitro-recipient-kms")
     );
+    assert_eq!(
+        overlay
+            .get_trimmed("MORPHEUS_GAME_SECRET_ROOT_SOURCE")
+            .as_deref(),
+        Some("nitro-recipient-kms")
+    );
+    assert_eq!(
+        overlay
+            .get_trimmed("MORPHEUS_GAME_SECRET_ROOT_HEX")
+            .as_deref(),
+        Some(GAME_SECRET_ROOT_HEX)
+    );
     let oracle: serde_json::Value = serde_json::from_str(
         &overlay
             .get_trimmed("MORPHEUS_ORACLE_KEY_MATERIAL_JSON")
@@ -374,6 +402,12 @@ fn direct_confidential_ciphertexts_materialize_only_inside_memory() {
             .contains(CUSTODY_TOKEN),
         "provision response leaked the custody caller token"
     );
+    assert!(
+        !serde_json::to_string(&outcome.body)
+            .expect("body")
+            .contains(GAME_SECRET_ROOT_HEX),
+        "provision response leaked the game-session secret root"
+    );
 }
 
 #[test]
@@ -382,6 +416,7 @@ fn confidential_envelopes_are_purpose_and_network_bound() {
         (ORACLE_CIPHERTEXT, oracle_envelope("mainnet")),
         (NEODID_CIPHERTEXT, neodid_envelope("mainnet")),
         (CUSTODY_TOKEN_CIPHERTEXT, custody_token_envelope("mainnet")),
+        (GAME_SECRET_CIPHERTEXT, game_secret_envelope("mainnet")),
     ] {
         let kms = FakeKms::releasing(RUNTIME_CIPHERTEXT, released_envelope(1, "testnet"));
         kms.set_result(ciphertext, Ok(plaintext));
@@ -389,7 +424,8 @@ fn confidential_envelopes_are_purpose_and_network_bound() {
         let field = match ciphertext {
             ORACLE_CIPHERTEXT => "MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64",
             NEODID_CIPHERTEXT => "MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64",
-            _ => "SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64",
+            CUSTODY_TOKEN_CIPHERTEXT => "SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64",
+            _ => "MORPHEUS_GAME_SECRET_KMS_CIPHERTEXT_BASE64",
         };
         let mut env = json!({
             "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64": RUNTIME_CIPHERTEXT,
@@ -562,8 +598,13 @@ fn the_response_contract_matches_the_node_server() {
         ])
     );
     let roles = outcome.body["roles"].as_array().expect("roles");
+    assert_eq!(roles.len(), 6);
     assert_eq!(roles[0]["role"], "updater");
     assert_eq!(roles[1]["role"], "oracle_verifier");
+    assert_eq!(roles[2]["role"], "relayer");
+    assert_eq!(roles[3]["role"], "worker");
+    assert_eq!(roles[4]["role"], "neox_updater");
+    assert_eq!(roles[5]["role"], "neox_verifier");
     assert_eq!(roles[0]["ok"], true);
     assert_eq!(roles[0]["key_source"], "kms_attested");
 }

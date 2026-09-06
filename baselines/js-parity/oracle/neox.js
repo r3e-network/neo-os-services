@@ -59,8 +59,8 @@ function isProductionRuntime(config) {
 export function assertHostNeoXSigningAllowed(config) {
   if (!isProductionRuntime(config)) return;
   throw new Error(
-    'Neo X production signing is unavailable: host-side secp256k1 keys are forbidden and the ' +
-      'shipped Rust custody/enclave runtime does not implement the complete EVM signer'
+    'Neo X production relaying is unavailable: custody supports secp256k1/NeoX signing, but ' +
+      'Rust relayer transaction construction, broadcast, and confirmation are not complete'
   );
 }
 

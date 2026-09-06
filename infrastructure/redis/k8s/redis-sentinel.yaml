@@ -1,0 +1,195 @@
+# Kubernetes Redis Sentinel Configuration for High Availability
+# Apply: kubectl apply -f infrastructure/redis/k8s/redis-sentinel.yaml
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-sentinel-config
+  namespace: neoos-system
+data:
+  sentinel.conf: |
+    # Redis Sentinel Configuration
+    bind 0.0.0.0
+    port 26379
+    
+    # Monitor the master nodes
+    sentinel monitor neoos redis-cluster-0.redis-cluster.default.svc.cluster.local 6379 2
+    
+    # Failover configuration
+    sentinel down-after-milliseconds neoos 5000
+    sentinel failover-timeout neoos 10000
+    sentinel parallel-syncs neoos 1
+    
+    # Authentication
+    sentinel auth-pass neoos ${REDIS_PASSWORD}
+    
+    # Announce config for proper failover
+    sentinel announce-hostnames yes
+    
+    # Logging
+    loglevel notice
+    slowlog-log-slower-than 10000
+
+---
+# Headless Service for Redis Sentinel
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-sentinel
+  namespace: neoos-system
+spec:
+  clusterIP: None
+  ports:
+    - name: sentinel
+      port: 26379
+      targetPort: 26379
+  selector:
+    app: redis-sentinel
+
+---
+# Deployment for Redis Sentinels (3 for HA)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-sentinel
+  namespace: neoos-system
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis-sentinel
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: redis-sentinel
+        role: sentinel
+      annotations:
+        checksum/config: "placeholder"
+    spec:
+      containers:
+        - name: sentinel
+          image: redis:7.2-alpine
+          command:
+            - sh
+            - -c
+            - |
+              redis-sentinel --port 26379 \
+                /etc/redis/sentinel.conf
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 26379
+              name: sentinel
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: password
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "250m"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/redis
+          livenessProbe:
+            exec:
+              command:
+                - redis-cli
+                - -p
+                - "26379"
+                - ping
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - -p
+                - "26379"
+                - ping
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: redis-sentinel
+                topologyKey: kubernetes.io/hostname
+      volumes:
+        - name: config
+          configMap:
+            name: redis-sentinel-config
+
+---
+# ClusterIP Service for Redis Sentinel
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-sentinel-service
+  namespace: neoos-system
+spec:
+  type: ClusterIP
+  ports:
+    - port: 26379
+      targetPort: 26379
+      name: sentinel
+  selector:
+    app: redis-sentinel
+
+---
+# Readiness Probe Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: verify-sentinels
+  namespace: neoos-system
+spec:
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: verification
+          image: redis:7.2-alpine
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for sentinels to be ready..."
+              sleep 10
+              
+              while true; do
+                SENTINEL_RESPONSE=$(redis-cli -h redis-sentinel default -p 26379 SENTINEL master neoos 2>/dev/null)
+                if [ $? -eq 0 ] && [ -n "$SENTINEL_RESPONSE" ]; then
+                  echo "✓ Sentinel is healthy"
+                  break
+                fi
+                echo "Sentinel not ready yet..."
+                sleep 5
+              done
+              
+              echo "Sentinel info:"
+              redis-cli -h redis-sentinel -p 26379 SENTINEL master neoos
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: password

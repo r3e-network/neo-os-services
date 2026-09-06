@@ -3,18 +3,29 @@ name = "neo-os-chain-evm"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "NeoX EVM chain adapter: RPC client, confidential-envelope decode, fulfillment and revert normalization (T01 skeleton)"
+description = "NeoX EVM chain adapter: JSON-RPC, ABI, fulfillment verification, custody signing, and EIP-1559 transactions"
 
-# T01 skeleton — bodies land in T03 (see docs/rust-migration/ARCHITECTURE.md §1.1).
-# Scope, ported from workers/morpheus-relayer/src/neox.js (547 LOC): EVM scans,
-# confidential envelope decoding, fulfillment digest binding, signing, receipt
-# waiting, revert normalization.
+# T03 bodies ported from workers/morpheus-relayer/src/neox.js (547 LOC).
 #
-# Digest parity is already vector-locked via crates/neo-os-core vectors
-# (neox_digest.json); this crate composes on top of it.
-#
-# Dependency note: alloy (not ethers-rs) when the real client lands in T03 —
-# pure Rust, no C builds, keeps the enclave `--locked` reproducible-build path
-# clean (ARCHITECTURE.md risk R9).
+# Dependency decisions (ARCHITECTURE.md §3.2, risk R9):
+# - No ethers-rs / no full alloy: the needed ABI shapes (uint256/address/bool/
+#   bytes32/bytes/string + one 13-field tuple) are hand-encoded here and
+#   vector-locked against ethers-harvested goldens (tests/vectors/neox_abi.json,
+#   tests/vectors/neox_signing.json). This keeps the enclave build pure-Rust
+#   and `--locked` reproducible.
+# - keccak256 via `sha3` (already in the workspace lockfile via morpheus-compute).
+# - The crate contains no private-key fallback. It derives and verifies the
+#   exact EIP-191/EIP-1559 wire values while production signatures come only
+#   from the authenticated custody service.
 
 [dependencies]
+neo-os-core = { path = "../neo-os-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha3 = "0.10"
+url = "2"
+rlp = "0.5"
+k256 = { version = "0.13", features = ["ecdsa"] }
+
+[dev-dependencies]
+hex = "0.4"

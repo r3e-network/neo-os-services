@@ -35,7 +35,8 @@ mainnet** — running **PCR0 `387a69cd1f6e9a69fb616bd326cab9f85f928439972ea1bfd8
 Carries the decrypt cache-poison fix + neodid salt-drift fix. Staged at
 `/opt/morpheus/nitro/morpheus-oracle-exec-2.eif`; `MORPHEUS_NITRO_EIF` repointed +
 `morpheus-nitro-signer` restarted. Validated: state RUNNING, signer:true,
-smart-fetch 200 (rotated token), feed-pusher pushed on-chain (txid 0xd178733a…),
+smart-fetch 200 (rotated token), historical Node feed-pusher pushed on-chain
+(txid 0xd178733a…),
 provision re-ran (n_keys 19, updater+oracle_verifier true, identity 03399c42
 unchanged). **Rollback:** `MORPHEUS_NITRO_EIF` → `morpheus-oracle-exec.eif`
 (`49a14225`, retained) + restart. NET-1 / EXP-1 / EGRESS-1 hardening still deferred to
@@ -72,9 +73,13 @@ Covered (the control plane's `EXECUTION_PLANE_ROUTES` /
 
 **Not covered by this migration** (separate paths — verify independently):
 
-- `/feeds/tick` — feeds are already pushed on-chain by the box feed-pusher (in-TEE).
-- `/callbacks/broadcast`, `/automation/execute` — route to `MORPHEUS_APP_BACKEND_URL`
-  (the Vercel Next.js app), not the execution runtime.
+- `/feeds/tick` — retired `410 Gone` at Cloudflare ingress; production N3/NeoX feed
+  delivery belongs to the Rust relayer (`feed_only` or feed-enabled `combined`).
+- `/callbacks/broadcast` — retired no-op because the Rust relayer already performs
+  authoritative fulfillment and callback delivery.
+- `/automation/execute` — returns `503` and enqueues nothing. Rust automation and
+  the legacy Cloudflare workflow are both non-authoritative until the Rust durable
+  claim/execute/commit protocol ships.
 - **AA paymaster / gasless relay** (gas-sponsor, aa-relay-console) — there is **no
   `/paymaster` route in the control plane**; that path is app-backend/chain-direct.
   The AA _contracts_ are live on-chain, so contract-interaction AA apps already work.
@@ -105,6 +110,8 @@ SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=<raw-verifier-key-id> \
 SIGNER_ROLE_UPDATER_KEY_ID=<raw-updater-key-id> \
 SIGNER_ROLE_RELAYER_KEY_ID=<raw-relayer-key-id> \
 SIGNER_ROLE_WORKER_KEY_ID=<raw-worker-key-id> \
+SIGNER_ROLE_NEOX_UPDATER_KEY_ID=<neox-updater-key-id> \
+SIGNER_ROLE_NEOX_VERIFIER_KEY_ID=<neox-verifier-key-id> \
   bash deploy/nitro/build-enclave-eif.sh --verify-reproducible
 ```
 

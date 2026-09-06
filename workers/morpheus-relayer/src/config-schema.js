@@ -668,7 +668,7 @@ export const CONFIG_SCHEMA = [
     default: '(unset)',
     required: false,
     description:
-      'Custody signer service base URL; all relayer Neo N3 signing goes through it. Required for the Neo N3 request lane.',
+      'Custody signer service base URL; every enabled Neo N3/NeoX request or feed submission signs through it.',
   },
   {
     key: 'nitro.custodyToken',
@@ -789,12 +789,43 @@ export const CONFIG_SCHEMA = [
     description: 'Neo X oracle contract address. Required for the Neo X lane.',
   },
   {
+    key: 'neox.datafeedContract',
+    aliases: ['MORPHEUS_RELAYER_NEOX_DATAFEED', 'NEOX_DATAFEED'],
+    default: 'registry neox.contracts.morpheus_datafeed',
+    required: false,
+    description: 'Neo X datafeed contract address. Required when Neo X feed sync is enabled.',
+  },
+  {
+    key: 'neox.feedGasLimit',
+    aliases: ['MORPHEUS_RELAYER_NEOX_FEED_GAS_LIMIT'],
+    default: '2000000',
+    required: false,
+    description: 'Neo X feed update gas ceiling; eth_estimateGas must fit below it.',
+  },
+  {
     key: 'neox.updaterPrivateKey',
     aliases: ['MORPHEUS_RELAYER_NEOX_UPDATER_PK', 'NEOX_UPDATER_PK', 'NEOX_FEED_PK'],
     default: '(unset)',
     required: false,
     secret: true,
-    description: 'Neo X updater secp256k1 private key. Required for the Neo X submit path.',
+    description:
+      'Legacy test-only Neo X updater private key. The Rust relayer never requires or consumes it.',
+  },
+  {
+    key: 'neox.custodyKeyIds.updater',
+    aliases: ['SIGNER_ROLE_NEOX_UPDATER_KEY_ID'],
+    default: '(unset)',
+    required: false,
+    description:
+      'Neo X custody key id signing fulfillment and feed transactions. Required whenever an enabled Neo X lane can submit.',
+  },
+  {
+    key: 'neox.custodyKeyIds.verifier',
+    aliases: ['SIGNER_ROLE_NEOX_VERIFIER_KEY_ID'],
+    default: '(unset)',
+    required: false,
+    description:
+      'Neo X custody key id signing chain-bound EIP-191 fulfillment digests. Must differ from the updater key.',
   },
   {
     key: 'neox.verifierPrivateKey',
@@ -802,7 +833,8 @@ export const CONFIG_SCHEMA = [
     default: '(unset)',
     required: false,
     secret: true,
-    description: 'Neo X verifier secp256k1 private key.',
+    description:
+      'Forbidden legacy Neo X verifier private key; the Rust relayer accepts only a custody verifier key id.',
   },
   {
     key: 'neox.confirmTimeoutMs',
@@ -879,8 +911,8 @@ export const CONFIG_SCHEMA = [
     default: '(unset)',
     required: false,
     description:
-      'Custody key id signing fulfillRequest/queueAutomationRequest transactions. ' +
-      'Required when neo_n3 is active AND mode is not feed_only.',
+      'Custody key id signing Neo N3 fulfillment and feed transactions. ' +
+      'Required whenever an enabled Neo N3 lane can submit.',
   },
   {
     key: 'neo_n3.custodyKeyIds.oracle_verifier',

@@ -758,7 +758,7 @@ fn evm_transfer_obeys_asset_limits_and_windows() {
     let policy = SignerPolicy {
         allow_transfer: true,
         asset_limits: vec![AssetLimit {
-            asset: ScriptHash(token),
+            asset: ScriptHash::from_evm_address(token),
             max_single_amount: Some(500),
             window_limit: Some(WindowLimit {
                 seconds: 3600,
@@ -790,7 +790,8 @@ fn evm_transfer_obeys_asset_limits_and_windows() {
         to: recipient,
         amount: amt_600,
     };
-    let verdict = evaluate_evm_transaction(&policy, ScriptHash([0u8; 20]), &dummy_tx, &intent, &spent);
+    let verdict =
+        evaluate_evm_transaction(&policy, ScriptHash([0u8; 20]), &dummy_tx, &intent, &spent);
     assert_eq!(
         denied(verdict).0,
         DenyReason::SingleAmountExceeded,
@@ -808,16 +809,85 @@ fn evm_transfer_obeys_asset_limits_and_windows() {
         amount: amt_400,
     };
     assert_eq!(
-        evaluate_evm_transaction(&policy, ScriptHash([0u8; 20]), &dummy_tx, &intent_400, &spent),
+        evaluate_evm_transaction(
+            &policy,
+            ScriptHash([0u8; 20]),
+            &dummy_tx,
+            &intent_400,
+            &spent
+        ),
         Verdict::Allow
     );
 
     // Spend 700 previously, now 400 exceeds window limit of 1000
-    spent.record(ScriptHash(token), 700);
-    let verdict = evaluate_evm_transaction(&policy, ScriptHash([0u8; 20]), &dummy_tx, &intent_400, &spent);
+    spent.record(ScriptHash::from_evm_address(token), 700);
+    let verdict = evaluate_evm_transaction(
+        &policy,
+        ScriptHash([0u8; 20]),
+        &dummy_tx,
+        &intent_400,
+        &spent,
+    );
     assert_eq!(
         denied(verdict).0,
         DenyReason::WindowAmountExceeded,
         "700 + 400 must exceed window limit 1000"
+    );
+}
+
+#[test]
+fn evm_contract_call_value_is_a_native_transfer_and_uses_natural_address_order() {
+    let contract = [0xabu8; 20];
+    let mut value = [0u8; 32];
+    value[31] = 10;
+    let transaction = UnsignedEvmTransaction {
+        chain_id: 12_227_332,
+        nonce: 0,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 2,
+        gas_limit: 21_000,
+        to: Some(contract),
+        value,
+        data: vec![0xde, 0xad, 0xbe, 0xef],
+        access_list: Vec::new(),
+    };
+    let intent = transaction.intent();
+    let policy = SignerPolicy {
+        allow_contract_call: true,
+        contract_whitelist: vec![ScriptHash::from_evm_address(contract)],
+        window_limit: Some(WindowLimit {
+            seconds: 3_600,
+            max_amount: 100,
+        }),
+        ..Default::default()
+    };
+    assert_eq!(
+        denied(evaluate_evm_transaction(
+            &policy,
+            ScriptHash([0u8; 20]),
+            &transaction,
+            &intent,
+            &WindowSpend::default(),
+        ))
+        .0,
+        DenyReason::TransferForbidden,
+        "contract-call value must not bypass the transfer switch"
+    );
+
+    let mut policy = policy;
+    policy.allow_transfer = true;
+    let mut spent = WindowSpend::default();
+    spent.record(ScriptHash([0u8; 20]), 95);
+    assert_eq!(
+        denied(evaluate_evm_transaction(
+            &policy,
+            ScriptHash([0u8; 20]),
+            &transaction,
+            &intent,
+            &spent,
+        ))
+        .0,
+        DenyReason::WindowAmountExceeded,
+        "contract-call value must consume the native rolling window"
     );
 }

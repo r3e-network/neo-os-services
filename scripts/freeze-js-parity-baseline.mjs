@@ -7,8 +7,8 @@
  * Two JS trees are the behavioural oracle for the Rust ports:
  *
  *   workers/nitro-worker    — the 11 game wrappers, whose sha256 IS `engineHash`
- *                             (pinned in `crates/neo-os-compute/src/game/
- *                             registry.rs` ENGINE_MANIFEST) and whose recorded
+ *                             (pinned in `crates/neo-os-games/src/registry.rs`
+ *                             ENGINE_MANIFEST) and whose recorded
  *                             op logs produced `engine-parity.goldens.json`.
  *   workers/morpheus-relayer — `router.js` / `neox.js`, the oracle behind the 8
  *                             consensus vector families exported by
@@ -39,7 +39,7 @@
  *   3. While a live source still exists, the frozen copy is byte-identical to
  *      it. This is the drift alarm: edit a wrapper without re-freezing and it
  *      fires here, in `cargo test` (see
- *      `crates/neo-os-compute/src/game/parity.rs`) and in CI.
+ *      `crates/neo-os-games/src/parity.rs`) and in CI.
  *   4. Mirror pairs that must stay byte-identical (the engine goldens live in
  *      two places today) really are identical.
  *
@@ -112,14 +112,14 @@ const ASSETS = [
 
 /**
  * Pairs that must stay byte-identical. The goldens are duplicated in the
- * compute crate because `include_str!` needs them inside the crate; the two
+ * games crate because `include_str!` needs them inside the crate; the two
  * copies diverging would mean the Rust parity driver tests a different corpus
  * than the JS recorder produced.
  */
 const MIRRORS = [
   {
     left: 'workers/nitro-worker/src/game/engine-parity.goldens.json',
-    right: 'crates/neo-os-compute/src/game/engine-parity.goldens.json',
+    right: 'crates/neo-os-games/src/engine-parity.goldens.json',
   },
 ];
 
@@ -159,9 +159,7 @@ function buildManifest() {
 }
 
 function freeze({ verbose }) {
-  const missing = ASSETS.filter(
-    (asset) => !existsSync(path.join(repoRoot, asset.source))
-  );
+  const missing = ASSETS.filter((asset) => !existsSync(path.join(repoRoot, asset.source)));
   if (missing.length > 0) {
     throw new Error(
       `refusing to re-freeze: ${missing.length} live source(s) are gone ` +

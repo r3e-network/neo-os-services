@@ -7,11 +7,14 @@ const REQUIRED_DOCS = [
   'docs/CRYPTO_OWNERSHIP.md',
   'docs/SIGNER_SERVICE.md',
   'docs/SIGNER_SERVICE_V2.md',
+  'docs/rust-migration/SERVICE_CONTRACT_MATRIX.md',
 ];
 
 const DOCUMENTATION_PAIRS = [
   ['workers/neo-signer/src/lib.rs', 'docs/SIGNER_SERVICE_V2.md'],
   ['workers/nitro-enclave-host/src/lib.rs', 'docs/RUST_SERVICE_MIGRATION.md'],
+  ['workers/neo-os-relayer/src/lib.rs', 'docs/RUST_SERVICE_MIGRATION.md'],
+  ['crates/neo-os-service-runtime/src/lib.rs', 'docs/RUST_SERVICE_MIGRATION.md'],
   ['crates/neo-os-compute/src/lib.rs', 'docs/RUST_SERVICE_MIGRATION.md'],
   ['crates/neo-os-compute/src/oracle/crypto.rs', 'docs/CRYPTO_OWNERSHIP.md'],
 ];
@@ -48,6 +51,12 @@ export function dockerInstructions(source) {
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith('#'))
     .join('\n');
+}
+
+export function cargoWorkspaceMembers(root = process.cwd()) {
+  const manifest = read(root, 'Cargo.toml');
+  const members = manifest.match(/\bmembers\s*=\s*\[([\s\S]*?)\]/m)?.[1] || '';
+  return [...members.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]);
 }
 
 export function documentationCoverage(root = process.cwd()) {
@@ -111,15 +120,40 @@ export function auditRustMigration(root = process.cwd()) {
     );
   }
 
+  const workspaceMembers = cargoWorkspaceMembers(root);
   for (const dockerfile of ['deploy/nitro/Dockerfile.enclave', 'deploy/nitro/Dockerfile.signer']) {
     if (!requireFile(dockerfile)) continue;
-    const instructions = dockerInstructions(read(root, dockerfile));
+    const source = read(root, dockerfile);
+    const instructions = dockerInstructions(source);
     reject(
       dockerfile,
       instructions,
       /\b(?:node|nodejs|npm|npx|yarn|pnpm)\b|workers\/nitro-worker|enclave-server\.mjs|ENCLAVE_BRIDGE_CHILD/i,
       'measured image instructions include a JavaScript runtime, worker, or child fallback'
     );
+    for (const member of workspaceMembers) {
+      requireMatch(
+        dockerfile,
+        source,
+        new RegExp(`COPY\\s+${member.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}/Cargo\\.toml\\b`),
+        `measured build does not copy workspace member manifest ${member}/Cargo.toml`
+      );
+    }
+  }
+  if (requireFile('.dockerignore')) {
+    const dockerignore = read(root, '.dockerignore');
+    for (const binaryDirectory of [
+      'workers/neo-signer/src/bin',
+      'workers/nitro-enclave-host/src/bin',
+      'crates/nitro-attest/src/bin',
+    ]) {
+      requireMatch(
+        '.dockerignore',
+        dockerignore,
+        new RegExp(`^!${binaryDirectory.replaceAll('/', '\\/')}/\\*\\*$`, 'm'),
+        `Docker context excludes required Rust binary directory ${binaryDirectory}`
+      );
+    }
   }
 
   const hostLib = 'workers/nitro-enclave-host/src/lib.rs';
@@ -162,8 +196,17 @@ export function auditRustMigration(root = process.cwd()) {
   reject(
     hostManifest,
     read(root, hostManifest),
-    /\b(?:p256|k256|scrypt|ed25519-dalek)\b/,
-    'enclave host must call custody instead of linking private-key signing dependencies'
+    /^\s*(?:neo-signer|scrypt|ed25519-dalek)\s*=/m,
+    'enclave host must call custody instead of linking a private-key custody implementation'
+  );
+  const hostProductionSources = rustSources(root, 'workers/nitro-enclave-host/src')
+    .map((relativePath) => read(root, relativePath))
+    .join('\n');
+  reject(
+    'workers/nitro-enclave-host/src',
+    hostProductionSources,
+    /\b(?:SigningKey|SecretKey|SecretKeyBytes)\b/,
+    'enclave host contains a private signing-key implementation instead of custody/public verification'
   );
 
   const coreSource = `${read(root, coreLib)}\n${read(root, coreManifest)}`;
