@@ -22,7 +22,8 @@
 //! * [`ContractParam::Hash160`] mirrors `ContractParam.hash160(value)` — the
 //!   20-byte script hash REVERSED on the wire, whether the input is a
 //!   base58check address or a (big-endian, optionally 0x-prefixed) hex string.
-//! * [`ContractParam::Boolean`] emits PUSHT (`08`) / PUSHF (`09`);
+//! * [`ContractParam::Boolean`] emits the neon-js boolean opcodes PUSHT (`08`)
+//!   / PUSHF (`09`);
 //!   [`ContractParam::Any`] emits PUSHNULL (`0b`).
 //! * Byte strings longer than 255 bytes switch to PUSHDATA2 (`0d`, u16 LE) —
 //!   the fulfillRequest script with a payload-sized result crosses that.
@@ -272,7 +273,11 @@ impl FeedTx<'_> {
     /// verification scripts as varuint-length byte strings).
     pub fn serialize_signed(&self, witnesses: &[Witness]) -> Vec<u8> {
         let mut out = self.serialize_unsigned();
-        out.push(witnesses.len() as u8);
+        // Witnesses are serialized as a variable-length array, just like the
+        // signer and attribute arrays in the unsigned transaction. The common
+        // case is one byte, but using the canonical varuint framing keeps
+        // multi-witness transactions correct at the 0xfd/0xfe boundaries.
+        push_varuint(&mut out, witnesses.len());
         for witness in witnesses {
             push_varuint(&mut out, witness.invocation_script.len());
             out.extend_from_slice(&witness.invocation_script);
@@ -294,21 +299,27 @@ impl FeedTx<'_> {
         message
     }
 
-    /// The transaction hash in display form: neon-js `transaction.hash()` =
-    /// `reverseHex(sha256(serialize(false)))` — the WITNESSES ARE EXCLUDED
-    /// (Neo N3 hashes the unsigned portion; signatures commit via the
-    /// witnesses themselves). This is what `getapplicationlog` polling and
-    /// `custodySignTransaction`'s fee sizing key on.
-    pub fn hash_display(&self) -> String {
+    /// The transaction hash bytes in Neo's display (little-endian) order:
+    /// `reverse(sha256(serialize_unsigned()))`.
+    ///
+    /// Neo hashes the unsigned portion, so witnesses are intentionally excluded
+    /// from this calculation. Signatures commit through the witness payload,
+    /// while RPC confirmation and custody fee sizing use the resulting hash.
+    pub fn transaction_hash(&self) -> [u8; 32] {
         let digest = Sha256::digest(self.serialize_unsigned());
-        let mut display = digest.to_vec();
-        display.reverse();
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&digest);
+        hash.reverse();
+        hash
+    }
+
+    /// The transaction hash in display form: neon-js `transaction.hash()` =
+    /// `reverseHex(sha256(serialize(false)))`, prefixed with `0x`.
+    pub fn hash_display(&self) -> String {
+        let hash = self.transaction_hash();
         format!(
             "0x{}",
-            display
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>()
+            hash.iter().map(|b| format!("{b:02x}")).collect::<String>()
         )
     }
 }
@@ -494,7 +505,10 @@ fn hex_value(byte: u8) -> Option<u8> {
 ///   payload already stores the little-endian form).
 pub fn hash160_param_bytes(value: &str) -> Option<[u8; 20]> {
     let trimmed = value.trim();
-    let raw = trimmed.strip_prefix("0x").unwrap_or(trimmed);
+    let raw = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
     if raw.len() == 40 {
         let bytes = decode_hex_strict(raw)?;
         let mut wire = [0u8; 20];

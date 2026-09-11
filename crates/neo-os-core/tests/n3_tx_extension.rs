@@ -9,6 +9,8 @@
 //! `scripts/export-rust-vectors.mjs` (the `n3_extension` family; refresh with
 //! `node scripts/export-rust-vectors.mjs`, gate with `--check`).
 
+use sha2::Digest;
+
 use neo_os_core::n3_tx::{
     address_from_script_hash, create_invoke_script, hash160_param_bytes, script_hash_from_address,
     script_hash_from_public_key, ContractParam, FeedSigner, FeedTx, Witness,
@@ -168,6 +170,31 @@ fn transaction_serializations_and_hash_match_the_neon_js_fixture() {
         field("tx_message_for_signing_hex")
     );
     assert_eq!(feed_tx.hash_display(), field("tx_hash_hex"));
+}
+
+#[test]
+fn transaction_hash_is_reversed_sha256_of_unsigned_bytes() {
+    let (feed_tx, _witnesses) = fixture_tx();
+    let unsigned = feed_tx.serialize_unsigned();
+    let mut expected = sha2::Sha256::digest(&unsigned).to_vec();
+    expected.reverse();
+    assert_eq!(feed_tx.transaction_hash().as_slice(), expected.as_slice());
+    assert_eq!(format!("0x{}", hex(&expected)), feed_tx.hash_display());
+}
+
+#[test]
+fn signed_serialization_uses_varuint_witness_count_boundary() {
+    let (feed_tx, _witnesses) = fixture_tx();
+    let witnesses = (0..=252)
+        .map(|_| Witness {
+            invocation_script: Vec::new(),
+            verification_script: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let serialized = feed_tx.serialize_signed(&witnesses);
+    let unsigned_len = feed_tx.serialize_unsigned().len();
+    assert_eq!(&serialized[unsigned_len..unsigned_len + 3], &[0xfd, 0xfd, 0x00]);
+    assert_eq!(serialized.len(), unsigned_len + 3 + witnesses.len() * 2);
 }
 
 #[test]
