@@ -68,6 +68,8 @@ const OP_PUSHT: u8 = 0x08;
 const OP_PUSHF: u8 = 0x09;
 /// PUSHNULL — `ContractParam.any(null)`.
 const OP_PUSHNULL: u8 = 0x0b;
+/// NEWARRAY0 — the canonical empty argument array emitted by neon-js.
+const OP_NEWARRAY0: u8 = 0xc2;
 const OP_PUSHM1: u8 = 0x0f;
 const OP_PUSH0: u8 = 0x10;
 const OP_PACK: u8 = 0xc0;
@@ -101,8 +103,18 @@ pub fn create_invoke_script(
     operation: &str,
     args: &[ContractParam],
 ) -> Result<Vec<u8>, N3EncodeError> {
+    if operation.is_empty() {
+        return Err(N3EncodeError("operation must not be empty".to_string()));
+    }
     let mut out = Vec::new();
-    emit_array(&mut out, args)?;
+    if args.is_empty() {
+        // neon-js `sc.createScript` uses NEWARRAY0 for an omitted/empty args
+        // list. `PUSH0 PACK` (00 c0) is a different VM program and does not
+        // have the same byte parity, even though both evaluate to an array.
+        out.push(OP_NEWARRAY0);
+    } else {
+        emit_array(&mut out, args)?;
+    }
     out.push(CALL_FLAGS_ALL);
     emit_string(&mut out, operation);
     out.push(OP_PUSHDATA1);
@@ -499,16 +511,20 @@ fn hex_value(byte: u8) -> Option<u8> {
 }
 
 /// The wire bytes a `Hash160` argument emits:
-/// * a 20-byte (optionally 0x-prefixed) hex input is big-endian and gets
-///   reversed to little-endian wire order;
-/// * a base58check address decodes to wire-order bytes directly (the address
+/// * a 20-byte `0x`-prefixed or bare hex input is big-endian and gets
+///   reversed to little-endian wire order; whitespace and `0X` are rejected to
+///   preserve neon-js input strictness;
+/// * a valid Base58Check Neo address (any version accepted by neon-js's
+///   default `isAddress`) decodes to wire-order bytes directly (the address
 ///   payload already stores the little-endian form).
+///
+/// This deliberately accepts address versions other than N3's `0x35`: the
+/// `ContractParam.hash160` helper validates checksum/address shape but does
+/// not pass a version to `isAddress`. Callers that require an N3 address must
+/// use [`script_hash_from_address`], which remains explicitly N3-only.
 pub fn hash160_param_bytes(value: &str) -> Option<[u8; 20]> {
-    let trimmed = value.trim();
-    let raw = trimmed
-        .strip_prefix("0x")
-        .or_else(|| trimmed.strip_prefix("0X"))
-        .unwrap_or(trimmed);
+    let trimmed = value;
+    let raw = trimmed.strip_prefix("0x").unwrap_or(trimmed);
     if raw.len() == 40 {
         let bytes = decode_hex_strict(raw)?;
         let mut wire = [0u8; 20];
@@ -519,7 +535,10 @@ pub fn hash160_param_bytes(value: &str) -> Option<[u8; 20]> {
     // Not 20-byte hex — try the address form (JS: getScriptHashFromAddress,
     // which throws on a non-address, and the caller surfaces '' / an error).
     let payload = base58_check_decode(trimmed)?;
-    if payload.len() != 21 || payload[0] != NEO_ADDRESS_VERSION {
+    // Unlike `script_hash_from_address`, ContractParam.hash160 follows
+    // neon-js's default `isAddress(value)` and accepts every valid address
+    // version. The version byte is intentionally not restricted here.
+    if payload.len() != 21 {
         return None;
     }
     let mut wire = [0u8; 20];

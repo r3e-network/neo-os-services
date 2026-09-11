@@ -289,6 +289,10 @@ fn normalize_public_key_rejects_junk() {
         compressed
     );
     assert!(normalize_public_key("0102").is_err());
+    // Neo single-sig scripts use compressed secp256r1 keys only; do not allow
+    // an uncompressed 65-byte key through to the downstream script builder.
+    let uncompressed = format!("04{}", "11".repeat(64));
+    assert!(normalize_public_key(&uncompressed).is_err());
     assert!(normalize_public_key("").is_err());
 }
 

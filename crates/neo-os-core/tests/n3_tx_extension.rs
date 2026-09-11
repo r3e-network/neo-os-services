@@ -33,6 +33,19 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+#[test]
+fn empty_top_level_args_use_newarray0_opcode() {
+    let script_hash = [0xab_u8; 20];
+    let script = create_invoke_script(&script_hash, "x", &[]).expect("empty args are valid");
+    assert_eq!(hex(&script), field("empty_args_script_hex"));
+}
+
+#[test]
+fn empty_operation_is_rejected() {
+    let script_hash = [0xab_u8; 20];
+    assert!(create_invoke_script(&script_hash, "", &[]).is_err());
+}
+
 fn fulfill_args() -> Vec<ContractParam> {
     vec![
         ContractParam::Integer(12345),
@@ -193,7 +206,10 @@ fn signed_serialization_uses_varuint_witness_count_boundary() {
         .collect::<Vec<_>>();
     let serialized = feed_tx.serialize_signed(&witnesses);
     let unsigned_len = feed_tx.serialize_unsigned().len();
-    assert_eq!(&serialized[unsigned_len..unsigned_len + 3], &[0xfd, 0xfd, 0x00]);
+    assert_eq!(
+        &serialized[unsigned_len..unsigned_len + 3],
+        &[0xfd, 0xfd, 0x00]
+    );
     assert_eq!(serialized.len(), unsigned_len + 3 + witnesses.len() * 2);
 }
 
@@ -264,6 +280,17 @@ fn invalid_hash160_inputs_are_rejected_not_silently_encoded() {
         .is_err(),
         "expected rejection for odd-length HexBytes"
     );
+}
+
+#[test]
+fn hash160_param_bytes_accepts_valid_non_n3_address_versions() {
+    // neon-js `ContractParam.hash160(address)` calls `isAddress` without a
+    // network version, so this valid legacy (0x11) address must be accepted.
+    // `script_hash_from_address` remains N3-only and is tested separately.
+    let wire = hash160_param_bytes("ALq7AWrhAueN6mJNqk6FHJjnsEoPRytLdW")
+        .expect("valid non-N3 Base58Check address");
+    assert_eq!(wire.len(), 20);
+    assert!(script_hash_from_address("ALq7AWrhAueN6mJNqk6FHJjnsEoPRytLdW").is_none());
 }
 
 #[test]
