@@ -9,6 +9,8 @@
 //! `scripts/export-rust-vectors.mjs` (the `n3_extension` family; refresh with
 //! `node scripts/export-rust-vectors.mjs`, gate with `--check`).
 
+use sha2::Digest;
+
 use neo_os_core::n3_tx::{
     address_from_script_hash, create_invoke_script, hash160_param_bytes, script_hash_from_address,
     script_hash_from_public_key, ContractParam, FeedSigner, FeedTx, Witness,
@@ -29,6 +31,19 @@ fn field(name: &str) -> String {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[test]
+fn empty_top_level_args_use_newarray0_opcode() {
+    let script_hash = [0xab_u8; 20];
+    let script = create_invoke_script(&script_hash, "x", &[]).expect("empty args are valid");
+    assert_eq!(hex(&script), field("empty_args_script_hex"));
+}
+
+#[test]
+fn empty_operation_is_rejected() {
+    let script_hash = [0xab_u8; 20];
+    assert!(create_invoke_script(&script_hash, "", &[]).is_err());
 }
 
 fn fulfill_args() -> Vec<ContractParam> {
@@ -171,6 +186,34 @@ fn transaction_serializations_and_hash_match_the_neon_js_fixture() {
 }
 
 #[test]
+fn transaction_hash_is_reversed_sha256_of_unsigned_bytes() {
+    let (feed_tx, _witnesses) = fixture_tx();
+    let unsigned = feed_tx.serialize_unsigned();
+    let mut expected = sha2::Sha256::digest(&unsigned).to_vec();
+    expected.reverse();
+    assert_eq!(feed_tx.transaction_hash().as_slice(), expected.as_slice());
+    assert_eq!(format!("0x{}", hex(&expected)), feed_tx.hash_display());
+}
+
+#[test]
+fn signed_serialization_uses_varuint_witness_count_boundary() {
+    let (feed_tx, _witnesses) = fixture_tx();
+    let witnesses = (0..=252)
+        .map(|_| Witness {
+            invocation_script: Vec::new(),
+            verification_script: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let serialized = feed_tx.serialize_signed(&witnesses);
+    let unsigned_len = feed_tx.serialize_unsigned().len();
+    assert_eq!(
+        &serialized[unsigned_len..unsigned_len + 3],
+        &[0xfd, 0xfd, 0x00]
+    );
+    assert_eq!(serialized.len(), unsigned_len + 3 + witnesses.len() * 2);
+}
+
+#[test]
 fn script_hash_derivation_matches_the_wallet_helpers() {
     let public_key =
         hex_to_bytes("0315b41fcf6671b6400237730bc8a261dcb64e25cc17de9878576c78eace1c9146");
@@ -237,6 +280,17 @@ fn invalid_hash160_inputs_are_rejected_not_silently_encoded() {
         .is_err(),
         "expected rejection for odd-length HexBytes"
     );
+}
+
+#[test]
+fn hash160_param_bytes_accepts_valid_non_n3_address_versions() {
+    // neon-js `ContractParam.hash160(address)` calls `isAddress` without a
+    // network version, so this valid legacy (0x11) address must be accepted.
+    // `script_hash_from_address` remains N3-only and is tested separately.
+    let wire = hash160_param_bytes("ALq7AWrhAueN6mJNqk6FHJjnsEoPRytLdW")
+        .expect("valid non-N3 Base58Check address");
+    assert_eq!(wire.len(), 20);
+    assert!(script_hash_from_address("ALq7AWrhAueN6mJNqk6FHJjnsEoPRytLdW").is_none());
 }
 
 #[test]

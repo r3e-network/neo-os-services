@@ -127,7 +127,9 @@ fn granted_job_executes_exactly_once_and_patches_completed() {
     // The terminal patch must be the completed status, not a retry.
     let patches = transport.patches.lock().unwrap();
     assert!(
-        patches.iter().any(|p| p.contains("\"status\":\"completed\"")),
+        patches
+            .iter()
+            .any(|p| p.contains("\"status\":\"completed\"")),
         "worker must patch the claimed job completed after success: {patches:?}"
     );
 }
@@ -199,7 +201,9 @@ fn failing_execution_is_patched_retry_scheduled_not_completed() {
     assert_eq!(outcomes, vec![DurableDrainOutcome::Claimed]);
     let patches = transport.patches.lock().unwrap();
     assert!(
-        patches.iter().any(|p| p.contains("\"status\":\"retry_scheduled\"")),
+        patches
+            .iter()
+            .any(|p| p.contains("\"status\":\"retry_scheduled\"")),
         "failed execution must be patched retry_scheduled: {patches:?}"
     );
     assert!(

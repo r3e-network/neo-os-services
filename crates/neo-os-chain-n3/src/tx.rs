@@ -152,8 +152,11 @@ pub fn public_key_from_signed_witness(signed: &Value) -> Result<String, String> 
     )
 }
 
-/// `normalizePublicKey`: 66-char (compressed) or 130-char (uncompressed)
-/// lowercase hex, 0x-stripped. Anything else is a custody-side contradiction.
+/// `normalizePublicKey`: 66-char compressed lowercase hex, 0x-stripped.
+/// Neo single-signature verification scripts require compressed secp256r1
+/// public keys (33 bytes, `02`/`03` prefix); accepting a 65-byte uncompressed
+/// key here would pass the relayer boundary only to be rejected while deriving
+/// the Neo verification script. Anything else is a custody-side contradiction.
 pub fn normalize_public_key(value: &str) -> Result<String, String> {
     let public_key = value.trim();
     let public_key = public_key
@@ -161,10 +164,10 @@ pub fn normalize_public_key(value: &str) -> Result<String, String> {
         .or_else(|| public_key.strip_prefix("0X"))
         .unwrap_or(public_key)
         .to_lowercase();
-    let is_compressed = public_key.len() == 66 && public_key.bytes().all(|b| b.is_ascii_hexdigit());
-    let is_uncompressed =
-        public_key.len() == 130 && public_key.bytes().all(|b| b.is_ascii_hexdigit());
-    if !is_compressed && !is_uncompressed {
+    let is_compressed = public_key.len() == 66
+        && (public_key.starts_with("02") || public_key.starts_with("03"))
+        && public_key.bytes().all(|b| b.is_ascii_hexdigit());
+    if !is_compressed {
         return Err("runtime derived updater returned an invalid public key".to_string());
     }
     Ok(public_key)

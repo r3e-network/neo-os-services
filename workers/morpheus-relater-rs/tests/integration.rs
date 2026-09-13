@@ -1,9 +1,9 @@
 use morpheus_relayer_rs::config::{CustodyKeyIds, NeoN3Config, RelayerConfig};
 use morpheus_relayer_rs::handlers::{validate_request, HandlerConfig};
 use morpheus_relayer_rs::oracle::{client::NeoN3RpcClient, contract::MorpheusOracleContract};
+use morpheus_relayer_rs::retry::{calculate_delay, RetryConfig, RetryEntry};
 use morpheus_relayer_rs::state_machine::RequestStateMachine;
 use morpheus_relayer_rs::types::{FulfillmentResult, OracleRequestEvent, RequestState};
-use morpheus_relayer_rs::retry::{RetryConfig, RetryEntry, calculate_delay};
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -15,7 +15,7 @@ async fn test_full_request_processing_pipeline() {
     // 3. State machine transitions
     // 4. Processing
     // 5. Response submission
-    
+
     let config = NeoN3Config {
         rpc_url: "http://localhost:10332".to_string(),
         rpc_urls: vec![],
@@ -61,10 +61,13 @@ async fn test_full_request_processing_pipeline() {
     // Step 2: Create state machine and transition through states
     let mut state_machine = RequestStateMachine::new();
     assert!(state_machine.try_transition(RequestState::Processing, "start"));
-    
+
     let transition_history = state_machine.get_transition_history();
     assert_eq!(transition_history.len(), 1);
-    assert!(matches!(transition_history[0].to_state, RequestState::Processing));
+    assert!(matches!(
+        transition_history[0].to_state,
+        RequestState::Processing
+    ));
 
     // Step 3: Simulate successful fulfillment
     let result = FulfillmentResult {
@@ -78,7 +81,10 @@ async fn test_full_request_processing_pipeline() {
 
     // Transition to confirmed state
     state_machine.try_transition(RequestState::Confirmed, "success");
-    assert!(matches!(state_machine.current_state, RequestState::Confirmed));
+    assert!(matches!(
+        state_machine.current_state,
+        RequestState::Confirmed
+    ));
 
     // Verify statistics
     let stats = state_machine.get_statistics();
@@ -149,7 +155,10 @@ async fn test_state_machine_invalid_transitions() {
 
     // Valid transition
     assert!(state_machine.try_transition(RequestState::Processing, "valid"));
-    assert!(matches!(state_machine.current_state, RequestState::Processing));
+    assert!(matches!(
+        state_machine.current_state,
+        RequestState::Processing
+    ));
 
     // Invalid transition from Processing
     assert!(!state_machine.try_transition(RequestState::Pending, "backward"));
@@ -157,15 +166,11 @@ async fn test_state_machine_invalid_transitions() {
 
 #[tokio::test]
 async fn test_retry_entry_lifecycle() {
-    let entry = RetryEntry::new(
-        "test_event",
-        3,
-        serde_json::json!({"data": "test"}),
-    );
+    let entry = RetryEntry::new("test_event", 3, serde_json::json!({"data": "test"}));
 
     assert_eq!(entry.retry_count, 0);
     assert!(entry.should_retry());
-    
+
     // Check if ready (depends on timestamp, will fail in deterministic way for testing)
     // In real scenario, we'd mock time or set next_retry_at explicitly
 }
@@ -218,7 +223,7 @@ async fn test_validation_edge_cases() {
 #[tokio::test]
 async fn test_concurrent_event_processing() {
     use std::sync::Arc;
-    
+
     let num_events = 100;
     let events: Vec<OracleRequestEvent> = (0..num_events)
         .map(|i| OracleRequestEvent {
@@ -253,7 +258,10 @@ async fn test_concurrent_event_processing() {
 
     futures::future::join_all(handles).await;
 
-    assert_eq!(shared_counter.load(std::sync::atomic::Ordering::SeqCst), num_events);
+    assert_eq!(
+        shared_counter.load(std::sync::atomic::Ordering::SeqCst),
+        num_events
+    );
 }
 
 #[tokio::test]
@@ -312,20 +320,17 @@ where
     F: FnMut() -> (),
 {
     let start = std::time::Instant::now();
-    
+
     for _ in 0..iterations {
         operation();
     }
-    
+
     let duration = start.elapsed();
     let ops_per_sec = iterations as f64 / duration.as_secs_f64();
-    
+
     println!(
         "{}: {} iterations in {:?} ({:.2} ops/sec)",
-        name,
-        iterations,
-        duration,
-        ops_per_sec
+        name, iterations, duration, ops_per_sec
     );
 }
 
@@ -358,7 +363,7 @@ fn benchmark_request_validation_performance() {
             tx_hash: "tx".to_string(),
             log_index: 0,
         };
-        
+
         validate_request(&event).ok();
     });
 }

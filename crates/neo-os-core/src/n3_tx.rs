@@ -22,7 +22,8 @@
 //! * [`ContractParam::Hash160`] mirrors `ContractParam.hash160(value)` — the
 //!   20-byte script hash REVERSED on the wire, whether the input is a
 //!   base58check address or a (big-endian, optionally 0x-prefixed) hex string.
-//! * [`ContractParam::Boolean`] emits PUSHT (`08`) / PUSHF (`09`);
+//! * [`ContractParam::Boolean`] emits the neon-js boolean opcodes PUSHT (`08`)
+//!   / PUSHF (`09`);
 //!   [`ContractParam::Any`] emits PUSHNULL (`0b`).
 //! * Byte strings longer than 255 bytes switch to PUSHDATA2 (`0d`, u16 LE) —
 //!   the fulfillRequest script with a payload-sized result crosses that.
@@ -67,6 +68,8 @@ const OP_PUSHT: u8 = 0x08;
 const OP_PUSHF: u8 = 0x09;
 /// PUSHNULL — `ContractParam.any(null)`.
 const OP_PUSHNULL: u8 = 0x0b;
+/// NEWARRAY0 — the canonical empty argument array emitted by neon-js.
+const OP_NEWARRAY0: u8 = 0xc2;
 const OP_PUSHM1: u8 = 0x0f;
 const OP_PUSH0: u8 = 0x10;
 const OP_PACK: u8 = 0xc0;
@@ -100,8 +103,18 @@ pub fn create_invoke_script(
     operation: &str,
     args: &[ContractParam],
 ) -> Result<Vec<u8>, N3EncodeError> {
+    if operation.is_empty() {
+        return Err(N3EncodeError("operation must not be empty".to_string()));
+    }
     let mut out = Vec::new();
-    emit_array(&mut out, args)?;
+    if args.is_empty() {
+        // neon-js `sc.createScript` uses NEWARRAY0 for an omitted/empty args
+        // list. `PUSH0 PACK` (00 c0) is a different VM program and does not
+        // have the same byte parity, even though both evaluate to an array.
+        out.push(OP_NEWARRAY0);
+    } else {
+        emit_array(&mut out, args)?;
+    }
     out.push(CALL_FLAGS_ALL);
     emit_string(&mut out, operation);
     out.push(OP_PUSHDATA1);
@@ -272,7 +285,11 @@ impl FeedTx<'_> {
     /// verification scripts as varuint-length byte strings).
     pub fn serialize_signed(&self, witnesses: &[Witness]) -> Vec<u8> {
         let mut out = self.serialize_unsigned();
-        out.push(witnesses.len() as u8);
+        // Witnesses are serialized as a variable-length array, just like the
+        // signer and attribute arrays in the unsigned transaction. The common
+        // case is one byte, but using the canonical varuint framing keeps
+        // multi-witness transactions correct at the 0xfd/0xfe boundaries.
+        push_varuint(&mut out, witnesses.len());
         for witness in witnesses {
             push_varuint(&mut out, witness.invocation_script.len());
             out.extend_from_slice(&witness.invocation_script);
@@ -294,21 +311,27 @@ impl FeedTx<'_> {
         message
     }
 
-    /// The transaction hash in display form: neon-js `transaction.hash()` =
-    /// `reverseHex(sha256(serialize(false)))` — the WITNESSES ARE EXCLUDED
-    /// (Neo N3 hashes the unsigned portion; signatures commit via the
-    /// witnesses themselves). This is what `getapplicationlog` polling and
-    /// `custodySignTransaction`'s fee sizing key on.
-    pub fn hash_display(&self) -> String {
+    /// The transaction hash bytes in Neo's display (little-endian) order:
+    /// `reverse(sha256(serialize_unsigned()))`.
+    ///
+    /// Neo hashes the unsigned portion, so witnesses are intentionally excluded
+    /// from this calculation. Signatures commit through the witness payload,
+    /// while RPC confirmation and custody fee sizing use the resulting hash.
+    pub fn transaction_hash(&self) -> [u8; 32] {
         let digest = Sha256::digest(self.serialize_unsigned());
-        let mut display = digest.to_vec();
-        display.reverse();
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&digest);
+        hash.reverse();
+        hash
+    }
+
+    /// The transaction hash in display form: neon-js `transaction.hash()` =
+    /// `reverseHex(sha256(serialize(false)))`, prefixed with `0x`.
+    pub fn hash_display(&self) -> String {
+        let hash = self.transaction_hash();
         format!(
             "0x{}",
-            display
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>()
+            hash.iter().map(|b| format!("{b:02x}")).collect::<String>()
         )
     }
 }
@@ -488,12 +511,19 @@ fn hex_value(byte: u8) -> Option<u8> {
 }
 
 /// The wire bytes a `Hash160` argument emits:
-/// * a 20-byte (optionally 0x-prefixed) hex input is big-endian and gets
-///   reversed to little-endian wire order;
-/// * a base58check address decodes to wire-order bytes directly (the address
+/// * a 20-byte `0x`-prefixed or bare hex input is big-endian and gets
+///   reversed to little-endian wire order; whitespace and `0X` are rejected to
+///   preserve neon-js input strictness;
+/// * a valid Base58Check Neo address (any version accepted by neon-js's
+///   default `isAddress`) decodes to wire-order bytes directly (the address
 ///   payload already stores the little-endian form).
+///
+/// This deliberately accepts address versions other than N3's `0x35`: the
+/// `ContractParam.hash160` helper validates checksum/address shape but does
+/// not pass a version to `isAddress`. Callers that require an N3 address must
+/// use [`script_hash_from_address`], which remains explicitly N3-only.
 pub fn hash160_param_bytes(value: &str) -> Option<[u8; 20]> {
-    let trimmed = value.trim();
+    let trimmed = value;
     let raw = trimmed.strip_prefix("0x").unwrap_or(trimmed);
     if raw.len() == 40 {
         let bytes = decode_hex_strict(raw)?;
@@ -505,7 +535,10 @@ pub fn hash160_param_bytes(value: &str) -> Option<[u8; 20]> {
     // Not 20-byte hex — try the address form (JS: getScriptHashFromAddress,
     // which throws on a non-address, and the caller surfaces '' / an error).
     let payload = base58_check_decode(trimmed)?;
-    if payload.len() != 21 || payload[0] != NEO_ADDRESS_VERSION {
+    // Unlike `script_hash_from_address`, ContractParam.hash160 follows
+    // neon-js's default `isAddress(value)` and accepts every valid address
+    // version. The version byte is intentionally not restricted here.
+    if payload.len() != 21 {
         return None;
     }
     let mut wire = [0u8; 20];

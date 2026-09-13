@@ -17,13 +17,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::automation::{process_automation_jobs, AutomationResult};
-use crate::durable::{drain_durable_jobs, DurableDrainConfig};
 use crate::config::RelayerConfig;
+use crate::durable::{drain_durable_jobs, DurableDrainConfig};
 use crate::feed_sync::{process_feed_sync_with, FeedSyncResult};
 use crate::heartbeat::send_heartbeat;
 use crate::scan::{process_chain_neo_n3, process_chain_neox, ChainProcessResult};
 use crate::transport::RelayerHttpTransport;
-use crate::xcm_lane::{drain_xcm_lane, relay_xcm_message, XcmDrainConfig, XcmDrainOutcome, XCM_DEFAULT_MAX_RETRIES, XCM_DEFAULT_RETRY_BASE_DELAY_MS, XCM_DEFAULT_RETRY_MAX_DELAY_MS};
+use crate::xcm_lane::{
+    drain_xcm_lane, relay_xcm_message, XcmDrainConfig, XcmDrainOutcome, XCM_DEFAULT_MAX_RETRIES,
+    XCM_DEFAULT_RETRY_BASE_DELAY_MS, XCM_DEFAULT_RETRY_MAX_DELAY_MS,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayerRunResult {
@@ -51,8 +54,12 @@ pub fn load_or_init_state(path_str: &str) -> Result<JsObject, String> {
     }
     let content = std::fs::read_to_string(p)
         .map_err(|error| format!("cannot read relayer state {}: {error}", p.display()))?;
-    let parsed = serde_json::from_str::<Value>(&content)
-        .map_err(|error| format!("relayer state {} is not recoverable JSON: {error}", p.display()))?;
+    let parsed = serde_json::from_str::<Value>(&content).map_err(|error| {
+        format!(
+            "relayer state {} is not recoverable JSON: {error}",
+            p.display()
+        )
+    })?;
     let js_val = JsValue::from_json(&parsed);
     Ok(normalize_state_file_value(&js_val))
 }
@@ -215,11 +222,18 @@ fn run_relayer_once_blocking(
                         // non-terminal failure is surfaced to the outer drain so
                         // the row is patched retry_scheduled, not completed.
                         let js_event = JsValue::from_json(event);
-                        let result =
-                            crate::fulfillment::process_event(config, &mut state, chain, &js_event, event_now_ms);
+                        let result = crate::fulfillment::process_event(
+                            config,
+                            &mut state,
+                            chain,
+                            &js_event,
+                            event_now_ms,
+                        );
                         match result.status.as_str() {
                             "fulfilled" | "already_fulfilled" => Ok(()),
-                            _ => Err(result.error.unwrap_or_else(|| "durable execution failed".to_string())),
+                            _ => Err(result
+                                .error
+                                .unwrap_or_else(|| "durable execution failed".to_string())),
                         }
                     },
                 );
@@ -306,7 +320,15 @@ fn run_relayer_once_blocking(
                 &xcm_now_iso,
                 &stale_before_iso,
                 |msg, existing_tx, persist| {
-                    relay_xcm_message(config, msg, existing_tx, persist, transport, &OsNonce, &SystemWaiter)
+                    relay_xcm_message(
+                        config,
+                        msg,
+                        existing_tx,
+                        persist,
+                        transport,
+                        &OsNonce,
+                        &SystemWaiter,
+                    )
                 },
             ) {
                 Ok(outcomes) => {
@@ -570,7 +592,10 @@ mod tests {
         let error = super::load_or_init_state(path.to_str().expect("utf8 path"))
             .expect_err("corrupt existing state must stop rather than reset");
         assert!(error.contains("not recoverable JSON"));
-        assert_eq!(std::fs::read_to_string(&path).expect("state remains"), original);
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("state remains"),
+            original
+        );
         std::fs::remove_file(&path).expect("remove corrupt fixture");
     }
 
@@ -604,7 +629,10 @@ mod tests {
             retries: vec![],
         };
         assert_eq!(
-            super::unresolved_discovery_chain(&Some(healthy_ref.clone()), &Some(unhealthy_ref.clone())),
+            super::unresolved_discovery_chain(
+                &Some(healthy_ref.clone()),
+                &Some(unhealthy_ref.clone())
+            ),
             Some("neox discovery unavailable".to_string())
         );
         assert_eq!(
