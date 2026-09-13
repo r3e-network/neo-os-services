@@ -626,7 +626,10 @@ mod tests {
 
     #[test]
     fn twap_errors_on_empty_samples() {
-        assert_eq!(twap(&[], 60.0).unwrap_err(), "twap requires at least one sample");
+        assert_eq!(
+            twap(&[], 60.0).unwrap_err(),
+            "twap requires at least one sample"
+        );
     }
 
     #[test]
@@ -679,7 +682,10 @@ mod tests {
     #[test]
     fn twap_identical_timestamps_fall_back_to_the_mean() {
         // Total duration collapses to zero → equal-weight mean of the prices.
-        assert_eq!(twap(&[(5.0, 100.0), (5.0, 200.0), (5.0, 300.0)], 60.0).unwrap(), 200.0);
+        assert_eq!(
+            twap(&[(5.0, 100.0), (5.0, 200.0), (5.0, 300.0)], 60.0).unwrap(),
+            200.0
+        );
     }
 
     #[test]

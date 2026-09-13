@@ -132,28 +132,26 @@ where
             ClaimDecision::Conflict => outcomes.push(DurableDrainOutcome::Conflict),
             ClaimDecision::BackoffSkip => outcomes.push(DurableDrainOutcome::SkippedBackoff),
             ClaimDecision::Unavailable => outcomes.push(DurableDrainOutcome::Unavailable),
-            ClaimDecision::Granted => {
-                match execute(event) {
-                    Ok(()) => {
-                        patch_relayer_job(
-                            client,
-                            event_key,
-                            &json!({"status":"completed","last_error":Value::Null}),
-                            now_ms,
-                        )?;
-                        outcomes.push(DurableDrainOutcome::Claimed);
-                    }
-                    Err(error) => {
-                        patch_relayer_job(
-                            client,
-                            event_key,
-                            &json!({"status":"retry_scheduled","last_error":error}),
-                            now_ms,
-                        )?;
-                        outcomes.push(DurableDrainOutcome::Claimed);
-                    }
+            ClaimDecision::Granted => match execute(event) {
+                Ok(()) => {
+                    patch_relayer_job(
+                        client,
+                        event_key,
+                        &json!({"status":"completed","last_error":Value::Null}),
+                        now_ms,
+                    )?;
+                    outcomes.push(DurableDrainOutcome::Claimed);
                 }
-            }
+                Err(error) => {
+                    patch_relayer_job(
+                        client,
+                        event_key,
+                        &json!({"status":"retry_scheduled","last_error":error}),
+                        now_ms,
+                    )?;
+                    outcomes.push(DurableDrainOutcome::Claimed);
+                }
+            },
         }
     }
     Ok(outcomes)
@@ -169,7 +167,13 @@ mod tests {
     // transport or execute callback.
     struct PanicTransport;
     impl HttpTransport for PanicTransport {
-        fn request(&self, _: &str, _: &str, _: &[(&str, &str)], _: Option<&str>) -> Result<(u16, String), String> {
+        fn request(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[(&str, &str)],
+            _: Option<&str>,
+        ) -> Result<(u16, String), String> {
             panic!("disabled durable lane must not access Supabase");
         }
     }

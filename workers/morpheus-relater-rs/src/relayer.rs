@@ -18,7 +18,7 @@ impl MorpheusRelayer {
             mode = self.config.mode,
             "Starting Morpheus Relayer in shadow mode"
         );
-        
+
         // Placeholder - actual implementation will be added later
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;

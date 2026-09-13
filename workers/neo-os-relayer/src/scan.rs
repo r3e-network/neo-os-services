@@ -296,7 +296,10 @@ pub fn process_chain_neo_n3(
         .get("metrics")
         .and_then(JsValue::as_object)
         .and_then(|m| m.get("discovery_failures_total"))
-        .and_then(|v| match v { JsValue::Number(n) => Some(*n), _ => None })
+        .and_then(|v| match v {
+            JsValue::Number(n) => Some(*n),
+            _ => None,
+        })
         .unwrap_or(0.0);
     let oracle_contract = n3_cfg
         .get("oracleContract")
@@ -548,7 +551,10 @@ pub fn process_chain_neo_n3(
             .get("metrics")
             .and_then(JsValue::as_object)
             .and_then(|m| m.get("discovery_failures_total"))
-            .and_then(|v| match v { JsValue::Number(n) => Some(*n), _ => None })
+            .and_then(|v| match v {
+                JsValue::Number(n) => Some(*n),
+                _ => None,
+            })
             .unwrap_or(discovery_failures_before)
             <= discovery_failures_before,
         scanned_blocks,
@@ -569,7 +575,10 @@ pub fn process_chain_neox(
         .get("metrics")
         .and_then(JsValue::as_object)
         .and_then(|m| m.get("discovery_failures_total"))
-        .and_then(|v| match v { JsValue::Number(n) => Some(*n), _ => None })
+        .and_then(|v| match v {
+            JsValue::Number(n) => Some(*n),
+            _ => None,
+        })
         .unwrap_or(0.0);
     let oracle_contract = neox_cfg
         .get("oracleContract")
@@ -722,7 +731,10 @@ pub fn process_chain_neox(
             .get("metrics")
             .and_then(JsValue::as_object)
             .and_then(|m| m.get("discovery_failures_total"))
-            .and_then(|v| match v { JsValue::Number(n) => Some(*n), _ => None })
+            .and_then(|v| match v {
+                JsValue::Number(n) => Some(*n),
+                _ => None,
+            })
             .unwrap_or(discovery_failures_before)
             <= discovery_failures_before,
         scanned_blocks: None,

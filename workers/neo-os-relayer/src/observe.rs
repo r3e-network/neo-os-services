@@ -349,9 +349,11 @@ pub fn render_prometheus_metrics(metrics: &Value) -> String {
     for name in XCM_COUNTERS {
         if let Some(val) = metrics.get(*name) {
             if !val.is_null() {
-                if let Some(line) =
-                    metric_line(&format!("morpheus_relayer_{name}"), num_val(Some(val)), None)
-                {
+                if let Some(line) = metric_line(
+                    &format!("morpheus_relayer_{name}"),
+                    num_val(Some(val)),
+                    None,
+                ) {
                     lines.push(line);
                 }
             }

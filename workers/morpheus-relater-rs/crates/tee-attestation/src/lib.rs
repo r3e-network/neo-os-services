@@ -1,5 +1,5 @@
 //! TEE Attestation Verification Library
-//! 
+//!
 //! This module provides placeholders for TEE attestation integration.
 //! TODO: Integrate with Nitro attestation service for production use.
 
@@ -17,7 +17,7 @@ pub struct TeeQuote {
 pub fn verify_quote(quote: &TeeQuote) -> Result<bool> {
     // Placeholder implementation
     // TODO: Implement actual attestation verification
-    
+
     Ok(true) // Assume valid for now
 }
 
@@ -44,7 +44,7 @@ mod tests {
             public_key: "key".to_string(),
             signature: vec![1, 2, 3],
         };
-        
+
         assert!(verify_quote(&quote).is_ok());
     }
 }
