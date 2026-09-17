@@ -9,8 +9,8 @@ commit `6d7bd0c7d612c1e9eeaf08efbb8788efef5a449b`, on 2026-09-09. Mainnet also
 matches that upstream's explicit genesis assertion. These are Neo RPC display
 hashes (`0x` + `Hash().StringLE()`), not internal byte-order encodings.
 
-| Network | Magic | Genesis |
-|---|---:|---|
+| Network |     Magic | Genesis                                                              |
+| ------- | --------: | -------------------------------------------------------------------- |
 | mainnet | 860833102 | `0x1f4d1defa46faa5e7b9b8d3f79a06bec777d7c26c4aa5f6f5899a291daa87c15` |
 | testnet | 894710606 | `0x9d3276785e7306daf59a3f3b9e31912c095598bbfb8a4476b821b0e59be4c57a` |
 

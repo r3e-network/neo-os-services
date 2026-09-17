@@ -61,10 +61,16 @@ function stackValue(item) {
 
 async function fetchQuotes(pair) {
   const [geckoResponse, paprikaResponse] = await Promise.all([
-    fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${pair.gecko}&vs_currencies=usd&include_last_updated_at=true`, { signal: AbortSignal.timeout(15000) }),
-    fetch(`https://api.coinpaprika.com/v1/tickers/${pair.paprika}`, { signal: AbortSignal.timeout(15000) }),
+    fetch(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${pair.gecko}&vs_currencies=usd&include_last_updated_at=true`,
+      { signal: AbortSignal.timeout(15000) }
+    ),
+    fetch(`https://api.coinpaprika.com/v1/tickers/${pair.paprika}`, {
+      signal: AbortSignal.timeout(15000),
+    }),
   ]);
-  if (!geckoResponse.ok || !paprikaResponse.ok) throw new Error(`provider HTTP failure for ${pair.storage}`);
+  if (!geckoResponse.ok || !paprikaResponse.ok)
+    throw new Error(`provider HTTP failure for ${pair.storage}`);
   const [gecko, paprika] = await Promise.all([geckoResponse.json(), paprikaResponse.json()]);
   const a = Number(gecko?.[pair.gecko]?.usd);
   const b = Number(paprika?.quotes?.USD?.price);
@@ -74,16 +80,22 @@ async function fetchQuotes(pair) {
   const price = (a + b) / 2;
   const timestamp = Math.min(
     Number(gecko?.[pair.gecko]?.last_updated_at || Math.floor(Date.now() / 1000)),
-    Date.parse(paprika?.last_updated || '') / 1000 || Math.floor(Date.now() / 1000),
+    Date.parse(paprika?.last_updated || '') / 1000 || Math.floor(Date.now() / 1000)
   );
   return { price, timestamp: Math.floor(timestamp), providers: { coingecko: a, coinpaprika: b } };
 }
 
 async function currentRecord(pair) {
-  const result = await jsonRpc('invokefunction', [FEED_HASH, 'getLatest', [{ type: 'String', value: pair }]]);
-  if (String(result?.state || '').toUpperCase() !== 'HALT') throw new Error(`getLatest faulted for ${pair}`);
+  const result = await jsonRpc('invokefunction', [
+    FEED_HASH,
+    'getLatest',
+    [{ type: 'String', value: pair }],
+  ]);
+  if (String(result?.state || '').toUpperCase() !== 'HALT')
+    throw new Error(`getLatest faulted for ${pair}`);
   const values = result?.stack?.[0]?.value;
-  if (!Array.isArray(values) || values.length < 4) throw new Error(`malformed getLatest for ${pair}`);
+  if (!Array.isArray(values) || values.length < 4)
+    throw new Error(`malformed getLatest for ${pair}`);
   return {
     round: BigInt(stackValue(values[1]) || 0),
     price: BigInt(stackValue(values[2]) || 0),
@@ -109,7 +121,10 @@ function makeUpdateScript(rows) {
 async function makeTransaction(rows) {
   const script = makeUpdateScript(rows);
   const blockCount = Number(await jsonRpc('getblockcount', []));
-  const signer = { account: UPDATER_HASH.replace(/^0x/, ''), scopes: tx.WitnessScope.CalledByEntry };
+  const signer = {
+    account: UPDATER_HASH.replace(/^0x/, ''),
+    scopes: tx.WitnessScope.CalledByEntry,
+  };
   const transaction = new tx.Transaction({
     nonce: randomInt(1, 0xffffffff),
     validUntilBlock: blockCount + 500,
@@ -123,35 +138,55 @@ async function makeTransaction(rows) {
     [{ account: UPDATER_HASH, scopes: 'CalledByEntry' }],
   ]);
   if (String(invoke?.state || '').toUpperCase() === 'FAULT') {
-    throw new Error(`updateFeeds test invocation faulted: ${String(invoke?.exception || 'unknown').slice(0, 240)}`);
+    throw new Error(
+      `updateFeeds test invocation faulted: ${String(invoke?.exception || 'unknown').slice(0, 240)}`
+    );
   }
   const gasConsumed = BigInt(invoke?.gasconsumed || '0');
   transaction.systemFee = u.BigInteger.fromDecimal((gasConsumed + 100000n).toString(), 0);
   const verificationScript = wallet.getVerificationScriptFromPublicKey(UPDATER_PUBLIC_KEY);
-  transaction.witnesses = [new tx.Witness({
-    invocationScript: `0c40${'00'.repeat(64)}`,
-    verificationScript,
-  })];
-  const networkFee = await jsonRpc('calculatenetworkfee', [u.HexString.fromHex(transaction.serialize(true)).toBase64()]);
+  transaction.witnesses = [
+    new tx.Witness({
+      invocationScript: `0c40${'00'.repeat(64)}`,
+      verificationScript,
+    }),
+  ];
+  const networkFee = await jsonRpc('calculatenetworkfee', [
+    u.HexString.fromHex(transaction.serialize(true)).toBase64(),
+  ]);
   transaction.networkFee = u.BigInteger.fromDecimal(String(networkFee?.networkfee || '0'), 0);
   transaction.witnesses = [];
   return { transaction, script, blockCount };
 }
 
 async function signAndBroadcast(transaction) {
-  const signerUrl = process.env.NITRO_SIGNER_URL || process.env.SIGNER_URL || 'http://127.0.0.1:8787';
-  const token = process.env.NITRO_SIGNER_TOKEN || process.env.MORPHEUS_RUNTIME_TOKEN || process.env.RUNTIME_TOKEN || '';
+  const signerUrl =
+    process.env.NITRO_SIGNER_URL || process.env.SIGNER_URL || 'http://127.0.0.1:8787';
+  const token =
+    process.env.NITRO_SIGNER_TOKEN ||
+    process.env.MORPHEUS_RUNTIME_TOKEN ||
+    process.env.RUNTIME_TOKEN ||
+    '';
   if (!token) throw new Error('Nitro signer token is not configured');
   const messageHex = transaction.getMessageForSigning(NETWORK_MAGIC);
   const response = await fetch(`${signerUrl.replace(/\/$/, '')}/sign/payload`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({ target_chain: 'neo_n3', data_hex: messageHex, role: 'updater', key_role: 'updater' }),
+    body: JSON.stringify({
+      target_chain: 'neo_n3',
+      data_hex: messageHex,
+      role: 'updater',
+      key_role: 'updater',
+    }),
   });
   const signed = await response.json();
   if (!response.ok || signed?.status === 'error') throw new Error('Nitro updater signing failed');
-  const publicKey = String(signed.public_key || '').replace(/^0x/, '').toLowerCase();
-  const signature = String(signed.signature || signed.signature_hex || '').replace(/^0x/, '').toLowerCase();
+  const publicKey = String(signed.public_key || '')
+    .replace(/^0x/, '')
+    .toLowerCase();
+  const signature = String(signed.signature || signed.signature_hex || '')
+    .replace(/^0x/, '')
+    .toLowerCase();
   if (publicKey !== UPDATER_PUBLIC_KEY || !/^[0-9a-f]{128}$/.test(signature)) {
     throw new Error('Nitro signer identity mismatch');
   }
@@ -184,21 +219,68 @@ for (const pair of PAIRS) {
   const round = current.round + 1n;
   const timestamp = BigInt(Math.max(quote.timestamp, Number(current.timestamp) + 1));
   const attestationHash = createHash('sha256')
-    .update(JSON.stringify({ pair: pair.storage, price: price.toString(), round: round.toString(), timestamp: timestamp.toString(), providers: quote.providers }))
+    .update(
+      JSON.stringify({
+        pair: pair.storage,
+        price: price.toString(),
+        round: round.toString(),
+        timestamp: timestamp.toString(),
+        providers: quote.providers,
+      })
+    )
     .digest('hex');
   // The deployed feed contract accepts the canonical 16-byte attestation
   // token encoded as 32 hex characters (the Neon script builder treats the
   // string as hex bytes). Keep the full digest out of the on-chain field.
-  rows.push({ pair: pair.storage, price, round, timestamp, attestationHash: attestationHash.slice(0, 32) });
+  rows.push({
+    pair: pair.storage,
+    price,
+    round,
+    timestamp,
+    attestationHash: attestationHash.slice(0, 32),
+  });
 }
 
 const { transaction, blockCount } = await makeTransaction(rows);
-const preview = rows.map((r) => ({ pair: r.pair, price_1e6: r.price.toString(), round: r.round.toString(), timestamp: r.timestamp.toString() }));
+const preview = rows.map((r) => ({
+  pair: r.pair,
+  price_1e6: r.price.toString(),
+  round: r.round.toString(),
+  timestamp: r.timestamp.toString(),
+}));
 if (!EXECUTE) {
-  console.log(JSON.stringify({ mode: 'dry-run', network: 'mainnet', feed: FEED_HASH, updater: UPDATER_HASH, block_count: blockCount, rows: preview }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        mode: 'dry-run',
+        network: 'mainnet',
+        feed: FEED_HASH,
+        updater: UPDATER_HASH,
+        block_count: blockCount,
+        rows: preview,
+      },
+      null,
+      2
+    )
+  );
   process.exit(0);
 }
 const submitted = await signAndBroadcast(transaction);
 const execution = await waitForApplicationLog(submitted.txid);
-if (!String(execution.vmstate || '').includes('HALT')) throw new Error(`feed update faulted: ${execution.vmstate || 'unknown'}`);
-console.log(JSON.stringify({ mode: 'execute', network: 'mainnet', feed: FEED_HASH, updater: UPDATER_HASH, txid: submitted.txid, vmstate: execution.vmstate, rows: preview }, null, 2));
+if (!String(execution.vmstate || '').includes('HALT'))
+  throw new Error(`feed update faulted: ${execution.vmstate || 'unknown'}`);
+console.log(
+  JSON.stringify(
+    {
+      mode: 'execute',
+      network: 'mainnet',
+      feed: FEED_HASH,
+      updater: UPDATER_HASH,
+      txid: submitted.txid,
+      vmstate: execution.vmstate,
+      rows: preview,
+    },
+    null,
+    2
+  )
+);

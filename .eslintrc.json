@@ -22,6 +22,7 @@
     ".next/",
     ".vercel/",
     "coverage/",
+    "**/dist/",
     "contracts/build/",
     "contracts/**/bin/",
     "contracts/**/obj/",

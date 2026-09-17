@@ -1,11 +1,5 @@
-import {
-  constants as cryptoConstants,
-  verify as cryptoVerify,
-} from 'node:crypto';
-import {
-  REQUEST_PROOF_ALGORITHM,
-  REQUEST_PROOF_SCHEMA,
-} from './constants.mjs';
+import { constants as cryptoConstants, verify as cryptoVerify } from 'node:crypto';
+import { REQUEST_PROOF_ALGORITHM, REQUEST_PROOF_SCHEMA } from './constants.mjs';
 import { ApiError } from './errors.mjs';
 import { canonicalRequestProof } from './protocol.mjs';
 import { validateAttestedPublicKey } from './session-sealer.mjs';
@@ -73,9 +67,8 @@ export function verifySessionRequestProof({
   const nonceHex = hash(proof.nonceHex);
   const bodySha256 = hash(proof.bodySha256);
   const timestampMs = timestamp(proof.timestampMs);
-  const difference = timestampMs >= BigInt(nowMs)
-    ? timestampMs - BigInt(nowMs)
-    : BigInt(nowMs) - timestampMs;
+  const difference =
+    timestampMs >= BigInt(nowMs) ? timestampMs - BigInt(nowMs) : BigInt(nowMs) - timestampMs;
   if (difference > BigInt(maximumClockSkewSeconds) * 1000n) reject();
 
   let key;

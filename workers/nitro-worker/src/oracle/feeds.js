@@ -237,10 +237,9 @@ function extractQuotePrice(response, provider) {
     response.data?.data?.amount;
   if (direct !== undefined && direct !== null) return direct;
   if (provider === 'coingecko') {
-    const first = response.data && typeof response.data === 'object'
-      ? Object.values(response.data)[0]
-      : null;
-    return first && typeof first === 'object' ? first.usd ?? null : null;
+    const first =
+      response.data && typeof response.data === 'object' ? Object.values(response.data)[0] : null;
+    return first && typeof first === 'object' ? (first.usd ?? null) : null;
   }
   if (provider === 'coinpaprika') return response.data?.quotes?.USD?.price ?? null;
   return null;

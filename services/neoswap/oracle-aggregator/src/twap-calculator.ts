@@ -49,16 +49,16 @@ export class TWAPCalculator {
     tokenPairId: string,
     startTime: number,
     endTime: number,
-    bucketSize: number
+    _bucketSize: number
   ): Promise<{ price: BigNumber; volume: BigNumber }[]> {
     // Query all price sources
     const keys = await this.redis.keys(`price:${tokenPairId}:*`);
-    const values = await Promise.all(keys.map(key => this.redis.get(key)));
+    const values = await Promise.all(keys.map((key) => this.redis.get(key)));
 
     const prices = values
-      .map(v => v ? JSON.parse(v) : null)
-      .filter(p => p !== null && p.timestamp >= startTime && p.timestamp <= endTime)
-      .map(p => ({
+      .map((v) => (v ? JSON.parse(v) : null))
+      .filter((p) => p !== null && p.timestamp >= startTime && p.timestamp <= endTime)
+      .map((p) => ({
         price: new BigNumber(p.price),
         volume: new BigNumber(p.volume || '0'),
       }));
@@ -66,9 +66,11 @@ export class TWAPCalculator {
     return prices;
   }
 
-  private calculateVolumeWeightedTWAP(samples: { price: BigNumber; volume: BigNumber }[]): BigNumber {
+  private calculateVolumeWeightedTWAP(
+    samples: { price: BigNumber; volume: BigNumber }[]
+  ): BigNumber {
     const totalVolume = samples.reduce((sum, s) => sum.plus(s.volume), new BigNumber(0));
-    
+
     if (totalVolume.isZero()) {
       // Equal weight if no volume data
       const totalPrice = samples.reduce((sum, s) => sum.plus(s.price), new BigNumber(0));
@@ -76,8 +78,9 @@ export class TWAPCalculator {
     }
 
     // Volume-weighted calculation
-    const weightedSum = samples.reduce((sum, s) => 
-      sum.plus(s.price.multipliedBy(s.volume)), new BigNumber(0)
+    const weightedSum = samples.reduce(
+      (sum, s) => sum.plus(s.price.multipliedBy(s.volume)),
+      new BigNumber(0)
     );
 
     return weightedSum.dividedBy(totalVolume);
@@ -86,10 +89,7 @@ export class TWAPCalculator {
   /**
    * Calculate simple arithmetic mean TWAP
    */
-  async calculateSimpleTWAP(
-    tokenPairId: string,
-    windowSeconds: number
-  ): Promise<number> {
+  async calculateSimpleTWAP(tokenPairId: string, windowSeconds: number): Promise<number> {
     const samples = await this.calculateTWAP(tokenPairId, windowSeconds);
     return parseFloat(samples.averagePrice);
   }

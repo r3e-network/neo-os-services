@@ -16,18 +16,22 @@ export function generateRateLimitKey(tenantId: string): string {
   return `ratelimit:${tenantId}`;
 }
 
-export async function checkRateLimit(tenantId: string, maxRequests: number, windowMs: number): Promise<{
+export async function checkRateLimit(
+  tenantId: string,
+  maxRequests: number,
+  windowMs: number
+): Promise<{
   allowed: boolean;
   remaining: number;
   resetTime: number;
 }> {
   const redis = await getRedis();
   const key = generateRateLimitKey(tenantId);
-  
+
   // Get current count
   const current = await redis.get(key);
   const count = current ? parseInt(current) : 0;
-  
+
   if (count >= maxRequests) {
     return {
       allowed: false,
@@ -35,11 +39,11 @@ export async function checkRateLimit(tenantId: string, maxRequests: number, wind
       resetTime: Date.now() + windowMs,
     };
   }
-  
+
   // Increment with TTL
   await redis.incr(key);
   await redis.expire(key, Math.floor(windowMs / 1000));
-  
+
   return {
     allowed: true,
     remaining: maxRequests - count - 1,
@@ -47,19 +51,22 @@ export async function checkRateLimit(tenantId: string, maxRequests: number, wind
   };
 }
 
-export function rateLimiter(tenantId: string, options: { maxRequests: number; windowMs: number } = {
-  maxRequests: TENANT_CONFIG.rateLimits.free.maxRequests,
-  windowMs: TENANT_CONFIG.rateLimits.free.windowMs,
-}) {
+export function rateLimiter(
+  tenantId: string,
+  options: { maxRequests: number; windowMs: number } = {
+    maxRequests: TENANT_CONFIG.rateLimits.free.maxRequests,
+    windowMs: TENANT_CONFIG.rateLimits.free.windowMs,
+  }
+) {
   const limitCheck = async () => {
     const result = await checkRateLimit(tenantId, options.maxRequests, options.windowMs);
-    
+
     if (!result.allowed) {
       throw new Error('Rate limit exceeded');
     }
-    
+
     return result;
   };
-  
+
   return limitCheck;
 }

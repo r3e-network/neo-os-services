@@ -104,14 +104,14 @@ transaction, and does not fund a wallet.
 
 `deploy/feed-pusher/lib-feed-network.mjs`
 
-| Input | Rule |
-| --- | --- |
-| `abi.probed !== true` | throw (`ABI not proven`) |
-| writer method present with wrong arity / types / duplicates | throw (`ambiguous` / `wrong_arity`) |
-| `network` not `mainnet` or `testnet` | throw (unknown network; no downgrade) |
-| `has_update_feeds === true` (exact 6× Array) | `batch_update_feeds` |
-| `network === 'testnet'` and exact 6-arg `updateFeed` | `per_pair_update_feed` |
-| anything else | throw |
+| Input                                                       | Rule                                  |
+| ----------------------------------------------------------- | ------------------------------------- |
+| `abi.probed !== true`                                       | throw (`ABI not proven`)              |
+| writer method present with wrong arity / types / duplicates | throw (`ambiguous` / `wrong_arity`)   |
+| `network` not `mainnet` or `testnet`                        | throw (unknown network; no downgrade) |
+| `has_update_feeds === true` (exact 6× Array)                | `batch_update_feeds`                  |
+| `network === 'testnet'` and exact 6-arg `updateFeed`        | `per_pair_update_feed`                |
+| anything else                                               | throw                                 |
 
 ### `encodeUpdateFeedInvocation(fields)`
 
@@ -165,14 +165,14 @@ application-log FAULT. Scraping those series is not alert delivery.
 Retry policy: `PER_PAIR_ATTEMPTS` (2) with `PER_PAIR_TIMEOUT_MS` (20s) per
 attempt, shared by both write modes. Safe retries:
 
-| Outcome | Action |
-| --- | --- |
-| Transport timeout / reset **before** a signed identity exists | sign a new tx |
-| Transport timeout **after** broadcast of a known hash | reconcile that hash; resend the **same** raw tx if still unknown |
-| `AlreadyExists` / found in mempool | confirm that hash; do not replace |
-| Explicit rejection and hash unknown | fail closed; batch keeps the signed sidecar and will not replace before safe reconciliation / expiry |
-| `invokescript` FAULT, ABI, identity, message mismatch | no retry |
-| Confirmation pending / timeout / application-log `FAULT` | no second write |
+| Outcome                                                       | Action                                                                                               |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Transport timeout / reset **before** a signed identity exists | sign a new tx                                                                                        |
+| Transport timeout **after** broadcast of a known hash         | reconcile that hash; resend the **same** raw tx if still unknown                                     |
+| `AlreadyExists` / found in mempool                            | confirm that hash; do not replace                                                                    |
+| Explicit rejection and hash unknown                           | fail closed; batch keeps the signed sidecar and will not replace before safe reconciliation / expiry |
+| `invokescript` FAULT, ABI, identity, message mismatch         | no retry                                                                                             |
+| Confirmation pending / timeout / application-log `FAULT`      | no second write                                                                                      |
 
 ### `ENCLAVE_FEED_SIGN`
 
@@ -185,11 +185,11 @@ the Neo X lane as a `ReferenceError`.
 
 ### Enclave `/feed/sign`
 
-| Field | Meaning |
-| --- | --- |
+| Field                            | Meaning                                           |
+| -------------------------------- | ------------------------------------------------- |
 | `write_mode` **and** `operation` | both must be `updateFeed` on the host accept path |
-| `symbols` | one bare symbol per `updateFeed` call |
-| `tx_params` | pinned `nonce`, `block_count`, fees |
+| `symbols`                        | one bare symbol per `updateFeed` call             |
+| `tx_params`                      | pinned `nonce`, `block_count`, fees               |
 
 `write_mode=updateFeed` is accepted only when the bound in-TEE identity
 network is `testnet`. Contract hash and magic come from that identity, not
@@ -255,7 +255,15 @@ Batch mainnet uses the same field names plus `confirmation_status`:
   "pairs_faulted": [],
   "txids": ["0x…"],
   "submitted_identity": { "hash": "0x…", "nonce": 1, "validUntilBlock": 4000500 },
-  "write_attempts": [{ "pair": "TWELVEDATA:NEO-USD", "status": "confirmed", "attempt": 1, "txid": "0x…", "error": null }],
+  "write_attempts": [
+    {
+      "pair": "TWELVEDATA:NEO-USD",
+      "status": "confirmed",
+      "attempt": 1,
+      "txid": "0x…",
+      "error": null
+    }
+  ],
   "errors": [],
   "missing_alerts": []
 }
@@ -351,26 +359,26 @@ untouched.
 
 ## Test coverage
 
-| Case | Expected |
-| --- | --- |
-| ABI mode dispatch | captured TestNet fixture → `per_pair_update_feed`; captured mainnet fixture → batch |
-| Wrong arity / ambiguous ABI | refuse before broadcast |
-| Testnet-only guard | mainnet / unknown / unprobed ABI refuse per-pair |
-| Invocation encoding | production `encodeUpdateFeedInvocation` matches fixture parameter types |
-| Confirmation | `sendrawtransaction` hash is pending until bounded `getapplicationlog` `HALT` (batch and per-pair) |
-| FAULT / pending / timeout | explicit; cycle `ok=false`; pusher unit failure alerts immediately; freshness monitor turns red only after its age threshold |
-| Idempotent retry | accepted-then-timeout, rejection, pending, and same-raw replay; no second same-round write or fresh nonce |
-| Partial results | confirmed / pending / skipped / failed distinct; any unconfirmed planned pair fails the cycle |
-| Mainnet batch HALT | mempool accept is `submitted` only; HALT required before `confirmed`/`ok` |
-| Mainnet batch replay | accepted-then-timeout and a later oneshot resend the persisted exact raw tx; no new nonce unless identity is unknown and expired |
-| TEE accept | `FEED_NETWORK=testnet` + matching magic / `MORPHEUS_NETWORK` / updater materializes and signs |
-| TEE refuse | mismatched pins refuse before signing; no `pinOverride` |
-| Compact `/health` | `{ ready, signer }` without materialized updater is rejected |
-| Mainnet regression | default `FEED_NETWORK` still batch `updateFeeds`; `updateFeed`-only ABI still fails closed |
-| Topology isolation | TestNet pusher `Requires=` `morpheus-nitro-signer-testnet`, pins `SIGNER_URL` `:8789`; TestNet env CID 17 / testnet-named EIF; start script refuses to terminate a non-testnet occupant of the requested CID |
-| Writer compatibility posture | TestNet Node pusher/timer have no `[Install]`, require `ENABLE_NODE_FEED_PUSHER_COMPAT`, and `Conflicts=` / `Before=` both Rust relayers; topology discovery fails if a TestNet writer is omitted |
-| Neo X `ENCLAVE_FEED_SIGN` | exported boolean; import is defined so Neo X cannot throw `ReferenceError`; production writer remains Rust |
-| Writer metrics | Prometheus textfile one-hot states + pair counts; skipped ≠ pending ≠ FAULT; restart rebuilds from status/sidecar; no pair/txid/raw labels |
+| Case                         | Expected                                                                                                                                                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ABI mode dispatch            | captured TestNet fixture → `per_pair_update_feed`; captured mainnet fixture → batch                                                                                                                          |
+| Wrong arity / ambiguous ABI  | refuse before broadcast                                                                                                                                                                                      |
+| Testnet-only guard           | mainnet / unknown / unprobed ABI refuse per-pair                                                                                                                                                             |
+| Invocation encoding          | production `encodeUpdateFeedInvocation` matches fixture parameter types                                                                                                                                      |
+| Confirmation                 | `sendrawtransaction` hash is pending until bounded `getapplicationlog` `HALT` (batch and per-pair)                                                                                                           |
+| FAULT / pending / timeout    | explicit; cycle `ok=false`; pusher unit failure alerts immediately; freshness monitor turns red only after its age threshold                                                                                 |
+| Idempotent retry             | accepted-then-timeout, rejection, pending, and same-raw replay; no second same-round write or fresh nonce                                                                                                    |
+| Partial results              | confirmed / pending / skipped / failed distinct; any unconfirmed planned pair fails the cycle                                                                                                                |
+| Mainnet batch HALT           | mempool accept is `submitted` only; HALT required before `confirmed`/`ok`                                                                                                                                    |
+| Mainnet batch replay         | accepted-then-timeout and a later oneshot resend the persisted exact raw tx; no new nonce unless identity is unknown and expired                                                                             |
+| TEE accept                   | `FEED_NETWORK=testnet` + matching magic / `MORPHEUS_NETWORK` / updater materializes and signs                                                                                                                |
+| TEE refuse                   | mismatched pins refuse before signing; no `pinOverride`                                                                                                                                                      |
+| Compact `/health`            | `{ ready, signer }` without materialized updater is rejected                                                                                                                                                 |
+| Mainnet regression           | default `FEED_NETWORK` still batch `updateFeeds`; `updateFeed`-only ABI still fails closed                                                                                                                   |
+| Topology isolation           | TestNet pusher `Requires=` `morpheus-nitro-signer-testnet`, pins `SIGNER_URL` `:8789`; TestNet env CID 17 / testnet-named EIF; start script refuses to terminate a non-testnet occupant of the requested CID |
+| Writer compatibility posture | TestNet Node pusher/timer have no `[Install]`, require `ENABLE_NODE_FEED_PUSHER_COMPAT`, and `Conflicts=` / `Before=` both Rust relayers; topology discovery fails if a TestNet writer is omitted            |
+| Neo X `ENCLAVE_FEED_SIGN`    | exported boolean; import is defined so Neo X cannot throw `ReferenceError`; production writer remains Rust                                                                                                   |
+| Writer metrics               | Prometheus textfile one-hot states + pair counts; skipped ≠ pending ≠ FAULT; restart rebuilds from status/sidecar; no pair/txid/raw labels                                                                   |
 
 ## Implementation notes
 

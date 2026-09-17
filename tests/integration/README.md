@@ -1,4 +1,5 @@
 # NeoSwap v2 Mock Blockchain Environment Configuration
+
 ## Neon Express Integration & Integration Test Suite
 
 This directory contains configuration and scripts for running NeoSwap v2 integration tests on a mocked blockchain environment using Neon Express.
@@ -127,7 +128,7 @@ tests/integration/
 #!/usr/bin/env node
 /**
  * NeoSwap v2 Testnet Deployment Script
- * 
+ *
  * Usage: npm run express:deploy-testnet
  */
 
@@ -140,7 +141,7 @@ const EXPRESS_WSS = 'ws://localhost:10333';
 
 async function deployContracts() {
   console.log('🚀 Starting NeoSwap v2 deployment to Neon Express...');
-  
+
   // 1. Check if Express is running
   const isRunning = await checkExpressStatus();
   if (!isRunning) {
@@ -149,36 +150,36 @@ async function deployContracts() {
 
   // 2. Initialize NeoExpress client
   const neoExpress = await initializeNeoExpressClient(EXPRESS_RPC);
-  
+
   // 3. Read contract artifacts
   const routerNef = await fs.readFile('../build/neoswap-v2.nef');
   const routerManifest = JSON.parse(await fs.readFile('../build/neoswap-v2.manifest.json', 'utf-8'));
-  
+
   // 4. Deploy contracts sequentially
   const deployedContracts = {};
-  
+
   const contractsToDeploy = [
     { name: 'NeoSwapRouter', nef: routerNef, manifest: routerManifest },
     { name: 'PlatformDeFi', nef: await fs.readFile('../build/platform-defi.nef'), ... },
     { name: 'MorpheusOracle', nef: await fs.readFile('../build/morpheus-oracle.nef'), ... }
   ];
-  
+
   for (const contract of contractsToDeploy) {
     console.log(`📦 Deploying ${contract.name}...`);
-    
+
     const txHash = await neoExpress.deployContract({
       nef: contract.nef,
       manifest: contract.manifest,
       senderAddress: '0x0000000000000000000000000000000000000001'
     });
-    
+
     deployedContracts[contract.name] = txHash;
     console.log(`✅ ${contract.name} deployed at hash: ${txHash}`);
-    
+
     // Wait for confirmation
     await waitForTransaction(txHash);
   }
-  
+
   // 5. Store deployment addresses
   const deploymentRecord = {
     timestamp: new Date().toISOString(),
@@ -188,10 +189,10 @@ async function deployContracts() {
     contracts: deployedContracts,
     adminAccount: '0x0000000000000000000000000000000000000001'
   };
-  
+
   await fs.writeFile('deployment-record.json', JSON.stringify(deploymentRecord, null, 2));
   console.log('💾 Deployment record saved to deployment-record.json');
-  
+
   return deployedContracts;
 }
 
@@ -212,7 +213,7 @@ function initializeNeoExpressClient(rpcUrl) {
 
 async function waitForTransaction(txHash, timeout = 30000) {
   const startTime = Date.now();
-  
+
   while (Date.now() - startTime < timeout) {
     const status = await fetch(`${EXPRESS_RPC}/tx/${txHash}`);
     if (status.status === 200) {
@@ -221,7 +222,7 @@ async function waitForTransaction(txHash, timeout = 30000) {
     }
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
-  
+
   throw new Error(`Transaction ${txHash} timeout after ${timeout}ms`);
 }
 
@@ -251,14 +252,14 @@ import { deployContracts } from './deploy-contracts.mjs';
 
 async function setupTestEnvironment() {
   console.log('⚙️  Setting up NeoSwap v2 test environment...');
-  
+
   // Import deployment record
   const deployment = JSON.parse(await fs.readFile('deployment-record.json'));
   const neoExpress = await initializeNeoExpressClient(deployment.rpcUrl);
-  
+
   // 1. Create Initial Liquidity Pools
   console.log('🏊 Creating initial liquidity pools...');
-  
+
   const poolConfigs = [
     {
       tokenA: 'NEO',
@@ -273,46 +274,46 @@ async function setupTestEnvironment() {
       reserveB: BigInt('500000000000')
     }
   ];
-  
+
   for (const config of poolConfigs) {
     await createPool(deployment.contracts.NeoSwapRouter, config);
   }
-  
+
   // 2. Fund Test Users
   console.log('💰 Funding test user wallets...');
-  
+
   const testUsers = [
     { address: '0xUser001', neo: '10000', gas: '10000' },
     { address: '0xUser002', neo: '5000', gas: '5000' },
     { address: '0xUser003', neo: '1000', gas: '1000' }
   ];
-  
+
   for (const user of testUsers) {
     await fundWallet(user.address, user.neo, user.gas);
   }
-  
+
   // 3. Set Oracle Price Feeds
   console.log('📊 Configuring oracle price feeds...');
-  
+
   await setPriceFeed('NEOGAS', {
     price: 0.99,
     roundId: 1,
     timestamp: Math.floor(Date.now() / 1000),
     confidence: 0.99
   });
-  
+
   await setPriceFeed('NEONEO', {
     price: 1.0,
     roundId: 2,
     timestamp: Math.floor(Date.now() / 1000),
     confidence: 0.99
   });
-  
+
   console.log('✅ Test environment ready!');
   console.log(`📍 RPC URL: ${deployment.rpcUrl}`);
   console.log(`📍 WebSocket URL: ${deployment.wsUrl}`);
   console.log(`💼 Admin Account: ${deployment.adminAccount}`);
-  
+
   return {
     rpcUrl: deployment.rpcUrl,
     wsUrl: deployment.wsUrl,
@@ -353,20 +354,20 @@ export default setupTestEnvironment;
 public class PoolIntegrationTest
 {
     private BlockchainTestingFixture<NeoSwapRouter> _fixture;
-    
+
     [TestInitialize]
     public void Setup()
     {
         var expressUrl = Environment.GetEnvironmentVariable("EXPRESS_RPC") ?? "http://localhost:10332";
         _fixture = new BlockchainTestingFixture<NeoSwapRouter>(expressUrl);
-        
+
         // Reset to clean state
         _fixture.ResetBlockchain();
-        
+
         // Deploy test contracts
         _fixture.InvokeTransaction("init", UInt160.Parse("0xAdmin"), 5m);
     }
-    
+
     [TestMethod]
     [TestCategory("Integration")]
     public void POOL_INT_001_CreatePool_ValidatesReserves()
@@ -374,22 +375,22 @@ public class PoolIntegrationTest
         // Arrange
         var tokenA = NativeContract.GAS.Hash;
         var tokenB = NativeContract.NEO.Hash;
-        
+
         // Act
         var poolAddress = _fixture.CallStatic<UInt160>("createPool", tokenA, tokenB);
-        
+
         // Assert
         Assert.IsNotNull(poolAddress);
-        
+
         var reserves = _fixture.CallStatic<PoolReserves>("getReserves", poolAddress);
         Assert.IsTrue(reserves.reserveA > 0);
         Assert.IsTrue(reserves.reserveB > 0);
-        
+
         // Verify invariant maintained
         var invariant = reserves.reserveA * reserves.reserveB;
         Assert.IsTrue(invariant > 0);
     }
-    
+
     [TestMethod]
     [TestCategory("Integration")]
     public void POOL_INT_002_AddLiquidity_CalculatesLPSharesCorrectly()
@@ -398,18 +399,18 @@ public class PoolIntegrationTest
         var amountA = BigInteger.Parse("1000000000");
         var amountB = BigInteger.Parse("1000000000");
         var recipient = UInt160.Parse("0xRecipient");
-        
+
         // Act
-        var shares = _fixture.CallStatic<BigInteger>("addLiquidity", 
+        var shares = _fixture.CallStatic<BigInteger>("addLiquidity",
             amountA, amountB, recipient);
-        
+
         // Assert
         Assert.AreEqual(amountA + amountB, shares);
-        
+
         var balance = _fixture.CallStatic<BigInteger>("balanceOf", recipient, shares);
         Assert.AreEqual(shares, balance);
     }
-    
+
     [TestMethod]
     [TestCategory("Integration")]
     public void POOL_INT_003_Swap_MaintainsConstantProductInvariant()
@@ -418,18 +419,18 @@ public class PoolIntegrationTest
         var initialReserveA = BigInteger.Parse("1000000000");
         var initialReserveB = BigInteger.Parse("1000000000");
         var initialInvariant = initialReserveA * initialReserveB;
-        
+
         // Execute swap
         var amountIn = BigInteger.Parse("100000000");
         var path = new[] { NativeContract.GAS.Hash, NativeContract.NEO.Hash };
-        
-        var output = _fixture.CallStatic<BigInteger>("swapExactInput", 
+
+        var output = _fixture.CallStatic<BigInteger>("swapExactInput",
             amountIn, BigInteger.Zero, path, msg.Sender);
-        
+
         // Verify invariant preserved
         var finalReserves = _fixture.CallStatic<PoolReserves>("getReserves", /* pool address */);
         var finalInvariant = finalReserves.reserveA * finalReserves.reserveB;
-        
+
         Assert.AreEqual(initialInvariant, finalInvariant);
     }
 }
@@ -445,14 +446,14 @@ public class PoolIntegrationTest
 describe('NeoSwap v2 Complete Integration Flow', () => {
   beforeEach(() => {
     // Load deployment configuration
-    cy.fixture('deployment').then(deployment => {
+    cy.fixture('deployment').then((deployment) => {
       Cypress.env('deployment', deployment);
     });
-    
+
     // Connect to mock blockchain
     cy.connectToMockBlockchain(Cypress.env('deployment').rpcUrl);
   });
-  
+
   it('COMPLETE_FLOW_001: Deposit → Swap → Withdraw on Mock Blockchain', () => {
     // Phase 1: Wallet Setup
     cy.createUserWallet().then((wallet) => {
@@ -460,20 +461,20 @@ describe('NeoSwap v2 Complete Integration Flow', () => {
       expect(wallet.balances).to.have.property('NEO');
       expect(wallet.balances).to.have.property('GAS');
     });
-    
+
     // Phase 2: Liquidity Provision
     cy.addLiquidity({
       tokenA: 'NEO',
       tokenB: 'GAS',
       amountA: '10000',
-      amountB: '10000'
+      amountB: '10000',
     }).then((lpPosition) => {
       expect(lpPosition.poolId).to.be.greaterThan(0);
       expect(lpPosition.shares).to.be.greaterThan(0);
-      
+
       cy.verifyLPBalance(lpPosition.poolId, lpPosition.shares);
     });
-    
+
     // Phase 3: Token Swap (Multi-Hop)
     cy.swapTokens({
       fromToken: 'GAS',
@@ -481,16 +482,16 @@ describe('NeoSwap v2 Complete Integration Flow', () => {
       amountIn: '5000',
       minAmountOut: '4900',
       maxHops: 3,
-      slippageProtection: true
+      slippageProtection: true,
     }).then((swapResult) => {
       expect(swapResult.actualOutput).to.be.at.least(4900);
       expect(swapResult.route.hops.length).to.be.at.most(3);
       expect(swapResult.totalFeesBps).to.be.at.most(5);
-      
+
       // Log swap event to blockchain
       cy.verifySwapEventEmitted(swapResult.transactionHash);
     });
-    
+
     // Phase 4: Real-Time Price Update Verification
     cy.subscribeToPriceFeed('NEOGAS').then((subscription) => {
       subscription.on('priceUpdate', (data) => {
@@ -500,7 +501,7 @@ describe('NeoSwap v2 Complete Integration Flow', () => {
           Date.now()
         );
       });
-      
+
       // Simulate swap price impact
       cy.executeLargeSwap('20000').then(() => {
         // Verify price update reflects swap
@@ -510,19 +511,19 @@ describe('NeoSwap v2 Complete Integration Flow', () => {
         });
       });
     });
-    
+
     // Phase 5: Liquidity Withdrawal
     cy.withdrawLiquidity({
       poolId: lpPosition.poolId,
-      shares: 'all'
+      shares: 'all',
     }).then((withdrawalResult) => {
       expect(withdrawalResult.amountA).to.be.greaterThan(0);
       expect(withdrawalResult.amountB).to.be.greaterThan(0);
-      
+
       // Verify no LP tokens remain
       cy.verifyLPBalance(lpPosition.poolId, 0);
     });
-    
+
     // Final State Verification
     cy.getUserFinalState().then((state) => {
       expect(state.totalSwapsExecuted).to.be.greaterThan(0);
@@ -543,9 +544,9 @@ name: Integration Tests
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
 
 env:
   EXPRESS_RPC: http://localhost:10332
@@ -554,67 +555,67 @@ env:
 jobs:
   integration-tests:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '18'
           cache: 'npm'
-      
+
       - name: Install dependencies
         run: npm ci
-      
+
       - name: Build contracts
         run: |
           cd neo-os-contracts
           npm run build
-      
+
       - name: Start Neon Express
         run: |
           cd neo-os-services
           npx neon-express --config ./.express/config.json &
           sleep 10
           curl -X POST ${{ env.EXPRESS_RPC }}/node/version
-        
+
       - name: Deploy test contracts
         run: |
           cd neo-os-services/tests/integration
           node scripts/deploy-contracts.mjs --deploy
-      
+
       - name: Setup test environment
         run: |
           cd neo-os-services/tests/integration
           node scripts/setup-environment.mjs
-      
+
       - name: Run C# integration tests
         run: |
           cd neo-os-contracts/tests
           dotnet test --verbosity normal --logger:"console;verbosity=detailed"
-        
+
       - name: Run Cypress E2E tests
         run: |
           cd neo-os-services/tests
           npm run cypress:run --spec "e2e/*cy.js"
-        
+
       - name: Upload coverage reports
         uses: codecov/codecov-action@v3
         with:
           files: ./coverage/*.xml
           flags: integration-tests
-      
+
       - name: Stop Neon Express
         if: always()
         run: |
           pkill -f neon-express || true
-  
+
   performance-integration:
     runs-on: ubuntu-latest
     needs: integration-tests
-    
+
     steps:
       - name: Run performance benchmarks
         run: |
@@ -701,17 +702,20 @@ jobs:
 Common issues and solutions:
 
 1. **Neon Express fails to start**: Clear data directory and restart
+
    ```bash
    rm -rf neo-os-services/.express/data/*
    npm run express:start
    ```
 
 2. **Contract deployment timeout**: Increase timeout in `deploy-contracts.mjs`
+
    ```javascript
    const timeout = 60000; // Change from 30s to 60s
    ```
 
 3. **Insufficient GAS for transactions**: Request test GAS from faucet
+
    ```bash
    curl -X POST http://localhost:10332/faucet \
      -H "Content-Type: application/json" \
@@ -738,6 +742,7 @@ Track integration test health via Prometheus metrics exposed at `/metrics`:
 - `neoswap_fees_collected` - Cumulative fees earned
 
 Run Grafana dashboard for visualization:
+
 ```bash
 docker run -d -p 3000:3000 grafana/grafana
 # Import dashboard: docs/grafana/neoswap-integration-dashboard.json

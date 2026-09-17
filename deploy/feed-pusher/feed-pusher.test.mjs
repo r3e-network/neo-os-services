@@ -46,7 +46,10 @@ const {
 } = await import('./feed-pusher.mjs');
 
 const MAINNET_STATE = JSON.parse(
-  readFileSync(new URL('./fixtures/morpheus-datafeed-mainnet.getcontractstate.json', import.meta.url), 'utf8')
+  readFileSync(
+    new URL('./fixtures/morpheus-datafeed-mainnet.getcontractstate.json', import.meta.url),
+    'utf8'
+  )
 );
 
 __setSignerHealthForTests(async () => ({
@@ -108,46 +111,106 @@ test('TwelveData HTTP errors fail the whole batch instead of becoming missing sy
 });
 
 test('TwelveData distinguishes daily quota from transient minute limits and subscription errors', () => {
-  assert.equal(classifyTwelveDataFailure({ status: 429 }, { message: 'Daily API credits exhausted' }), 'daily_quota_exhausted');
-  assert.equal(classifyTwelveDataFailure({ status: 200 }, { code: 429, message: 'Too many credits this minute' }), 'minute_rate_limited');
+  assert.equal(
+    classifyTwelveDataFailure({ status: 429 }, { message: 'Daily API credits exhausted' }),
+    'daily_quota_exhausted'
+  );
+  assert.equal(
+    classifyTwelveDataFailure(
+      { status: 200 },
+      { code: 429, message: 'Too many credits this minute' }
+    ),
+    'minute_rate_limited'
+  );
   assert.equal(classifyTwelveDataFailure({ status: 429 }, {}), 'rate_limited');
-  assert.equal(classifyTwelveDataFailure({ status: 401 }, { message: 'Your subscription has expired' }), 'subscription_expired');
+  assert.equal(
+    classifyTwelveDataFailure({ status: 401 }, { message: 'Your subscription has expired' }),
+    'subscription_expired'
+  );
   assert.equal(classifyTwelveDataFailure({ status: 403 }, {}), 'provider_unauthorized');
 });
 
 test('TwelveData per-symbol quota failure rejects a mixed HTTP 200 batch', () => {
-  assert.throws(() => parseTwelveDataPrices({ ok: true, status: 200 }, {
-    'NEO/USD': { price: '2.1' },
-    'GAS/USD': { status: 'error', code: 429, message: 'Daily credits exhausted' },
-  }, ['NEO-USD', 'GAS-USD']), error => error.providerCategory === 'daily_quota_exhausted');
+  assert.throws(
+    () =>
+      parseTwelveDataPrices(
+        { ok: true, status: 200 },
+        {
+          'NEO/USD': { price: '2.1' },
+          'GAS/USD': { status: 'error', code: 429, message: 'Daily credits exhausted' },
+        },
+        ['NEO-USD', 'GAS-USD']
+      ),
+    (error) => error.providerCategory === 'daily_quota_exhausted'
+  );
 });
 
 test('TwelveData preserves valid prices but refuses a batch with no usable prices immediately', () => {
-  assert.deepEqual(parseTwelveDataPrices({ ok: true, status: 200 }, { price: '2.1' }, ['NEO-USD']), { 'NEO-USD': 2.1 });
+  assert.deepEqual(
+    parseTwelveDataPrices({ ok: true, status: 200 }, { price: '2.1' }, ['NEO-USD']),
+    { 'NEO-USD': 2.1 }
+  );
   for (const body of [null, {}, { price: '0' }, { price: '-1' }, { price: 'Infinity' }]) {
-    assert.throws(() => parseTwelveDataPrices({ ok: true, status: 200 }, body, ['NEO-USD']),
-      error => error.providerCategory === 'no_usable_prices');
+    assert.throws(
+      () => parseTwelveDataPrices({ ok: true, status: 200 }, body, ['NEO-USD']),
+      (error) => error.providerCategory === 'no_usable_prices'
+    );
   }
-  assert.deepEqual(parseTwelveDataPrices({ ok: true, status: 200 }, { 'NEO/USD': { price: '2.1' } },
-    ['NEO-USD', 'GAS-USD']), { 'NEO-USD': 2.1 });
+  assert.deepEqual(
+    parseTwelveDataPrices({ ok: true, status: 200 }, { 'NEO/USD': { price: '2.1' } }, [
+      'NEO-USD',
+      'GAS-USD',
+    ]),
+    { 'NEO-USD': 2.1 }
+  );
 });
 
 test('TwelveData rejects coercible non-prices in single and mixed batches', () => {
   const response = { ok: true, status: 200 };
-  for (const price of [true, false, ['2.1'], [], {}, null, '0x10', '0b10', ' 2.1 ', '',
-    '+2', '.5', 'NaN', NaN, Infinity, -1, 0, '1e999', '1e-999']) {
-    assert.throws(() => parseTwelveDataPrices(response, { price }, ['NEO-USD']),
-      error => error.providerCategory === 'no_usable_prices');
-    assert.deepEqual(parseTwelveDataPrices(response, {
-      'NEO/USD': { price }, 'GAS/USD': { price: '2.1' },
-    }, ['NEO-USD', 'GAS-USD']), { 'GAS-USD': 2.1 });
+  for (const price of [
+    true,
+    false,
+    ['2.1'],
+    [],
+    {},
+    null,
+    '0x10',
+    '0b10',
+    ' 2.1 ',
+    '',
+    '+2',
+    '.5',
+    'NaN',
+    NaN,
+    Infinity,
+    -1,
+    0,
+    '1e999',
+    '1e-999',
+  ]) {
+    assert.throws(
+      () => parseTwelveDataPrices(response, { price }, ['NEO-USD']),
+      (error) => error.providerCategory === 'no_usable_prices'
+    );
+    assert.deepEqual(
+      parseTwelveDataPrices(
+        response,
+        {
+          'NEO/USD': { price },
+          'GAS/USD': { price: '2.1' },
+        },
+        ['NEO-USD', 'GAS-USD']
+      ),
+      { 'GAS-USD': 2.1 }
+    );
   }
 });
 
 test('TwelveData accepts positive decimal numeric primitives and exponent notation', () => {
   for (const price of [2.1, '2.1', '0.000001', '2.1e-3', '2E+2']) {
-    assert.deepEqual(parseTwelveDataPrices({ ok: true, status: 200 }, { price }, ['NEO-USD']),
-      { 'NEO-USD': Number(price) });
+    assert.deepEqual(parseTwelveDataPrices({ ok: true, status: 200 }, { price }, ['NEO-USD']), {
+      'NEO-USD': Number(price),
+    });
   }
 });
 
@@ -743,7 +806,11 @@ test('pushNeoN3 aborts before planning when getAllFeedRecords is empty, malforme
         () => pushNeoN3({ 'NEO-USD': 5.25 }, 1_780_000_000),
         /getAllFeedRecords (empty|malformed|fault|undecodable) \(fail-closed, not bootstrap\)/
       );
-      assert.equal(progressedPastRead, false, 'must not plan or write after an unreadable registry');
+      assert.equal(
+        progressedPastRead,
+        false,
+        'must not plan or write after an unreadable registry'
+      );
     } finally {
       __resetN3RpcForTests();
     }
@@ -755,7 +822,10 @@ test('pushNeoN3 falls back to per-pair getLatest only when getAllFeedRecords is 
   let usedLatest = false;
   __setN3RpcForTests(async (method, params) => {
     const proven = provenWriteRpc(method, params);
-    if (proven !== undefined && !(method === 'invokefunction' && params[1] === 'getAllFeedRecords')) {
+    if (
+      proven !== undefined &&
+      !(method === 'invokefunction' && params[1] === 'getAllFeedRecords')
+    ) {
       return proven;
     }
     if (method === 'invokefunction' && params[1] === 'getAllFeedRecords') {
@@ -805,7 +875,10 @@ test('pushNeoN3 does not treat a key-does-not-exist business error as missing ge
   let usedLatest = false;
   __setN3RpcForTests(async (method, params) => {
     const proven = provenWriteRpc(method, params);
-    if (proven !== undefined && !(method === 'invokefunction' && params[1] === 'getAllFeedRecords')) {
+    if (
+      proven !== undefined &&
+      !(method === 'invokefunction' && params[1] === 'getAllFeedRecords')
+    ) {
       return proven;
     }
     if (method === 'invokefunction' && params[1] === 'getAllFeedRecords') {
@@ -843,7 +916,9 @@ test('pushNeoN3 delegates compute+sign to mandatory enclave /feed/sign and broad
     switch (method) {
       case 'invokefunction':
         if (params[1] === 'getAllFeedRecords') {
-          return haltAllRecords([{ pair: 'TWELVEDATA:NEO-USD', round: 1, price: 5.0, ts: now - 3600 }]);
+          return haltAllRecords([
+            { pair: 'TWELVEDATA:NEO-USD', round: 1, price: 5.0, ts: now - 3600 },
+          ]);
         }
         // balanceOf (n3UpdaterGas) -> healthy balance.
         if (params[1] === 'balanceOf') {
@@ -991,7 +1066,9 @@ test('pushNeoN3 fails closed on invokescript FAULT instead of exiting 0', async 
     switch (method) {
       case 'invokefunction':
         if (params[1] === 'getAllFeedRecords')
-          return haltAllRecords([{ pair: 'TWELVEDATA:NEO-USD', round: 1, price: 5.0, ts: 1_779_000_000 }]);
+          return haltAllRecords([
+            { pair: 'TWELVEDATA:NEO-USD', round: 1, price: 5.0, ts: 1_779_000_000 },
+          ]);
         if (params[1] === 'balanceOf')
           return { state: 'HALT', stack: [{ type: 'Integer', value: String(20 * 1e8) }] };
         throw new Error('unexpected invokefunction ' + params[1]);
@@ -1024,7 +1101,9 @@ test('pushNeoN3 refuses to broadcast when the enclave tx message diverges from t
     switch (method) {
       case 'invokefunction':
         if (params[1] === 'getAllFeedRecords')
-          return haltAllRecords([{ pair: 'TWELVEDATA:NEO-USD', round: 1, price: 5.0, ts: now - 3600 }]);
+          return haltAllRecords([
+            { pair: 'TWELVEDATA:NEO-USD', round: 1, price: 5.0, ts: now - 3600 },
+          ]);
         if (params[1] === 'balanceOf')
           return { state: 'HALT', stack: [{ type: 'Integer', value: String(20 * 1e8) }] };
         throw new Error('unexpected invokefunction ' + params[1]);

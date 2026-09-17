@@ -61,12 +61,10 @@ test('acceptance SLO is 6 hours', () => {
 });
 
 test('retired-pair policy is the single checked source', () => {
-  assert.deepEqual([...DEFAULT_RETIRED_FEED_PAIRS], [
-    'COPPER-USD',
-    'FLM-USD',
-    '1000FLM-USD',
-    '1000JPY-USD',
-  ]);
+  assert.deepEqual(
+    [...DEFAULT_RETIRED_FEED_PAIRS],
+    ['COPPER-USD', 'FLM-USD', '1000FLM-USD', '1000JPY-USD']
+  );
 });
 
 test('resolveFeedNetwork defaults to the live mainnet writer target', () => {
@@ -155,7 +153,9 @@ test('N3_FEED and FEED_MAGIC overrides fail closed and cannot silently retarget'
     { requireTdKey: true }
   );
   assert.equal(leftover.network, null);
-  assert.ok(leftover.errors.some((error) => /N3_FEED|FEED_MAGIC|silent retarget/.test(error.summary)));
+  assert.ok(
+    leftover.errors.some((error) => /N3_FEED|FEED_MAGIC|silent retarget/.test(error.summary))
+  );
 });
 
 test('validateFeedPusherEnv does not treat a URL substring as network isolation', () => {
@@ -208,7 +208,10 @@ test('selectRpcsMatchingMagic fails closed when no candidate matches', async () 
 
 test('extractNetworkMagic reads protocol.network and rejects a missing magic', () => {
   assert.equal(extractNetworkMagic({ protocol: { network: 860833102 } }), 860833102);
-  assert.throws(() => extractNetworkMagic({ useragent: '/Neo:3/' }), /did not return a network magic/);
+  assert.throws(
+    () => extractNetworkMagic({ useragent: '/Neo:3/' }),
+    /did not return a network magic/
+  );
 });
 
 test('readChainUnixTime uses the previous block header time', async () => {
@@ -227,10 +230,16 @@ test('normalizeChainUnixTime accepts millisecond header times without inventing 
 });
 
 const TESTNET_STATE = JSON.parse(
-  readFileSync(new URL('./fixtures/morpheus-datafeed-testnet.getcontractstate.json', import.meta.url), 'utf8')
+  readFileSync(
+    new URL('./fixtures/morpheus-datafeed-testnet.getcontractstate.json', import.meta.url),
+    'utf8'
+  )
 );
 const MAINNET_STATE = JSON.parse(
-  readFileSync(new URL('./fixtures/morpheus-datafeed-mainnet.getcontractstate.json', import.meta.url), 'utf8')
+  readFileSync(
+    new URL('./fixtures/morpheus-datafeed-mainnet.getcontractstate.json', import.meta.url),
+    'utf8'
+  )
 );
 
 test('parseContractUpdateMethods requires exact captured ABI arity and types', () => {
@@ -306,11 +315,7 @@ test('resolveFeedWriteMode is testnet-only for updateFeed and never downgrades m
     FEED_WRITE_MODE_BATCH
   );
   assert.throws(
-    () =>
-      resolveFeedWriteMode(
-        'mainnet',
-        parseContractUpdateMethods(TESTNET_STATE.manifest)
-      ),
+    () => resolveFeedWriteMode('mainnet', parseContractUpdateMethods(TESTNET_STATE.manifest)),
     /Refusing silent downgrade/
   );
   assert.throws(
@@ -318,7 +323,9 @@ test('resolveFeedWriteMode is testnet-only for updateFeed and never downgrades m
       resolveFeedWriteMode(
         'testnet',
         parseContractUpdateMethods({
-          abi: { methods: [{ name: 'updateFeed', parameters: UPDATE_FEED_PARAMETERS.slice(0, 4) }] },
+          abi: {
+            methods: [{ name: 'updateFeed', parameters: UPDATE_FEED_PARAMETERS.slice(0, 4) }],
+          },
         })
       ),
     /wrong_arity|ambiguous/
@@ -384,7 +391,9 @@ test('decodeNeoHash160 fails loudly on unsupported representations', () => {
 });
 
 test('finalizePusherCycle is fail-closed on fetch, push, ABI, and missing-symbol faults', () => {
-  const quotaError = Object.assign(new Error('Daily credits exhausted'), { providerCategory: 'daily_quota_exhausted' });
+  const quotaError = Object.assign(new Error('Daily credits exhausted'), {
+    providerCategory: 'daily_quota_exhausted',
+  });
   const quota = finalizePusherCycle({ fetchError: quotaError });
   assert.equal(quota.exitCode, 1);
   assert.equal(quota.errors[0].provider_category, 'daily_quota_exhausted');
@@ -466,8 +475,14 @@ test('decodeGetAllFeedRecords fails closed on FAULT, empty, malformed, and mixed
     decoded_count: 0,
     undecodable_count: 0,
   });
-  assert.equal(decodeGetAllFeedRecords({ state: 'HALT', stack: [{ type: 'Array', value: [] }] }).reason, 'empty');
-  assert.equal(decodeGetAllFeedRecords({ state: 'HALT', stack: [{ type: 'Integer', value: '1' }] }).reason, 'malformed');
+  assert.equal(
+    decodeGetAllFeedRecords({ state: 'HALT', stack: [{ type: 'Array', value: [] }] }).reason,
+    'empty'
+  );
+  assert.equal(
+    decodeGetAllFeedRecords({ state: 'HALT', stack: [{ type: 'Integer', value: '1' }] }).reason,
+    'malformed'
+  );
   const mixed = decodeGetAllFeedRecords({
     state: 'HALT',
     stack: [
@@ -525,7 +540,10 @@ test('isMissingGetAllFeedRecordsError matches only exact Neo/JSON-RPC missing-me
     true
   );
 
-  assert.equal(isMissingGetAllFeedRecordsError('The given key does not exist in the storage'), false);
+  assert.equal(
+    isMissingGetAllFeedRecordsError('The given key does not exist in the storage'),
+    false
+  );
   assert.equal(isMissingGetAllFeedRecordsError('getAllFeedRecords: the key does not exist'), false);
   assert.equal(
     isMissingGetAllFeedRecordsError('Method getAllFeedRecords failed: key does not exist'),
@@ -538,7 +556,10 @@ test('isMissingGetAllFeedRecordsError matches only exact Neo/JSON-RPC missing-me
     }),
     false
   );
-  assert.equal(isMissingGetAllFeedRecordsError({ code: -32601, message: 'Method not found' }), false);
+  assert.equal(
+    isMissingGetAllFeedRecordsError({ code: -32601, message: 'Method not found' }),
+    false
+  );
   assert.equal(isMissingGetAllFeedRecordsError('method not found: updateFeeds/6'), false);
   assert.equal(
     decodeGetAllFeedRecords({
@@ -667,11 +688,11 @@ test('broadcast accept is not HALT confirmation', () => {
     status: 'confirmed',
     vmstate: 'HALT',
   });
-  assert.equal(classifyApplicationLog({ executions: [{ vmstate: 'FAULT', exception: 'boom' }] }).status, 'fault');
   assert.equal(
-    classifyApplicationLog(null, new Error('Unknown transaction')).status,
-    'pending'
+    classifyApplicationLog({ executions: [{ vmstate: 'FAULT', exception: 'boom' }] }).status,
+    'fault'
   );
+  assert.equal(classifyApplicationLog(null, new Error('Unknown transaction')).status, 'pending');
 });
 
 test('confirmation poll is bounded and fail-closed on timeout or FAULT', async () => {
@@ -701,10 +722,15 @@ test('confirmation poll is bounded and fail-closed on timeout or FAULT', async (
 
 test('retry taxonomy is structured transport codes only', () => {
   assert.equal(
-    isRetryablePerPairError(Object.assign(new Error('timed out'), { name: 'TimeoutError', code: 'ABORT_ERR' })),
+    isRetryablePerPairError(
+      Object.assign(new Error('timed out'), { name: 'TimeoutError', code: 'ABORT_ERR' })
+    ),
     true
   );
-  assert.equal(isRetryablePerPairError(Object.assign(new Error('reset'), { code: 'ECONNRESET' })), true);
+  assert.equal(
+    isRetryablePerPairError(Object.assign(new Error('reset'), { code: 'ECONNRESET' })),
+    true
+  );
   assert.equal(isRetryablePerPairError(new Error('enclave /feed/sign timed out')), false);
   assert.equal(isRetryablePerPairError(new Error('Invalid network fee')), false);
   assert.equal(classifyBroadcastOutcome(new Error('AlreadyExists')).kind, 'already_exists');

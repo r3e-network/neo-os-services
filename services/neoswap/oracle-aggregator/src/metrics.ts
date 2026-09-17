@@ -1,6 +1,6 @@
 import { RedisClientType } from 'redis';
 import { createClient } from 'redis';
-import promClient, { Counter, Gauge, Histogram } from 'prom-client';
+import promClient, { Gauge, Histogram } from 'prom-client';
 
 const metricRegistry = new promClient.Registry();
 promClient.collectDefaultMetrics({ register: metricRegistry });

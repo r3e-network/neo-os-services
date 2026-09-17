@@ -75,32 +75,60 @@ describe('runtime health network isolation', () => {
     });
   });
 
-  it.each([{}, { network: 'unknown' }, 'not JSON'])('refuses an HTTP 200 without verified network: %j', async (body) => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(body)));
-    const result = await fetchBoxHealth('testnet');
-    expect(result.ok).toBe(false);
-    expect(result.status).toBe(503);
-    expect(result.body).toMatchObject({ error: 'runtime_network_unverified', ready: false });
-  });
+  it.each([{}, { network: 'unknown' }, 'not JSON'])(
+    'refuses an HTTP 200 without verified network: %j',
+    async (body) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => Response.json(body))
+      );
+      const result = await fetchBoxHealth('testnet');
+      expect(result.ok).toBe(false);
+      expect(result.status).toBe(503);
+      expect(result.body).toMatchObject({ error: 'runtime_network_unverified', ready: false });
+    }
+  );
 
-  it.each(['mainnet', 'testnet'])('accepts the matching %s runtime and refuses redirects', async (network) => {
-    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ network, status: 'ok', ready: true }));
-    vi.stubGlobal('fetch', fetcher);
-    const result = await fetchBoxHealth(network);
-    expect(result.ok).toBe(true);
-    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ redirect: 'error', cache: 'no-store' });
-  });
+  it.each(['mainnet', 'testnet'])(
+    'accepts the matching %s runtime and refuses redirects',
+    async (network) => {
+      const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        Response.json({ network, status: 'ok', ready: true })
+      );
+      vi.stubGlobal('fetch', fetcher);
+      const result = await fetchBoxHealth(network);
+      expect(result.ok).toBe(true);
+      expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ redirect: 'error', cache: 'no-store' });
+    }
+  );
 
-  it.each([undefined, null, 'true', false, 1])('requires boolean ready=true, received %j', async (ready) => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ network: 'testnet', status: 'ok', ready })));
-    const result = await fetchBoxHealth('testnet');
-    expect(result.ok).toBe(false);
-    expect(result.status).toBe(503);
-    expect(result.body).toMatchObject({ error: 'runtime_not_ready', ready: false });
-  });
+  it.each([undefined, null, 'true', false, 1])(
+    'requires boolean ready=true, received %j',
+    async (ready) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => Response.json({ network: 'testnet', status: 'ok', ready }))
+      );
+      const result = await fetchBoxHealth('testnet');
+      expect(result.ok).toBe(false);
+      expect(result.status).toBe(503);
+      expect(result.body).toMatchObject({ error: 'runtime_not_ready', ready: false });
+    }
+  );
 
-  it.each([[201, 'ok'], [503, 'ok'], [200, 'degraded'], [200, 'error'], [200, null]])('refuses contradictory HTTP/body status %j/%j', async (httpStatus, status) => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ network: 'testnet', ready: true, status }, { status: httpStatus as number })));
+  it.each([
+    [201, 'ok'],
+    [503, 'ok'],
+    [200, 'degraded'],
+    [200, 'error'],
+    [200, null],
+  ])('refuses contradictory HTTP/body status %j/%j', async (httpStatus, status) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({ network: 'testnet', ready: true, status }, { status: httpStatus as number })
+      )
+    );
     const result = await fetchBoxHealth('testnet');
     expect(result.ok).toBe(false);
     expect(result.body).toMatchObject({ ready: false });
@@ -109,18 +137,30 @@ describe('runtime health network isolation', () => {
   it('cancels oversized UTF-8 bodies without reading or echoing the remainder', async () => {
     const cancelled = vi.fn();
     const stream = new ReadableStream<Uint8Array>({
-      start(controller) { controller.enqueue(new TextEncoder().encode('密'.repeat(22000))); },
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('密'.repeat(22000)));
+      },
       cancel: cancelled,
     });
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(stream)));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(stream))
+    );
     const result = await fetchBoxHealth('testnet');
     expect(result.ok).toBe(false);
-    expect(result.body).toEqual({ error: 'runtime_health_unavailable', ready: false, requested_network: 'testnet' });
+    expect(result.body).toEqual({
+      error: 'runtime_health_unavailable',
+      ready: false,
+      requested_network: 'testnet',
+    });
     expect(cancelled).toHaveBeenCalledOnce();
   });
 
   it('does not expose malformed origin body strings', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('private-key=secret')));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('private-key=secret'))
+    );
     const result = await fetchBoxHealth('testnet');
     expect(result.ok).toBe(false);
     expect(JSON.stringify(result)).not.toContain('secret');
@@ -131,10 +171,14 @@ describe('runtime health network isolation', () => {
     vi.useFakeTimers();
     const cancelled = vi.fn();
     const stream = new ReadableStream<Uint8Array>({
-      start(controller) { controller.enqueue(new TextEncoder().encode('{"network":"testnet",')); },
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"network":"testnet",'));
+      },
       cancel: cancelled,
     });
-    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(stream));
+    const fetcher = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(stream)
+    );
     vi.stubGlobal('fetch', fetcher);
     const pending = fetchBoxHealth('testnet');
     await vi.advanceTimersByTimeAsync(8000);
@@ -147,15 +191,30 @@ describe('runtime health network isolation', () => {
 
   it('also bounds a hanging wait for response headers', async () => {
     vi.useFakeTimers();
-    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => {}))
+    );
     const pending = fetchBoxHealth('testnet');
     await vi.advanceTimersByTimeAsync(8000);
-    expect(await pending).toMatchObject({ ok: false, body: { error: 'runtime_health_unavailable', ready: false } });
+    expect(await pending).toMatchObject({
+      ok: false,
+      body: { error: 'runtime_health_unavailable', ready: false },
+    });
   });
 
   it('keeps private origin details out of transport errors', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('https://user:secret@internal.test/private'); }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('https://user:secret@internal.test/private');
+      })
+    );
     const result = await fetchBoxHealth('testnet');
-    expect(result.body).toEqual({ error: 'runtime_health_unavailable', ready: false, requested_network: 'testnet' });
+    expect(result.body).toEqual({
+      error: 'runtime_health_unavailable',
+      ready: false,
+      requested_network: 'testnet',
+    });
   });
 });

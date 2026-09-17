@@ -33,18 +33,18 @@ No Rust migration, custody implementation, current startup scripts, existing dep
 
 An operator must first identify or provision the testnet execution instance. The following are requirements, not claims that these resources already exist:
 
-| Item | Required value or proof |
-| --- | --- |
-| Target | Confirmed testnet EC2/Nitro host and region, or verified spare capacity on the documented mainnet host |
-| Release | Verifiable execution EIF digest/PCRs and corresponding reproducible source release; do not deploy the mixed uncommitted Rust migration workspace |
-| Runtime network | `MORPHEUS_NETWORK=testnet` in the provisioned execution configuration, verified by the instance's own health response |
-| Neo N3 identity | Testnet RPC whose `getversion.protocol.network` is `894710606`, testnet contract hashes, and testnet-specific signer role IDs/public identities |
-| Key material | Independently configured testnet custody authorization and attestation-bound sealed material; do not copy mainnet WIFs, private keys, role IDs, or token envelopes |
-| Storage and config | Dedicated testnet configuration files, journal/data directories, state/cursor namespaces and service unit; no mainnet default paths |
-| Host topology | Existing frontier is CID 16 / host port 8787; custody is CID 17 / host port 8789; egress uses 8788. None of these is the testnet instance |
-| Candidate topology | CID 18 / loopback port 8791 is an **unallocated proposal**, usable only after operator checks show it is free; a separate host may instead use its own isolated defaults |
-| Capacity | Adequate Nitro allocator CPU/memory for the extra execution instance and its custody arrangement; existing mainnet allocation remains intact |
-| Startup safety | Do not invoke the existing startup script with default arguments: it terminates the enclave occupying the configured CID. Its run-report output is also currently global. A reviewed isolated service must avoid CID reuse and mainnet path overwrites |
+| Item                 | Required value or proof                                                                                                                                                                                                                                |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Target               | Confirmed testnet EC2/Nitro host and region, or verified spare capacity on the documented mainnet host                                                                                                                                                 |
+| Release              | Verifiable execution EIF digest/PCRs and corresponding reproducible source release; do not deploy the mixed uncommitted Rust migration workspace                                                                                                       |
+| Runtime network      | `MORPHEUS_NETWORK=testnet` in the provisioned execution configuration, verified by the instance's own health response                                                                                                                                  |
+| Neo N3 identity      | Testnet RPC whose `getversion.protocol.network` is `894710606`, testnet contract hashes, and testnet-specific signer role IDs/public identities                                                                                                        |
+| Key material         | Independently configured testnet custody authorization and attestation-bound sealed material; do not copy mainnet WIFs, private keys, role IDs, or token envelopes                                                                                     |
+| Storage and config   | Dedicated testnet configuration files, journal/data directories, state/cursor namespaces and service unit; no mainnet default paths                                                                                                                    |
+| Host topology        | Existing frontier is CID 16 / host port 8787; custody is CID 17 / host port 8789; egress uses 8788. None of these is the testnet instance                                                                                                              |
+| Candidate topology   | CID 18 / loopback port 8791 is an **unallocated proposal**, usable only after operator checks show it is free; a separate host may instead use its own isolated defaults                                                                               |
+| Capacity             | Adequate Nitro allocator CPU/memory for the extra execution instance and its custody arrangement; existing mainnet allocation remains intact                                                                                                           |
+| Startup safety       | Do not invoke the existing startup script with default arguments: it terminates the enclave occupying the configured CID. Its run-report output is also currently global. A reviewed isolated service must avoid CID reuse and mainnet path overwrites |
 | Confidential callers | The control-plane and direct confidential gateway credentials must be authorized for the isolated testnet runtime. A healthy public probe does not establish this. Keep those credentials server-side and validate with a non-signing capability check |
 
 This is not a complete ready-to-start second-instance configuration because a confirmed host, verifiable candidate EIF/release, isolated credentials, allocation, and service identity are not available on this workstation. Do not fill those gaps using mainnet settings.

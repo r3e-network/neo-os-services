@@ -9,10 +9,7 @@ export class MEVRiskScanner {
   private knownBots: Set<string> = new Set();
   private suspiciousPatterns: Map<string, number> = new Map();
 
-  async scanRoute(
-    route: SwapRoute,
-    txContext?: TransactionContext
-  ): Promise<MEVScanResult> {
+  async scanRoute(route: SwapRoute, txContext?: TransactionContext): Promise<MEVScanResult> {
     const patterns: string[] = [];
     let riskScore = 0;
 
@@ -29,7 +26,11 @@ export class MEVRiskScanner {
     }
 
     // Pattern 3: Gas bidding anomalies
-    if (txContext?.gasPrice && txContext.baseGasPrice !== undefined && txContext.gasPrice > 2 * txContext.baseGasPrice) {
+    if (
+      txContext?.gasPrice &&
+      txContext.baseGasPrice !== undefined &&
+      txContext.gasPrice > 2 * txContext.baseGasPrice
+    ) {
       patterns.push('PRIORITY_FEE_ANOMALY');
       riskScore += 25;
     }
@@ -68,10 +69,10 @@ export class MEVRiskScanner {
 
   private calculateSuggestedSlippage(route: SwapRoute, patterns: string[]): number {
     let baseSlippage = 0.5; // 0.5% default
-    
+
     // Add slippage buffer for each detected pattern
     baseSlippage += patterns.length * 0.5;
-    
+
     // Increase significantly for high price impact
     if (route.priceImpact > 5.0) {
       baseSlippage += 5.0;
@@ -85,7 +86,7 @@ export class MEVRiskScanner {
     reasons: string[];
   }> {
     const reasons: string[] = [];
-    
+
     // A route does not carry the reserve snapshot, so a fabricated TVL must
     // never be used to claim that depth was checked. Price impact is the
     // conservative signal available at this layer.
@@ -105,14 +106,14 @@ export class MEVRiskScanner {
     pendingSwaps: MempoolTransaction[]
   ): SandwichOpportunity | null {
     // Look for large swaps that can be sandwiched
-    const targetTx = pendingSwaps.find(tx => 
-      tx.amountUsd > mempoolTx.amountUsd * 2 // Target should be 2x larger
+    const targetTx = pendingSwaps.find(
+      (tx) => tx.amountUsd > mempoolTx.amountUsd * 2 // Target should be 2x larger
     );
 
     if (!targetTx) return null;
 
     const profitEstimate = this.estimateSandwichProfit(mempoolTx, targetTx);
-    
+
     return {
       opportunity: true,
       targetTx: targetTx.hash,

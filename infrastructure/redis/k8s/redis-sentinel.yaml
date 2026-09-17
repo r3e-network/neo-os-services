@@ -12,21 +12,21 @@ data:
     # Redis Sentinel Configuration
     bind 0.0.0.0
     port 26379
-    
+
     # Monitor the master nodes
     sentinel monitor neoos redis-cluster-0.redis-cluster.default.svc.cluster.local 6379 2
-    
+
     # Failover configuration
     sentinel down-after-milliseconds neoos 5000
     sentinel failover-timeout neoos 10000
     sentinel parallel-syncs neoos 1
-    
+
     # Authentication
     sentinel auth-pass neoos ${REDIS_PASSWORD}
-    
+
     # Announce config for proper failover
     sentinel announce-hostnames yes
-    
+
     # Logging
     loglevel notice
     slowlog-log-slower-than 10000
@@ -70,7 +70,7 @@ spec:
         app: redis-sentinel
         role: sentinel
       annotations:
-        checksum/config: "placeholder"
+        checksum/config: 'placeholder'
     spec:
       containers:
         - name: sentinel
@@ -93,11 +93,11 @@ spec:
                   key: password
           resources:
             requests:
-              memory: "128Mi"
-              cpu: "100m"
+              memory: '128Mi'
+              cpu: '100m'
             limits:
-              memory: "256Mi"
-              cpu: "250m"
+              memory: '256Mi'
+              cpu: '250m'
           volumeMounts:
             - name: config
               mountPath: /etc/redis
@@ -106,7 +106,7 @@ spec:
               command:
                 - redis-cli
                 - -p
-                - "26379"
+                - '26379'
                 - ping
             initialDelaySeconds: 15
             periodSeconds: 10
@@ -117,7 +117,7 @@ spec:
               command:
                 - redis-cli
                 - -p
-                - "26379"
+                - '26379'
                 - ping
             initialDelaySeconds: 10
             periodSeconds: 5
@@ -174,7 +174,7 @@ spec:
             - |
               echo "Waiting for sentinels to be ready..."
               sleep 10
-              
+
               while true; do
                 SENTINEL_RESPONSE=$(redis-cli -h redis-sentinel default -p 26379 SENTINEL master neoos 2>/dev/null)
                 if [ $? -eq 0 ] && [ -n "$SENTINEL_RESPONSE" ]; then
@@ -184,7 +184,7 @@ spec:
                 echo "Sentinel not ready yet..."
                 sleep 5
               done
-              
+
               echo "Sentinel info:"
               redis-cli -h redis-sentinel -p 26379 SENTINEL master neoos
           env:

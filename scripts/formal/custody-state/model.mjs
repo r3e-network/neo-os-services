@@ -277,11 +277,7 @@ export function buildModel({ bound = 14, mutation = 'none', timeoutMs = 30000 } 
         ),
         sawSnapshotTakeover: remember(
           'sawSnapshotTakeover',
-          and(
-            `(< ${s('owner')} 2)`,
-            not(eq(s('owner'), s('actor'))),
-            `(> ${s('snapshotFence')} 0)`
-          )
+          and(`(< ${s('owner')} 2)`, not(eq(s('owner'), s('actor'))), `(> ${s('snapshotFence')} 0)`)
         ),
         ...updateLocal({ phase: 2, epoch: add(s('epoch')) }),
       }

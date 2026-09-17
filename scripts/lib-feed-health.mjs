@@ -73,8 +73,7 @@ export function classifyPairAgainstSlo(
     Number.isFinite(timestamp) && timestamp > 0 ? Math.floor(nowMs / 1000) - timestamp : null;
   const sloSeconds = Math.round(Number(staleHours) * 3600) || FEED_SLO_SECONDS;
   const retired = isRetiredPair(record?.pair, retiredPairs);
-  const clockSkew =
-    Number.isFinite(ageSeconds) && ageSeconds < -CLOCK_SKEW_TOLERANCE_SEC;
+  const clockSkew = Number.isFinite(ageSeconds) && ageSeconds < -CLOCK_SKEW_TOLERANCE_SEC;
   const stale = !clockSkew && (ageSeconds == null || ageSeconds > sloSeconds);
   return {
     pair: trimString(record?.pair),
@@ -634,7 +633,8 @@ export async function buildFeedHealthReport({
   } catch {
     chainTimeUnix = null;
   }
-  const effectiveNowMs = Number.isFinite(chainTimeUnix) && chainTimeUnix > 0 ? chainTimeUnix * 1000 : nowMs;
+  const effectiveNowMs =
+    Number.isFinite(chainTimeUnix) && chainTimeUnix > 0 ? chainTimeUnix * 1000 : nowMs;
 
   let allRecordsResult;
   try {

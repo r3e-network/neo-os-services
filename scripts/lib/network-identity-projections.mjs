@@ -1,8 +1,9 @@
 // Pure projections used by the network identity generator. No runtime fetching.
-import {isDeepStrictEqual} from 'node:util';
+import { isDeepStrictEqual } from 'node:util';
 
 function magicValue(value) {
-  if (!Number.isInteger(value) || value <= 0 || value > 0xffffffff) throw new Error('magic must be a positive uint32');
+  if (!Number.isInteger(value) || value <= 0 || value > 0xffffffff)
+    throw new Error('magic must be a positive uint32');
   return value;
 }
 
@@ -18,11 +19,14 @@ export function renderCSharpNetworkIdentities(catalog) {
 // JSON.parse alone is insufficient because it silently accepts duplicate keys.
 export function projectProtocolNetwork(source, magic) {
   magicValue(magic);
-  if (typeof source !== 'string' || Buffer.byteLength(source, 'utf8') > 1024 * 1024) throw new Error('protocol must be bounded UTF-8 JSON');
+  if (typeof source !== 'string' || Buffer.byteLength(source, 'utf8') > 1024 * 1024)
+    throw new Error('protocol must be bounded UTF-8 JSON');
   const before = JSON.parse(source);
   let cursor = 0;
   const fields = [];
-  const skipSpace = () => { while (/[ \t\r\n]/.test(source[cursor] ?? '') && cursor < source.length) cursor++; };
+  const skipSpace = () => {
+    while (/[ \t\r\n]/.test(source[cursor] ?? '') && cursor < source.length) cursor++;
+  };
   function take(character) {
     skipSpace();
     if (source[cursor] !== character) throw new Error('uncertain protocol shape');
@@ -44,46 +48,79 @@ export function projectProtocolNetwork(source, magic) {
     skipSpace();
     const char = source[cursor];
     if (char === '{') {
-      cursor++;skipSpace();
+      cursor++;
+      skipSpace();
       const keys = new Set();
-      if (source[cursor] === '}') {cursor++;return;}
+      if (source[cursor] === '}') {
+        cursor++;
+        return;
+      }
       while (true) {
         const key = readString();
         if (keys.has(key)) throw new Error('duplicate protocol property');
-        keys.add(key);take(':');skipSpace();
-        const start = cursor;
-        value([...path,key],depth+1);
-        if (key === 'Network') fields.push({path:[...path,key],start,end:cursor});
+        keys.add(key);
+        take(':');
         skipSpace();
-        if (source[cursor] === '}') {cursor++;return;}
+        const start = cursor;
+        value([...path, key], depth + 1);
+        if (key === 'Network') fields.push({ path: [...path, key], start, end: cursor });
+        skipSpace();
+        if (source[cursor] === '}') {
+          cursor++;
+          return;
+        }
         take(',');
       }
     }
     if (char === '[') {
-      cursor++;skipSpace();
-      if (source[cursor] === ']') {cursor++;return;}
+      cursor++;
+      skipSpace();
+      if (source[cursor] === ']') {
+        cursor++;
+        return;
+      }
       let index = 0;
       while (true) {
-        value([...path,index++],depth+1);skipSpace();
-        if (source[cursor] === ']') {cursor++;return;}
+        value([...path, index++], depth + 1);
+        skipSpace();
+        if (source[cursor] === ']') {
+          cursor++;
+          return;
+        }
         take(',');
       }
     }
-    if (char === '"') {readString();return;}
-    const primitive = /^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(source.slice(cursor));
+    if (char === '"') {
+      readString();
+      return;
+    }
+    const primitive = /^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(
+      source.slice(cursor)
+    );
     if (!primitive) throw new Error('invalid protocol token');
     cursor += primitive[0].length;
   }
-  value([],0);skipSpace();
-  if (cursor !== source.length || fields.length !== 1 || !isDeepStrictEqual(fields[0].path,['ProtocolConfiguration','Network'])) throw new Error('protocol requires one unambiguous ProtocolConfiguration.Network');
-  const {start,end} = fields[0];
-  const token = source.slice(start,end);
+  value([], 0);
+  skipSpace();
+  if (
+    cursor !== source.length ||
+    fields.length !== 1 ||
+    !isDeepStrictEqual(fields[0].path, ['ProtocolConfiguration', 'Network'])
+  )
+    throw new Error('protocol requires one unambiguous ProtocolConfiguration.Network');
+  const { start, end } = fields[0];
+  const token = source.slice(start, end);
   if (!/^[1-9]\d*$/.test(token)) throw new Error('protocol Network must be a decimal uint32 token');
   magicValue(Number(token));
-  const result = source.slice(0,start) + String(magic) + source.slice(end);
+  const result = source.slice(0, start) + String(magic) + source.slice(end);
   const after = JSON.parse(result);
   before.ProtocolConfiguration.Network = magic;
-  if (!isDeepStrictEqual(before,after)) throw new Error('protocol projection changed unrelated values');
-  if (result.slice(0,start) !== source.slice(0,start) || result.slice(start+String(magic).length) !== source.slice(end)) throw new Error('protocol projection changed unrelated bytes');
+  if (!isDeepStrictEqual(before, after))
+    throw new Error('protocol projection changed unrelated values');
+  if (
+    result.slice(0, start) !== source.slice(0, start) ||
+    result.slice(start + String(magic).length) !== source.slice(end)
+  )
+    throw new Error('protocol projection changed unrelated bytes');
   return result;
 }

@@ -21,10 +21,7 @@ test('network magic is registry-authoritative and rejects env drift', () => {
   const saved = process.env.NEO_MAINNET_MAGIC;
   process.env.NEO_MAINNET_MAGIC = '894710606';
   try {
-    assert.throws(
-      () => resolveNeoN3NetworkMagic('mainnet', registry),
-      /network magic conflicts/,
-    );
+    assert.throws(() => resolveNeoN3NetworkMagic('mainnet', registry), /network magic conflicts/);
   } finally {
     if (saved === undefined) delete process.env.NEO_MAINNET_MAGIC;
     else process.env.NEO_MAINNET_MAGIC = saved;

@@ -65,8 +65,13 @@ test('HTTP wrapper rejects non-JSON and missing custody-session credentials', as
 
 test('HTTP proof hashes original bytes including whitespace and decoded base64', async () => {
   const handler = makeHandler({
-    method: 'POST', route: '/v1/vaults/{vaultId}/test', body: true, session: true,
-    async invoke({ proof }) { return { statusCode: 200, body: { digest: proof.bodySha256 } }; },
+    method: 'POST',
+    route: '/v1/vaults/{vaultId}/test',
+    body: true,
+    session: true,
+    async invoke({ proof }) {
+      return { statusCode: 200, body: { digest: proof.bodySha256 } };
+    },
   });
   const headers = {
     'content-type': 'application/json',
@@ -77,8 +82,14 @@ test('HTTP proof hashes original bytes including whitespace and decoded base64',
   };
   for (const raw of ['{"a":1}', '{ "a": 1 }']) {
     for (const encoded of [false, true]) {
-      const result = await handler(event({ headers, pathParameters: { vaultId: 'vault' },
-        body: encoded ? Buffer.from(raw).toString('base64') : raw, isBase64Encoded: encoded }));
+      const result = await handler(
+        event({
+          headers,
+          pathParameters: { vaultId: 'vault' },
+          body: encoded ? Buffer.from(raw).toString('base64') : raw,
+          isBase64Encoded: encoded,
+        })
+      );
       assert.equal(result.statusCode, 200);
       assert.equal(JSON.parse(result.body).digest, sha256Hex(Buffer.from(raw)));
     }

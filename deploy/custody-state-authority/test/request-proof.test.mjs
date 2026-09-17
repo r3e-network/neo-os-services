@@ -1,9 +1,5 @@
 import assert from 'node:assert/strict';
-import {
-  constants as cryptoConstants,
-  generateKeyPairSync,
-  sign,
-} from 'node:crypto';
+import { constants as cryptoConstants, generateKeyPairSync, sign } from 'node:crypto';
 import test from 'node:test';
 import { createCustodyStateAuthority } from '../src/authority.mjs';
 import { sha256Hex } from '../src/codec.mjs';
@@ -145,10 +141,19 @@ test('authority consumes a request nonce before entering business logic', async 
     token: TOKEN,
     proof: proofFor(),
   };
-  await assert.rejects(authority.getHead(request), (error) => error.code === 'head_not_initialized');
-  await assert.rejects(authority.getHead(request), (error) => error.code === 'invalid_request_proof');
-  const concurrent = await Promise.allSettled(Array.from({ length: 4 }, () =>
-    authority.getHead({ ...request, proof: proofFor({ nonceHex: '82'.repeat(32) }) })));
+  await assert.rejects(
+    authority.getHead(request),
+    (error) => error.code === 'head_not_initialized'
+  );
+  await assert.rejects(
+    authority.getHead(request),
+    (error) => error.code === 'invalid_request_proof'
+  );
+  const concurrent = await Promise.allSettled(
+    Array.from({ length: 4 }, () =>
+      authority.getHead({ ...request, proof: proofFor({ nonceHex: '82'.repeat(32) }) })
+    )
+  );
   const codes = concurrent.map((result) => result.reason?.code);
   assert.equal(codes.filter((code) => code === 'head_not_initialized').length, 1);
   assert.equal(codes.filter((code) => code === 'invalid_request_proof').length, 3);

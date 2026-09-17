@@ -63,3 +63,8 @@ workers/nitro-worker/src/game/engines/sudoku.js
 # hand-formatting it only reverts on the next build. Root-scoped on purpose: a
 # hand-authored manifest.json under deploy/ or apps/ should still be formatted.
 /*.manifest.json
+contracts/__tests__/Generated/*.manifest.json
+
+# Captured parity fixtures are byte-pinned across Rust, JS and frozen baselines.
+crates/neo-os-games/src/engine-parity.goldens.json
+workers/nitro-worker/src/game/engine-parity.goldens.json

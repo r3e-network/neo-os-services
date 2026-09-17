@@ -12,9 +12,16 @@ export default {
     if (cookies.length) {
       headers.delete('set-cookie');
       for (const cookie of cookies) {
-        headers.append('set-cookie', cookie.replace(/;\s*domain=\.?admin\.neomini\.app(?=;|$)/gi, ''));
+        headers.append(
+          'set-cookie',
+          cookie.replace(/;\s*domain=\.?admin\.neomini\.app(?=;|$)/gi, '')
+        );
       }
     }
-    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
   },
 };

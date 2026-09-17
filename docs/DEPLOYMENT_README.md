@@ -9,18 +9,21 @@ This guide helps you configure Morpheus services correctly before deployment to 
 ## Quick Start Commands
 
 ### Windows PowerShell
+
 ```powershell
 $env:MORPHEUS_NETWORK="testnet"
 npm run check:network-config
 ```
 
 ### Linux/macOS (bash/zsh)
+
 ```bash
 export MORPHEUS_NETWORK=testnet
 npm run check:network-config
 ```
 
 ### Vercel/Cloudflare Dashboard
+
 ```
 Variable Name: MORPHEUS_NETWORK
 Value: testnet (or mainnet)
@@ -31,19 +34,20 @@ Environment: production-preview
 
 ## Critical Variables Summary
 
-| Variable | Purpose | Example Value | Required |
-|----------|---------|---------------|----------|
-| `MORPHEUS_NETWORK` | Main runtime network | `mainnet` or `testnet` | ✅ YES |
-| `NEXT_PUBLIC_MORPHEUS_NETWORK` | Client-side identifier | `mainnet` or `testnet` | Alternative |
-| `UPSTASH_REDIS_REST_URL` | Rate limiting (production) | `https://xxx.upstash.io` | Production |
-| `SUPABASE_SECRET_KEY` | Database access | `sb_...` | YES |
-| `MORPHEUS_RUNTIME_TOKEN` | Runtime authentication | Random secret | YES |
+| Variable                       | Purpose                    | Example Value            | Required    |
+| ------------------------------ | -------------------------- | ------------------------ | ----------- |
+| `MORPHEUS_NETWORK`             | Main runtime network       | `mainnet` or `testnet`   | ✅ YES      |
+| `NEXT_PUBLIC_MORPHEUS_NETWORK` | Client-side identifier     | `mainnet` or `testnet`   | Alternative |
+| `UPSTASH_REDIS_REST_URL`       | Rate limiting (production) | `https://xxx.upstash.io` | Production  |
+| `SUPABASE_SECRET_KEY`          | Database access            | `sb_...`                 | YES         |
+| `MORPHEUS_RUNTIME_TOKEN`       | Runtime authentication     | Random secret            | YES         |
 
 ---
 
 ## Common Deployment Scenarios
 
 ### Scenario 1: Testnet Development
+
 ```powershell
 # PowerShell
 $env:MORPHEUS_NETWORK="testnet"
@@ -55,6 +59,7 @@ npm run check:network-config -- --expected testnet
 ```
 
 ### Scenario 2: Mainnet Production
+
 ```powershell
 # PowerShell
 $env:MORPHEUS_NETWORK="mainnet"
@@ -67,6 +72,7 @@ npm run check:network-config -- --expected mainnet
 ```
 
 ### Scenario 3: Preview/Staging Environment
+
 ```powershell
 # Use same as production but different secrets
 $env:MORPHEUS_NETWORK="mainnet"
@@ -84,7 +90,7 @@ Run these in order before deploying:
 # 1. Basic network configuration
 npm run check:network-config
 
-# 2. Full environment validation  
+# 2. Full environment validation
 npm run check:env
 
 # 3. Web app requirements
@@ -105,9 +111,11 @@ MORPHEUS_NETWORK=testnet npm run verify:n3
 ## Error Resolution
 
 ### Error: "Network not configured"
+
 **Problem:** Neither `MORPHEUS_NETWORK` nor `NEXT_PUBLIC_MORPHEUS_NETWORK` set
 
 **Solution:**
+
 ```bash
 export MORPHEUS_NETWORK=testnet
 # OR in your .env file:
@@ -115,16 +123,20 @@ export MORPHEUS_NETWORK=testnet
 ```
 
 ### Error: "Invalid network value"
+
 **Problem:** Typo in network value (e.g., `mianet`)
 
 **Solution:** Check spelling carefully
+
 - ✅ Correct: `mainnet`, `testnet`
 - ❌ Wrong: `mianet`, `tests`, `staging`
 
 ### Error: "runtime_network_mismatch"
+
 **Problem:** CVM reports different network than expected by control plane
 
 **Solution:**
+
 1. Check all components use same network
 2. Verify environment consistency across services
 3. Review DEPLOYMENT_CHECKLIST.md section on network mismatch

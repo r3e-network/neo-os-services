@@ -11,10 +11,14 @@ export const QuoteSchema = z.object({
   sources: z.array(z.string()).default(['NeoSwap']),
   deadline: z.number().int().positive().optional(),
   slippageTolerance: z.number().min(0).max(50).default(0.5),
-  routes: z.array(z.object({
-    poolIds: z.array(z.string()),
-    percentage: z.number().min(0).max(100),
-  })).default([{ poolIds: [], percentage: 100 }]),
+  routes: z
+    .array(
+      z.object({
+        poolIds: z.array(z.string()),
+        percentage: z.number().min(0).max(100),
+      })
+    )
+    .default([{ poolIds: [], percentage: 100 }]),
 });
 
 // Validation schemas for API requests

@@ -9,8 +9,8 @@ services:
     image: redis:7.2-alpine
     container_name: neoos-redis-master-0
     ports:
-      - "6379:6379"
-      - "16379:16379"
+      - '6379:6379'
+      - '16379:16379'
     command: >
       bash -c 'redis-server --port 6379 \
         --cluster-enabled yes \
@@ -27,7 +27,7 @@ services:
     networks:
       - redis-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "ping"]
+      test: ['CMD', 'redis-cli', '-h', 'localhost', '-p', '6379', 'ping']
       interval: 5s
       timeout: 3s
       retries: 5
@@ -38,8 +38,8 @@ services:
     image: redis:7.2-alpine
     container_name: neoos-redis-replica-0
     ports:
-      - "6380:6379"
-      - "16380:16379"
+      - '6380:6379'
+      - '16380:16379'
     command: >
       bash -c 'redis-server --port 6379 \
         --replicaof redis-master-0 6379 \
@@ -58,7 +58,7 @@ services:
     networks:
       - redis-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "ping"]
+      test: ['CMD', 'redis-cli', '-h', 'localhost', '-p', '6379', 'ping']
       interval: 5s
       timeout: 3s
       retries: 5
@@ -69,8 +69,8 @@ services:
     image: redis:7.2-alpine
     container_name: neoos-redis-master-1
     ports:
-      - "6381:6379"
-      - "16381:16379"
+      - '6381:6379'
+      - '16381:16379'
     command: >
       bash -c 'redis-server --port 6379 \
         --cluster-enabled yes \
@@ -87,7 +87,7 @@ services:
     networks:
       - redis-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "ping"]
+      test: ['CMD', 'redis-cli', '-h', 'localhost', '-p', '6379', 'ping']
       interval: 5s
       timeout: 3s
       retries: 5
@@ -98,8 +98,8 @@ services:
     image: redis:7.2-alpine
     container_name: neoos-redis-replica-1
     ports:
-      - "6382:6379"
-      - "16382:16379"
+      - '6382:6379'
+      - '16382:16379'
     command: >
       bash -c 'redis-server --port 6379 \
         --replicaof redis-master-1 6379 \
@@ -118,7 +118,7 @@ services:
     networks:
       - redis-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "ping"]
+      test: ['CMD', 'redis-cli', '-h', 'localhost', '-p', '6379', 'ping']
       interval: 5s
       timeout: 3s
       retries: 5
@@ -129,8 +129,8 @@ services:
     image: redis:7.2-alpine
     container_name: neoos-redis-master-2
     ports:
-      - "6383:6379"
-      - "16383:16379"
+      - '6383:6379'
+      - '16383:16379'
     command: >
       bash -c 'redis-server --port 6379 \
         --cluster-enabled yes \
@@ -147,7 +147,7 @@ services:
     networks:
       - redis-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "ping"]
+      test: ['CMD', 'redis-cli', '-h', 'localhost', '-p', '6379', 'ping']
       interval: 5s
       timeout: 3s
       retries: 5
@@ -158,8 +158,8 @@ services:
     image: redis:7.2-alpine
     container_name: neoos-redis-replica-2
     ports:
-      - "6384:6379"
-      - "16384:16379"
+      - '6384:6379'
+      - '16384:16379'
     command: >
       bash -c 'redis-server --port 6379 \
         --replicaof redis-master-2 6379 \
@@ -178,7 +178,7 @@ services:
     networks:
       - redis-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "ping"]
+      test: ['CMD', 'redis-cli', '-h', 'localhost', '-p', '6379', 'ping']
       interval: 5s
       timeout: 3s
       retries: 5
@@ -189,7 +189,7 @@ services:
     image: redis:7.2-alpine
     container_name: neoos-redis-sentinel-0
     ports:
-      - "26379:26379"
+      - '26379:26379'
     command: >
       bash -c 'redis-sentinel --port 26379 \
         /etc/redis/sentinel.conf'
@@ -205,7 +205,7 @@ services:
     networks:
       - redis-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "26379", "sentinel", "master", "neoos"]
+      test: ['CMD', 'redis-cli', '-h', 'localhost', '-p', '26379', 'sentinel', 'master', 'neoos']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -216,7 +216,7 @@ services:
     image: redis:7.2-alpine
     container_name: neoos-redis-sentinel-1
     ports:
-      - "26380:26379"
+      - '26380:26379'
     command: >
       bash -c 'redis-sentinel --port 26379 \
         /etc/redis/sentinel.conf'
@@ -232,7 +232,7 @@ services:
     networks:
       - redis-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "26379", "sentinel", "master", "neoos"]
+      test: ['CMD', 'redis-cli', '-h', 'localhost', '-p', '26379', 'sentinel', 'master', 'neoos']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -243,7 +243,7 @@ services:
     image: redis:7.2-alpine
     container_name: neoos-redis-sentinel-2
     ports:
-      - "26381:26379"
+      - '26381:26379'
     command: >
       bash -c 'redis-sentinel --port 26379 \
         /etc/redis/sentinel.conf'
@@ -259,7 +259,7 @@ services:
     networks:
       - redis-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "26379", "sentinel", "master", "neoos"]
+      test: ['CMD', 'redis-cli', '-h', 'localhost', '-p', '26379', 'sentinel', 'master', 'neoos']
       interval: 10s
       timeout: 5s
       retries: 5

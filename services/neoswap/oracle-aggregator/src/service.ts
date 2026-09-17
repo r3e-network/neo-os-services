@@ -56,17 +56,16 @@ export class OracleAggregatorService {
 
     wss.on('connection', (socket) => {
       const clientId = crypto.randomUUID();
-      
+
       socket.on('message', (data) => {
         try {
           const message = JSON.parse(data.toString());
-          
+
           if (message.type === 'subscribe' && message.tokenPair) {
-            const unsubscribe = this.subscriptionsManager.subscribe(
-              message.tokenPair,
-              (msg) => socket.send(msg)
+            const unsubscribe = this.subscriptionsManager.subscribe(message.tokenPair, (msg) =>
+              socket.send(msg)
             );
-            
+
             // Register cleanup
             socket.on('close', () => unsubscribe());
             console.log(`Client ${clientId} subscribed to ${message.tokenPair}`);
@@ -80,10 +79,12 @@ export class OracleAggregatorService {
       });
 
       // Send initial health status
-      socket.send(JSON.stringify({
-        type: 'health_check',
-        payload: this.subscriptionsManager.getHealthStatus(),
-      }));
+      socket.send(
+        JSON.stringify({
+          type: 'health_check',
+          payload: this.subscriptionsManager.getHealthStatus(),
+        })
+      );
 
       console.log(`Connected client: ${clientId}`);
     });
@@ -95,21 +96,29 @@ export class OracleAggregatorService {
     this.wsServer = wss;
   }
 
-  private handleTWAPRequest(socket: any, message: { tokenPair: string; windowSeconds?: number }): void {
+  private handleTWAPRequest(
+    socket: any,
+    message: { tokenPair: string; windowSeconds?: number }
+  ): void {
     const windowSeconds = message.windowSeconds || 300;
-    
-    this.twapCalculator.calculateTWAP(message.tokenPair, windowSeconds)
-      .then(twap => {
-        socket.send(JSON.stringify({
-          type: 'twap_update',
-          payload: twap,
-        }));
+
+    this.twapCalculator
+      .calculateTWAP(message.tokenPair, windowSeconds)
+      .then((twap) => {
+        socket.send(
+          JSON.stringify({
+            type: 'twap_update',
+            payload: twap,
+          })
+        );
       })
-      .catch(error => {
-        socket.send(JSON.stringify({
-          type: 'error',
-          message: `TWAP calculation failed: ${error.message}`,
-        }));
+      .catch((error) => {
+        socket.send(
+          JSON.stringify({
+            type: 'error',
+            message: `TWAP calculation failed: ${error.message}`,
+          })
+        );
       });
   }
 
@@ -120,10 +129,12 @@ export class OracleAggregatorService {
 
       if (req.url === '/health') {
         res.writeHead(200);
-        res.end(JSON.stringify({
-          status: 'healthy',
-          timestamp: Date.now(),
-        }));
+        res.end(
+          JSON.stringify({
+            status: 'healthy',
+            timestamp: Date.now(),
+          })
+        );
       } else if (req.url === '/metrics') {
         res.writeHead(200);
         const metrics = await getMetrics();
@@ -151,9 +162,7 @@ export class OracleAggregatorService {
    * Get current price tick
    */
   async getPriceTick(tokenPairId: string, sourceId?: string): Promise<any> {
-    const key = sourceId 
-      ? `price:${tokenPairId}:${sourceId}`
-      : `price:${tokenPairId}:*`;
+    const key = sourceId ? `price:${tokenPairId}:${sourceId}` : `price:${tokenPairId}:*`;
 
     const keys = await this.redis.keys(key);
     if (keys.length === 0) {
@@ -186,7 +195,7 @@ export class OracleAggregatorService {
     }
 
     if (this.redis.isOpen) await this.redis.quit();
-    
+
     console.log('Oracle Aggregator shutdown complete');
   }
 }
@@ -201,7 +210,9 @@ export function getService(): OracleAggregatorService {
   return serviceInstance;
 }
 
-export async function initializeService(config: { redisUrl: string }): Promise<OracleAggregatorService> {
+export async function initializeService(config: {
+  redisUrl: string;
+}): Promise<OracleAggregatorService> {
   serviceInstance = new OracleAggregatorService(config);
   await serviceInstance.start();
   return serviceInstance;

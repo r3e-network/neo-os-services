@@ -208,7 +208,11 @@ export function createSnapshotStore({
       );
     }
     if (versions.length === 0) {
-      throw new ApiError(404, 'snapshot_not_uploaded', 'no S3 version exists for this upload claim');
+      throw new ApiError(
+        404,
+        'snapshot_not_uploaded',
+        'no S3 version exists for this upload claim'
+      );
     }
     const versionId = versions[0].VersionId;
     if (versionId.length === 0 || versionId.length > 1024 || /\p{Cc}/u.test(versionId)) {

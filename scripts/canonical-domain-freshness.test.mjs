@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assertFreshResponse, assertFreshTimestamp, assertLatestHeight } from './lib/canonical-domain-freshness.mjs';
+import {
+  assertFreshResponse,
+  assertFreshTimestamp,
+  assertLatestHeight,
+} from './lib/canonical-domain-freshness.mjs';
 
 test('a successful stale fallback must fail the production probe', () => {
   for (const headers of [
@@ -11,7 +15,8 @@ test('a successful stale fallback must fail the production probe', () => {
     { 'x-n3index-stale-age-seconds': '1' },
     { warning: '110 - "Response is stale"' },
     { warning: '111 - "Revalidation failed"' },
-  ]) assert.throws(() => assertFreshResponse(new Response('{}', { status: 200, headers })));
+  ])
+    assert.throws(() => assertFreshResponse(new Response('{}', { status: 200, headers })));
   assertFreshResponse(new Response('{}', { headers: { 'x-upstream-source': 'origin' } }));
 });
 

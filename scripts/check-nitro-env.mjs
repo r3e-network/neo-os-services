@@ -178,8 +178,9 @@ report.neo_n3_signers = ['updater', 'oracle_verifier'].map((role) => {
     env: { ...runtimeConfig, ...env },
     allowMissing: true,
   })[0];
-  const localMaterial = signerMaterialByRole[role]
-    .filter((key) => getValue(env, runtimeConfig, key));
+  const localMaterial = signerMaterialByRole[role].filter((key) =>
+    getValue(env, runtimeConfig, key)
+  );
   const issues = [...entry.issues];
   if (localMaterial.length > 0) {
     issues.push(

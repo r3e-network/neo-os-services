@@ -374,7 +374,8 @@ export function parseTwelveDataPrices(response, body, symbols) {
     if (entry) assertTwelveDataResponse(response, entry);
     const price = entry?.price;
     // Provider prices must be numeric primitives, never JS-coercible containers.
-    const validType = typeof price === 'number' ||
+    const validType =
+      typeof price === 'number' ||
       (typeof price === 'string' && /^(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(price));
     if (!validType) continue;
     const number = Number(price);
@@ -604,7 +605,8 @@ export function __resetSignerHealthForTests() {
 let confirmSleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function __setConfirmSleepForTests(fn) {
-  confirmSleepImpl = typeof fn === 'function' ? fn : (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  confirmSleepImpl =
+    typeof fn === 'function' ? fn : (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function __resetConfirmSleepForTests() {
@@ -1020,7 +1022,9 @@ async function signOneUpdateFeed({
     throw new Error(`[neo-n3] enclave returned no single-pair updateFeed for ${pair}`);
   }
   if (resp.write_mode !== 'updateFeed' || resp.operation !== 'updateFeed') {
-    throw new Error('[neo-n3] enclave write_mode and operation must both be updateFeed — refusing to broadcast');
+    throw new Error(
+      '[neo-n3] enclave write_mode and operation must both be updateFeed — refusing to broadcast'
+    );
   }
   if (resp.pairs[0] !== pair) {
     throw new Error(`[neo-n3] enclave pair ${resp.pairs[0]} != planned ${pair}`);

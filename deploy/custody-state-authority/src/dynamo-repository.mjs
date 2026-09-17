@@ -7,8 +7,7 @@ const N = (value) => ({ N: String(value) });
 const key = (pk, sk) => ({ pk: S(pk), sk: S(sk) });
 const challengeKey = (challengeId) => key(`CHALLENGE#${challengeId}`, 'META');
 const sessionKey = (tokenHash) => key(`SESSION#${tokenHash}`, 'META');
-const sessionProofKey = (tokenHash, nonceHex) =>
-  key(`PROOF#${tokenHash}#${nonceHex}`, 'META');
+const sessionProofKey = (tokenHash, nonceHex) => key(`PROOF#${tokenHash}#${nonceHex}`, 'META');
 const scopeKey = ({ vaultId, profileId, networkId, rootCommitment }) =>
   `${vaultId}#${profileId}#${networkId}#${rootCommitment}`;
 const stateKey = (scope) => key(`STATE#${scopeKey(scope)}`, 'HEAD');

@@ -18,11 +18,11 @@ npm run audit:feeds:health -- --network mainnet --stale-hours 6 --json
 
 Exit codes:
 
-| Code | Meaning |
-| ---- | ------- |
-| `0` | Every selected network was readable and every **active** (non-retired) pair is inside the SLO |
-| `1` | Readable, but at least one active pair is older than the SLO |
-| `2` | The audit itself cannot classify health: configuration error, RPC/magic isolation failure, or `getAllFeedRecords` FAULT / empty / malformed / undecodable, or an active pair timestamp is in the future of chain/header time |
+| Code | Meaning                                                                                                                                                                                                                      |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Every selected network was readable and every **active** (non-retired) pair is inside the SLO                                                                                                                                |
+| `1`  | Readable, but at least one active pair is older than the SLO                                                                                                                                                                 |
+| `2`  | The audit itself cannot classify health: configuration error, RPC/magic isolation failure, or `getAllFeedRecords` FAULT / empty / malformed / undecodable, or an active pair timestamp is in the future of chain/header time |
 
 A FAULT, empty HALT array, malformed stack, or undecodable record set is **not**
 healthy. It is an unreadable feed (`readable: false`) and must not be treated as
@@ -42,13 +42,13 @@ funded signer/writer host with a matching EIF. Actual mainnet recovery still
 depends on a valid TwelveData subscription/key; confirmation semantics cannot
 invent quotes.
 
-| Fact                                               | Evidence                                                                             |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Default pusher target is still mainnet             | `FEED_NETWORK` default `mainnet` → `03013f49…`, magic `860833102`                    |
-| Testnet ABI has no batch writer                    | `getcontractstate` methods include `updateFeed` (singular) and **not** `updateFeeds` |
-| Live EIF still signs `updateFeeds` only            | running host EIF; this checkout adds `write_mode=updateFeed` but is not deployed     |
-| Canonical testnet updater is funded                | `updater()` = `0xe421999c…` (NiUs…); GAS ≫ warn threshold                            |
-| Box `i-0c52851f134db20ee` cannot be inspected here | `--skip-aws`, or STS fails on both the default chain **and** documented profile `morpheus` |
+| Fact                                               | Evidence                                                                                                                                  |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Default pusher target is still mainnet             | `FEED_NETWORK` default `mainnet` → `03013f49…`, magic `860833102`                                                                         |
+| Testnet ABI has no batch writer                    | `getcontractstate` methods include `updateFeed` (singular) and **not** `updateFeeds`                                                      |
+| Live EIF still signs `updateFeeds` only            | running host EIF; this checkout adds `write_mode=updateFeed` but is not deployed                                                          |
+| Canonical testnet updater is funded                | `updater()` = `0xe421999c…` (NiUs…); GAS ≫ warn threshold                                                                                 |
+| Box `i-0c52851f134db20ee` cannot be inspected here | `--skip-aws`, or STS fails on both the default chain **and** documented profile `morpheus`                                                |
 | Hetzner Fura/MCP `95.216.148.60` is not the writer | SSH read-only: every `morpheus-feed-*` unit is `not-found`; `/opt/neoos/services/deploy/feed-pusher` and `/opt/morpheus/nitro` are absent |
 
 A 6-hour SLO that only looked at “a record exists” would stay red forever on
@@ -299,40 +299,40 @@ FEED HEALTH testnet FAIL active_stale=<n>/<n> (retired_stale=<n>) newest=NEO-USD
 
 ## Test coverage
 
-| Case                                           | Expected                                                    |
-| ---------------------------------------------- | ----------------------------------------------------------- |
-| `resolveFeedNetwork()` default                 | mainnet hash + magic + updater                              |
-| `FEED_NETWORK=testnet`                         | `9bea75cf…` / `894710606` / `e421999c…`                     |
-| `MORPHEUS_NETWORK=testnet` without `FEED_NETWORK` | still mainnet (no silent retarget)                       |
-| RPC whose `getversion` magic mismatches        | rejected; zero matches → configuration error                |
-| ABI manifest without `updateFeeds` on mainnet  | `resolveFeedWriteMode` refuses silent per-pair downgrade    |
-| Testnet ABI `updateFeed` only                  | `per_pair_update_feed` after magic-pinned selection         |
-| Mainnet batch mempool accept                   | `submitted`/`pending`; `ok` only after application-log HALT |
-| Mainnet batch FAULT / timeout / rejection      | fail-closed; distinct status; unit exit 1                   |
-| Active pairs older than 6h                     | `active_stale` excludes retired; exit 1                     |
-| Writable ABI + funded updater + all active stale | `live_writer_not_advancing`; not an ABI mismatch          |
-| `--skip-aws`                                   | `aws_inspection_skipped` live blocker; Hetzner is not probed |
-| `getAllFeedRecords` FAULT / empty / malformed  | `readable: false`; CLI/library exit 2                       |
-| Future timestamp vs header time                | `clock_skew`; not ordinary stale; exit 2                    |
-| Monitor pair >120s ahead of header (s or ms)   | `ok=false`, `clock_skew=true`; exit 2                       |
-| `getAllFeedRecords` FAULT "key does not exist" | not missing-method; no per-pair fallback                    |
-| Leftover `N3_FEED` / `FEED_MAGIC` mismatch     | fail closed; cannot silently retarget                       |
-| Neo X vs mainnet N3 pusher state files         | distinct `PUSH_*` / `MISSING_STATE`; exec pin wins          |
-| updater GAS above warn                         | `updater_gas_exhausted` in `ruled_out`                      |
-| AWS CLI exact “Unable to locate credentials”   | `credentials_absent` after default **and** `morpheus` retry |
-| Default STS absent, documented `morpheus` ok   | `identity_ok` with `profile=morpheus`; no identity echo     |
-| Explicit `AWS_PROFILE` set                     | documented profile is not substituted                       |
-| AWS exact ExpiredToken / AccessDenied codes    | `credentials_expired_or_denied` (no stderr echo)            |
-| Bare ENOENT + empty stderr; TLS/connection expired | `aws_unreachable` (not credential denial)               |
-| Mixed valid + undecodable registry rows        | `readable: false`; `undecodable`; decode counts; exit 2     |
-| Monitor FAULT / empty / malformed / partial    | exit 2, `ok=false`; no NEO-USD fallback upgrade             |
-| Pusher empty / malformed / partial HALT        | abort before plan/write; nonzero; not bootstrap             |
-| Leftover `FEED_NETWORK` in EnvironmentFile     | ignored; ExecStart `/usr/bin/env` pin wins                  |
-| Hash160 ByteString / Hash160 / hex LE          | canonical `0x` + 40 hex; unsupported throws                 |
-| `FEED_CHAINS=none`                             | pusher still exits 0                                        |
-| enabled chain, no `TD_KEY`                     | pusher exits 1                                              |
-| Testnet unit files                             | distinct log/status/metrics paths vs mainnet                |
-| Retired-pair lists                             | drift-checked against `DEFAULT_RETIRED_FEED_PAIRS`          |
+| Case                                               | Expected                                                     |
+| -------------------------------------------------- | ------------------------------------------------------------ |
+| `resolveFeedNetwork()` default                     | mainnet hash + magic + updater                               |
+| `FEED_NETWORK=testnet`                             | `9bea75cf…` / `894710606` / `e421999c…`                      |
+| `MORPHEUS_NETWORK=testnet` without `FEED_NETWORK`  | still mainnet (no silent retarget)                           |
+| RPC whose `getversion` magic mismatches            | rejected; zero matches → configuration error                 |
+| ABI manifest without `updateFeeds` on mainnet      | `resolveFeedWriteMode` refuses silent per-pair downgrade     |
+| Testnet ABI `updateFeed` only                      | `per_pair_update_feed` after magic-pinned selection          |
+| Mainnet batch mempool accept                       | `submitted`/`pending`; `ok` only after application-log HALT  |
+| Mainnet batch FAULT / timeout / rejection          | fail-closed; distinct status; unit exit 1                    |
+| Active pairs older than 6h                         | `active_stale` excludes retired; exit 1                      |
+| Writable ABI + funded updater + all active stale   | `live_writer_not_advancing`; not an ABI mismatch             |
+| `--skip-aws`                                       | `aws_inspection_skipped` live blocker; Hetzner is not probed |
+| `getAllFeedRecords` FAULT / empty / malformed      | `readable: false`; CLI/library exit 2                        |
+| Future timestamp vs header time                    | `clock_skew`; not ordinary stale; exit 2                     |
+| Monitor pair >120s ahead of header (s or ms)       | `ok=false`, `clock_skew=true`; exit 2                        |
+| `getAllFeedRecords` FAULT "key does not exist"     | not missing-method; no per-pair fallback                     |
+| Leftover `N3_FEED` / `FEED_MAGIC` mismatch         | fail closed; cannot silently retarget                        |
+| Neo X vs mainnet N3 pusher state files             | distinct `PUSH_*` / `MISSING_STATE`; exec pin wins           |
+| updater GAS above warn                             | `updater_gas_exhausted` in `ruled_out`                       |
+| AWS CLI exact “Unable to locate credentials”       | `credentials_absent` after default **and** `morpheus` retry  |
+| Default STS absent, documented `morpheus` ok       | `identity_ok` with `profile=morpheus`; no identity echo      |
+| Explicit `AWS_PROFILE` set                         | documented profile is not substituted                        |
+| AWS exact ExpiredToken / AccessDenied codes        | `credentials_expired_or_denied` (no stderr echo)             |
+| Bare ENOENT + empty stderr; TLS/connection expired | `aws_unreachable` (not credential denial)                    |
+| Mixed valid + undecodable registry rows            | `readable: false`; `undecodable`; decode counts; exit 2      |
+| Monitor FAULT / empty / malformed / partial        | exit 2, `ok=false`; no NEO-USD fallback upgrade              |
+| Pusher empty / malformed / partial HALT            | abort before plan/write; nonzero; not bootstrap              |
+| Leftover `FEED_NETWORK` in EnvironmentFile         | ignored; ExecStart `/usr/bin/env` pin wins                   |
+| Hash160 ByteString / Hash160 / hex LE              | canonical `0x` + 40 hex; unsupported throws                  |
+| `FEED_CHAINS=none`                                 | pusher still exits 0                                         |
+| enabled chain, no `TD_KEY`                         | pusher exits 1                                               |
+| Testnet unit files                                 | distinct log/status/metrics paths vs mainnet                 |
+| Retired-pair lists                                 | drift-checked against `DEFAULT_RETIRED_FEED_PAIRS`           |
 
 ## Implementation notes
 

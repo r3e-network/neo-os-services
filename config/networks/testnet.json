@@ -9,11 +9,7 @@
     "oracle_attestation_explorer_url": "",
     "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
     "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
-    "datafeed_providers": [
-      "TWELVEDATA",
-      "COINGECKO",
-      "COINPAPRIKA"
-    ],
+    "datafeed_providers": ["TWELVEDATA", "COINGECKO", "COINPAPRIKA"],
     "datafeed_attestation_explorer_url": ""
   },
   "neo_n3": {

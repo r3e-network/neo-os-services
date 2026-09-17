@@ -68,7 +68,7 @@ This guide documents the comprehensive Redis caching layer implementation design
 
 **Purpose**: Cache signer policy lookups - most frequent read in signing flow  
 **TTL**: 300 seconds (5 minutes)  
-**Expected Hit Rate**: >95%  
+**Expected Hit Rate**: >95%
 
 #### Usage Pattern
 
@@ -88,13 +88,13 @@ async fn sign_transaction_with_cache(
         Ok(None) | Err(_) => {
             // Fallback to database
             let policy = db_fetch_policy(key_id).await?;
-            
+
             // Store in cache for future calls
             if let Some(p) = &policy {
                 let json = serde_json::to_string(p)?;
                 cache_manager.policy.set_policy(key_id, &json, None).await?;
             }
-            
+
             policy.unwrap_or_default()
         }
     }
@@ -120,7 +120,7 @@ cache_manager.policy.invalidate_batch(&key_ids).await?;
 
 **Purpose**: Cache expensive cryptographic derivations  
 **TTL**: 3600 seconds (1 hour)  
-**Expected Hit Rate**: >90%  
+**Expected Hit Rate**: >90%
 
 #### Usage Pattern
 
@@ -141,7 +141,7 @@ async fn get_public_key(cache: &PublicKeyCache, chain: ChainFamily, seed: &[u8])
 
 **Purpose**: Cache computed addresses from public key hashes  
 **TTL**: 3600 seconds (1 hour)  
-**Expected Hit Rate**: >95%  
+**Expected Hit Rate**: >95%
 
 #### Usage Pattern
 
@@ -165,7 +165,7 @@ async fn get_display_address(
 
 **Purpose**: Cache expensive blockchain RPC queries  
 **TTL**: 300 seconds (5 minutes) - configurable per query  
-**Expected Hit Rate**: >80%  
+**Expected Hit Rate**: >80%
 
 #### Usage Pattern
 
@@ -178,7 +178,7 @@ async fn get_block_height(cache: &QueryCache) -> Result<u32> {
         let block_height = rpc_client.get_latest_block().await?;
         Ok(serde_json::to_string(&block_height)?)
     }).await?;
-    
+
     let query_result: BlockHeightResponse = serde_json::from_str(&result_json)?;
     Ok(query_result.height)
 }
@@ -208,14 +208,14 @@ use redis_cache::{CacheManager, create_cache_manager_from_env};
 async fn main() -> anyhow::Result<()> {
     // Initialize cache manager from environment variables
     let cache_manager = create_cache_manager_from_env().await?;
-    
+
     // Optionally run background metrics tracker
     tokio::spawn(async move {
         redis_cache::metrics::run_hit_rate_tracker().await;
     });
-    
+
     // Use cache_manager throughout your application...
-    
+
     Ok(())
 }
 ```
@@ -256,7 +256,7 @@ pub async fn sign_transaction(...) -> Result<SignResponse> {
 pub async fn sign_transaction_with_cache(...) -> Result<SignResponse> {
     // Try cache first
     let cached_policy = self.cache_manager.policy.get_policy(key_id).await?;
-    
+
     let policy = match cached_policy {
         Some(cached) => {
             serde_json::from_str(cached.to_json())?
@@ -264,17 +264,17 @@ pub async fn sign_transaction_with_cache(...) -> Result<SignResponse> {
         None => {
             // Load from DB
             let policy = self.repository.signer_policy_or_default(key_id)?;
-            
+
             // Cache it
             if let Some(p) = &policy {
                 let json = serde_json::to_string(p)?;
                 self.cache_manager.policy.set_policy(key_id, &json, None).await?;
             }
-            
+
             policy
         }
     };
-    
+
     // Continue with normal signing logic...
 }
 ```
@@ -292,10 +292,10 @@ pub async fn save_policy_with_invalidation(
 ) -> Result<Outcome<SignerPolicy>> {
     // Save to database
     let stored_policy = self.repository.save_signer_policy(id, policy, now_unix()?)?;
-    
+
     // Invalidate cache so next request fetches fresh data
     self.cache_manager.policy.invalidate_policy(id).await.ok();
-    
+
     Ok(Outcome::Allowed(stored_policy))
 }
 ```
@@ -331,6 +331,7 @@ redis_evicted_keys_total{type="policy"} 150
 Dashboard JSON template located at: `infrastructure/redis/grafana/neoos-cache-dashboard.json`
 
 **Key Panels:**
+
 1. Cache Hit Rate Over Time (by type)
 2. Average Latency (GET operations)
 3. Memory Usage Trends
@@ -352,8 +353,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Redis cache hit rate dropped below 80%"
-          
+          summary: 'Redis cache hit rate dropped below 80%'
+
       # High eviction rate
       - alert: HighEvictionRate
         expr: rate(redis_evicted_keys_total[5m]) > 10
@@ -361,8 +362,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "High cache eviction rate detected"
-          
+          summary: 'High cache eviction rate detected'
+
       # Redis connection failures
       - alert: RedisConnectionFailure
         expr: up{job="redis-exporter"} == 0
@@ -370,7 +371,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Redis node is unreachable"
+          summary: 'Redis node is unreachable'
 ```
 
 ---
@@ -379,21 +380,23 @@ groups:
 
 ### 1. TTL Selection Guidelines
 
-| Data Type | Recommended TTL | Rationale |
-|-----------|----------------|-----------|
-| Policies | 300s (5min) | Change infrequently but need reasonable freshness |
-| Public Keys | 3600s (1hr) | Static once derived, never changes |
-| Addresses | 3600s (1hr) | Permanent mapping, extremely stable |
-| Blockchain Queries | 300s (5min) | Dynamic data, may change frequently |
+| Data Type          | Recommended TTL | Rationale                                         |
+| ------------------ | --------------- | ------------------------------------------------- |
+| Policies           | 300s (5min)     | Change infrequently but need reasonable freshness |
+| Public Keys        | 3600s (1hr)     | Static once derived, never changes                |
+| Addresses          | 3600s (1hr)     | Permanent mapping, extremely stable               |
+| Blockchain Queries | 300s (5min)     | Dynamic data, may change frequently               |
 
 ### 2. Cache Invalidation Strategy
 
 **Options:**
+
 - ✅ **Time-based (Default)**: Rely on TTL expiration
 - ⚠️ **Manual**: Invalidate on write operations
 - ❌ **Notification-based**: Requires pub/sub infrastructure
 
 **Recommendation**: Hybrid approach for NeoOS:
+
 - Default to time-based TTLs
 - Add manual invalidation on explicit writes (policy updates)
 
@@ -434,24 +437,24 @@ match cache_manager.policy.get_policy(key_id).await {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_cache_with_fallback() {
         // Setup cache with test Redis instance
         let cache_manager = create_test_cache_manager().await;
-        
+
         // First call - cache miss
         let result1 = sign_transaction_with_cache(...).await;
         assert!(result1.is_ok());
-        
+
         // Second call - cache hit
         let result2 = sign_transaction_with_cache(...).await;
         assert!(result2.is_ok());
-        
+
         // Verify same result
         assert_eq!(result1, result2);
     }
-    
+
     #[tokio::test]
     #[ignore] // Requires Redis
     async fn test_cache_performance_under_load() {
@@ -461,12 +464,12 @@ mod tests {
                 let _ = cache_manager.policy.get_policy(&format!("key-{}", i % 10)).await;
             }))
             .collect();
-        
+
         let start = Instant::now();
         for handle in handles {
             handle.await.unwrap();
         }
-        
+
         println!("Total time: {:?}", start.elapsed());
         // Should complete under 2 seconds for good performance
     }
@@ -488,23 +491,23 @@ mod tests {
 ```rust
 pub async fn get_policy_with_lock(&self, key_id: &str) -> Result<Option<CachedPolicy>> {
     let lock_key = format!("lock:policy:{}", key_id);
-    
+
     // Try to acquire lock
     if self.redis.set_if_not_exists(&lock_key, "locked", Some(10)).await? {
         // We got the lock, try to fetch from cache
         if let Some(cached) = self.get_policy(key_id).await? {
             return Ok(Some(cached));
         }
-        
+
         // Cache miss, fetch from database
         let policy = self.load_from_database(key_id).await?;
-        
+
         // Populate cache
         if let Some(p) = &policy {
             let json = serde_json::to_string(p)?;
             self.set_policy(key_id, &json, None).await?;
         }
-        
+
         // Release lock
         self.redis.delete(&lock_key).await?;
     } else {
@@ -512,7 +515,7 @@ pub async fn get_policy_with_lock(&self, key_id: &str) -> Result<Option<CachedPo
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         return self.get_policy(key_id).await;
     }
-    
+
     Ok(policy)
 }
 ```
@@ -522,6 +525,7 @@ pub async fn get_policy_with_lock(&self, key_id: &str) -> Result<Option<CachedPo
 **Symptom**: High memory usage, frequent evictions
 
 **Solutions**:
+
 1. Reduce pool sizes or max entries
 2. Shorten TTLs for volatile caches
 3. Enable Redis LRU eviction policy:
@@ -533,7 +537,8 @@ pub async fn get_policy_with_lock(&self, key_id: &str) -> Result<Option<CachedPo
 
 **Symptom**: Cached values don't reflect latest DB state
 
-**Solution**: 
+**Solution**:
+
 - Ensure manual invalidation on writes
 - Verify TTL isn't too long
 - Consider versioned cache keys: `policy:{key_id}:{version}`
@@ -543,6 +548,7 @@ pub async fn get_policy_with_lock(&self, key_id: &str) -> Result<Option<CachedPo
 **Symptom**: GET operations taking >10ms
 
 **Diagnostics**:
+
 ```bash
 # Check Redis performance
 redis-cli --latency --interval 1
@@ -555,6 +561,7 @@ redis-cli CLIENT LIST
 ```
 
 **Optimization**:
+
 - Increase connection pool size
 - Ensure proper indexing
 - Consider local L1 cache (dashmap) for hottest keys
@@ -574,12 +581,15 @@ redis-cli CLIENT LIST
 ## Contact & Support
 
 For issues or questions:
+
 - GitHub Issue: Create issue with `[redis-cache]` prefix
 - Slack Channel: `#neoos-cache-support`
 - Emergency: Page SRE team with `CRITICAL-REDIS` severity
 
 ---
 
-*Document Version: 1.0*  
-*Last Updated: September 6, 2026*  
-*Author: NeoOS Infrastructure Team*
+_Document Version: 1.0_
+
+_Last Updated: September 6, 2026_
+
+_Author: NeoOS Infrastructure Team_

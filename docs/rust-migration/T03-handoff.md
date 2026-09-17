@@ -42,15 +42,15 @@
 
 ### 2.2 `neo-os-chain-n3` crate（~1.9k 行 + 41 测试全绿）
 
-| 模块             | 内容                                                                                                                                                                                                | 测试                   |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| `rpc.rs`         | 注入 transport、URL failover + known-good promotion、JS 错误串逐字对齐、7 个类型化方法                                                                                                              | 绿                     |
-| `scan.rs`        | 栈项解码（hex/base64/auto）、kernel/legacy 通知形态、≥14/≥12 记录形态（settled 过滤：14-field 门在 index 10/12/13，12-field 门在 index 8/10/11）、4 个扫描入口                                        | 绿                     |
-| `tx.rs`          | 注入 NonceSource（CSPRNG）/Waiter、两段签名（费前/费后）、20% headroom、custody key-swap 检测（hash160 需 **reverse 成 LE display** 再比对）、confirm 轮询四态                                       | 集成于 tx_broadcast.rs |
-| `custody.rs`     | key 身份/sign-raw/sign-transaction；2xx 但 `allowed:false` 也是拒绝                                                                                                                                  | 绿                     |
-| `ssrf.rs`        | http/https 强制 + resolve-then-classify + 十进制/十六进制/八进制 IPv4 绕过检测；resolver 注入（测试离线）                                                                                            | 绿                     |
-| `concurrency.rs` | `mapWithConcurrency`：输入序保持、fail-fast、跳过排队项                                                                                                                                             | 绿                     |
-| `tests/tx_broadcast.rs` | 广播 happy path、FAULT 塑形、key-swap、confirm 四态                                                                                                                                           | 9/9 绿                 |
+| 模块                    | 内容                                                                                                                                                           | 测试                   |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `rpc.rs`                | 注入 transport、URL failover + known-good promotion、JS 错误串逐字对齐、7 个类型化方法                                                                         | 绿                     |
+| `scan.rs`               | 栈项解码（hex/base64/auto）、kernel/legacy 通知形态、≥14/≥12 记录形态（settled 过滤：14-field 门在 index 10/12/13，12-field 门在 index 8/10/11）、4 个扫描入口 | 绿                     |
+| `tx.rs`                 | 注入 NonceSource（CSPRNG）/Waiter、两段签名（费前/费后）、20% headroom、custody key-swap 检测（hash160 需 **reverse 成 LE display** 再比对）、confirm 轮询四态 | 集成于 tx_broadcast.rs |
+| `custody.rs`            | key 身份/sign-raw/sign-transaction；2xx 但 `allowed:false` 也是拒绝                                                                                            | 绿                     |
+| `ssrf.rs`               | http/https 强制 + resolve-then-classify + 十进制/十六进制/八进制 IPv4 绕过检测；resolver 注入（测试离线）                                                      | 绿                     |
+| `concurrency.rs`        | `mapWithConcurrency`：输入序保持、fail-fast、跳过排队项                                                                                                        | 绿                     |
+| `tests/tx_broadcast.rs` | 广播 happy path、FAULT 塑形、key-swap、confirm 四态                                                                                                            | 9/9 绿                 |
 
 注意：`HttpTransport` trait 与 `&T` blanket impl 定义在 chain-n3、chain-evm、relayer-store **各自**的 lib.rs（三个 crate 未互相依赖）。
 

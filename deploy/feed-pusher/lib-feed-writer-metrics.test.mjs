@@ -59,7 +59,9 @@ function metricValue(text, name, labels = {}) {
     .map(([key, value]) => `${key}="${value}"`)
     .join(',');
   const suffix = labelBody ? `{${labelBody}}` : '';
-  const match = text.match(new RegExp(`^${name}${suffix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} (.+)$`, 'm'));
+  const match = text.match(
+    new RegExp(`^${name}${suffix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} (.+)$`, 'm')
+  );
   return match ? match[1] : null;
 }
 
@@ -91,11 +93,26 @@ test('metric name and label vocabulary stays low cardinality', () => {
     'faulted',
     'failed',
   ]);
-  assert.equal(FEED_WRITER_METRIC_NAMES.last_attempt, 'neoos_feed_writer_last_attempt_timestamp_seconds');
-  assert.equal(FEED_WRITER_METRIC_NAMES.last_submitted, 'neoos_feed_writer_last_submitted_timestamp_seconds');
-  assert.equal(FEED_WRITER_METRIC_NAMES.last_confirmed, 'neoos_feed_writer_last_confirmed_timestamp_seconds');
-  assert.equal(FEED_WRITER_METRIC_NAMES.last_submitted_height, 'neoos_feed_writer_last_submitted_height');
-  assert.equal(FEED_WRITER_METRIC_NAMES.last_confirmed_height, 'neoos_feed_writer_last_confirmed_height');
+  assert.equal(
+    FEED_WRITER_METRIC_NAMES.last_attempt,
+    'neoos_feed_writer_last_attempt_timestamp_seconds'
+  );
+  assert.equal(
+    FEED_WRITER_METRIC_NAMES.last_submitted,
+    'neoos_feed_writer_last_submitted_timestamp_seconds'
+  );
+  assert.equal(
+    FEED_WRITER_METRIC_NAMES.last_confirmed,
+    'neoos_feed_writer_last_confirmed_timestamp_seconds'
+  );
+  assert.equal(
+    FEED_WRITER_METRIC_NAMES.last_submitted_height,
+    'neoos_feed_writer_last_submitted_height'
+  );
+  assert.equal(
+    FEED_WRITER_METRIC_NAMES.last_confirmed_height,
+    'neoos_feed_writer_last_confirmed_height'
+  );
   assert.equal(FEED_WRITER_METRIC_NAMES.confirmation_state, 'neoos_feed_writer_confirmation_state');
   assert.equal(FEED_WRITER_METRIC_NAMES.pairs, 'neoos_feed_writer_pairs');
   assert.equal(FEED_WRITER_METRIC_NAMES.source_pairs, 'neoos_feed_writer_source_pairs');
@@ -235,7 +252,10 @@ test('batch pending plus sidecar is unconfirmed, not skipped, and does not incre
     metricValue(text, FEED_WRITER_METRIC_NAMES.outstanding_replay, { network: 'mainnet' }),
     '1'
   );
-  assert.equal(metricValue(text, FEED_WRITER_METRIC_NAMES.failed_cycles, { network: 'mainnet' }), '3');
+  assert.equal(
+    metricValue(text, FEED_WRITER_METRIC_NAMES.failed_cycles, { network: 'mainnet' }),
+    '3'
+  );
   assert.doesNotMatch(text, LEAK_RE);
 });
 
@@ -263,7 +283,11 @@ test('batch FAULT increments failed cycles once and stays fault after restart', 
 
     const replay = loadWriterMetricsFromDisk({ statusPath, sidecarPath, metricsPath });
     assert.equal(replay.snapshot.confirmation_state, 'fault');
-    assert.equal(replay.snapshot.failed_cycles_total, 1, 'restart must not double-count the same cycle');
+    assert.equal(
+      replay.snapshot.failed_cycles_total,
+      1,
+      'restart must not double-count the same cycle'
+    );
     const text = renderFeedWriterPrometheus(replay.snapshot);
     assert.equal(
       metricValue(text, FEED_WRITER_METRIC_NAMES.confirmation_state, {
@@ -488,7 +512,10 @@ test('later skipped cycle keeps last confirmed times and does not look like FAUL
   assert.equal(skipped.confirmation_state, 'skipped');
   assert.equal(skipped.last_confirmed_unix, confirmed.last_confirmed_unix);
   assert.equal(skipped.last_submitted_unix, confirmed.last_submitted_unix);
-  assert.equal(skipped.last_confirmation_latency_seconds, confirmed.last_confirmation_latency_seconds);
+  assert.equal(
+    skipped.last_confirmation_latency_seconds,
+    confirmed.last_confirmation_latency_seconds
+  );
   assert.equal(skipped.failed_cycles_total, 0);
   const text = renderFeedWriterPrometheus(skipped);
   assert.equal(
@@ -516,7 +543,9 @@ test('later skipped cycle keeps last confirmed times and does not look like FAUL
 
 test('unknown network or missing confirmation emits no high-cardinality or 1970 gauges', () => {
   const empty = renderFeedWriterPrometheus(
-    advanceWriterMetrics({ status: { ts: 'nope', network: 'neox', confirmation_status: 'confirmed' } })
+    advanceWriterMetrics({
+      status: { ts: 'nope', network: 'neox', confirmation_status: 'confirmed' },
+    })
   );
   assert.equal(empty, '');
   const envOnly = renderFeedWriterPrometheus(
@@ -569,7 +598,10 @@ test('textfile write is atomic and omitted when the path is empty', () => {
     writeFeedWriterPrometheusTextfile('', snapshot);
     assert.equal(existsSync(promPath), false);
     writeFeedWriterPrometheusTextfile(promPath, snapshot);
-    assert.match(readFileSync(promPath, 'utf8'), /# TYPE neoos_feed_writer_confirmation_state gauge/);
+    assert.match(
+      readFileSync(promPath, 'utf8'),
+      /# TYPE neoos_feed_writer_confirmation_state gauge/
+    );
     assert.equal(existsSync(`${promPath}.tmp`), false);
   } finally {
     rmSync(tmp, { recursive: true, force: true });

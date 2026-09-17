@@ -17,7 +17,7 @@ export class RoutingEngineService {
     this.pathfinding = new PathfindingEngine();
     this.mevScanner = new MEVRiskScanner();
     this.poolProvider = config.poolProvider;
-    
+
     if (config.redisUrl) {
       this.redis = this.createRedisClient(config.redisUrl);
       this.connectRedis();
@@ -26,10 +26,10 @@ export class RoutingEngineService {
 
   private async connectRedis(): Promise<void> {
     if (!this.redis) return;
-    
+
     this.redis.on('connect', () => console.log('Redis connected'));
     this.redis.on('error', (err) => console.error('Redis error:', err));
-    
+
     try {
       await this.redis.connect();
       console.log('Routing Engine: Redis connection established');
@@ -44,11 +44,11 @@ export class RoutingEngineService {
   async calculateRoutes(request: RouteRequest): Promise<RouteResponse> {
     const startTime = Date.now();
     const requestId = uuidv4();
-    
+
     try {
       // Validate request
       const validated = RouteRequestSchema.parse(request);
-      
+
       // Check cache first
       const cacheKey = `route:${validated.tokenIn}:${validated.tokenOut}:${validated.amount}`;
       const cached = await this.getCachedRoute(cacheKey);
@@ -59,10 +59,10 @@ export class RoutingEngineService {
       // Find best routes using pathfinding
       const routes = await this.findOptimalRoutes(validated);
       if (routes.length === 0) throw new Error('No viable swap route');
-      
+
       // MEV scanning
       const mevResult = await this.mevScanner.scanRoute(routes[0]);
-      
+
       const response: RouteResponse = RouteResponseSchema.parse({
         requestId,
         timestamp: Date.now(),
@@ -74,14 +74,16 @@ export class RoutingEngineService {
 
       // Cache the result
       await this.cacheRoute(cacheKey, response);
-      
+
       // Record metrics
       const duration = (Date.now() - startTime) / 1000;
-      requestCounter.inc({ status: 'success', token_pair: `${validated.tokenIn}/${validated.tokenOut}` });
+      requestCounter.inc({
+        status: 'success',
+        token_pair: `${validated.tokenIn}/${validated.tokenOut}`,
+      });
       latencyHistogram.observe({ step: 'routing' }, duration);
 
       return response;
-
     } catch (error) {
       console.error('Routing calculation failed:', error);
       requestCounter.inc({ status: 'error', token_pair: `${request.tokenIn}/${request.tokenOut}` });
@@ -92,10 +94,10 @@ export class RoutingEngineService {
   private async findOptimalRoutes(request: RouteRequest): Promise<SwapRoute[]> {
     // Get pool information
     const pools = await this.getPoolData();
-    
+
     // Build graph
     this.pathfinding.setPools(pools);
-    
+
     // Find all possible routes
     const rawRoutes = this.pathfinding.findBestRoutes(
       request.tokenIn,
@@ -103,13 +105,13 @@ export class RoutingEngineService {
       request.amount,
       request.maxHops
     );
-    
+
     // Filter by excluded/include pools
-    return rawRoutes.filter(route => {
-      if (request.excludePools?.some(id => route.poolPath.includes(id))) {
+    return rawRoutes.filter((route) => {
+      if (request.excludePools?.some((id) => route.poolPath.includes(id))) {
         return false;
       }
-      if (request.includePools && !request.includePools.some(id => route.poolPath.includes(id))) {
+      if (request.includePools && !request.includePools.some((id) => route.poolPath.includes(id))) {
         return false;
       }
       return true;
@@ -130,13 +132,13 @@ export class RoutingEngineService {
     const total = routes.reduce((sum, route) => {
       return sum.plus(new BigNumber(route.outAmount));
     }, new BigNumber(0));
-    
+
     return total.toFixed(8);
   }
 
   private async getCachedRoute(key: string): Promise<RouteResponse | null> {
     if (!this.redis) return null;
-    
+
     try {
       const cached = await this.redis.get(key);
       if (cached) {
@@ -145,13 +147,13 @@ export class RoutingEngineService {
     } catch (error) {
       console.error('Cache read failed:', error);
     }
-    
+
     return null;
   }
 
   private async cacheRoute(key: string, route: RouteResponse): Promise<void> {
     if (!this.redis) return;
-    
+
     try {
       await this.redis.setEx(key, CACHE_TTL.ROUTES, JSON.stringify(route));
     } catch (error) {
@@ -168,7 +170,7 @@ export class RoutingEngineService {
     timestamp: number;
   }> {
     const components: Record<string, 'ok' | 'error'> = {};
-    
+
     // Check Redis
     try {
       if (this.redis) {
@@ -180,10 +182,10 @@ export class RoutingEngineService {
     } catch {
       components.redis = 'error';
     }
-    
+
     // Overall status
-    const unhealthy = Object.values(components).filter(v => v === 'error').length;
-    
+    const unhealthy = Object.values(components).filter((v) => v === 'error').length;
+
     return {
       status: unhealthy === 0 ? 'healthy' : unhealthy > 1 ? 'unhealthy' : 'degraded',
       components,

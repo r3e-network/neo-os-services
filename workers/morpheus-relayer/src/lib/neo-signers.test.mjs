@@ -545,7 +545,7 @@ describe('custody migration boundary', () => {
       process.env.MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET = ACCOUNT_A.WIF;
       assert.throws(
         () => resolvePinnedNeoN3Role('testnet', 'relayer'),
-        (err) => err.message.includes('no usable relayer signer configured'),
+        (err) => err.message.includes('no usable relayer signer configured')
       );
     });
   });

@@ -583,9 +583,11 @@ export function classifyFeedTransportError(error) {
 
 export function isRetryablePerPairError(error) {
   const message = String(error instanceof Error ? error.message : error || '');
-  if (/invokescript fault|message mismatch|abi not proven|identity|refusing silent|wrong_arity|ambiguous abi|wrong-arity/i.test(
+  if (
+    /invokescript fault|message mismatch|abi not proven|identity|refusing silent|wrong_arity|ambiguous abi|wrong-arity/i.test(
       message
-    )) {
+    )
+  ) {
     return false;
   }
   return classifyFeedTransportError(error) != null;
@@ -763,7 +765,10 @@ export function markFeedWriteSubmitted(report, { pairs = [], identity, attempt =
   return report;
 }
 
-export function applyWriteConfirmation(report, { pairs = [], confirmation = {}, identity, attempt = 1 } = {}) {
+export function applyWriteConfirmation(
+  report,
+  { pairs = [], confirmation = {}, identity, attempt = 1 } = {}
+) {
   if (!report || typeof report !== 'object') {
     throw new Error('feed write report is required');
   }
@@ -820,7 +825,11 @@ export function finalizeFeedWrite(report) {
   const pending = [...new Set(report.pending || [])];
   const failed = [...new Set(report.failed || [])];
   const unresolved = planned.filter(
-    (pair) => !confirmed.has(pair) && !skipped.has(pair) && !pending.includes(pair) && !failed.includes(pair)
+    (pair) =>
+      !confirmed.has(pair) &&
+      !skipped.has(pair) &&
+      !pending.includes(pair) &&
+      !failed.includes(pair)
   );
   for (const pair of unresolved) failed.push(pair);
   report.pending = pending.filter((pair) => !confirmed.has(pair) && !failed.includes(pair));
@@ -873,9 +882,7 @@ export function assertContractIdentity(state, expectedFeed) {
   const got = normalizeHash160(state?.hash || state?.id || state?.scripthash);
   if (!expected) throw new Error('expected contract identity is not a Hash160');
   if (!got || got !== expected) {
-    throw new Error(
-      `contract identity not proven: got 0x${got || '?'} expected 0x${expected}`
-    );
+    throw new Error(`contract identity not proven: got 0x${got || '?'} expected 0x${expected}`);
   }
   return got;
 }
@@ -885,9 +892,7 @@ export function assertUpdaterIdentity(stackItem, expectedUpdater) {
   if (!expected) throw new Error('expected updater identity is not a Hash160');
   const got = normalizeHash160(decodeNeoHash160(stackItem));
   if (!got || got !== expected) {
-    throw new Error(
-      `updater identity not proven: got 0x${got || '?'} expected 0x${expected}`
-    );
+    throw new Error(`updater identity not proven: got 0x${got || '?'} expected 0x${expected}`);
   }
   return got;
 }
@@ -1405,9 +1410,17 @@ export function finalizePusherCycle({
     errors.push({
       code: 'twelvedata_fetch_failed',
       summary: String(fetchError instanceof Error ? fetchError.message : fetchError),
-      ...(['daily_quota_exhausted', 'minute_rate_limited', 'rate_limited', 'subscription_expired',
-        'provider_unauthorized', 'provider_error', 'no_usable_prices'].includes(fetchError.providerCategory)
-        ? { provider_category: fetchError.providerCategory } : {}),
+      ...([
+        'daily_quota_exhausted',
+        'minute_rate_limited',
+        'rate_limited',
+        'subscription_expired',
+        'provider_unauthorized',
+        'provider_error',
+        'no_usable_prices',
+      ].includes(fetchError.providerCategory)
+        ? { provider_category: fetchError.providerCategory }
+        : {}),
     });
   }
   for (const error of chainErrors || []) {

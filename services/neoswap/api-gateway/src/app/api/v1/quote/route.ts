@@ -9,15 +9,15 @@ import { requestCounter, latencyHistogram } from '@/utils/metrics';
  */
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
-  
+
   try {
     const url = new URL(request.url);
-    
+
     // Extract query parameters
     const tokenIn = url.searchParams.get('tokenIn');
     const tokenOut = url.searchParams.get('tokenOut');
     const amount = url.searchParams.get('amount');
-    
+
     if (!tokenIn || !tokenOut || !amount) {
       return NextResponse.json(
         { error: 'Missing required parameters: tokenIn, tokenOut, amount' },
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
 
     // Generate cache key
     const cacheKey = cacheKeyFromRequest(tokenIn, tokenOut, amount);
-    
+
     // Try to get from cache first (TTL: 10 seconds)
     let cachedQuote = await getCached(cacheKey);
     if (cachedQuote) {
@@ -53,18 +53,14 @@ export async function GET(request: NextRequest) {
       timestamp: Date.now(),
       cached: false,
     });
-
   } catch (error) {
     console.error('Quote calculation failed:', error);
-    
+
     const duration = (Date.now() - startTime) / 1000;
     requestCounter.inc({ method: 'GET', endpoint: '/api/v1/quote', status_code: 500 });
     latencyHistogram.observe(duration, '/api/v1/quote');
 
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
@@ -75,7 +71,7 @@ async function calculateQuote(params: {
 }): Promise<any> {
   // In production, this would call the routing engine service
   // For now, return mock response
-  
+
   return {
     tokenIn: params.tokenIn,
     tokenOut: params.tokenOut,

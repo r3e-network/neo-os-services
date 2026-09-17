@@ -1,17 +1,18 @@
 # NeoSwap v2 Performance Benchmarking Suite
+
 ## Route Calculation, Order Matching & WebSocket Stress Tests
 
 This directory contains comprehensive performance benchmarking tools for validating NeoSwap v2 meets all performance targets.
 
 ### Benchmarks Overview
 
-| Metric | Target | Actual Result | Status |
-|--------|--------|---------------|--------|
-| Route Calculation Latency (P99) | < 5ms | TBD | Pending |
-| Order Matching Throughput | ≥ 1000/sec | TBD | Pending |
-| WebSocket Connections | ≥ 10,000 concurrent | TBD | Pending |
-| API QPS | ≥ 5000 | TBD | Pending |
-| Gas Cost per Swap | < 8M units | TBD | Pending |
+| Metric                          | Target              | Actual Result | Status  |
+| ------------------------------- | ------------------- | ------------- | ------- |
+| Route Calculation Latency (P99) | < 5ms               | TBD           | Pending |
+| Order Matching Throughput       | ≥ 1000/sec          | TBD           | Pending |
+| WebSocket Connections           | ≥ 10,000 concurrent | TBD           | Pending |
+| API QPS                         | ≥ 5000              | TBD           | Pending |
+| Gas Cost per Swap               | < 8M units          | TBD           | Pending |
 
 ### Quick Start
 
@@ -34,6 +35,7 @@ npm run benchmark:report -- --output report.pdf
 ## 1. Route Calculation Benchmark
 
 ### Objective
+
 Validate optimal route discovery completes within P99 < 5ms target.
 
 ### Test Configuration (`benchmark-config/route-calculation.json`)
@@ -75,7 +77,7 @@ Validate optimal route discovery completes within P99 < 5ms target.
 ```javascript
 /**
  * Route Calculation Performance Benchmark
- * 
+ *
  * Targets: P99 < 5ms, Throughput > 1000 QPS
  */
 
@@ -90,85 +92,84 @@ class RouteCalculationBenchmark {
     this.parallel = new Parallel();
     this.rateLimiter = new RateLimiter({
       tokensPerInterval: config.targetQPS,
-      interval: 'second'
+      interval: 'second',
     });
-    
+
     this.observedMetrics = new Map();
     this.setupPerformanceObserver();
   }
-  
+
   setupPerformanceObserver() {
     const obs = new PerformanceObserver((items) => {
-      items.getEntries().forEach(entry => {
+      items.getEntries().forEach((entry) => {
         if (!this.observedMetrics.has(entry.name)) {
           this.observedMetrics.set(entry.name, []);
         }
         this.observedMetrics.get(entry.name).push(entry.duration);
       });
     });
-    
+
     obs.observe({ entryTypes: ['measure'] });
   }
-  
+
   async executeTest(testCase) {
     return this.calculateOptimalRoute({
       fromToken: testCase.fromToken,
       toToken: testCase.toToken,
       amountIn: testCase.amountIn,
-      maxHops: testCase.maxHops || 3
+      maxHops: testCase.maxHops || 3,
     });
   }
-  
+
   async calculateOptimalRoute(params) {
     const startTime = performance.now();
-    
+
     // Execute route calculation against deployed contracts
     const route = await window.neoSDK.callContract(
       'NeoSwapRouter',
       'calculateOptimalRoute',
       params
     );
-    
+
     const endTime = performance.now();
     const latency = endTime - startTime;
-    
+
     this.recordResult(params.testName, latency, route);
-    
+
     return {
       route,
       latencyMs: latency,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
   }
-  
+
   recordResult(testName, latency, route) {
     const result = {
       testName,
       latencyMs: latency,
-      throughputQPS: 1000 / latency * 1000, // Calculate implied QPS
+      throughputQPS: (1000 / latency) * 1000, // Calculate implied QPS
       routeHops: route.hops?.length || 0,
       totalOutput: route.totalOutput || 0,
-      feesBps: route.totalFeesBps || 0
+      feesBps: route.totalFeesBps || 0,
     };
-    
+
     this.results.push(result);
   }
-  
+
   async run() {
     console.log('🚀 Starting Route Calculation Benchmark...');
     console.log(`📊 Duration: ${this.config.duration}s, Concurrency: ${this.config.concurrency}`);
-    
+
     const startTime = Date.now();
-    
+
     // Generate test workload
     while (Date.now() - startTime < this.config.duration * 1000) {
-      const randomTest = this.config.testCases[
-        Math.floor(Math.random() * this.config.testCases.length)
-      ];
-      
+      const randomTest =
+        this.config.testCases[Math.floor(Math.random() * this.config.testCases.length)];
+
       const limiterKey = `bench-${Date.now()}-${Math.random()}`;
       const token = await this.rateLimiter.removeTokens(1, limiterKey);
-      
+
       if (token) {
         try {
           await this.executeTest(randomTest);
@@ -177,37 +178,37 @@ class RouteCalculationBenchmark {
         }
       }
     }
-    
+
     return this.analyzeResults();
   }
-  
+
   analyzeResults() {
     const latencies = Array.from(this.observedMetrics.values()).flat();
-    
+
     // Calculate statistics
     const sorted = [...latencies].sort((a, b) => a - b);
     const p50 = sorted[Math.floor(sorted.length * 0.5)];
     const p90 = sorted[Math.floor(sorted.length * 0.9)];
     const p99 = sorted[Math.floor(sorted.length * 0.99)];
     const avg = latencies.reduce((sum, val) => sum + val, 0) / latencies.length;
-    
+
     return {
       summary: {
         totalRequests: latencies.length,
         durationSeconds: this.config.duration,
-        achievedQPS: latencies.length / this.config.duration
+        achievedQPS: latencies.length / this.config.duration,
       },
       latencies: {
         p50Ms: parseFloat(p50.toFixed(3)),
         p90Ms: parseFloat(p90.toFixed(3)),
         p99Ms: parseFloat(p99.toFixed(3)),
-        avgMs: parseFloat(avg.toFixed(3))
+        avgMs: parseFloat(avg.toFixed(3)),
       },
       compliance: {
         p99TargetMet: p99 < 5,
-        throughputTargetMet: (latencies.length / this.config.duration) >= 1000,
-        status: p99 < 5 ? 'PASS' : 'FAIL'
-      }
+        throughputTargetMet: latencies.length / this.config.duration >= 1000,
+        status: p99 < 5 ? 'PASS' : 'FAIL',
+      },
     };
   }
 }
@@ -220,24 +221,31 @@ if (process.argv.includes('--route-benchmark')) {
     targetQPS: 10000,
     testCases: [
       { testName: 'single-hop', fromToken: 'GAS', toToken: 'NEO', amountIn: '1000' },
-      { testName: 'two-hop', fromToken: 'GAS', toToken: 'GAS', amountIn: '5000', intermediateToken: 'NEO' },
-      { testName: 'three-hop', fromToken: 'NEO', toToken: 'NEO', amountIn: '10000', maxHops: 3 }
-    ]
+      {
+        testName: 'two-hop',
+        fromToken: 'GAS',
+        toToken: 'GAS',
+        amountIn: '5000',
+        intermediateToken: 'NEO',
+      },
+      { testName: 'three-hop', fromToken: 'NEO', toToken: 'NEO', amountIn: '10000', maxHops: 3 },
+    ],
   });
-  
-  benchmark.run()
-    .then(results => {
+
+  benchmark
+    .run()
+    .then((results) => {
       console.log('\n📈 Route Calculation Results:');
       console.table(results.summary);
       console.table(results.latencies);
       console.table(results.compliance);
-      
+
       // Write results to file
       import('fs/promises').then(({ writeFile }) => {
         writeFile('results/route-calculation.json', JSON.stringify(results, null, 2));
       });
     })
-    .catch(err => {
+    .catch((err) => {
       console.error('Benchmark failed:', err);
       process.exit(1);
     });
@@ -281,6 +289,7 @@ export default RouteCalculationBenchmark;
 ## 2. Order Matching Throughput Benchmark
 
 ### Objective
+
 Validate order matching engine processes ≥ 1000 orders per second.
 
 ### Test Configuration
@@ -301,7 +310,7 @@ Validate order matching engine processes ≥ 1000 orders per second.
 ```javascript
 /**
  * Order Matching Engine Throughput Benchmark
- * 
+ *
  * Targets: ≥ 1000 orders/sec matching rate
  */
 
@@ -315,20 +324,20 @@ class OrderMatchingBenchmark {
     this.matchedOrders = 0;
     this.wsClient = null;
   }
-  
+
   async initialize() {
     console.log('🔌 Connecting to mock blockchain...');
     this.wsClient = new WebSocket('ws://localhost:10333');
-    
+
     await new Promise((resolve, reject) => {
       this.wsClient.on('open', resolve);
       this.wsClient.on('error', reject);
       setTimeout(() => reject(new Error('Connection timeout')), 10000);
     });
-    
+
     console.log('✅ Connected to WebSocket');
   }
-  
+
   simulateMarketOrder() {
     return {
       id: faker.helpers.uniqueId(),
@@ -336,63 +345,67 @@ class OrderMatchingBenchmark {
       pair: 'GAS/NEO',
       quantity: parseFloat(faker.finance.amount({ dec: 2, min: 1, max: 1000 })),
       price: parseFloat(faker.finance.amount({ dec: 8, min: 0.9, max: 1.1 })),
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
   }
-  
+
   async submitOrder(order) {
     return new Promise((resolve, reject) => {
       const message = JSON.stringify({
         method: 'submitOrder',
         params: [order],
-        id: Date.now()
+        id: Date.now(),
       });
-      
+
       this.wsClient.send(message, (err) => {
         if (err) reject(err);
       });
     });
   }
-  
+
   startOrderGenerator() {
     // Simulate 500 concurrent users each placing 100 orders/sec
     const userAgents = Array.from({ length: this.config.simulatedUsers }, (_, i) => ({
       userId: `user-${i}`,
-      position: i % 2 === 0 ? 'buyer' : 'seller'
+      position: i % 2 === 0 ? 'buyer' : 'seller',
     }));
-    
+
     setInterval(() => {
-      userAgents.forEach(userAgent => {
+      userAgents.forEach((userAgent) => {
         const order = this.simulateMarketOrder();
-        
+
         if (userAgent.position === 'buyer') {
           order.side = 'buy';
         } else {
           order.side = 'sell';
         }
-        
+
         this.submitOrder(order);
       });
     }, 1000 / this.config.orderFrequencyHz);
-    
-    console.log(`📡 Started order simulation: ${this.config.simulatedUsers} users × ${this.config.orderFrequencyHz} Hz`);
+
+    console.log(
+      `📡 Started order simulation: ${this.config.simulatedUsers} users × ${this.config.orderFrequencyHz} Hz`
+    );
   }
-  
+
   monitorMatchRate() {
     const checkInterval = 1000; // Measure every second
-    
+
     setInterval(() => {
       const currentMatches = this.matchedOrders;
       const throughput = currentMatches / (checkInterval / 1000);
-      
-      console.log(`⚡ Current throughput: ${throughput.toFixed(0)} orders/sec (target: ${this.config.targetThroughput})`);
-      
+
+      console.log(
+        `⚡ Current throughput: ${throughput.toFixed(0)} orders/sec (target: ${this.config.targetThroughput})`
+      );
+
       if (throughput >= this.config.targetThroughput) {
         console.log('✅ Target met! Continuing benchmark for full duration...');
       }
     }, checkInterval);
   }
-  
+
   stop() {
     this.wsClient.close();
   }
@@ -405,10 +418,11 @@ if (process.argv.includes('--order-benchmark')) {
     simulatedUsers: 500,
     orderFrequencyHz: 100,
     targetThroughput: 1000,
-    orderTypes: ['limit', 'market', 'IOC', 'FOK']
+    orderTypes: ['limit', 'market', 'IOC', 'FOK'],
   });
-  
-  benchmark.initialize()
+
+  benchmark
+    .initialize()
     .then(() => benchmark.startOrderGenerator())
     .then(() => benchmark.monitorMatchRate());
 }
@@ -421,6 +435,7 @@ export default OrderMatchingBenchmark;
 ## 3. WebSocket Connection Stress Test
 
 ### Objective
+
 Validate WebSocket server handles ≥ 10,000 concurrent connections.
 
 ### Implementation (`src/benchmarks/websocketStressTest.js`)
@@ -428,7 +443,7 @@ Validate WebSocket server handles ≥ 10,000 concurrent connections.
 ```javascript
 /**
  * WebSocket Server Stress Test
- * 
+ *
  * Targets: ≥ 10,000 concurrent connections, < 100ms latency
  */
 
@@ -441,21 +456,21 @@ const CONCURRENT_USERS = Math.ceil(TOTAL_CONNECTIONS / cpus().length);
 
 if (cluster.isMaster) {
   const numCPUs = cpus().length;
-  
+
   for (let i = 0; i < numCPUs; i++) {
     cluster.fork();
   }
-  
+
   console.log(`🖥️  Master started: ${numCPUs} workers, ${TOTAL_CONNECTIONS} total connections`);
-  
-  Object.values(cluster.workers).forEach(worker => {
-    worker.on('message', msg => {
+
+  Object.values(cluster.workers).forEach((worker) => {
+    worker.on('message', (msg) => {
       if (msg.type === 'stats') {
         console.log(`📊 Worker ${worker.process.pid}: ${msg.connections} connections`);
       }
     });
   });
-  
+
   cluster.on('exit', (worker, code, signal) => {
     console.log(`Worker ${worker.process.pid} died`);
   });
@@ -463,49 +478,53 @@ if (cluster.isMaster) {
   const wsServer = new WebSocket.Server({ port: 8765 });
   let activeConnections = 0;
   const connectionTimeouts = [];
-  
+
   wsServer.on('connection', (ws) => {
     activeConnections++;
     const startTime = Date.now();
-    
+
     // Track latency
     ws.on('pong', () => {
       const latency = Date.now() - startTime;
       connectionTimeouts.push(latency);
     });
-    
+
     ws.on('close', () => {
       activeConnections--;
       updateStatus();
     });
-    
+
     // Send initial data
-    ws.send(JSON.stringify({
-      type: 'connected',
-      connectionId: activeConnections,
-      timestamp: Date.now()
-    }));
+    ws.send(
+      JSON.stringify({
+        type: 'connected',
+        connectionId: activeConnections,
+        timestamp: Date.now(),
+      })
+    );
   });
-  
+
   function updateStatus() {
     console.log(`🔄 Active connections: ${activeConnections}/${CONCURRENT_USERS}`);
-    
+
     if (activeConnections === 0) {
       const avgLatency = connectionTimeouts.reduce((a, b) => a + b, 0) / connectionTimeouts.length;
-      const p99 = [...connectionTimeouts].sort((a, b) => a - b)[Math.floor(connectionTimeouts.length * 0.99)];
-      
+      const p99 = [...connectionTimeouts].sort((a, b) => a - b)[
+        Math.floor(connectionTimeouts.length * 0.99)
+      ];
+
       console.log('\n📈 WebSocket Stress Test Results:');
       console.table({
         'Total Connections': TOTAL_CONNECTIONS,
         'Avg Latency (ms)': avgLatency.toFixed(2),
         'P99 Latency (ms)': p99.toFixed(2),
-        'Compliance Status': p99 < 100 ? 'PASS ✅' : 'FAIL ❌'
+        'Compliance Status': p99 < 100 ? 'PASS ✅' : 'FAIL ❌',
       });
-      
+
       process.exit(0);
     }
   }
-  
+
   updateStatus();
 }
 
@@ -529,7 +548,7 @@ export default {};
       <stringProp name="ThreadGroup.ramp_time">60</stringProp>
       <stringProp name="ThreadGroup.duration">300</stringProp>
     </TestPlan>
-    
+
     <HashTree>
       <!-- HTTP Request Defaults -->
       <HTTPDefaultsConfig guiclass="HttpDefaultsGui" testclass="HTTPDefaultsConfig" testname="API Endpoint">
@@ -537,12 +556,12 @@ export default {};
         <stringProp name="HTTPSampler.port">8080</stringProp>
         <stringProp name="HTTPSampler.protocol">http</stringProp>
       </HTTPDefaultsConfig>
-      
+
       <!-- Random User Selection -->
       <RandomController guiclass="RandomControlGui" testclass="RandomController" testname="User Rotation">
         <boolProp name="RandomControl.all_users">true</boolProp>
       </RandomController>
-      
+
       <!-- API Calls -->
       <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Get Quote">
         <stringProp name="HTTPSampler.path">/api/v1/quote</stringProp>
@@ -550,7 +569,7 @@ export default {};
           <stringProp name="GET">tokenIn=GAS&amp;tokenOut=NEO&amp;amountIn=1000</stringProp>
         </elementProps>
       </HTTPSamplerProxy>
-      
+
       <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Submit Swap">
         <stringProp name="HTTPSampler.path">/api/v1/swap</stringProp>
         <elementProps>
@@ -578,18 +597,18 @@ const routeLatencyHistogram = new client.Histogram({
   name: 'neoswap_route_calculation_latency_seconds',
   help: 'Route calculation latency histogram',
   labelNames: ['test_case', 'p99_status'],
-  buckets: [0.001, 0.002, 0.005, 0.01, 0.05, 0.1]
+  buckets: [0.001, 0.002, 0.005, 0.01, 0.05, 0.1],
 });
 
 const orderThroughputCounter = new client.Counter({
   name: 'neoswap_orders_matched_total',
   help: 'Total number of orders matched',
-  labelNames: ['order_type']
+  labelNames: ['order_type'],
 });
 
 const websocketConnectionsGauge = new client.Gauge({
   name: 'neoswap_websocket_connections_current',
-  help: 'Current number of active WebSocket connections'
+  help: 'Current number of active WebSocket connections',
 });
 
 register.registerMetric(routeLatencyHistogram);
@@ -652,13 +671,13 @@ Add to GitHub Actions:
   run: |
     cd neo-os-services/tests/benchmarks
     ./run-all-benchmarks.sh
-    
+
 - name: Upload benchmark results
   uses: actions/upload-artifact@v3
   with:
     name: performance-results
     path: neo-os-services/tests/benchmarks/results/
-    
+
 - name: Check performance targets
   run: |
     jq '.compliance.p99TargetMet == true' neo-os-services/tests/benchmarks/results/route-calculation.json

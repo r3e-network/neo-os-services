@@ -9,7 +9,7 @@ const wrangler = 'wrangler@4.130.0';
 const confirmation = String(process.env.DEPLOY_CONTROL_PLANE_CONFIRM || '').trim();
 if (confirmation !== 'I_UNDERSTAND_THIS_DEPLOYS_CONTROL_PLANE') {
   throw new Error(
-    'Set DEPLOY_CONTROL_PLANE_CONFIRM=I_UNDERSTAND_THIS_DEPLOYS_CONTROL_PLANE to deploy',
+    'Set DEPLOY_CONTROL_PLANE_CONFIRM=I_UNDERSTAND_THIS_DEPLOYS_CONTROL_PLANE to deploy'
   );
 }
 if (!String(process.env.CLOUDFLARE_API_TOKEN || '').trim()) {
@@ -22,7 +22,10 @@ if (!String(process.env.CLOUDFLARE_API_TOKEN || '').trim()) {
   }
 }
 
-const config = resolve(process.cwd(), 'deploy/cloudflare/morpheus-control-plane/wrangler.meshmini.toml');
+const config = resolve(
+  process.cwd(),
+  'deploy/cloudflare/morpheus-control-plane/wrangler.meshmini.toml'
+);
 const source = readFileSync(config, 'utf8');
 if (!/account_id\s*=\s*"[^"]+"/.test(source)) {
   throw new Error(`Cloudflare account_id missing from ${config}`);

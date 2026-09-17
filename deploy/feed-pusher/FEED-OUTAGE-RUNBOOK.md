@@ -92,6 +92,7 @@ or `systemctl enable` timers that are already enabled. Those are healthy.
    returns no prices (401/empty). This checkout's HALT-closed batch path
    is local until deployed; live recovery still needs a valid TwelveData
    subscription/key. Do not restart the enclave for a quote outage.
+
 3. Prove recovery with all three checks in §2.4 (on-chain `getLatest`,
    `systemctl start morpheus-feed-monitor.service`, public
    `/api/feeds/status`). Also
@@ -112,7 +113,6 @@ restoring quotes. Deploying the checkout's `assertTwelveDataResponse`
 expiry pages instead of exiting 0.
 
 ---
-
 
 **RESOLVED 2026-08-20T13:12:31Z after 22.5 days. Kept as the incident record and
 the procedure for the next time.** What actually happened, verified on the box

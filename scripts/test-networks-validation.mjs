@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * @fileoverview Test script to verify networks.ts throws proper errors
- * 
+ *
  * This validates the fix for the Morpheus network configuration problem.
  */
 
@@ -38,9 +38,10 @@ console.log('✅ Usage example included');
 
 // Check 4: Verify old silent fallback is removed
 const lines = content.split('\n');
-const hasSilentFallback = lines.some(line => 
-  line.trim() === "return 'mainnet';" || 
-  line.trim() === "return 'mainnet' // Silent fallback to mainnet"
+const hasSilentFallback = lines.some(
+  (line) =>
+    line.trim() === "return 'mainnet';" ||
+    line.trim() === "return 'mainnet' // Silent fallback to mainnet"
 );
 
 if (hasSilentFallback) {
@@ -50,10 +51,11 @@ if (hasSilentFallback) {
 console.log('✅ Silent fallback removed');
 
 // Check 5: Verify error handling structure
-const hasCorrectStructure = content.includes('if (!raw) {') &&
-                            content.includes('throw new Error(') &&
-                            content.includes('if (!normalized) {');
-                            
+const hasCorrectStructure =
+  content.includes('if (!raw) {') &&
+  content.includes('throw new Error(') &&
+  content.includes('if (!normalized) {');
+
 if (!hasCorrectStructure) {
   console.error('❌ FAIL: Error handling structure incorrect');
   process.exit(1);

@@ -92,7 +92,10 @@ export function classifyWriterConfirmationState(status = {}, { pendingReplay = f
     .trim()
     .toLowerCase();
   if (faulted > 0 || confirmation === 'fault') return 'fault';
-  if (pendingReplay && (confirmation === 'confirmed' || confirmation === 'skipped' || confirmation === '')) {
+  if (
+    pendingReplay &&
+    (confirmation === 'confirmed' || confirmation === 'skipped' || confirmation === '')
+  ) {
     return 'pending';
   }
   if (CONFIRMATION_STATE_SET.has(confirmation)) return confirmation;
@@ -124,11 +127,7 @@ function previousNumber(previous, key) {
   return Number.isFinite(value) ? value : null;
 }
 
-export function advanceWriterMetrics({
-  status = {},
-  previous = null,
-  pendingReplay = false,
-} = {}) {
+export function advanceWriterMetrics({ status = {}, previous = null, pendingReplay = false } = {}) {
   const network = sanitizeFeedWriterNetwork(status.network);
   const writeMode = sanitizeFeedWriteMode(status.write_mode);
   const confirmationState = classifyWriterConfirmationState(status, { pendingReplay });
@@ -147,7 +146,10 @@ export function advanceWriterMetrics({
     last_confirmed_unix: previousNumber(previous, 'last_confirmed_unix'),
     last_submitted_height: previousNumber(previous, 'last_submitted_height'),
     last_confirmed_height: previousNumber(previous, 'last_confirmed_height'),
-    last_confirmation_latency_seconds: previousNumber(previous, 'last_confirmation_latency_seconds'),
+    last_confirmation_latency_seconds: previousNumber(
+      previous,
+      'last_confirmation_latency_seconds'
+    ),
     failed_cycles_total: Math.max(0, Math.floor(Number(previous?.failed_cycles_total) || 0)),
     last_failed_cycle_ts: String(previous?.last_failed_cycle_ts || ''),
     outstanding_replay: pendingReplay ? 1 : 0,
@@ -279,10 +281,14 @@ export function renderFeedWriterPrometheus(snapshot = {}) {
   );
   for (const state of FEED_WRITER_CONFIRMATION_STATES) {
     lines.push(
-      metricLine(FEED_WRITER_METRIC_NAMES.confirmation_state, snapshot.confirmation_state === state ? 1 : 0, {
-        network,
-        state,
-      })
+      metricLine(
+        FEED_WRITER_METRIC_NAMES.confirmation_state,
+        snapshot.confirmation_state === state ? 1 : 0,
+        {
+          network,
+          state,
+        }
+      )
     );
   }
 
@@ -305,10 +311,14 @@ export function renderFeedWriterPrometheus(snapshot = {}) {
   );
   for (const result of FEED_WRITER_SOURCE_RESULTS) {
     lines.push(
-      metricLine(FEED_WRITER_METRIC_NAMES.source_pairs, finiteCount(snapshot.source_pairs?.[result]), {
-        network,
-        result,
-      })
+      metricLine(
+        FEED_WRITER_METRIC_NAMES.source_pairs,
+        finiteCount(snapshot.source_pairs?.[result]),
+        {
+          network,
+          result,
+        }
+      )
     );
   }
 
@@ -316,9 +326,13 @@ export function renderFeedWriterPrometheus(snapshot = {}) {
     '# HELP neoos_feed_writer_confirmation_latency_seconds Seconds from last submitted persist to last confirmed persist.',
     '# TYPE neoos_feed_writer_confirmation_latency_seconds gauge'
   );
-  const latency = metricLine(FEED_WRITER_METRIC_NAMES.latency, snapshot.last_confirmation_latency_seconds, {
-    network,
-  });
+  const latency = metricLine(
+    FEED_WRITER_METRIC_NAMES.latency,
+    snapshot.last_confirmation_latency_seconds,
+    {
+      network,
+    }
+  );
   if (latency) lines.push(latency);
 
   lines.push(
@@ -412,7 +426,10 @@ export function writeFeedWriterPrometheusTextfile(filePath, snapshot) {
 export function loadWriterMetricsFromDisk({ statusPath, sidecarPath, metricsPath } = {}) {
   const status = statusPath ? readJsonObject(statusPath) : null;
   const previous = metricsPath ? readJsonObject(metricsPath) : null;
-  const pendingReplay = readPendingReplayPresence(sidecarPath, status?.network || previous?.network);
+  const pendingReplay = readPendingReplayPresence(
+    sidecarPath,
+    status?.network || previous?.network
+  );
   if (!status) {
     return { snapshot: previous, pendingReplay };
   }
@@ -422,11 +439,7 @@ export function loadWriterMetricsFromDisk({ statusPath, sidecarPath, metricsPath
   };
 }
 
-export function persistFeedWriterMetrics({
-  status,
-  statusPath,
-  promPath = '',
-} = {}) {
+export function persistFeedWriterMetrics({ status, statusPath, promPath = '' } = {}) {
   if (!statusPath) return null;
   const sidecarPath = pendingBatchSidecarPath(statusPath);
   const metricsPath = writerMetricsStatePath(statusPath);

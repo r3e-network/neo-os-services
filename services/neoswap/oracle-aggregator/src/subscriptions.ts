@@ -61,14 +61,14 @@ export class PriceSubscriptionsManager {
     }
 
     const source = this.sources.get(sourceId)!;
-    
+
     this.updateSourceHealth(sourceId, false);
     throw new Error(`Price source transport is not configured for ${source.name}`);
   }
 
   async emitPriceUpdate(tick: PriceTick): Promise<void> {
     const key = `${tick.tokenPairId}:${tick.sourceId}`;
-    
+
     // Store in Redis with TTL
     await this.redis.setEx(
       `price:${key}`,
@@ -114,22 +114,29 @@ export class PriceSubscriptionsManager {
     const startTime = Date.now() - windowSizeSeconds * 1000;
     const endTime = Date.now();
     const keys = await this.redis.keys(`price:${tokenPairId}:*`);
-    const values = await Promise.all(keys.map(key => this.redis.get(key)));
+    const values = await Promise.all(keys.map((key) => this.redis.get(key)));
 
-    return values.flatMap(value => {
+    return values.flatMap((value) => {
       if (!value) return [];
       try {
         const tick = JSON.parse(value) as PriceTick;
         const price = Number(tick.price);
-        if (tick.timestamp < startTime || tick.timestamp > endTime || !Number.isFinite(price) || price < 0) {
+        if (
+          tick.timestamp < startTime ||
+          tick.timestamp > endTime ||
+          !Number.isFinite(price) ||
+          price < 0
+        ) {
           return [];
         }
-        return [{
-          averagePrice: tick.price,
-          windowStart: tick.timestamp,
-          windowEnd: tick.timestamp,
-          sampleCount: 1,
-        }];
+        return [
+          {
+            averagePrice: tick.price,
+            windowStart: tick.timestamp,
+            windowEnd: tick.timestamp,
+            sampleCount: 1,
+          },
+        ];
       } catch {
         return [];
       }

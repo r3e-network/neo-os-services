@@ -46,7 +46,9 @@ test('runFeedHealthAudit exits 2 when getAllFeedRecords is unreadable', async ()
       readable: false,
       unreadable_reason: 'fault',
       headline: 'FEED HEALTH testnet UNREADABLE',
-      root_causes: [{ severity: 'confirmed', code: 'getAllFeedRecords_unreadable', summary: 'FAULT' }],
+      root_causes: [
+        { severity: 'confirmed', code: 'getAllFeedRecords_unreadable', summary: 'FAULT' },
+      ],
       ruled_out: [],
       live_blockers: [],
       counts: { active_stale: 0, active: 0, clock_skew: 0 },

@@ -19,7 +19,7 @@ export class AnalyticsDatabase {
   private async initializeTimescale(): Promise<void> {
     try {
       const client = await this.pool.connect();
-      
+
       // Create trades table (TimescaleDB hypertable)
       await client.query(`
         CREATE TABLE IF NOT EXISTS trades (
@@ -37,11 +37,15 @@ export class AnalyticsDatabase {
       `);
 
       // Create TimescaleDB hypertable for time-series optimization
-      await client.query(`
+      await client
+        .query(
+          `
         SELECT create_hypertable('trades', 'timestamp');
-      `).catch(err => {
-        console.log('TimescaleDB extension may not be installed:', err.message);
-      });
+      `
+        )
+        .catch((err) => {
+          console.log('TimescaleDB extension may not be installed:', err.message);
+        });
 
       // Add indexes
       await client.query(`
@@ -67,8 +71,9 @@ export class AnalyticsDatabase {
     offset: number = 0
   ): Promise<TransactionRecord[]> {
     const startTime = Date.now();
-    
-    const result: QueryResult<TransactionRecord> = await this.pool.query(`
+
+    const result: QueryResult<TransactionRecord> = await this.pool.query(
+      `
       SELECT 
         id::text as id,
         EXTRACT(EPOCH FROM timestamp) * 1000 AS timestamp,
@@ -84,11 +89,13 @@ export class AnalyticsDatabase {
       WHERE user_id = $1
       ORDER BY timestamp DESC
       LIMIT $2 OFFSET $3
-    `, [userId, limit, offset]);
+    `,
+      [userId, limit, offset]
+    );
 
     const duration = (Date.now() - startTime) / 1000;
     console.log(`Transaction history query took ${duration}s`);
-    
+
     return result.rows;
   }
 
@@ -110,14 +117,17 @@ export class AnalyticsDatabase {
     // Derive only from the immutable trades table. There is no position or
     // slippage ledger in this service's schema, so unsupported PnL fields stay
     // explicitly zero instead of returning fabricated values.
-    const ledgerQuery = await this.pool.query(`
+    const ledgerQuery = await this.pool.query(
+      `
       SELECT
         COALESCE(SUM(amount_in), 0)::text AS total_volume,
         COALESCE(SUM(fee_amount), 0)::text AS total_fees,
         COALESCE(SUM(amount_out) / NULLIF(SUM(amount_in), 0), 0)::text AS average_execution_price
       FROM trades
       WHERE ${filters.join(' AND ')}
-    `, params);
+    `,
+      params
+    );
     const ledger = ledgerQuery.rows[0] ?? {};
 
     return {
@@ -151,7 +161,8 @@ export class AnalyticsDatabase {
       filters.push(`timestamp <= TO_TIMESTAMP($${params.length} / 1000.0)`);
     }
 
-    const result = await this.pool.query(`
+    const result = await this.pool.query(
+      `
       SELECT
         date_trunc($1, timestamp) AS bucket,
         COALESCE(SUM(amount_in), 0)::text AS volume,
@@ -162,9 +173,11 @@ export class AnalyticsDatabase {
       ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
       GROUP BY bucket
       ORDER BY bucket ASC
-    `, params);
+    `,
+      params
+    );
 
-    return result.rows.map(row => ({
+    return result.rows.map((row) => ({
       timestamp: Math.floor(Date.parse(row.bucket) * 1000),
       volume: row.volume || '0',
       trades: Number(row.trades || 0),

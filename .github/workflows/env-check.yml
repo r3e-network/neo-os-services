@@ -23,98 +23,98 @@ jobs:
   validate-network-env:
     runs-on: ubuntu-latest
     name: Validate Network Configuration
-    
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
-      
+
       - name: Install dependencies
         run: npm ci --ignore-scripts
-      
+
       - name: Check Morpheus Network Configuration
         id: network-check
         run: |
           echo "🔍 Validating MORPHEUS_NETWORK configuration..."
-          
+
           # Get network from input or skip explicit check
           NETWORK="${{ github.event.inputs.network }}"
           if [[ -z "$NETWORK" ]]; then
             echo "⚠️ No explicit network specified, skipping targeted validation"
             exit 0
           fi
-          
+
           echo "📋 Targeting: $NETWORK"
-          
+
           # Verify scripts can load without errors
           if [[ ! -f "scripts/check-root-env.mjs" ]]; then
             echo "❌ ERROR: check-root-env.mjs script not found"
             exit 1
           fi
-          
+
           # Run the actual environment check
           npm run check:env || {
             echo "❌ Environment validation failed"
             exit 1
           }
-          
+
           echo "✅ Network validation passed"
-      
+
       - name: Validate TypeScript Configuration
         run: |
           echo "🔍 Checking networks.ts implementation..."
-          
+
           if [[ ! -f "apps/web/lib/networks.ts" ]]; then
             echo "❌ ERROR: networks.ts not found"
             exit 1
           fi
-          
+
           # Verify the error throwing logic is in place
           grep -q "MORPHEUS_NETWORK/NEXT_PUBLIC_MORPHEUS_NETWORK is required but not set" apps/web/lib/networks.ts || {
             echo "❌ ERROR: Error message not found in networks.ts"
             exit 1
           }
-          
+
           grep -q 'throw new Error(' apps/web/lib/networks.ts || {
             echo "❌ ERROR: Error throwing logic not found"
             exit 1
           }
-          
+
           echo "✅ TypeScript validation passed"
-      
+
       - name: Generate Validation Report
         run: |
           REPORT_FILE="build/env-validation-report-$(date +%Y%m%d-%H%M%S).txt"
-          
+
           cat > "$REPORT_FILE" << EOF
-========================================
-Environment Validation Report
-Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-========================================
+          ========================================
+          Environment Validation Report
+          Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          ========================================
 
-Network Variables:
-- MORPHEUS_NETWORK: Required
-- NEXT_PUBLIC_MORPHEUS_NETWORK: Required (alternative)
+          Network Variables:
+          - MORPHEUS_NETWORK: Required
+          - NEXT_PUBLIC_MORPHEUS_NETWORK: Required (alternative)
 
-Validation Results:
-✅ Script validation passed
-✅ Error handling implemented
-✅ Type safety maintained
+          Validation Results:
+          ✅ Script validation passed
+          ✅ Error handling implemented
+          ✅ Type safety maintained
 
-Recommendations:
-1. Always deploy with explicit MORPHEUS_NETWORK
-2. Use separate configs for testnet/mainnet
-3. Enable monitoring for network mismatch errors
-========================================
-EOF
-          
+          Recommendations:
+          1. Always deploy with explicit MORPHEUS_NETWORK
+          2. Use separate configs for testnet/mainnet
+          3. Enable monitoring for network mismatch errors
+          ========================================
+          EOF
+
           echo "Report generated: $REPORT_FILE"
           cat "$REPORT_FILE"
-      
+
       - name: Upload Validation Artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
@@ -126,29 +126,29 @@ EOF
   validate-web-app-env:
     runs-on: ubuntu-latest
     name: Validate Web App Environment
-    
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
-      
+
       - name: Install web app dependencies
         run: cd apps/web && npm ci --ignore-scripts
-      
+
       - name: Check Web App Cron Environment
         run: |
           echo "🔍 Validating web app deployment requirements..."
-          
+
           # This should exist and verify critical variables
           npm run check:web-cron-env -- --fail-on-missing || {
             echo "❌ Web app environment validation warning (may be expected in CI)"
             echo "Proceeding with other validations..."
           }
-      
+
       - name: Verify Production Requirements
         run: |
           echo "✅ Web app dependency validation complete"
@@ -162,29 +162,29 @@ EOF
   validate-signers:
     runs-on: ubuntu-latest
     name: Validate Signer Configuration
-    
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
-      
+
       - name: Install dependencies
         run: npm ci --ignore-scripts
-      
+
       - name: Check Signer Files
         run: |
           echo "🔍 Validating signer configuration..."
-          
+
           # Check that signer identity generation is possible
           npm run check:signers || {
             echo "⚠️ Signer validation skipped (keys may not be configured in CI)"
             echo "This is normal for PR builds without secrets"
           }
-      
+
       - name: Validate Network-Specific Signers
         run: |
           echo "✅ Signer configuration check complete"
@@ -195,14 +195,14 @@ EOF
     needs: [validate-network-env, validate-web-app-env, validate-signers]
     runs-on: ubuntu-latest
     if: always()
-    
+
     steps:
       - name: Job Status Summary
         run: |
           echo "=========================================="
           echo "Environment Validation Summary"
           echo "=========================================="
-          
+
           if [[ "${{ needs.validate-network-env.result }}" == "success" ]] && \
              [[ "${{ needs.validate-web-app-env.result }}" == "success" || "${{ needs.validate-web-app-env.result }}" == "skipped" ]] && \
              [[ "${{ needs.validate-signers.result }}" == "success" || "${{ needs.validate-signers.result }}" == "skipped" ]]; then

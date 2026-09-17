@@ -25,7 +25,9 @@ const LIVE_MAINNET = Object.freeze({
 });
 
 test('testnet nitro env example does not reuse live CID, host port, EIF, or signer env', () => {
-  const assigned = parseEnvFileAssignments(readRepo('deploy/nitro/morpheus-nitro-testnet.env.example'));
+  const assigned = parseEnvFileAssignments(
+    readRepo('deploy/nitro/morpheus-nitro-testnet.env.example')
+  );
   assert.equal(assigned.MORPHEUS_NETWORK, 'testnet');
   assert.equal(assigned.MORPHEUS_NITRO_CID, '17');
   assert.equal(assigned.MORPHEUS_NITRO_HOST_PORT, '8789');

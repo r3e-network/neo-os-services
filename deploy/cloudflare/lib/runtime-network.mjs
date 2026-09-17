@@ -8,9 +8,14 @@ export function runtimeNetworkRefusal(pathname) {
   // Every ingress to this origin must enforce its enclave's actual network.
   const network = path.split(/[\\/]/).filter(Boolean)[0]?.toLowerCase();
   if (network === 'testnet') {
-    return Response.json({
-      error: 'runtime_network_mismatch', requested_network: 'testnet', actual_network: 'mainnet',
-    }, { status: 503, headers: { 'cache-control': 'no-store' } });
+    return Response.json(
+      {
+        error: 'runtime_network_mismatch',
+        requested_network: 'testnet',
+        actual_network: 'mainnet',
+      },
+      { status: 503, headers: { 'cache-control': 'no-store' } }
+    );
   }
   return null;
 }

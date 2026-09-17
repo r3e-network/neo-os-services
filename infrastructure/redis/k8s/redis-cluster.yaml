@@ -12,35 +12,35 @@ data:
     # Redis production configuration for NeoOS
     bind 0.0.0.0
     port 6379
-    
+
     # Cluster configuration
     cluster-enabled yes
     cluster-config-file nodes.conf
     cluster-node-timeout 5000
     cluster-require-full-coverage no
-    
+
     # Persistence - RDB snapshots
     save 900 1
     save 300 10
     save 60 10000
-    
+
     # Persistence - AOF
     appendonly yes
     appendfsync everysec
     auto-aof-rewrite-percentage 100
     auto-aof-rewrite-min-size 64mb
-    
+
     # Memory management
     maxmemory 2gb
     maxmemory-policy allkeys-lru
-    
+
     # Security
     requirepass ${REDIS_PASSWORD}
-    
+
     # Slow log for debugging
     slowlog-log-slower-than 10000
     slowlog-max-len 128
-    
+
     # Client output buffer limits
     client-output-buffer-limit normal 0 0 0
     client-output-buffer-limit replica 256mb 64mb 60
@@ -87,7 +87,7 @@ spec:
         app: redis-cluster
         role: redis
       annotations:
-        checksum/config: "placeholder"
+        checksum/config: 'placeholder'
     spec:
       containers:
         - name: redis
@@ -101,11 +101,11 @@ spec:
               else
                 ROLE="replica"
               fi
-              
+
               redis-server /etc/redis/redis.conf \
                 --cluster-node-timeout 5000 \
                 --replicaof redis-cluster-$((POD_INDEX - 3)).redis-cluster.default.svc.cluster.local 6379
-                
+
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 6379
@@ -124,11 +124,11 @@ spec:
                   key: password
           resources:
             requests:
-              memory: "512Mi"
-              cpu: "250m"
+              memory: '512Mi'
+              cpu: '250m'
             limits:
-              memory: "2Gi"
-              cpu: "1000m"
+              memory: '2Gi'
+              cpu: '1000m'
           volumeMounts:
             - name: data
               mountPath: /data
@@ -169,7 +169,7 @@ spec:
     - metadata:
         name: data
       spec:
-        accessModes: ["ReadWriteOnce"]
+        accessModes: ['ReadWriteOnce']
         resources:
           requests:
             storage: 10Gi
@@ -198,10 +198,10 @@ spec:
             - |
               # Wait for all pods to be ready
               sleep 30
-              
+
               # Get first master node
               MASTER_HOST=$(kubectl get pods -l app=redis-cluster -o jsonpath='{.items[0].status.podIP}')
-              
+
               # Initialize cluster with 3 masters and 3 replicas
               redis-cli --cluster create \
                 $(for i in {0..5}; do echo "-c redis-cluster-$i.redis-cluster.$(kubectl get ns -o name | tr -d '/')$i.redis-cluster.$(kubectl get ns -o name | tr -d '/').svc.cluster.local:6379"; done) \
@@ -229,7 +229,7 @@ metadata:
   namespace: neoos-system
 type: Opaque
 stringData:
-  password: "${REDIS_PASSWORD}"
+  password: '${REDIS_PASSWORD}'
 
 ---
 # Redis resource quota
@@ -240,10 +240,10 @@ metadata:
   namespace: neoos-system
 spec:
   hard:
-    requests.memory: "8Gi"
-    requests.cpu: "4000m"
-    limits.memory: "16Gi"
-    limits.cpu: "8000m"
+    requests.memory: '8Gi'
+    requests.cpu: '4000m'
+    limits.memory: '16Gi'
+    limits.cpu: '8000m'
 
 ---
 # LimitRange for Redis pods
@@ -257,13 +257,13 @@ spec:
     - type: Container
       default:
         memory: 1Gi
-        cpu: "500m"
+        cpu: '500m'
       defaultRequest:
         memory: 512Mi
-        cpu: "250m"
+        cpu: '250m'
       max:
         memory: 2Gi
-        cpu: "1000m"
+        cpu: '1000m'
       min:
         memory: 256Mi
-        cpu: "100m"
+        cpu: '100m'

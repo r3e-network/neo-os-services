@@ -2,76 +2,141 @@
 // Read-only unless --write is explicit. The per-network registry is authority.
 import fs from 'node:fs';
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
-import {renderCSharpNetworkIdentities,projectProtocolNetwork} from './lib/network-identity-projections.mjs';
-const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const modes=process.argv.slice(2);
-if(modes.length!==1 || !['--check','--write'].includes(modes[0])) throw new Error('use --check or --write');
-const networks={};
-for(const name of ['mainnet','testnet']) {
- const registry=JSON.parse(fs.readFileSync(path.join(root,'config/networks',name+'.json'),'utf8'));
- const {network_magic:magic,genesis_hash:genesisHash,genesis_source:provenance}=registry.neo_n3;
- if(registry.network!==name || !Number.isInteger(magic) || magic<=0 || magic>0xffffffff || typeof genesisHash!=='string' || !/^0x[0-9a-f]{64}$/.test(genesisHash) || /^0x0{64}$/.test(genesisHash) || !provenance) throw new Error(name+': incomplete reviewed identity');
- networks[name]={network:name,magic,genesisHash,provenance};
+import { fileURLToPath } from 'node:url';
+import {
+  renderCSharpNetworkIdentities,
+  projectProtocolNetwork,
+} from './lib/network-identity-projections.mjs';
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const modes = process.argv.slice(2);
+if (modes.length !== 1 || !['--check', '--write'].includes(modes[0]))
+  throw new Error('use --check or --write');
+const networks = {};
+for (const name of ['mainnet', 'testnet']) {
+  const registry = JSON.parse(
+    fs.readFileSync(path.join(root, 'config/networks', name + '.json'), 'utf8')
+  );
+  const {
+    network_magic: magic,
+    genesis_hash: genesisHash,
+    genesis_source: provenance,
+  } = registry.neo_n3;
+  if (
+    registry.network !== name ||
+    !Number.isInteger(magic) ||
+    magic <= 0 ||
+    magic > 0xffffffff ||
+    typeof genesisHash !== 'string' ||
+    !/^0x[0-9a-f]{64}$/.test(genesisHash) ||
+    /^0x0{64}$/.test(genesisHash) ||
+    !provenance
+  )
+    throw new Error(name + ': incomplete reviewed identity');
+  networks[name] = { network: name, magic, genesisHash, provenance };
 }
-const catalog={schemaVersion:1,networks};
-const text=JSON.stringify(catalog,null,2)+'\n';
-const csharp=renderCSharpNetworkIdentities(catalog);
-const nativeRoot=path.join(root,'../neo-os-app');
-const furaRoot=path.join(root,'../neo-os-fura');
-const devpackRoot=path.join(root,'../neo-os-devpack');
-const repositories=[root,nativeRoot,furaRoot,devpackRoot];
+const catalog = { schemaVersion: 1, networks };
+const text = JSON.stringify(catalog, null, 2) + '\n';
+const csharp = renderCSharpNetworkIdentities(catalog);
+const nativeRoot = path.join(root, '../neo-os-app');
+const furaRoot = path.join(root, '../neo-os-fura');
+const devpackRoot = path.join(root, '../neo-os-devpack');
+const repositories = [root, nativeRoot, furaRoot, devpackRoot];
 
 // A generator may create directories within an existing consumer checkout, but
 // must never invent a repository or follow its output through a symlink. Check
 // every destination before the first write, including the Native input resource.
 function requireRepository(repository) {
- let stat;
- try {stat=fs.lstatSync(repository)} catch(error) {
-  if(error.code==='ENOENT')throw new Error(path.basename(repository)+': consumer repository directory is missing');
-  throw error;
- }
- if(!stat.isDirectory() || stat.isSymbolicLink())throw new Error(path.basename(repository)+': consumer repository must be an existing regular directory');
-}
-function validateDestination(repository,target) {
- const relative=path.relative(repository,target);
- if(!relative || relative==='..' || relative.startsWith('..'+path.sep) || path.isAbsolute(relative))throw new Error('network identity output escapes its repository');
- const parts=relative.split(path.sep);
- let current=repository;
- for(let index=0;index<parts.length;index++) {
-  current=path.join(current,parts[index]);
   let stat;
-  try {stat=fs.lstatSync(current)} catch(error) {
-   if(error.code==='ENOENT')return;
-   throw error;
+  try {
+    stat = fs.lstatSync(repository);
+  } catch (error) {
+    if (error.code === 'ENOENT')
+      throw new Error(path.basename(repository) + ': consumer repository directory is missing');
+    throw error;
   }
-  if(stat.isSymbolicLink())throw new Error(path.basename(repository)+': network identity path must not follow symlinks');
-  const valid=index===parts.length-1 ? stat.isFile() : stat.isDirectory();
-  if(!valid)throw new Error(path.basename(repository)+': network identity destination has an invalid file type');
- }
+  if (!stat.isDirectory() || stat.isSymbolicLink())
+    throw new Error(
+      path.basename(repository) + ': consumer repository must be an existing regular directory'
+    );
 }
-for(const repository of repositories)requireRepository(repository);
-const protocolPath=path.join(nativeRoot,'NeoOS.App/Resources/Raw/protocol.json');
-validateDestination(nativeRoot,protocolPath);
-if(!fs.lstatSync(protocolPath).isFile()) throw new Error('Native protocol must be a regular file');
-const protocolBytes=fs.readFileSync(protocolPath);
-const protocolSource=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(protocolBytes);
-const protocol=projectProtocolNetwork(protocolSource,networks.mainnet.magic);
+function validateDestination(repository, target) {
+  const relative = path.relative(repository, target);
+  if (
+    !relative ||
+    relative === '..' ||
+    relative.startsWith('..' + path.sep) ||
+    path.isAbsolute(relative)
+  )
+    throw new Error('network identity output escapes its repository');
+  const parts = relative.split(path.sep);
+  let current = repository;
+  for (let index = 0; index < parts.length; index++) {
+    current = path.join(current, parts[index]);
+    let stat;
+    try {
+      stat = fs.lstatSync(current);
+    } catch (error) {
+      if (error.code === 'ENOENT') return;
+      throw error;
+    }
+    if (stat.isSymbolicLink())
+      throw new Error(
+        path.basename(repository) + ': network identity path must not follow symlinks'
+      );
+    const valid = index === parts.length - 1 ? stat.isFile() : stat.isDirectory();
+    if (!valid)
+      throw new Error(
+        path.basename(repository) + ': network identity destination has an invalid file type'
+      );
+  }
+}
+for (const repository of repositories) requireRepository(repository);
+const protocolPath = path.join(nativeRoot, 'NeoOS.App/Resources/Raw/protocol.json');
+validateDestination(nativeRoot, protocolPath);
+if (!fs.lstatSync(protocolPath).isFile()) throw new Error('Native protocol must be a regular file');
+const protocolBytes = fs.readFileSync(protocolPath);
+const protocolSource = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+  protocolBytes
+);
+const protocol = projectProtocolNetwork(protocolSource, networks.mainnet.magic);
 // Build and validate every output before writing any projection.
-const outputs=[
- {repository:root,target:path.join(root,'config/generated/network-identities.v1.json'),text},
- {repository:furaRoot,target:path.join(furaRoot,'supabase_indexer/internal/networkidentity/known-networks.json'),text},
- {repository:devpackRoot,target:path.join(devpackRoot,'shared/constants/generated-network-identities.json'),text},
- {repository:root,target:path.join(root,'config/generated/NeoN3NetworkIdentity.g.cs'),text:csharp},
- {repository:nativeRoot,target:path.join(nativeRoot,'Shared/Generated/NeoN3NetworkIdentity.g.cs'),text:csharp},
- {repository:nativeRoot,target:protocolPath,text:protocol},
+const outputs = [
+  {
+    repository: root,
+    target: path.join(root, 'config/generated/network-identities.v1.json'),
+    text,
+  },
+  {
+    repository: furaRoot,
+    target: path.join(furaRoot, 'supabase_indexer/internal/networkidentity/known-networks.json'),
+    text,
+  },
+  {
+    repository: devpackRoot,
+    target: path.join(devpackRoot, 'shared/constants/generated-network-identities.json'),
+    text,
+  },
+  {
+    repository: root,
+    target: path.join(root, 'config/generated/NeoN3NetworkIdentity.g.cs'),
+    text: csharp,
+  },
+  {
+    repository: nativeRoot,
+    target: path.join(nativeRoot, 'Shared/Generated/NeoN3NetworkIdentity.g.cs'),
+    text: csharp,
+  },
+  { repository: nativeRoot, target: protocolPath, text: protocol },
 ];
-for(const {repository,target} of outputs)validateDestination(repository,target);
-if(!fs.readFileSync(protocolPath).equals(protocolBytes)) throw new Error('Native protocol changed while planning; refusing writes');
-for(const {target,text:output} of outputs) {
- if(modes[0]==='--write') {
-  if(fs.existsSync(target) && fs.readFileSync(target,'utf8')===output)continue;
-  fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,output);
- } else if(fs.readFileSync(target,'utf8')!==output) throw new Error(path.basename(target)+': network identity projection drift');
+for (const { repository, target } of outputs) validateDestination(repository, target);
+if (!fs.readFileSync(protocolPath).equals(protocolBytes))
+  throw new Error('Native protocol changed while planning; refusing writes');
+for (const { target, text: output } of outputs) {
+  if (modes[0] === '--write') {
+    if (fs.existsSync(target) && fs.readFileSync(target, 'utf8') === output) continue;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, output);
+  } else if (fs.readFileSync(target, 'utf8') !== output)
+    throw new Error(path.basename(target) + ': network identity projection drift');
 }
 console.log('network identity projections match reviewed registry');

@@ -19,7 +19,11 @@ export async function getCached(key: string): Promise<any | null> {
   return null;
 }
 
-export async function setCache(key: string, data: any, ttlSeconds: number = CACHE_CONFIG.ROUTE_CACHE_TTL): Promise<void> {
+export async function setCache(
+  key: string,
+  data: any,
+  ttlSeconds: number = CACHE_CONFIG.ROUTE_CACHE_TTL
+): Promise<void> {
   try {
     await redis.setex(key, ttlSeconds, JSON.stringify(data));
   } catch (error) {

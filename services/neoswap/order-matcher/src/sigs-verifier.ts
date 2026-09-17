@@ -26,7 +26,7 @@ export class DualSignatureVerifier {
     requiredSigners: string[]
   ): boolean {
     const userIdLower = userId.toLowerCase();
-    
+
     // Check if user is in required signers
     const signerIds = [...new Set(requiredSigners.map((id) => id.toLowerCase()))];
     if (signerIds.length < 2 || !signerIds.includes(userIdLower)) {
@@ -39,7 +39,7 @@ export class DualSignatureVerifier {
 
     for (const signerId of signerIds) {
       const publicKey = this.verifierKeys.get(signerId);
-      
+
       if (!publicKey) {
         console.warn(`No public key found for signer: ${signerId}`);
         continue;
@@ -47,7 +47,7 @@ export class DualSignatureVerifier {
 
       // Check if any signature matches this signer
       const sigToVerify = signerId === userIdLower ? sig1 : sig2;
-      
+
       try {
         const valid = nacl.sign.detached.verify(message, sigToVerify, publicKey);
         if (valid) {
@@ -67,10 +67,9 @@ export class DualSignatureVerifier {
    * Hash message before signing
    */
   hashMessage(message: string | Buffer): Uint8Array {
-    const msgBuffer = typeof message === 'string' 
-      ? Buffer.from(message, 'utf-8')
-      : Buffer.from(message);
-    
+    const msgBuffer =
+      typeof message === 'string' ? Buffer.from(message, 'utf-8') : Buffer.from(message);
+
     return sha512(msgBuffer);
   }
 
@@ -79,7 +78,7 @@ export class DualSignatureVerifier {
    */
   generateKeypair(): { privateKey: Buffer; publicKey: Buffer } {
     const keypair = nacl.sign.keyPair();
-    
+
     return {
       privateKey: Buffer.from(keypair.secretKey),
       publicKey: Buffer.from(keypair.publicKey),

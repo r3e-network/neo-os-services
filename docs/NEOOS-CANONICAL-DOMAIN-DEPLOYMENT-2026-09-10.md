@@ -5,15 +5,15 @@ Deployment date: 2026-09-10 UTC
 The following Cloudflare Workers were deployed from the current workspace and
 are attached to the `neoos.network` zone:
 
-| Host | Worker | Evidence |
-| --- | --- | --- |
-| `admin.neoos.network` | `neoos-admin-proxy` | Canonical callback accepted by Auth0; real-user session acceptance pending |
-| `aa.neoos.network` | `neoos-aa-proxy` | HTTPS custom domain active |
-| `fura.neoos.network`, `indexer.neoos.network` | `neoos-fura-proxy` | HTTPS custom domains active; upstream routes retain their existing API contract |
-| `runtime.neoos.network` | `neoos-runtime-proxy` | `GET /health` returns runtime health JSON |
-| `mcp.neoos.network` | `neoos-mcp-proxy` | `GET /healthz` returns 200; unauthenticated `POST /mcp` returns 401 |
-| `services.neoos.network` | `neoos-service-gateway` | Root catalog returns fixed service prefixes; `/mcp/healthz` reaches the MCP upstream |
-| `explorer.neoos.network` | `neoos-explorer-redirect` | Redirects to `https://www.neo3scan.com/` |
+| Host                                          | Worker                    | Evidence                                                                             |
+| --------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------ |
+| `admin.neoos.network`                         | `neoos-admin-proxy`       | Canonical callback accepted by Auth0; real-user session acceptance pending           |
+| `aa.neoos.network`                            | `neoos-aa-proxy`          | HTTPS custom domain active                                                           |
+| `fura.neoos.network`, `indexer.neoos.network` | `neoos-fura-proxy`        | HTTPS custom domains active; upstream routes retain their existing API contract      |
+| `runtime.neoos.network`                       | `neoos-runtime-proxy`     | `GET /health` returns runtime health JSON                                            |
+| `mcp.neoos.network`                           | `neoos-mcp-proxy`         | `GET /healthz` returns 200; unauthenticated `POST /mcp` returns 401                  |
+| `services.neoos.network`                      | `neoos-service-gateway`   | Root catalog returns fixed service prefixes; `/mcp/healthz` reaches the MCP upstream |
+| `explorer.neoos.network`                      | `neoos-explorer-redirect` | Redirects to `https://www.neo3scan.com/`                                             |
 
 `services.neoos.network` is a fixed-prefix gateway. It exposes `/fura/*`,
 `/mcp/*`, `/runtime/*`, and `/control/*`; unknown prefixes return 404. The
@@ -57,14 +57,14 @@ chain release gates and were not changed by this edge deployment.
 Overall `releaseReady=false`. These edge deployments do not deploy the Services,
 Fura, Indexer or MCP backend binaries and do not imply fleet acceptance.
 
-| Worker | Deployed version |
-| --- | --- |
-| neoos-admin-proxy | 6ceed24d-befb-406b-9c28-0cc8e0791552 |
-| neoos-aa-proxy | 1f870ef9-bce3-4bfc-b7d1-c62926e9d9b9 |
-| neoos-fura-proxy | 906248df-dfd7-49ae-9f02-5882453f73bf |
-| neoos-runtime-proxy | 06e463b9-14ea-42d5-b866-088c12f4b781 |
-| neoos-mcp-proxy | eb5d4062-610d-4c5f-b8a7-76aac8563813 |
-| neoos-service-gateway | e1fe8315-fe51-4c36-88e1-2861c4e84572 |
+| Worker                  | Deployed version                     |
+| ----------------------- | ------------------------------------ |
+| neoos-admin-proxy       | 6ceed24d-befb-406b-9c28-0cc8e0791552 |
+| neoos-aa-proxy          | 1f870ef9-bce3-4bfc-b7d1-c62926e9d9b9 |
+| neoos-fura-proxy        | 906248df-dfd7-49ae-9f02-5882453f73bf |
+| neoos-runtime-proxy     | 06e463b9-14ea-42d5-b866-088c12f4b781 |
+| neoos-mcp-proxy         | eb5d4062-610d-4c5f-b8a7-76aac8563813 |
+| neoos-service-gateway   | e1fe8315-fe51-4c36-88e1-2861c4e84572 |
 | neoos-explorer-redirect | d8a2a3f0-6451-4963-a35a-879d39bc4800 |
 
 Admin Vercel deployment `dpl_65nfJBQSPktF8pb6ThbhMG2xJehf` was promoted after
@@ -85,16 +85,16 @@ regression test verifies both MCP entrypoints survive 300 seconds and abort at
 Explorer now redirects directly to www.neo3scan.com, preserving path/query and
 removing the previous extra redirect through neo3scan.com.
 
-| Verification | Result |
-| --- | --- |
-| Admin full suite | 462 passed; 3 existing skipped |
-| Admin build and typecheck | Passed; 17 NeoPkg traces and 5 schemas verified |
-| Local full OIDC integration | 3 passed: local HTTP IdP, PKCE, RSA signature, session, CSRF, logout, role/state/nonce failures and code reuse |
-| Cloudflare suites | 83/83 passed in final combined run; /tmp/neoos-edge-final-tests-20260910.log |
-| Services scripts | 228 passed |
-| Rust config-schema tests | 4 passed |
-| Rust format/generated identity | Passed |
-| TLS-verified canonical production probes | 12/12 passed |
+| Verification                             | Result                                                                                                         |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Admin full suite                         | 462 passed; 3 existing skipped                                                                                 |
+| Admin build and typecheck                | Passed; 17 NeoPkg traces and 5 schemas verified                                                                |
+| Local full OIDC integration              | 3 passed: local HTTP IdP, PKCE, RSA signature, session, CSRF, logout, role/state/nonce failures and code reuse |
+| Cloudflare suites                        | 83/83 passed in final combined run; /tmp/neoos-edge-final-tests-20260910.log                                   |
+| Services scripts                         | 228 passed                                                                                                     |
+| Rust config-schema tests                 | 4 passed                                                                                                       |
+| Rust format/generated identity           | Passed                                                                                                         |
+| TLS-verified canonical production probes | 12/12 passed                                                                                                   |
 
 The existing control-plane CI matrix lane now runs `npm run test:cloudflare`
 so every new proxy and shared helper is included in future CI runs. The Admin

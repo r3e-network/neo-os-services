@@ -14,21 +14,25 @@ NeoSwap v2 is a production-grade, multi-microservice decentralized exchange back
 ## 📦 Components Implemented
 
 ### 1. **Routing Engine** (`@neoswap/routing-engine`)
+
 📍 Location: `neo-os-services/services/neoswap/routing-engine/`
 
 **Features:**
+
 - Floyd-Warshall algorithm for optimal multi-hop pathfinding
 - MEV risk scanning and front-run protection
 - Liquidity depth analysis
 - Price impact calculation
 
 **Key Technologies:**
+
 - Node.js + TypeScript
 - Redis for caching (TTL: 10s)
 - Prom-client for metrics
 - Zod validation schemas
 
 **API Endpoints:**
+
 ```typescript
 POST /api/v1/route      # Calculate optimal paths
 GET  /api/v1/quote      # Get aggregated quotes
@@ -36,6 +40,7 @@ POST /api/v1/mev-scan   # MEV risk assessment
 ```
 
 **Metrics:**
+
 - `neoswap_routing_requests_total`
 - `neoswap_routing_latency_seconds`
 - `neoswap_pool_liquidity_usd`
@@ -44,21 +49,25 @@ POST /api/v1/mev-scan   # MEV risk assessment
 ---
 
 ### 2. **Order Matcher** (`@neoswap/order-matcher`)
+
 📍 Location: `neo-os-services/services/neoswap/order-matcher/`
 
 **Features:**
+
 - SQLite-based orderbook persistence
 - WASM sandboxed matching logic execution
 - Dual-signature verification for large trades (> $10k)
 - Time-priority order matching
 
 **Key Technologies:**
+
 - better-sqlite3 for local storage
 - TweetNaCl for EdDSA signatures
 - WASI/WASM for isolated computation
 - Bignumber.js for precision arithmetic
 
 **Database Schema:**
+
 ```sql
 CREATE TABLE orders (
   id TEXT PRIMARY KEY,
@@ -85,6 +94,7 @@ CREATE TABLE fills (
 ```
 
 **API Endpoints:**
+
 ```typescript
 POST /api/v1/order          # Submit limit order
 DELETE /api/v1/order/:id    # Cancel order
@@ -95,21 +105,25 @@ POST /api/v1/batch-match    # Batch matching execution
 ---
 
 ### 3. **TWAP Oracle Aggregator** (`@neoswap/oracle-aggregator`)
+
 📍 Location: `neo-os-services/services/neoswap/oracle-aggregator/`
 
 **Features:**
+
 - Multi-source price subscription (StealthEX, Uniswap V3, Curve, Balancer)
 - TimescaleDB-compatible historical data storage
 - WebSocket real-time push
 - Volume-weighted TWAP calculation
 
 **Key Technologies:**
+
 - ioredis for Redis pub/sub
 - pg for PostgreSQL connectivity
 - WebSocket server (ws library)
 - Async mutex for thread-safe operations
 
 **WebSocket Protocol:**
+
 ```json
 // Subscribe to token prices
 { "type": "subscribe", "tokens": ["NEO/USDT"] }
@@ -123,6 +137,7 @@ POST /api/v1/batch-match    # Batch matching execution
 ```
 
 **API Endpoints:**
+
 ```bash
 GET /metrics           # Prometheus metrics
 WS  ws://localhost:8080 # WebSocket endpoint
@@ -131,26 +146,31 @@ WS  ws://localhost:8080 # WebSocket endpoint
 ---
 
 ### 4. **API Gateway** (`@neoswap/api-gateway`)
+
 📍 Location: `neo-os-services/services/neoswap/api-gateway/`
 
 **Features:**
+
 - Next.js 14 App Router implementation
 - /api/v1/quote aggregation endpoint
 - Redis TTL caching (10 seconds)
 - Tenant-isolated rate limiting (3-tier system)
 
 **Rate Limiting Tiers:**
+
 - Free: 100 requests/minute
 - Standard: 1,000 requests/minute
 - Premium: 10,000 requests/minute
 
 **Key Technologies:**
+
 - Next.js 14 Server Actions
 - Redis for distributed caching
 - Helmet.js for security headers
 - Express-rate-limit middleware
 
 **API Endpoints:**
+
 ```typescript
 GET /api/v1/quote?tokenIn=...&tokenOut=...&amount=...
 GET /api/v1/pools              # List liquidity pools
@@ -159,20 +179,23 @@ POST /api/v1/sign              # Prepare signed transaction
 ```
 
 **Caching Strategy:**
+
 ```typescript
 const CACHE_CONFIG = {
-  ROUTE_CACHE_TTL: 10,     // 10s for route calculations
-  POOL_INFO_TTL: 300,      // 5min for pool metadata
-  USER_SESSION_TTL: 3600,  // 1h for user sessions
+  ROUTE_CACHE_TTL: 10, // 10s for route calculations
+  POOL_INFO_TTL: 300, // 5min for pool metadata
+  USER_SESSION_TTL: 3600, // 1h for user sessions
 };
 ```
 
 ---
 
 ### 5. **Price Feed Service** (`@neoswap/price-feed`)
+
 📍 Location: `neo-os-services/services/neoswap/price-feed/`
 
 **Features:**
+
 - WebSocket server supporting 10,000+ concurrent connections
 - P99 latency target < 50ms
 - Backpressure handling mechanism
@@ -186,14 +209,16 @@ const CACHE_CONFIG = {
 | Broadcast Throughput | 50K msg/s | ✅ 75K msg/s |
 
 **Backpressure Mechanism:**
+
 ```typescript
 if (queueSize > 5000) {
   console.warn(`Backpressure active: Queue size ${queueSize}`);
-  await new Promise(resolve => setTimeout(resolve, 1)); // Yield control
+  await new Promise((resolve) => setTimeout(resolve, 1)); // Yield control
 }
 ```
 
 **Health Check:**
+
 ```bash
 curl http://localhost:8081/metrics
 ```
@@ -201,15 +226,18 @@ curl http://localhost:8081/metrics
 ---
 
 ### 6. **Analytics Dashboard API** (`@neoswap/analytics-api`)
+
 📍 Location: `neo-os-services/services/neoswap/analytics-api/`
 
 **Features:**
+
 - PostgreSQL + TimescaleDB integration
 - Transaction history queries with pagination
 - Real-time PnL calculator
 - CSV/PDF export functionality
 
 **TimescaleDB Hypertable:**
+
 ```sql
 SELECT create_hypertable('trades', 'timestamp');
 
@@ -219,6 +247,7 @@ CREATE INDEX idx_trades_timestamp ON trades(timestamp DESC);
 ```
 
 **API Endpoints:**
+
 ```typescript
 GET /api/v1/history/:userId       # Transaction history
 GET /api/v1/pnl/:userId           # Profit & Loss calculation
@@ -227,14 +256,15 @@ GET /api/v1/metrics/:metricType   # Historical metrics
 ```
 
 **PnL Calculator Logic:**
+
 ```typescript
 interface PnLResult {
-  realizedPnL: string;        // Closed position profit/loss
-  unrealizedPnL: string;      // Open position P&L
-  totalVolume: string;        // Cumulative trading volume
-  totalFees: string;          // Total fees paid
+  realizedPnL: string; // Closed position profit/loss
+  unrealizedPnL: string; // Open position P&L
+  totalVolume: string; // Cumulative trading volume
+  totalFees: string; // Total fees paid
   averageExecutionPrice: string;
-  slippageLoss: string;       // Cost from price impact
+  slippageLoss: string; // Cost from price impact
 }
 ```
 
@@ -262,7 +292,7 @@ docker-compose down
 # API Gateway
 curl http://localhost:3001/health
 
-# Routing Engine  
+# Routing Engine
 curl http://localhost:3002/health
 
 # Order Matcher
@@ -281,6 +311,7 @@ curl http://localhost:3005/health
 ### Prometheus Monitoring
 
 Access Prometheus at `http://localhost:9090`:
+
 - Query routing engine performance
 - Monitor order match throughput
 - Track WebSocket connection counts
@@ -289,6 +320,7 @@ Access Prometheus at `http://localhost:9090`:
 ### Grafana Dashboards
 
 Access Grafana at `http://localhost:3006` (admin/admin123):
+
 - Pre-configured dashboards for all 6 services
 - Real-time performance visualization
 - Historical trend analysis
@@ -328,39 +360,41 @@ npm run test -- --coverage
 
 ### Latency Targets (P99)
 
-| Service | Target | Achieved | Status |
-|---------|--------|----------|--------|
-| Route Calculation | 25ms | 18ms | ✅ |
-| Order Matching | 5ms | 2ms | ✅ |
-| Quote Generation | 10ms | 7ms | ✅ |
-| Price Push | 2ms | <1ms | ✅ |
-| Analytics Query | 50ms | 35ms | ✅ |
+| Service           | Target | Achieved | Status |
+| ----------------- | ------ | -------- | ------ |
+| Route Calculation | 25ms   | 18ms     | ✅     |
+| Order Matching    | 5ms    | 2ms      | ✅     |
+| Quote Generation  | 10ms   | 7ms      | ✅     |
+| Price Push        | 2ms    | <1ms     | ✅     |
+| Analytics Query   | 50ms   | 35ms     | ✅     |
 
 ### Throughput Capacity
 
-| Service | Target QPS | Achieved | Status |
-|---------|------------|----------|--------|
-| Routing Engine | 1,000+ | 1,500 | ✅ |
-| Order Matcher | 5,000+ | 8,000 | ✅ |
-| API Gateway | 10,000+ | 15,000 | ✅ |
-| Price Feed | 50K msg/s | 75K msg/s | ✅ |
+| Service        | Target QPS | Achieved  | Status |
+| -------------- | ---------- | --------- | ------ |
+| Routing Engine | 1,000+     | 1,500     | ✅     |
+| Order Matcher  | 5,000+     | 8,000     | ✅     |
+| API Gateway    | 10,000+    | 15,000    | ✅     |
+| Price Feed     | 50K msg/s  | 75K msg/s | ✅     |
 
 ---
 
 ## 🔒 Security Features
 
 ### 1. MEV Protection
+
 - Front-run detection algorithms
 - Sandwich attack prevention
 - Dynamic slippage suggestions
 - Suggested gas pricing
 
 ### 2. Dual Signature Verification
+
 ```typescript
 // Large trades (>$10k) require dual signature
 const isValid = sigVerifier.verifyDualSignature(
   message,
-  sig1, 
+  sig1,
   sig2,
   userId,
   [userId] // required signers
@@ -368,11 +402,13 @@ const isValid = sigVerifier.verifyDualSignature(
 ```
 
 ### 3. WASM Sandboxing
+
 - Isolated order matching logic execution
 - Resource limits enforced
 - Deterministic computation guaranteed
 
 ### 4. Rate Limiting & Tenant Isolation
+
 ```typescript
 // Tenant-specific rate limits
 TENANT_CONFIG.rateLimits = {
@@ -458,18 +494,23 @@ neo-os-services/services/neoswap/
 ## ✨ Key Innovations
 
 ### 1. Hybrid Routing Architecture
+
 Combines BFS pathfinding with Floyd-Warshall optimization for sub-second multi-hop calculations even with 10K+ pools.
 
 ### 2. MEV-First Design
+
 Built-in risk scanning prevents sandwich attacks before transactions are broadcasted, not after.
 
 ### 3. Dual-Layer Caching
+
 Route-level TTL caching combined with per-request deduplication achieves 90%+ cache hit rates.
 
 ### 4. Adaptive Backpressure
+
 WebSocket server auto-adjusts based on queue pressure, preventing memory exhaustion under load.
 
 ### 5. WASM-Guarded Computation
+
 Critical matching logic executes in isolated WASM environment, providing deterministic behavior and resource isolation.
 
 ---
@@ -477,6 +518,7 @@ Critical matching logic executes in isolated WASM environment, providing determi
 ## 🎓 Learning Points
 
 This implementation demonstrates:
+
 - ✅ Production-grade microservices architecture
 - ✅ Multi-language polyglot approach (Node.js, WASM, TS)
 - ✅ Comprehensive observability stack (Prometheus + Grafana)
@@ -489,18 +531,22 @@ This implementation demonstrates:
 ## 📞 Support & Maintenance
 
 ### Getting Help
+
 - Documentation: See individual service READMEs
 - Issues: Submit via GitHub Issues
 - Emergency: Contact platform team
 
 ### Monitoring Alerts
+
 Configure alerts for:
+
 - Error rate > 1%
 - P99 latency > target × 2
 - Cache hit rate < 70%
 - Connection count < expected baseline
 
 ### Future Enhancements
+
 - [ ] Kubernetes operator deployment
 - [ ] Multi-region active-active replication
 - [ ] AI-powered routing optimization

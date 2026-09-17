@@ -36,7 +36,7 @@ describe('Export Functions', () => {
 
       expect(csvBuffer).toBeInstanceOf(Buffer);
       expect(csvBuffer.length).toBeGreaterThan(0);
-      
+
       // Should contain transaction data
       const csvString = csvBuffer.toString();
       expect(csvString).toContain('neo');
@@ -55,16 +55,14 @@ describe('Export Functions', () => {
     it('should format timestamps correctly', () => {
       const singleTransaction = [mockTransactions[0]!];
       const csvBuffer = generateCSVExport(singleTransaction);
-      
+
       const csvString = csvBuffer.toString();
       const lines = csvString.split('\n');
-      
+
       // First line should be header or date field
       const today = new Date().toISOString().substring(0, 10);
-      const hasDateField = lines.some((line) =>
-        line.includes('timestamp') || line.includes(today),
-      );
-      
+      const hasDateField = lines.some((line) => line.includes('timestamp') || line.includes(today));
+
       expect(hasDateField).toBe(true);
     });
   });
@@ -72,7 +70,7 @@ describe('Export Functions', () => {
   describe('generatePDFExport', () => {
     it('should not throw for valid input', () => {
       const outputPath = '/tmp/test-report.pdf';
-      
+
       // PDF generation uses file system operations that may not work in all environments
       // We'll test that the function accepts valid parameters without throwing type errors
       expect(() => {
@@ -83,7 +81,7 @@ describe('Export Functions', () => {
     it('should handle single transaction', () => {
       const singleTx = [mockTransactions[0]!];
       const outputPath = '/tmp/single-tx-report.pdf';
-      
+
       expect(() => {
         generatePDFExport(singleTx, outputPath);
       }).not.toThrow();
@@ -95,9 +93,9 @@ describe('Export Functions', () => {
         id: `txn-${i}`,
         amountIn: (Math.random() * 1000).toFixed(2),
       }));
-      
+
       const outputPath = '/tmp/large-report.pdf';
-      
+
       // PDFKit should create multi-page documents
       expect(() => {
         generatePDFExport(manyTransactions, outputPath);

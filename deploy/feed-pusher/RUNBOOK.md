@@ -71,21 +71,21 @@ WorkingDirectory=/opt/morpheus/neo-morpheus-oracle/deploy/feed-pusher
 Repeat the drop-in for each feed unit you enable. See
 [`FEED-OUTAGE-RUNBOOK.md`](./FEED-OUTAGE-RUNBOOK.md) §0.
 
-| repo file                               | box path                                                                      |
-| --------------------------------------- | ----------------------------------------------------------------------------- |
-| `feed-pusher.mjs`                       | `/opt/neoos/services/deploy/feed-pusher/feed-pusher.mjs`                      |
-| `feed-monitor.mjs`                      | `/opt/neoos/services/deploy/feed-pusher/feed-monitor.mjs`                     |
-| `feed-topup.mjs`                        | `/opt/neoos/services/deploy/feed-pusher/feed-topup.mjs`                       |
-| `lib-feed-network.mjs`                  | `/opt/neoos/services/deploy/feed-pusher/lib-feed-network.mjs` (required sibling) |
-| `lib-feed-writer-metrics.mjs`           | `/opt/neoos/services/deploy/feed-pusher/lib-feed-writer-metrics.mjs` (required sibling) |
-| `db-prune.mjs`                          | `/opt/neoos/services/deploy/feed-pusher/db-prune.mjs`                         |
-| `morpheus-feed-pusher.service` + `.timer` | `/etc/systemd/system/` (every 5 min; exec-time pin `FEED_NETWORK=mainnet`) |
-| `morpheus-feed-monitor.service` + `.timer` | `/etc/systemd/system/` (every 15 min; exec-time pin `FEED_NETWORK=mainnet`) |
-| `morpheus-feed-pusher-neox.service` + `.timer` | `/etc/systemd/system/` (distinct `PUSH_*` / `MISSING_STATE` from N3) |
-| `morpheus-feed-pusher-testnet.service` + `.timer` | `/etc/systemd/system/` (compatibility artifact: no `[Install]`; requires `ENABLE_NODE_FEED_PUSHER_COMPAT`; `Conflicts=` / `Before=` both Rust relayers; distinct `PUSH_*` / `MISSING_STATE` / `SIGNER_URL=:8789`; `Requires=` TestNet signer). Never enable. |
-| `morpheus-feed-monitor-testnet.service` + `.timer` | `/etc/systemd/system/` (distinct `MONITOR_*` paths/labels)         |
-| `morpheus-db-prune.service` + `.timer`  | `/etc/systemd/system/` (daily 03:30 UTC; retain 30d)                          |
-| `feed-pusher.env.example`               | template for `/opt/morpheus/nitro/feed-pusher.env` (chmod 600)                |
+| repo file                                          | box path                                                                                                                                                                                                                                                     |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `feed-pusher.mjs`                                  | `/opt/neoos/services/deploy/feed-pusher/feed-pusher.mjs`                                                                                                                                                                                                     |
+| `feed-monitor.mjs`                                 | `/opt/neoos/services/deploy/feed-pusher/feed-monitor.mjs`                                                                                                                                                                                                    |
+| `feed-topup.mjs`                                   | `/opt/neoos/services/deploy/feed-pusher/feed-topup.mjs`                                                                                                                                                                                                      |
+| `lib-feed-network.mjs`                             | `/opt/neoos/services/deploy/feed-pusher/lib-feed-network.mjs` (required sibling)                                                                                                                                                                             |
+| `lib-feed-writer-metrics.mjs`                      | `/opt/neoos/services/deploy/feed-pusher/lib-feed-writer-metrics.mjs` (required sibling)                                                                                                                                                                      |
+| `db-prune.mjs`                                     | `/opt/neoos/services/deploy/feed-pusher/db-prune.mjs`                                                                                                                                                                                                        |
+| `morpheus-feed-pusher.service` + `.timer`          | `/etc/systemd/system/` (every 5 min; exec-time pin `FEED_NETWORK=mainnet`)                                                                                                                                                                                   |
+| `morpheus-feed-monitor.service` + `.timer`         | `/etc/systemd/system/` (every 15 min; exec-time pin `FEED_NETWORK=mainnet`)                                                                                                                                                                                  |
+| `morpheus-feed-pusher-neox.service` + `.timer`     | `/etc/systemd/system/` (distinct `PUSH_*` / `MISSING_STATE` from N3)                                                                                                                                                                                         |
+| `morpheus-feed-pusher-testnet.service` + `.timer`  | `/etc/systemd/system/` (compatibility artifact: no `[Install]`; requires `ENABLE_NODE_FEED_PUSHER_COMPAT`; `Conflicts=` / `Before=` both Rust relayers; distinct `PUSH_*` / `MISSING_STATE` / `SIGNER_URL=:8789`; `Requires=` TestNet signer). Never enable. |
+| `morpheus-feed-monitor-testnet.service` + `.timer` | `/etc/systemd/system/` (distinct `MONITOR_*` paths/labels)                                                                                                                                                                                                   |
+| `morpheus-db-prune.service` + `.timer`             | `/etc/systemd/system/` (daily 03:30 UTC; retain 30d)                                                                                                                                                                                                         |
+| `feed-pusher.env.example`                          | template for `/opt/morpheus/nitro/feed-pusher.env` (chmod 600)                                                                                                                                                                                               |
 
 ## Emergency compatibility rollback
 

@@ -16,10 +16,10 @@ Before deploying Morpheus services, verify all required environment variables ar
 
 ### Network Selection (CRITICAL) / 网络选择（关键）
 
-| Variable | Required For | Description | Example |
-|----------|-------------|-------------|---------|
-| `MORPHEUS_NETWORK` | **ALL** | Main Morpheus runtime network selection | `mainnet` or `testnet` |
-| `NEXT_PUBLIC_MORPHEUS_NETWORK` | Web apps | Public-facing network identifier for browser clients | `mainnet` or `testnet` |
+| Variable                       | Required For | Description                                          | Example                |
+| ------------------------------ | ------------ | ---------------------------------------------------- | ---------------------- |
+| `MORPHEUS_NETWORK`             | **ALL**      | Main Morpheus runtime network selection              | `mainnet` or `testnet` |
+| `NEXT_PUBLIC_MORPHEUS_NETWORK` | Web apps     | Public-facing network identifier for browser clients | `mainnet` or `testnet` |
 
 **⚠️ CRITICAL:** At least one of these variables MUST be set during any deployment. If both are unset, the application will refuse to start with an error message directing you to set the appropriate network variable.
 
@@ -31,16 +31,16 @@ Before deploying Morpheus services, verify all required environment variables ar
 
 ### Key Differences / 主要差异
 
-| Aspect | Testnet | Mainnet |
-|--------|---------|---------|
-| **Purpose** | Development, testing, staging | Production, live users |
-| **Network Magic** | Different value (`1268474290`) | Different value (`860834051`) |
-| **Contract Addresses** | Testnet-specific hashes | Production contract hashes |
-| **Token Value** | Zero-value test tokens | Real-value assets |
-| **Security** | Lower threshold, more permissive | Strict security, production-ready |
-| **Rate Limits** | More generous | Stricter limits |
-| **RPC Endpoints** | Testnet RPC URLs | Production RPC URLs |
-| **Signer Keys** | Separate testnet keys | Production signing keys |
+| Aspect                 | Testnet                          | Mainnet                           |
+| ---------------------- | -------------------------------- | --------------------------------- |
+| **Purpose**            | Development, testing, staging    | Production, live users            |
+| **Network Magic**      | Different value (`1268474290`)   | Different value (`860834051`)     |
+| **Contract Addresses** | Testnet-specific hashes          | Production contract hashes        |
+| **Token Value**        | Zero-value test tokens           | Real-value assets                 |
+| **Security**           | Lower threshold, more permissive | Strict security, production-ready |
+| **Rate Limits**        | More generous                    | Stricter limits                   |
+| **RPC Endpoints**      | Testnet RPC URLs                 | Production RPC URLs               |
+| **Signer Keys**        | Separate testnet keys            | Production signing keys           |
 
 ### Configuration Checklist / 配置检查清单
 
@@ -76,6 +76,7 @@ Before deploying Morpheus services, verify all required environment variables ar
 ### Error: Network Not Configured / 错误：网络未配置
 
 **Symptom:**
+
 ```
 Error: MORPHEUS_NETWORK/NEXT_PUBLIC_MORPHEUS_NETWORK is required but not set. Set to "testnet" or "mainnet". Example: export MORPHEUS_NETWORK=testnet
 ```
@@ -83,6 +84,7 @@ Error: MORPHEUS_NETWORK/NEXT_PUBLIC_MORPHEUS_NETWORK is required but not set. Se
 **Root Cause:** Neither `MORPHEUS_NETWORK` nor `NEXT_PUBLIC_MORPHEUS_NETWORK` environment variables are defined.
 
 **Solution:**
+
 ```bash
 # Option 1: Direct export
 export MORPHEUS_NETWORK=testnet
@@ -94,7 +96,8 @@ echo "MORPHEUS_NETWORK=testnet" >> .env
 # Set NEXT_PUBLIC_MORPHEUS_NETWORK in your deployment platform
 ```
 
-**Prevention:** 
+**Prevention:**
+
 - Always verify environment before deploying
 - Use deployment workflows with pre-check validation
 - Document required variables in team onboarding
@@ -106,39 +109,45 @@ echo "MORPHEUS_NETWORK=testnet" >> .env
 **Error Code:** `runtime_network_mismatch`
 
 **Symptom:**
+
 ```
 Health check detected network mismatch: CVM reports 'testnet' but origin expects 'mainnet'
 ```
 
-**Root Cause:** 
+**Root Cause:**
+
 - Runtime environment reports different network than expected by control plane
 - Mixed configuration between testnet and mainnet endpoints
 
 **Solution:**
 
 1. **Verify Runtime Configuration:**
+
    ```bash
    curl -X GET https://oracle.meshmini.app/testnet/api/runtime/status
    ```
 
 2. **Check Consistency Across Services:**
+
    ```bash
    # Ensure all components use same network
    grep -r MORPHEUS_NETWORK deploy/ config/ scripts/
    ```
 
 3. **Update Network-Specific URLs:**
+
    ```bash
    # Correct mainnet endpoints
    MORPHEUS_MAINNET_RUNTIME_URL=https://oracle.meshmini.app/mainnet
    MORPHEUS_MAINNET_ORIGIN_URL=https://edge.meshmini.app/mainnet
-   
-   # Correct testnet endpoints  
+
+   # Correct testnet endpoints
    MORPHEUS_TESTNET_RUNTIME_URL=https://oracle.meshmini.app/testnet
    MORPHEUS_TESTNET_ORIGIN_URL=https://edge.meshmini.app/testnet
    ```
 
 **Prevention:**
+
 - Never mix testnet and mainnet configurations in same deployment
 - Use separate deployment environments for each network
 - Validate network consistency in CI/CD pipeline
@@ -148,6 +157,7 @@ Health check detected network mismatch: CVM reports 'testnet' but origin expects
 ### Error: Invalid Network Value / 错误：无效的网络值
 
 **Symptom:**
+
 ```
 Error: Invalid MORPHEUS_NETWORK/NEXT_PUBLIC_MORPHEUS_NETWORK value "mianet"; expected "mainnet" or "testnet"
 ```
@@ -155,6 +165,7 @@ Error: Invalid MORPHEUS_NETWORK/NEXT_PUBLIC_MORPHEUS_NETWORK value "mianet"; exp
 **Root Cause:** Typo in environment variable value (e.g., `mianet` instead of `mainnet`)
 
 **Solution:**
+
 ```bash
 # Double-check spelling
 export MORPHEUS_NETWORK=mainnet
@@ -164,6 +175,7 @@ echo "Allowed values: mainnet, testnet"
 ```
 
 **Common Typos:**
+
 - ❌ `mianet` → ✅ `mainnet`
 - ❌ `tests` → ✅ `testnet`
 - ❌ `production` → ✅ `mainnet`
@@ -318,11 +330,13 @@ jobs:
 ## Contact Support / 联系支持
 
 For deployment issues, contact:
+
 - **Slack Channel:** #morpheus-support
 - **Email:** morpheus-ops@r3e.network
 - **On-Call Pager:** See internal wiki
 
 **Always include:**
+
 - Network type (testnet/mainnet)
 - Error messages
 - Environment variable dump (redacted)

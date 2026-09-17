@@ -21,13 +21,10 @@ describe('DualSignatureVerifier', () => {
       const sig1 = verifier.signMessage(message, keypair.privateKey);
       const sig2 = verifier.signMessage(message, secondKeypair.privateKey);
 
-      const isValid = verifier.verifyDualSignature(
-        message,
-        sig1,
-        sig2,
+      const isValid = verifier.verifyDualSignature(message, sig1, sig2, userId, [
         userId,
-        [userId, secondUserId]
-      );
+        secondUserId,
+      ]);
 
       expect(isValid).toBe(true);
     });
@@ -35,19 +32,15 @@ describe('DualSignatureVerifier', () => {
     it('should reject invalid signature', () => {
       const userId = 'user-456';
       const maliciousUserId = 'evil-user';
-      
+
       verifier.registerUserPublicKey(userId, Buffer.alloc(32));
-      
+
       const message = Buffer.from('malicious-message');
       const fakeSig = Buffer.alloc(64, 0xff);
 
-      const isValid = verifier.verifyDualSignature(
-        message,
-        fakeSig,
-        fakeSig,
+      const isValid = verifier.verifyDualSignature(message, fakeSig, fakeSig, maliciousUserId, [
         maliciousUserId,
-        [maliciousUserId]
-      );
+      ]);
 
       expect(isValid).toBe(false);
     });
@@ -68,13 +61,11 @@ describe('DualSignatureVerifier', () => {
       const validSigBob = verifier.signMessage(message, bob.privateKey);
 
       // Only Alice and Bob have valid keys, Charlie doesn't
-      const isValid = verifier.verifyDualSignature(
-        message,
-        validSigAlice,
-        validSigBob,
+      const isValid = verifier.verifyDualSignature(message, validSigAlice, validSigBob, user1, [
         user1,
-        [user1, user2, user3]
-      );
+        user2,
+        user3,
+      ]);
 
       expect(isValid).toBe(true);
     });

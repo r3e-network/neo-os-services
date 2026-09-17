@@ -238,11 +238,7 @@ function buildServiceDidDocument(
             'isMasterNullifierUsed',
             'isActionNullifierUsed',
           ],
-          write_methods: [
-            'registerBindingCommitment',
-            'revokeBinding',
-            'useActionTicket',
-          ],
+          write_methods: ['registerBindingCommitment', 'revokeBinding', 'useActionTicket'],
         },
       },
       {

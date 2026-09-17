@@ -9,9 +9,10 @@
 
 ## Executive Summary
 
-The NeoSigner service now has **fully implemented cross-chain support** for both Neo N3 and Neo X chains. 
+The NeoSigner service now has **fully implemented cross-chain support** for both Neo N3 and Neo X chains.
 
 **Key Findings**:
+
 - ✅ Core signing logic for both chain families is COMPLETE (service.rs lines 1970-2072)
 - ✅ Cryptographic primitives for secp256r1 (Neo N3) and secp256k1 (Neo X) are COMPLETE (crypto.rs lines 28-536)
 - ✅ Database schema migrations are COMPLETE (schema.rs lines 239-314)

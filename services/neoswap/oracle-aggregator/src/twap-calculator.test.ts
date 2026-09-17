@@ -9,9 +9,10 @@ describe('TWAPCalculator', () => {
     calculator = new TWAPCalculator('redis://localhost:6379');
     const store = new Map<string, string>();
     (calculator as any).redis = {
-      keys: async (pattern: string) => [...store.keys()].filter((key) =>
-        pattern.endsWith('*') ? key.startsWith(pattern.slice(0, -1)) : key === pattern,
-      ),
+      keys: async (pattern: string) =>
+        [...store.keys()].filter((key) =>
+          pattern.endsWith('*') ? key.startsWith(pattern.slice(0, -1)) : key === pattern
+        ),
       get: async (key: string) => store.get(key) ?? null,
       setEx: async (key: string, _ttl: number, value: string) => {
         store.set(key, value);
@@ -68,12 +69,24 @@ describe('TWAPCalculator', () => {
       const bucketSize = 60; // 1 second buckets
 
       const redis = (calculator as any).redis;
-      await redis.setEx('price:NEO/USDT:source-a', 60, JSON.stringify({
-        price: '25', volume: '10', timestamp: endTime - 1000,
-      }));
-      await redis.setEx('price:NEO/USDT:source-b', 60, JSON.stringify({
-        price: '30', volume: '10', timestamp: endTime - 120000,
-      }));
+      await redis.setEx(
+        'price:NEO/USDT:source-a',
+        60,
+        JSON.stringify({
+          price: '25',
+          volume: '10',
+          timestamp: endTime - 1000,
+        })
+      );
+      await redis.setEx(
+        'price:NEO/USDT:source-b',
+        60,
+        JSON.stringify({
+          price: '30',
+          volume: '10',
+          timestamp: endTime - 120000,
+        })
+      );
 
       // This would call actual Redis in production
       const prices = await (calculator as any).queryPriceHistory(
@@ -101,10 +114,7 @@ describe('TWAPCalculator', () => {
       await calculator.cacheTWAPResult(sample, 300);
 
       // Verify cache hit
-      const cached = await calculator.getCachedTWAP(
-        sample.windowStart,
-        sample.windowEnd
-      );
+      const cached = await calculator.getCachedTWAP(sample.windowStart, sample.windowEnd);
 
       expect(cached).toBeDefined();
       expect(cached?.averagePrice).toBe(sample.averagePrice);

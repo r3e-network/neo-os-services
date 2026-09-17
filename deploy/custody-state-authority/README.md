@@ -106,14 +106,14 @@ deployment-specific fact.
 One DynamoDB table uses `pk`/`sk` string keys. `scope` below is the exact
 `vault#profile#network#root-commitment` tuple:
 
-| Entity       | Key                            | Lifetime  | Mutation rule              |
-| ------------ | ------------------------------ | --------- | -------------------------- |
-| Challenge    | `CHALLENGE#id / META`          | TTL       | One atomic consume only    |
-| Session      | `SESSION#sha256(token) / META` | TTL       | Insert only                |
-| Request proof | `PROOF#tokenHash#nonce / META` | Session TTL | Conditional insert once |
-| HEAD         | `STATE#scope / HEAD`           | Permanent | Exact conditional CAS only |
-| Commit claim | `COMMIT#scope#id / CLAIM`      | Permanent | Insert only                |
-| COMMIT       | `COMMIT#scope#id / RECORD`     | Permanent | Insert only                |
+| Entity        | Key                            | Lifetime    | Mutation rule              |
+| ------------- | ------------------------------ | ----------- | -------------------------- |
+| Challenge     | `CHALLENGE#id / META`          | TTL         | One atomic consume only    |
+| Session       | `SESSION#sha256(token) / META` | TTL         | Insert only                |
+| Request proof | `PROOF#tokenHash#nonce / META` | Session TTL | Conditional insert once    |
+| HEAD          | `STATE#scope / HEAD`           | Permanent   | Exact conditional CAS only |
+| Commit claim  | `COMMIT#scope#id / CLAIM`      | Permanent   | Insert only                |
+| COMMIT        | `COMMIT#scope#id / RECORD`     | Permanent   | Insert only                |
 
 Every authority read uses `ConsistentRead: true`, including HEAD and idempotency
 lookups. A commit transaction binds the vault, profile, network set, root-key

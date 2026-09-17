@@ -61,8 +61,10 @@ test('request verifier cannot bypass authentication by returning no proof', asyn
   for (const value of [null, undefined, false]) {
     const { authority, repository, time } = fixture({ verifyRequestProof: async () => value });
     seedSession(repository, TOKEN_A, time.now);
-    await assert.rejects(authority.getHead({ vaultId: VAULT_ID, profileId: PROFILE_ID, token: TOKEN_A }),
-      (error) => error.code === 'invalid_request_proof');
+    await assert.rejects(
+      authority.getHead({ vaultId: VAULT_ID, profileId: PROFILE_ID, token: TOKEN_A }),
+      (error) => error.code === 'invalid_request_proof'
+    );
   }
 });
 
@@ -206,8 +208,10 @@ test('upload status rechecks the live owner lease after S3 resolution', async ()
     time.now += TEST_CONFIG.leaseDurationSeconds * 1000;
     return 'exact-version';
   };
-  await assert.rejects(authority.resolveUpload(request),
-    (error) => error.code === 'upload_status_precondition_failed');
+  await assert.rejects(
+    authority.resolveUpload(request),
+    (error) => error.code === 'upload_status_precondition_failed'
+  );
 });
 
 test('epoch takeover preserves the committed snapshot fence and exact version recovery', async () => {

@@ -38,9 +38,7 @@ export function validateAttestedPublicKey(claims) {
     key.asymmetricKeyDetails.modulusLength !== 3072 ||
     key.asymmetricKeyDetails.publicExponent !== 65_537n
   ) {
-    throw new Error(
-      'attested session key must be canonical RSA-3072 SPKI with exponent 65537'
-    );
+    throw new Error('attested session key must be canonical RSA-3072 SPKI with exponent 65537');
   }
   return key;
 }

@@ -3,28 +3,28 @@ info:
   title: NeoOS Signer Service API
   description: |
     Production-grade custody service for Neo N3 and NeoX private keys.
-    
+
     The signer service is the only component in NeoOS allowed to hold an unlocked 
     Neo N3 or NeoX private key, and the only component that decides whether a given 
     key signs a given intent. Every key is immutably bound to its chain family and 
     chain identifier.
-    
+
     ## Security Considerations
     - Transport: loopback or internal network only
     - Authentication: Bearer token or Ed25519 workload identity
     - Origin checking: Required for browser-based callers
     - Audit trail: All decisions are recorded with full details
-    
+
     ## Key Concepts
     - **Keys**: Custody keys bound to specific chains (Neo N3/Neo X)
     - **Callers**: Registered identities requesting signatures
     - **Policies**: Boundaries defining what each key can sign
     - **Audit Trail**: Complete record of all signing decisions
-    
+
     ## Chain Families
     - `neo-n3`: Neo N3 (NEO Legacy) network support
     - `neox`: Neo X (EVM-compatible) network support
-    
+
     For complete documentation, see [SIGNER_SERVICE.md](../SIGNER_SERVICE.md)
   version: 2.1.0
   contact:
@@ -63,7 +63,7 @@ paths:
       description: |
         Unlocks the master key through attestation verification. This must be called
         once per boot before any other operations. Only callable from trusted enclave hosts.
-        
+
         The vault starts sealed and becomes open after successful provisioning.
       operationId: provisionVault
       requestBody:
@@ -76,9 +76,9 @@ paths:
               nitro:
                 value:
                   env:
-                    provision_key_arn: "arn:aws:kms:us-east-1:123456789012:key/abcd1234-5678-9012-abcd-ef1234567890"
-                    vault_id: "vault-prod-001"
-                    attestation_source: "nitro"
+                    provision_key_arn: 'arn:aws:kms:us-east-1:123456789012:key/abcd1234-5678-9012-abcd-ef1234567890'
+                    vault_id: 'vault-prod-001'
+                    attestation_source: 'nitro'
       responses:
         '200':
           description: Vault successfully provisioned
@@ -93,7 +93,7 @@ paths:
                   vault_fingerprint:
                     type: string
                     description: SHA-256 fingerprint of the vault state
-                    example: "a3f5c8b9d2e1f4a7c6b5d8e9f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0"
+                    example: 'a3f5c8b9d2e1f4a7c6b5d8e9f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0'
         '409':
           description: Vault already provisioned
           content:
@@ -104,8 +104,8 @@ paths:
                 default:
                   value:
                     allowed: false
-                    code: "signer-provision-already-done"
-                    message: "the vault is already provisioned; provisioning happens once per boot"
+                    code: 'signer-provision-already-done'
+                    message: 'the vault is already provisioned; provisioning happens once per boot'
         '503':
           description: Vault not yet provisioned
           content:
@@ -137,10 +137,10 @@ paths:
               examples:
                 ready:
                   value:
-                    status: "ok"
+                    status: 'ok'
                 pending:
                   value:
-                    status: "unprovisioned"
+                    status: 'unprovisioned'
 
   /metrics:
     get:
@@ -196,16 +196,16 @@ paths:
               examples:
                 default:
                   value:
-                    status: "ok"
-                    runtime: "nitro-eif-2.1.0"
-                    format: "cose-sign1-cbor-base64"
-                    vault_fingerprint: "abc123def456..."
-                    boundaries_sha256: "e3b0c44298fc1c149af..."
+                    status: 'ok'
+                    runtime: 'nitro-eif-2.1.0'
+                    format: 'cose-sign1-cbor-base64'
+                    vault_fingerprint: 'abc123def456...'
+                    boundaries_sha256: 'e3b0c44298fc1c149af...'
                     boundaries_json: '{"keys":[...]}'
-                    nonce: "random_hex_nonce_here"
-                    user_data_hex: "attested_user_data"
+                    nonce: 'random_hex_nonce_here'
+                    user_data_hex: 'attested_user_data'
                     document_len: 512
-                    attestation_document: "eyJz..."
+                    attestation_document: 'eyJz...'
 
   # ==================== TRANSACTION SIGNING ENDPOINTS ====================
 
@@ -218,10 +218,10 @@ paths:
         Signs a SerializeUnsigned transaction using the specified key. The request
         includes unsigned transaction bytes which are parsed and validated according
         to the key's policy before signing.
-        
+
         For NeoN3: returns witness data for the transaction
         For NeoX: returns complete signed EVM transaction
-        
+
         Idempotent by request_id - exact retries return cached signature without
         consuming limits again.
       operationId: signTransaction
@@ -234,17 +234,17 @@ paths:
             examples:
               neotx:
                 value:
-                  key_id: "key-neon3-treasury-001"
-                  unsigned_hex: "1100abcdef..."
-                  request_id: "tx-uuid-12345"
-                  chain_family: "neo-n3"
+                  key_id: 'key-neon3-treasury-001'
+                  unsigned_hex: '1100abcdef...'
+                  request_id: 'tx-uuid-12345'
+                  chain_family: 'neo-n3'
                   chain_id: null
               neox_tx:
                 value:
-                  key_id: "key-neox-oracle-001"
-                  unsigned_hex: "02f88b..."
-                  request_id: "tx-uuid-67890"
-                  chain_family: "neox"
+                  key_id: 'key-neox-oracle-001'
+                  unsigned_hex: '02f88b...'
+                  request_id: 'tx-uuid-67890'
+                  chain_family: 'neox'
                   chain_id: 12227332
       responses:
         '200':
@@ -340,7 +340,7 @@ paths:
       description: |
         Signs arbitrary raw bytes. REQUIRES the key to have allow_raw=true policy flag.
         Only available to dedicated enclave-host role keys with raw_sign capability.
-        
+
         WARNING: No parsing or validation occurs. Caller has full control over what
         gets signed. Use only for preimages assembled inside measured boundary.
       operationId: signRaw
@@ -434,7 +434,7 @@ paths:
       description: |
         Imports an existing private key into the custody vault. The private key
         is encrypted at rest and never stored in plaintext. Requires admin capabilities.
-        
+
         WARNING: Private key material is sent in the request body and should be
         transmitted securely.
       operationId: importKey
@@ -594,7 +594,7 @@ paths:
       description: |
         Sets the policy configuration for a key. Policies are evaluated for every
         signing request and enforce fine-grained access controls.
-        
+
         The default policy is CLOSED - nothing is allowed until explicitly permitted.
       operationId: saveKeyPolicy
       parameters:
@@ -772,7 +772,7 @@ paths:
       description: |
         Accesses the complete audit trail of signing decisions and administrative
         actions. Requires admin capabilities and whole-vault grant.
-        
+
         The detail field contains sensitive information (hashes, amounts) and is
         ONLY available here - never exposed in refusal responses to regular callers.
       operationId: listAuditLogs
@@ -811,22 +811,22 @@ components:
         key_id:
           type: string
           description: ID of the key to use for signing
-          example: "key-neon3-treasury-001"
+          example: 'key-neon3-treasury-001'
         unsigned_hex:
           type: string
           format: hex
           description: Unsigned transaction bytes in hexadecimal format
-          example: "1100abcdef..."
+          example: '1100abcdef...'
           minLength: 2
         request_id:
           type: string
           format: uuid
           description: Optional unique request ID for idempotency
-          example: "550e8400-e29b-41d4-a716-446655440000"
+          example: '550e8400-e29b-41d4-a716-446655440000'
         chain_family:
           type: string
-          enum: ["neo-n3", "neox"]
-          default: "neo-n3"
+          enum: ['neo-n3', 'neox']
+          default: 'neo-n3'
           description: Target chain family
         chain_id:
           type: integer
@@ -930,12 +930,12 @@ components:
           description: Human-readable label for the key
         network:
           type: string
-          enum: ["mainnet", "testnet", "private"]
+          enum: ['mainnet', 'testnet', 'private']
           description: Target network
         chain_family:
           type: string
-          enum: ["neo-n3", "neox"]
-          default: "neo-n3"
+          enum: ['neo-n3', 'neox']
+          default: 'neo-n3'
         chain_id:
           type: integer
           description: NeoX chain ID
@@ -955,10 +955,10 @@ components:
           type: string
         network:
           type: string
-          enum: ["mainnet", "testnet", "private"]
+          enum: ['mainnet', 'testnet', 'private']
         chain_family:
           type: string
-          enum: ["neo-n3", "neox"]
+          enum: ['neo-n3', 'neox']
         private_key:
           type: string
           description: Private key material (will be zeroed after import)
@@ -1055,7 +1055,7 @@ components:
         allow_raw:
           type: boolean
           default: false
-          description: WARNING: Allows blind signing of raw bytes
+          description: 'WARNING: Allows blind signing of raw bytes'
         contract_whitelist:
           type: array
           items:
@@ -1116,7 +1116,7 @@ components:
           $ref: '#/components/schemas/SignatureRate'
         chain_family:
           type: string
-          enum: ["neo-n3", "neox"]
+          enum: ['neo-n3', 'neox']
         evm_max_gas_price:
           type: string
         evm_max_gas_limit:
@@ -1137,8 +1137,8 @@ components:
       properties:
         mode:
           type: string
-          enum: ["any", "only"]
-          default: "only"
+          enum: ['any', 'only']
+          default: 'only'
         key_ids:
           type: array
           items:
@@ -1314,7 +1314,7 @@ components:
           format: hex
         chain_family:
           type: string
-          enum: ["neo-n3", "neox"]
+          enum: ['neo-n3', 'neox']
         signature_hex:
           type: string
           description: Signed transaction (deprecated, use signature instead)
@@ -1400,10 +1400,10 @@ components:
           format: uuid
         network:
           type: string
-          enum: ["mainnet", "testnet", "private"]
+          enum: ['mainnet', 'testnet', 'private']
         chain_family:
           type: string
-          enum: ["neo-n3", "neox"]
+          enum: ['neo-n3', 'neox']
         chain_id:
           type: integer
         label:
@@ -1504,7 +1504,7 @@ components:
             type: string
         caller_type:
           type: string
-          enum: ["bearer", "workload"]
+          enum: ['bearer', 'workload']
 
     CreateCallerResponse:
       type: object
@@ -1623,12 +1623,12 @@ components:
       properties:
         status:
           type: string
-          enum: ["ok"]
+          enum: ['ok']
         runtime:
           type: string
         format:
           type: string
-          enum: ["cose-sign1-cbor-base64"]
+          enum: ['cose-sign1-cbor-base64']
         vault_fingerprint:
           type: string
           format: hash-256

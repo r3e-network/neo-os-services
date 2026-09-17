@@ -42,7 +42,10 @@ async function readBoxHealth(url: string): Promise<{ status: number; body: unkno
   let timer: ReturnType<typeof setTimeout> | undefined;
   const operation = (async () => {
     const response = await fetch(url, {
-      method: 'GET', cache: 'no-store', signal: controller.signal, redirect: 'error',
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller.signal,
+      redirect: 'error',
     });
     if (controller.signal.aborted) {
       void response.body?.cancel().catch(() => {});
@@ -61,8 +64,14 @@ async function readBoxHealth(url: string): Promise<{ status: number; body: unkno
     }
     const content = new Uint8Array(bytes);
     let offset = 0;
-    for (const chunk of chunks) { content.set(chunk, offset); offset += chunk.byteLength; }
-    return { status: response.status, body: JSON.parse(new TextDecoder().decode(content)) as unknown };
+    for (const chunk of chunks) {
+      content.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return {
+      status: response.status,
+      body: JSON.parse(new TextDecoder().decode(content)) as unknown,
+    };
   })();
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
@@ -90,8 +99,10 @@ export async function fetchBoxHealth(networkOverride?: string | null): Promise<R
     const response = await readBoxHealth(resolveBoxHealthUrl(networkKey));
     // Never return a raw response string (or spread string characters into an
     // error envelope). Only structured health documents can supply evidence.
-    const body = response.body && typeof response.body === 'object' && !Array.isArray(response.body)
-      ? response.body as Record<string, unknown> : {};
+    const body =
+      response.body && typeof response.body === 'object' && !Array.isArray(response.body)
+        ? (response.body as Record<string, unknown>)
+        : {};
 
     const reportedNetwork = normalizeNetworkKey(body.network as string | null);
     if (response.status === 200 && reportedNetwork !== networkKey) {
@@ -108,7 +119,10 @@ export async function fetchBoxHealth(networkOverride?: string | null): Promise<R
         },
       };
     }
-    if (response.status === 200 && (body.ready !== true || (body.status !== undefined && body.status !== 'ok'))) {
+    if (
+      response.status === 200 &&
+      (body.ready !== true || (body.status !== undefined && body.status !== 'ok'))
+    ) {
       return {
         ok: false,
         status: 503,

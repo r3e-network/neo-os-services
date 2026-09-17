@@ -40,21 +40,25 @@ export class PathfindingEngine {
 
   // Floyd-Warshall algorithm for multi-hop pathfinding
   findBestRoutes(tokenIn: string, tokenOut: string, amount: string, maxHops = 4): SwapRoute[] {
-    if (tokenIn === tokenOut || !new BigNumber(amount).isFinite() || new BigNumber(amount).isLessThanOrEqualTo(0)) {
+    if (
+      tokenIn === tokenOut ||
+      !new BigNumber(amount).isFinite() ||
+      new BigNumber(amount).isLessThanOrEqualTo(0)
+    ) {
       return [];
     }
     const routes: SwapRoute[] = [];
-    
+
     // Find all paths using BFS with depth limiting
     const paths = this.bfsEdgePaths(tokenIn, tokenOut, Math.min(Math.max(maxHops, 1), 6));
-    
+
     for (const path of paths) {
       const route = this.calculateRoute(path, amount);
       if (route) {
         routes.push(route);
       }
     }
-    
+
     // Sort by expected output amount
     return routes.sort((a, b) => {
       return new BigNumber(b.outAmount).comparedTo(new BigNumber(a.outAmount)) ?? 0;
@@ -120,11 +124,11 @@ export class PathfindingEngine {
 
   private calculateRoute(path: PoolEdge[], amount: string): SwapRoute | null {
     let remainingAmount = new BigNumber(amount);
-    
+
     for (const edge of path) {
       const pool = this.pools.get(edge.poolId);
       if (!pool) return null;
-      
+
       // Calculate swap output based on constant product formula
       remainingAmount = this.calculatePoolOutput(pool, remainingAmount.toString(), edge.reverse);
     }
@@ -147,7 +151,7 @@ export class PathfindingEngine {
     const reserveIn = new BigNumber(reverse ? pool.reserveOut : pool.reserveIn || '0');
     const reserveOut = new BigNumber(reverse ? pool.reserveIn : pool.reserveOut || '0');
     const amountIn = new BigNumber(inputAmount);
-    
+
     if (reserveIn.isZero() || reserveOut.isZero()) {
       throw new Error('Pool has zero liquidity');
     }
@@ -156,19 +160,19 @@ export class PathfindingEngine {
     const amountInWithFee = amountIn.times(new BigNumber(10000).minus(fee));
     const numerator = amountInWithFee.times(reserveOut);
     const denominator = reserveIn.times(10000).plus(amountInWithFee);
-    
+
     return numerator.div(denominator);
   }
 
   private calculatePriceImpact(inputAmount: string, outputAmount: string): number {
     const input = new BigNumber(inputAmount);
     const output = new BigNumber(outputAmount);
-    
+
     // Simple price impact calculation
     const midPrice = this.getMidPrice();
     const impliedPrice = input.div(output);
-    
-    return ((impliedPrice.minus(midPrice)).dividedBy(midPrice)).abs().toNumber() * 100;
+
+    return impliedPrice.minus(midPrice).dividedBy(midPrice).abs().toNumber() * 100;
   }
 
   private getMidPrice(): BigNumber {

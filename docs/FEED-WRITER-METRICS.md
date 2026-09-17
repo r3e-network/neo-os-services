@@ -50,45 +50,45 @@ Alertmanager, or a webhook.
 All series are prefixed `neoos_feed_writer_`. Every series includes
 `network="mainnet"` or `network="testnet"`.
 
-| Name | Type | Labels | Meaning |
-| --- | --- | --- | --- |
-| `neoos_feed_writer_last_attempt_timestamp_seconds` | gauge | `network` | Unix seconds of the last persisted status `ts` |
-| `neoos_feed_writer_last_submitted_timestamp_seconds` | gauge | `network` | Unix seconds of the last persist that recorded broadcast accept (`submitted`/`pending`). Retained across later skipped cycles |
-| `neoos_feed_writer_last_confirmed_timestamp_seconds` | gauge | `network` | Unix seconds of the last persist that recorded `HALT` (`confirmed`) |
-| `neoos_feed_writer_last_submitted_height` | gauge | `network` | `submitted_identity.validUntilBlock` from the last submitted persist. Not a txid |
-| `neoos_feed_writer_last_confirmed_height` | gauge | `network` | `validUntilBlock` retained from the last confirmed persist |
-| `neoos_feed_writer_confirmation_state` | gauge | `network`, `state` | One-hot `0`/`1`. `state` is `skipped` \| `submitted` \| `pending` \| `confirmed` \| `fault` \| `failed` |
-| `neoos_feed_writer_pairs` | gauge | `network`, `result` | Counts from `pairs_*`. `result` is `submitted` \| `pending` \| `confirmed` \| `skipped` \| `faulted` \| `failed` |
-| `neoos_feed_writer_source_pairs` | gauge | `network`, `result` | Planning-phase counts: `skipped` (threshold) and `missing` (no quote). Not confirmation |
-| `neoos_feed_writer_confirmation_latency_seconds` | gauge | `network` | `last_confirmed_unix - last_submitted_unix` for the last confirmed cycle. Omitted until both exist |
-| `neoos_feed_writer_failed_cycles_total` | counter | `network` | Persisted count of cycles whose classified state is `failed` or `fault`. Not incremented for `pending`/`submitted`/`skipped` |
-| `neoos_feed_writer_outstanding_replay` | gauge | `network` | `1` when the pending-batch sidecar file exists for this network |
-| `neoos_feed_writer_write_mode` | gauge | `network`, `mode` | One-hot `batch_update_feeds` / `per_pair_update_feed` |
+| Name                                                 | Type    | Labels              | Meaning                                                                                                                       |
+| ---------------------------------------------------- | ------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `neoos_feed_writer_last_attempt_timestamp_seconds`   | gauge   | `network`           | Unix seconds of the last persisted status `ts`                                                                                |
+| `neoos_feed_writer_last_submitted_timestamp_seconds` | gauge   | `network`           | Unix seconds of the last persist that recorded broadcast accept (`submitted`/`pending`). Retained across later skipped cycles |
+| `neoos_feed_writer_last_confirmed_timestamp_seconds` | gauge   | `network`           | Unix seconds of the last persist that recorded `HALT` (`confirmed`)                                                           |
+| `neoos_feed_writer_last_submitted_height`            | gauge   | `network`           | `submitted_identity.validUntilBlock` from the last submitted persist. Not a txid                                              |
+| `neoos_feed_writer_last_confirmed_height`            | gauge   | `network`           | `validUntilBlock` retained from the last confirmed persist                                                                    |
+| `neoos_feed_writer_confirmation_state`               | gauge   | `network`, `state`  | One-hot `0`/`1`. `state` is `skipped` \| `submitted` \| `pending` \| `confirmed` \| `fault` \| `failed`                       |
+| `neoos_feed_writer_pairs`                            | gauge   | `network`, `result` | Counts from `pairs_*`. `result` is `submitted` \| `pending` \| `confirmed` \| `skipped` \| `faulted` \| `failed`              |
+| `neoos_feed_writer_source_pairs`                     | gauge   | `network`, `result` | Planning-phase counts: `skipped` (threshold) and `missing` (no quote). Not confirmation                                       |
+| `neoos_feed_writer_confirmation_latency_seconds`     | gauge   | `network`           | `last_confirmed_unix - last_submitted_unix` for the last confirmed cycle. Omitted until both exist                            |
+| `neoos_feed_writer_failed_cycles_total`              | counter | `network`           | Persisted count of cycles whose classified state is `failed` or `fault`. Not incremented for `pending`/`submitted`/`skipped`  |
+| `neoos_feed_writer_outstanding_replay`               | gauge   | `network`           | `1` when the pending-batch sidecar file exists for this network                                                               |
+| `neoos_feed_writer_write_mode`                       | gauge   | `network`, `mode`   | One-hot `batch_update_feeds` / `per_pair_update_feed`                                                                         |
 
 ### Confirmation-state mapping
 
-| Persisted evidence | `confirmation_state` |
-| --- | --- |
-| `confirmation_status=skipped` (planned writes empty; `ok` true) | `skipped` — source-stale / no planned writes |
-| `confirmation_status=submitted` | `submitted` — mempool accept, not `HALT` |
-| `confirmation_status=pending`, or sidecar present while status claims `confirmed`/`skipped` | `pending` — submitted but unconfirmed |
-| `confirmation_status=confirmed` and no sidecar | `confirmed` |
-| `pairs_faulted.length > 0` | `fault` — application-log `FAULT` |
-| `confirmation_status=failed` and no faulted pairs | `failed` — rejection / unsubmitted / other |
-| Status has no `confirmation_status` (env error, Neo X) | no one-hot bit set |
+| Persisted evidence                                                                          | `confirmation_state`                         |
+| ------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `confirmation_status=skipped` (planned writes empty; `ok` true)                             | `skipped` — source-stale / no planned writes |
+| `confirmation_status=submitted`                                                             | `submitted` — mempool accept, not `HALT`     |
+| `confirmation_status=pending`, or sidecar present while status claims `confirmed`/`skipped` | `pending` — submitted but unconfirmed        |
+| `confirmation_status=confirmed` and no sidecar                                              | `confirmed`                                  |
+| `pairs_faulted.length > 0`                                                                  | `fault` — application-log `FAULT`            |
+| `confirmation_status=failed` and no faulted pairs                                           | `failed` — rejection / unsubmitted / other   |
+| Status has no `confirmation_status` (env error, Neo X)                                      | no one-hot bit set                           |
 
 `skipped` must not be alerted as “tx stuck”. Use `submitted`/`pending` for
 unconfirmed writes and `fault`/`failed` for terminal write failures.
 
 ### Files
 
-| Path | Role |
-| --- | --- |
-| `deploy/feed-pusher/lib-feed-writer-metrics.mjs` | Classify, persist, render Prometheus text |
-| `${PUSH_STATUS}` | Writer status JSON (unchanged schema) |
-| `${PUSH_STATUS}.pending-batch.json` | Mainnet replay sidecar; metrics read existence / network only |
-| `${PUSH_STATUS}.metrics.json` | Durable timestamps + `failed_cycles_total` (no secrets) |
-| `$PUSH_PROM_TEXTFILE` | Prometheus textfile (atomic temp + rename). Empty pin = no scrape file |
+| Path                                             | Role                                                                   |
+| ------------------------------------------------ | ---------------------------------------------------------------------- |
+| `deploy/feed-pusher/lib-feed-writer-metrics.mjs` | Classify, persist, render Prometheus text                              |
+| `${PUSH_STATUS}`                                 | Writer status JSON (unchanged schema)                                  |
+| `${PUSH_STATUS}.pending-batch.json`              | Mainnet replay sidecar; metrics read existence / network only          |
+| `${PUSH_STATUS}.metrics.json`                    | Durable timestamps + `failed_cycles_total` (no secrets)                |
+| `$PUSH_PROM_TEXTFILE`                            | Prometheus textfile (atomic temp + rename). Empty pin = no scrape file |
 
 ### `advanceWriterMetrics({ status, previous, pendingReplay })`
 
@@ -142,16 +142,16 @@ document does not claim a scrape job or alert rule is installed.
 
 ## Test coverage
 
-| Case | Expected |
-| --- | --- |
-| Batch confirmed | `state=confirmed`, pair `confirmed` count, latency from submitted→confirmed timestamps, no sidecar |
-| Batch pending + sidecar | `state=pending`, `outstanding_replay=1`, `failed_cycles_total` unchanged |
-| Batch FAULT | `state=fault`, `pairs{result="faulted"}`, counter increments once |
-| Oneshot overlay after FAULT | Same `ts` reused; `failed_cycles_total` stays at one |
-| Per-pair confirmed / pending / FAULT | Same classification with `mode=per_pair_update_feed` |
-| Skipped / missing quotes | `state=skipped`, `source_pairs` missing/skipped, not `pending`/`fault` |
-| Restart | Rebuild from status + sidecar + metrics sidecar equals the pre-restart exposition |
-| Leak guard | Rendered text contains no pair id, txid, raw tx, TD key, or account value |
+| Case                                 | Expected                                                                                           |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| Batch confirmed                      | `state=confirmed`, pair `confirmed` count, latency from submitted→confirmed timestamps, no sidecar |
+| Batch pending + sidecar              | `state=pending`, `outstanding_replay=1`, `failed_cycles_total` unchanged                           |
+| Batch FAULT                          | `state=fault`, `pairs{result="faulted"}`, counter increments once                                  |
+| Oneshot overlay after FAULT          | Same `ts` reused; `failed_cycles_total` stays at one                                               |
+| Per-pair confirmed / pending / FAULT | Same classification with `mode=per_pair_update_feed`                                               |
+| Skipped / missing quotes             | `state=skipped`, `source_pairs` missing/skipped, not `pending`/`fault`                             |
+| Restart                              | Rebuild from status + sidecar + metrics sidecar equals the pre-restart exposition                  |
+| Leak guard                           | Rendered text contains no pair id, txid, raw tx, TD key, or account value                          |
 
 ## Implementation notes
 

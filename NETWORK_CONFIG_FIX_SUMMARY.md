@@ -36,6 +36,7 @@ if (!raw) {
 ```
 
 **Benefits:**
+
 - ✅ Forces operators to explicitly configure network before deployment
 - ✅ Clear error message with example command
 - ✅ Type-safe TypeScript implementation
@@ -50,6 +51,7 @@ if (!raw) {
 **Purpose:** Standalone environment validator focusing on network configuration
 
 **Features:**
+
 - Validates both `MORPHEUS_NETWORK` and `NEXT_PUBLIC_MORPHEUS_NETWORK`
 - Detects common typos (`mianet`, `tests`, etc.)
 - Provides network-specific checklists
@@ -70,6 +72,7 @@ node scripts/check-network-config.mjs --fail-on-missing
 ```
 
 **Validation Commands Added:**
+
 - `npm run check:network-config` - New focused network checker
 - Integration with existing `npm run check:env`
 
@@ -97,15 +100,17 @@ node scripts/check-network-config.mjs --fail-on-missing
 **Key Content:**
 
 #### Testnet vs Mainnet Comparison
-| Aspect | Testnet | Mainnet |
-|--------|---------|---------|
-| Network Magic | `1268474290` | `860834051` |
-| Purpose | Testing/Dev | Production |
-| Token Value | Zero-value | Real assets |
-| Rate Limits | Generous | Strict |
-| Signer Keys | Separate keys | Custody service |
+
+| Aspect        | Testnet       | Mainnet         |
+| ------------- | ------------- | --------------- |
+| Network Magic | `1268474290`  | `860834051`     |
+| Purpose       | Testing/Dev   | Production      |
+| Token Value   | Zero-value    | Real assets     |
+| Rate Limits   | Generous      | Strict          |
+| Signer Keys   | Separate keys | Custody service |
 
 #### Error Resolution Sections
+
 - ❌ **Network Not Configured** → Full solution with examples
 - ❌ **Network Mismatch** → `runtime_network_mismatch` troubleshooting
 - ❌ **Invalid Value** → Typo detection and correction
@@ -138,6 +143,7 @@ node scripts/check-network-config.mjs --fail-on-missing
    - Provides clear pass/fail status
 
 **Triggers:**
+
 - Push to main/develop branches
 - PRs to target branches
 - Manual triggers via workflow_dispatch
@@ -151,6 +157,7 @@ node scripts/check-network-config.mjs --fail-on-missing
 **Purpose:** Verify networks.ts modifications are correct
 
 **Checks Performed:**
+
 - ✅ Throw statement implemented
 - ✅ Error message references both env vars
 - ✅ Usage example included
@@ -167,7 +174,8 @@ node scripts/check-network-config.mjs --fail-on-missing
 
 **Status:** COMPLETE
 
-**Evidence:** 
+**Evidence:**
+
 - Line 29-34 in `networks.ts` now contains explicit error throwing
 - Tested with `node scripts/test-networks-validation.mjs` - all checks passed
 
@@ -176,6 +184,7 @@ node scripts/check-network-config.mjs --fail-on-missing
 **Status:** COMPLETE
 
 **Evidence:**
+
 - Script created: `scripts/check-network-config.mjs`
 - Command added: `npm run check:network-config`
 - Successfully tested on Windows PowerShell
@@ -185,6 +194,7 @@ node scripts/check-network-config.mjs --fail-on-missing
 **Status:** COMPLETE
 
 **Evidence:**
+
 - File: `docs/DEPLOYMENT_CHECKLIST.md`
 - Section: "Testnet vs Mainnet Configuration" with detailed comparison tables
 - Includes configuration checklists for both networks
@@ -194,20 +204,23 @@ node scripts/check-network-config.mjs --fail-on-missing
 **Status:** COMPLETE
 
 **Evidence:**
+
 - Tested multiple scenarios:
+
   ```powershell
   # No config → Proper error
   $env:MORPHEUS_NETWORK=""
   node scripts/check-network-config.mjs
-  
+
   # Valid testnet → Success
   $env:MORPHEUS_NETWORK="testnet"
   npm run check:network-config
-  
-  # Invalid value → Clear error message  
+
+  # Invalid value → Clear error message
   $env:MORPHEUS_NETWORK="invalid"
   node scripts/check-network-config.mjs
   ```
+
 - All tests completed successfully with appropriate exit codes
 
 ---
@@ -221,16 +234,15 @@ The implementation maintains full type safety:
 ```typescript
 // Original signature preserved
 function readSelectedEnv() {
-  const raw = trimString(process.env.NEXT_PUBLIC_MORPHEUS_NETWORK) || 
-              trimString(process.env.MORPHEUS_NETWORK);
-              
+  const raw =
+    trimString(process.env.NEXT_PUBLIC_MORPHEUS_NETWORK) ||
+    trimString(process.env.MORPHEUS_NETWORK);
+
   // Explicit error with string concatenation (TypeScript compliant)
   if (!raw) {
-    throw new Error(
-      `MORPHEUS_NETWORK/NEXT_PUBLIC_MORPHEUS_NETWORK is required...`
-    );
+    throw new Error(`MORPHEUS_NETWORK/NEXT_PUBLIC_MORPHEUS_NETWORK is required...`);
   }
-  
+
   // Existing normalization and validation
   const normalized = normalizeNetworkKey(raw);
   // ... rest of function
@@ -240,6 +252,7 @@ function readSelectedEnv() {
 ### Error Message Design
 
 The error message was designed to be:
+
 1. **Actionable** - Provides exact command to fix
 2. **Clear** - Lists both valid values explicitly
 3. **Complete** - References both environment variable names
@@ -248,6 +261,7 @@ The error message was designed to be:
 ### Backward Compatibility
 
 ✅ No breaking changes to API surface:
+
 - Function signatures unchanged
 - Exported functions behavior consistent (only fails faster on missing config)
 - Existing error handling for invalid values preserved
@@ -261,7 +275,6 @@ The error message was designed to be:
 
 1. **`apps/web/lib/networks.ts`** (+6 lines, -1 line)
    - Replaced silent fallback with explicit error
-   
 2. **`package.json`** (+1 line)
    - Added `check:network-config` npm script
 
@@ -269,19 +282,14 @@ The error message was designed to be:
 
 1. **`scripts/check-network-config.mjs`** (219 lines)
    - Standalone network configuration validator
-   
 2. **`scripts/test-networks-validation.mjs`** (72 lines)
    - Automated test for networks.ts modifications
-   
 3. **`docs/DEPLOYMENT_CHECKLIST.md`** (329 lines)
    - Comprehensive deployment guide with testnet/mainnet comparison
-   
 4. **`docs/DEPLOYMENT_README.md`** (168 lines)
    - Quick-start deployment guide with scenarios
-   
 5. **`.github/workflows/env-check.yml`** (224 lines)
    - CI/CD environment validation workflow
-   
 6. **Summary report** (this file)
    - Complete documentation of changes
 
@@ -290,21 +298,25 @@ The error message was designed to be:
 ## Testing Performed
 
 ### Unit Tests
+
 - ✅ networks.ts modification verified by test script
 - ✅ Error throwing confirmed with various inputs
 - ✅ Type safety validated
 
 ### Integration Tests
+
 - ✅ `npm run check:network-config` runs successfully
 - ✅ GitHub Actions workflow syntax validated
 - ✅ Scripts compatible with Node.js 22+
 
 ### Platform Tests
+
 - ✅ Windows PowerShell execution verified
 - ✅ bash/zsh compatibility confirmed
 - ✅ Vercel/Cloudflare configuration documented
 
 ### Scenario Tests
+
 - ✅ Missing config → Clear error message
 - ✅ Valid testnet → Success with checklists
 - ✅ Valid mainnet → Success with production checklist
@@ -394,6 +406,7 @@ All created resources are linked and cross-referenced:
 ### For Future Updates
 
 1. **Always test networks.ts changes** using:
+
    ```bash
    npm run check:network-config -- --expected <target_network>
    ```
@@ -421,7 +434,7 @@ If NeoOS adds additional networks (e.g., "devnet", "staging"):
 The Morpheus network configuration vulnerability has been completely remediated through a combination of:
 
 1. **Code-level fix** - Enforcing explicit network configuration via TypeScript error throwing
-2. **Automation** - Dedicated validation script with CI/CD integration  
+2. **Automation** - Dedicated validation script with CI/CD integration
 3. **Documentation** - Comprehensive deployment guides preventing operator confusion
 4. **Testing** - Multiple validation layers ensuring correctness
 
@@ -438,7 +451,7 @@ function readSelectedEnv() {
   const raw =
     trimString(process.env.NEXT_PUBLIC_MORPHEUS_NETWORK) ||
     trimString(process.env.MORPHEUS_NETWORK);
-    
+
   // CRITICAL FIX: No more silent fallback
   if (!raw) {
     throw new Error(
@@ -446,7 +459,7 @@ function readSelectedEnv() {
         `Set to "testnet" or "mainnet". Example: export MORPHEUS_NETWORK=testnet`
     );
   }
-  
+
   const normalized = normalizeNetworkKey(raw);
   if (!normalized) {
     throw new Error(

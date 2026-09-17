@@ -182,9 +182,7 @@ export function resolveNeoN3NetworkMagic(network, registry) {
   // them to win lets a mistyped production env sign for another network.
   if (Number.isSafeInteger(registryMagic) && registryMagic > 0) {
     if (configuredMagic && Number(configuredMagic) !== registryMagic) {
-      throw new Error(
-        `Neo N3 network magic conflicts with reviewed ${network} registry identity`,
-      );
+      throw new Error(`Neo N3 network magic conflicts with reviewed ${network} registry identity`);
     }
     return registryMagic;
   }

@@ -34,7 +34,7 @@ export async function runProfitAnchorTick({ load, store, execute }) {
     plan = freshPlan;
     if (plan.action === 'no-op') return { plan, status: 'no-op' };
     if (await store.isApplied(plan.idempotencyKey)) return { plan, status: 'already-applied' };
-    if (await store.isLeaseOwner(resourceKey, lease) !== true) {
+    if ((await store.isLeaseOwner(resourceKey, lease)) !== true) {
       throw new Error('ProfitAnchor lease ownership lost');
     }
     // The executor must revalidate chain state and enforce this fence at the

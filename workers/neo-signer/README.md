@@ -14,25 +14,25 @@ directory, and npm skips it only because there is no manifest to read.
 
 ## What is here
 
-| Module       | Role                                                                                  |
-| ------------ | ------------------------------------------------------------------------------------- |
-| `crypto`     | P-256/K-256 signing, Neo/EVM identities, AES-256-GCM sealing, NEP-2 import            |
-| `coordinator`| TestNet v2 SigV4/rustls authority client, RSA session transport, restore orchestration |
-| `durable`    | Commit-before-release state machine and independent KMS receipt verification          |
-| `snapshot`   | Whole-vault authenticated encrypted snapshots bound to generation/fence/predecessor   |
-| `tx`         | Decodes N3 transactions, NeoX EIP-1559 transactions and consensus policy intents      |
-| `policy`     | The pure decision function: does this boundary let this key sign this request         |
-| `auth`       | Caller tokens, origin binding, constant-time digest comparison                        |
-| `audit`      | Refusal vocabulary: what a caller may see vs. what the log keeps                      |
-| `vault`      | Where the master key comes from (env credential or data-dir file)                     |
-| `store`      | The eight `signer_*` tables, their indexes, and the row mappers                       |
-| `model`      | The stored types: keys, boundaries, callers, audit rows, and the `ScriptHash`         |
-| `service`    | `SignerService`: the signing path, the management surface, and the rows both write    |
-| `network`    | Chain identity: Neo N3 network magic and NeoX EIP-155 chain-id tables                 |
-| `api`        | The axum router: §5's caller routes, §5.1's management routes, and the refusal shapes |
-| `neo_block`  | Validated Neo header encoding and transaction Merkle-root verification                |
-| `signclient` | Official Neo SignClient gRPC adapter with one durability barrier per RPC              |
-| `vault_profile` | Immutable vault, network, KMS, coordinator, and receipt-key bindings               |
+| Module          | Role                                                                                   |
+| --------------- | -------------------------------------------------------------------------------------- |
+| `crypto`        | P-256/K-256 signing, Neo/EVM identities, AES-256-GCM sealing, NEP-2 import             |
+| `coordinator`   | TestNet v2 SigV4/rustls authority client, RSA session transport, restore orchestration |
+| `durable`       | Commit-before-release state machine and independent KMS receipt verification           |
+| `snapshot`      | Whole-vault authenticated encrypted snapshots bound to generation/fence/predecessor    |
+| `tx`            | Decodes N3 transactions, NeoX EIP-1559 transactions and consensus policy intents       |
+| `policy`        | The pure decision function: does this boundary let this key sign this request          |
+| `auth`          | Caller tokens, origin binding, constant-time digest comparison                         |
+| `audit`         | Refusal vocabulary: what a caller may see vs. what the log keeps                       |
+| `vault`         | Where the master key comes from (env credential or data-dir file)                      |
+| `store`         | The eight `signer_*` tables, their indexes, and the row mappers                        |
+| `model`         | The stored types: keys, boundaries, callers, audit rows, and the `ScriptHash`          |
+| `service`       | `SignerService`: the signing path, the management surface, and the rows both write     |
+| `network`       | Chain identity: Neo N3 network magic and NeoX EIP-155 chain-id tables                  |
+| `api`           | The axum router: §5's caller routes, §5.1's management routes, and the refusal shapes  |
+| `neo_block`     | Validated Neo header encoding and transaction Merkle-root verification                 |
+| `signclient`    | Official Neo SignClient gRPC adapter with one durability barrier per RPC               |
+| `vault_profile` | Immutable vault, network, KMS, coordinator, and receipt-key bindings                   |
 
 `src/bin/signer_service.rs` is the process. Its configuration is environment-only
 (`SIGNER_SERVICE_DATA_DIR` is required; host, port, the body ceiling, and the bounded

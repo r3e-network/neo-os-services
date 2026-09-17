@@ -167,10 +167,18 @@ function startMockRpc({
           else
             result = {
               state: 'HALT',
-              stack: [{ type: 'Array', value: [feedRecordStruct({ roundId, price: 5_250_000, timestamp })] }],
+              stack: [
+                {
+                  type: 'Array',
+                  value: [feedRecordStruct({ roundId, price: 5_250_000, timestamp })],
+                },
+              ],
             };
         } else if (operation === 'getLatest') {
-          result = { state: 'HALT', stack: [feedRecordStruct({ roundId, price: 5_250_000, timestamp })] };
+          result = {
+            state: 'HALT',
+            stack: [feedRecordStruct({ roundId, price: 5_250_000, timestamp })],
+          };
         } else {
           result = { state: 'HALT', stack: [{ type: 'Integer', value: String(gasBalance) }] };
         }
@@ -313,7 +321,10 @@ test('parseAllRecords strips the TWELVEDATA: prefix and computes per-pair age', 
   assert.equal(future.rows[0].age, -200);
   assert.equal(parseAllRecords({ state: 'FAULT', stack: [] }, now).reason, 'fault');
   assert.equal(parseAllRecords(null, now).ok, false);
-  assert.equal(parseAllRecords({ state: 'HALT', stack: [{ type: 'Array', value: [] }] }, now).reason, 'empty');
+  assert.equal(
+    parseAllRecords({ state: 'HALT', stack: [{ type: 'Array', value: [] }] }, now).reason,
+    'empty'
+  );
 });
 
 test('isMarketClosed flags weekends and configured holidays only', () => {

@@ -16,9 +16,8 @@ export class WASMSandbox {
     const sells = params.sellOrders.map(cloneOrder).filter(isPositiveOrder).sort(compareSell);
     const fills: Fill[] = [];
     const maxMatches = params.maxMatches ?? Number.MAX_SAFE_INTEGER;
-    const minimumNotional = Number.isFinite(params.minFillRatio) && params.minFillRatio > 0
-      ? params.minFillRatio
-      : 0;
+    const minimumNotional =
+      Number.isFinite(params.minFillRatio) && params.minFillRatio > 0 ? params.minFillRatio : 0;
 
     for (const buy of buys) {
       if (fills.length >= maxMatches) break;
@@ -83,9 +82,17 @@ function isPositiveOrder(order: LimitOrder): boolean {
 }
 
 function compareBuy(a: LimitOrder, b: LimitOrder): number {
-  return Number(b.price) - Number(a.price) || a.createdAt - b.createdAt || a.orderId.localeCompare(b.orderId);
+  return (
+    Number(b.price) - Number(a.price) ||
+    a.createdAt - b.createdAt ||
+    a.orderId.localeCompare(b.orderId)
+  );
 }
 
 function compareSell(a: LimitOrder, b: LimitOrder): number {
-  return Number(a.price) - Number(b.price) || a.createdAt - b.createdAt || a.orderId.localeCompare(b.orderId);
+  return (
+    Number(a.price) - Number(b.price) ||
+    a.createdAt - b.createdAt ||
+    a.orderId.localeCompare(b.orderId)
+  );
 }

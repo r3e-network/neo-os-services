@@ -44,12 +44,10 @@ test('parseFeedHealthArgs defaults to all networks and a 6 hour SLO', () => {
 });
 
 test('retired-pair policy matches the single checked source', () => {
-  assert.deepEqual([...DEFAULT_RETIRED_PAIRS], [
-    'COPPER-USD',
-    'FLM-USD',
-    '1000FLM-USD',
-    '1000JPY-USD',
-  ]);
+  assert.deepEqual(
+    [...DEFAULT_RETIRED_PAIRS],
+    ['COPPER-USD', 'FLM-USD', '1000FLM-USD', '1000JPY-USD']
+  );
 });
 
 test('classifyPairAgainstSlo treats retired pairs as stale-but-not-failing', () => {
@@ -93,25 +91,33 @@ test('decodeFeedRecordsFromInvoke fails closed on FAULT, empty, malformed, and u
     decoded_count: 0,
     undecodable_count: 0,
   });
-  assert.deepEqual(decodeFeedRecordsFromInvoke({ state: 'HALT', stack: [{ type: 'Array', value: [] }] }), {
-    ok: false,
-    reason: 'empty',
-    rows: [],
-    record_count: 0,
-    decoded_count: 0,
-    undecodable_count: 0,
-  });
-  assert.deepEqual(decodeFeedRecordsFromInvoke({ state: 'HALT', stack: [{ type: 'Integer', value: '1' }] }), {
-    ok: false,
-    reason: 'malformed',
-    rows: [],
-    record_count: 0,
-    decoded_count: 0,
-    undecodable_count: 0,
-  });
+  assert.deepEqual(
+    decodeFeedRecordsFromInvoke({ state: 'HALT', stack: [{ type: 'Array', value: [] }] }),
+    {
+      ok: false,
+      reason: 'empty',
+      rows: [],
+      record_count: 0,
+      decoded_count: 0,
+      undecodable_count: 0,
+    }
+  );
+  assert.deepEqual(
+    decodeFeedRecordsFromInvoke({ state: 'HALT', stack: [{ type: 'Integer', value: '1' }] }),
+    {
+      ok: false,
+      reason: 'malformed',
+      rows: [],
+      record_count: 0,
+      decoded_count: 0,
+      undecodable_count: 0,
+    }
+  );
   const allBad = decodeFeedRecordsFromInvoke({
     state: 'HALT',
-    stack: [{ type: 'Array', value: [{ type: 'Struct', value: [{ type: 'ByteString', value: '' }] }] }],
+    stack: [
+      { type: 'Array', value: [{ type: 'Struct', value: [{ type: 'ByteString', value: '' }] }] },
+    ],
   });
   assert.equal(allBad.ok, false);
   assert.equal(allBad.reason, 'undecodable');
@@ -187,10 +193,7 @@ test('diagnoseFeedHealth is ok when every active pair is inside the SLO', () => 
   });
   assert.equal(report.ok, true);
   assert.equal(report.counts.active_stale, 0);
-  assert.equal(
-    report.root_causes.length,
-    0
-  );
+  assert.equal(report.root_causes.length, 0);
   assert.equal(
     report.root_causes.some((entry) => entry.code === 'live_writer_not_advancing'),
     false
@@ -243,8 +246,14 @@ test('inspectAwsIdentity distinguishes absent, expired/denied, and unreachable w
     }),
     { reachable: false, reason: 'credentials_absent' }
   );
-  assert.equal(classifyAwsDiagnostic('ExpiredToken: The security token included in the request is expired'), 'credentials_expired_or_denied');
-  assert.equal(classifyAwsDiagnostic('An error occurred (AccessDenied)'), 'credentials_expired_or_denied');
+  assert.equal(
+    classifyAwsDiagnostic('ExpiredToken: The security token included in the request is expired'),
+    'credentials_expired_or_denied'
+  );
+  assert.equal(
+    classifyAwsDiagnostic('An error occurred (AccessDenied)'),
+    'credentials_expired_or_denied'
+  );
   const denied = inspectAwsIdentity(() => {
     const error = new Error('AccessDenied');
     error.stderr = 'An error occurred (ExpiredToken) arn:aws:iam::123456789012:user/secret-op';
@@ -278,7 +287,8 @@ test('inspectAwsIdentity retries documented morpheus profile when default creden
       return 'ok-text';
     }
     const error = new Error('Unable to locate credentials');
-    error.stderr = 'Unable to locate credentials. You can configure credentials by running "aws configure".';
+    error.stderr =
+      'Unable to locate credentials. You can configure credentials by running "aws configure".';
     throw error;
   }, {});
   assert.deepEqual(recovered, {
@@ -292,18 +302,24 @@ test('inspectAwsIdentity retries documented morpheus profile when default creden
 
 test('inspectAwsIdentity does not substitute the documented profile when AWS_PROFILE is already set', () => {
   const profiles = [];
-  const denied = inspectAwsIdentity((cmd, args, opts) => {
-    profiles.push(opts?.env?.AWS_PROFILE || '');
-    const error = new Error('Unable to locate credentials');
-    error.stderr = 'Unable to locate credentials. You can configure credentials by running "aws configure".';
-    throw error;
-  }, { AWS_PROFILE: 'other', PATH: '/usr/bin' });
+  const denied = inspectAwsIdentity(
+    (cmd, args, opts) => {
+      profiles.push(opts?.env?.AWS_PROFILE || '');
+      const error = new Error('Unable to locate credentials');
+      error.stderr =
+        'Unable to locate credentials. You can configure credentials by running "aws configure".';
+      throw error;
+    },
+    { AWS_PROFILE: 'other', PATH: '/usr/bin' }
+  );
   assert.deepEqual(denied, { reachable: false, reason: 'credentials_absent' });
   assert.deepEqual(profiles, ['other']);
 });
 
 test('summarizeFeedHealthReports distinguishes stale (1) from unreadable (2)', () => {
-  const stale = summarizeFeedHealthReports([{ network: 'testnet', ok: false, readable: true, headline: 'FAIL' }]);
+  const stale = summarizeFeedHealthReports([
+    { network: 'testnet', ok: false, readable: true, headline: 'FAIL' },
+  ]);
   assert.equal(stale.ok, false);
   assert.equal(stale.exit_code, 1);
   const unreadable = summarizeFeedHealthReports([
@@ -325,7 +341,11 @@ function recordStruct(pair, timestamp) {
   };
 }
 
-function healthSeams({ recordsResult, updater = `0x${FEED_NETWORK_DEFAULTS.testnet.updaterSh}`, magic = 894710606 }) {
+function healthSeams({
+  recordsResult,
+  updater = `0x${FEED_NETWORK_DEFAULTS.testnet.updaterSh}`,
+  magic = 894710606,
+}) {
   return {
     invoke: (_urls, _contract, operation) => {
       if (operation === 'getAllFeedRecords') return recordsResult;
@@ -430,7 +450,10 @@ test('buildFeedHealthReport rejects candidate RPCs whose getversion magic does n
     network: 'testnet',
     staleHours: 6,
     ...healthSeams({
-      recordsResult: { state: 'HALT', stack: [{ type: 'Array', value: [recordStruct('TWELVEDATA:NEO-USD', 1)] }] },
+      recordsResult: {
+        state: 'HALT',
+        stack: [{ type: 'Array', value: [recordStruct('TWELVEDATA:NEO-USD', 1)] }],
+      },
       magic: 860833102,
     }),
   });

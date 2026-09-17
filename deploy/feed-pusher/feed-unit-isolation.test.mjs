@@ -240,7 +240,9 @@ test('runbook install path matches unit WorkingDirectory and atomically includes
 });
 
 test('feed-pusher.env.example leaves reserved pins unset so copy-paste cannot collide', () => {
-  const assigned = parseEnvFileAssignments(readFileSync(path.join(HERE, 'feed-pusher.env.example'), 'utf8'));
+  const assigned = parseEnvFileAssignments(
+    readFileSync(path.join(HERE, 'feed-pusher.env.example'), 'utf8')
+  );
   assert.deepEqual(reservedKeysPresent(assigned), []);
 });
 

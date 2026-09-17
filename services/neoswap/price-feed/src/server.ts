@@ -6,13 +6,12 @@
 import WebSocket, { WebSocketServer } from 'ws';
 import Redis from 'ioredis';
 import { Mutex } from 'async-mutex';
-import { 
-  activeConnectionsGauge, 
-  connectionCountCounter, 
+import {
+  activeConnectionsGauge,
+  connectionCountCounter,
   latencyHistogram,
   messageThroughputCounter,
   backpressureQueueSizeGauge,
-  getMetrics,
 } from './metrics';
 
 interface ClientInfo {
@@ -49,25 +48,25 @@ export class PriceFeedServer {
   private readonly twapProvider?: (tokenPair: string) => Promise<number>;
   private metricsTimer?: ReturnType<typeof setInterval>;
   private shutdownStarted = false;
-  
+
   constructor(
     portOrServer: number | WebSocketServer = parseInt(process.env.WS_PORT || '8081'),
-    dependencies: PriceFeedDependencies = {},
+    dependencies: PriceFeedDependencies = {}
   ) {
     this.ownsWebSocketServer = typeof portOrServer === 'number';
-    this.wss = typeof portOrServer === 'number'
-      ? new WebSocketServer({ port: portOrServer })
-      : portOrServer;
+    this.wss =
+      typeof portOrServer === 'number' ? new WebSocketServer({ port: portOrServer }) : portOrServer;
     this.twapProvider = dependencies.calculateTWAP;
-    
+
     // Use an injected client in tests and create a lazy ioredis client in production.
     // ioredis does not expose node-redis's createClient({ url }) API.
-    this.redis = (dependencies.redis ?? new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
-      lazyConnect: true,
-      maxRetriesPerRequest: 2,
-    })) as unknown as RedisLike;
+    this.redis = (dependencies.redis ??
+      new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+        lazyConnect: true,
+        maxRetriesPerRequest: 2,
+      })) as unknown as RedisLike;
     if (!dependencies.redis) void this.connectRedis();
-    
+
     this.initializeWebSocketHandlers();
     this.startMetricsCleanup();
   }
@@ -100,7 +99,7 @@ export class PriceFeedServer {
   private handleConnection(ws: WebSocket): void {
     const clientId = crypto.randomUUID();
     const startTime = Date.now();
-    
+
     // Register client
     this.clients.set(clientId, {
       ws,
@@ -109,36 +108,41 @@ export class PriceFeedServer {
       subscriptions: new Map(),
       createdAt: Date.now(),
     });
-    
+
     activeConnectionsGauge.set(this.clients.size);
     connectionCountCounter.inc({ status: 'connected' });
-    
+
     console.log(`Connected client: ${clientId}`);
-    ws.send(JSON.stringify({
-      type: 'health_check',
-      payload: { sources: {}, lastUpdate: Date.now() },
-    }));
-    
+    ws.send(
+      JSON.stringify({
+        type: 'health_check',
+        payload: { sources: {}, lastUpdate: Date.now() },
+      })
+    );
+
     // Handle messages
     ws.on('message', async (data: WebSocket.Data) => {
       const opStartTime = Date.now();
-      
+
       try {
         const message = JSON.parse(data.toString());
         await this.handleMessage(clientId, message);
-      } catch (error) {
+      } catch {
         ws.send(JSON.stringify({ type: 'error', message: 'Invalid request' }));
       }
-      
-      latencyHistogram.observe({ operation: 'message_processing' }, (Date.now() - opStartTime) / 1000);
+
+      latencyHistogram.observe(
+        { operation: 'message_processing' },
+        (Date.now() - opStartTime) / 1000
+      );
     });
-    
+
     // Handle disconnect
     ws.on('close', () => {
       this.clients.delete(clientId);
       activeConnectionsGauge.set(this.clients.size);
       connectionCountCounter.inc({ status: 'disconnected' });
-      
+
       const duration = (Date.now() - startTime) / 1000;
       console.log(`Disconnected client: ${clientId} (duration: ${duration.toFixed(2)}s)`);
     });
@@ -149,20 +153,22 @@ export class PriceFeedServer {
       case 'subscribe':
         await this.subscribe(clientId, message.tokens);
         break;
-        
+
       case 'unsubscribe':
         await this.unsubscribe(clientId, message.tokens);
         break;
-        
+
       case 'request_twap':
         await this.requestTWAP(clientId, message.tokenPair);
         break;
-        
+
       default:
-        this.clients.get(clientId)?.ws.send(JSON.stringify({ 
-          type: 'error', 
-          message: 'Unknown message type' 
-        }));
+        this.clients.get(clientId)?.ws.send(
+          JSON.stringify({
+            type: 'error',
+            message: 'Unknown message type',
+          })
+        );
     }
   }
 
@@ -171,11 +177,11 @@ export class PriceFeedServer {
     try {
       const client = this.clients.get(clientId);
       if (!client) return;
-      
+
       for (const token of tokens) {
         if (!client.subscribedTokens.has(token)) {
           client.subscribedTokens.add(token);
-          
+
           // Subscribe to Redis channel
           const subscriber = await this.openSubscription(`token:${token}`, (msg: string) => {
             if (client && client.ws.readyState === WebSocket.OPEN) {
@@ -183,16 +189,18 @@ export class PriceFeedServer {
               messageThroughputCounter.inc({ type: 'price_update' });
             }
           });
-          
+
           client.subscriptions.set(token, subscriber);
         }
       }
-      
-      this.clients.get(clientId)?.ws.send(JSON.stringify({ 
-        type: 'subscribed',
-        tokens,
-        subscriptionCount: client.subscribedTokens.size,
-      }));
+
+      this.clients.get(clientId)?.ws.send(
+        JSON.stringify({
+          type: 'subscribed',
+          tokens,
+          subscriptionCount: client.subscribedTokens.size,
+        })
+      );
     } finally {
       release();
     }
@@ -200,7 +208,7 @@ export class PriceFeedServer {
 
   private async openSubscription(
     channel: string,
-    callback: (message: string) => void,
+    callback: (message: string) => void
   ): Promise<{ quit: () => Promise<unknown> }> {
     if (!this.redis.subscribe) throw new Error('Redis subscription is unavailable');
 
@@ -221,7 +229,12 @@ export class PriceFeedServer {
     const subscribe = this.redis.subscribe;
     if (!subscribe) throw new Error('Redis subscription is unavailable');
     const result = await subscribe.call(this.redis, channel, callback);
-    if (result && typeof result === 'object' && 'quit' in result && typeof result.quit === 'function') {
+    if (
+      result &&
+      typeof result === 'object' &&
+      'quit' in result &&
+      typeof result.quit === 'function'
+    ) {
       return result as { quit: () => Promise<unknown> };
     }
     return {
@@ -236,7 +249,7 @@ export class PriceFeedServer {
     try {
       const client = this.clients.get(clientId);
       if (!client) return;
-      
+
       for (const token of tokens) {
         if (client.subscriptions.has(token)) {
           const subscriber = client.subscriptions.get(token)!;
@@ -245,12 +258,14 @@ export class PriceFeedServer {
         }
         client.subscribedTokens.delete(token);
       }
-      
-      this.clients.get(clientId)?.ws.send(JSON.stringify({ 
-        type: 'unsubscribed',
-        tokens,
-        remainingSubscriptions: client.subscribedTokens.size,
-      }));
+
+      this.clients.get(clientId)?.ws.send(
+        JSON.stringify({
+          type: 'unsubscribed',
+          tokens,
+          remainingSubscriptions: client.subscribedTokens.size,
+        })
+      );
     } finally {
       release();
     }
@@ -261,24 +276,28 @@ export class PriceFeedServer {
     try {
       // Query TWAP from Oracle Aggregator service
       const twapValue = await this.calculateTWAP(tokenPair);
-      
+
       const client = this.clients.get(clientId);
-      
+
       if (client?.ws.readyState === WebSocket.OPEN) {
-        client.ws.send(JSON.stringify({
-          type: 'twap_result',
-          tokenPair,
-          value: twapValue,
-          timestamp: Date.now(),
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'twap_result',
+            tokenPair,
+            value: twapValue,
+            timestamp: Date.now(),
+          })
+        );
       }
     } catch (error) {
       const client = this.clients.get(clientId);
       if (client?.ws.readyState === WebSocket.OPEN) {
-        client.ws.send(JSON.stringify({
-          type: 'error',
-          message: `TWAP calculation failed: ${error instanceof Error ? error.message : 'unknown error'}`,
-        }));
+        client.ws.send(
+          JSON.stringify({
+            type: 'error',
+            message: `TWAP calculation failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+          })
+        );
       }
     } finally {
       release();
@@ -302,16 +321,16 @@ export class PriceFeedServer {
   async broadcastPriceUpdate(tokenPair: string, priceData: any): Promise<void> {
     const startTimestamp = Date.now();
     const queueBefore = this.queueSize;
-    
+
     backpressureQueueSizeGauge.set(queueBefore);
-    
+
     try {
       // Apply backpressure if queue is too large (>5000 pending messages)
       if (queueBefore > 5000) {
         console.warn(`Backpressure active: Queue size ${queueBefore}`);
-        await new Promise(resolve => setTimeout(resolve, 1)); // Yield control
+        await new Promise((resolve) => setTimeout(resolve, 1)); // Yield control
       }
-      
+
       // Publish to Redis pub/sub
       await this.redis.publish(
         `token:${tokenPair}`,
@@ -321,13 +340,12 @@ export class PriceFeedServer {
           timestamp: Date.now(),
         })
       );
-      
+
       // Increment metrics
       messageThroughputCounter.inc({ type: 'broadcast' });
-      
+
       const duration = (Date.now() - startTimestamp) / 1000;
       latencyHistogram.observe({ operation: 'broadcast' }, duration);
-      
     } finally {
       this.queueSize++;
       setTimeout(() => {
@@ -339,17 +357,20 @@ export class PriceFeedServer {
 
   private startMetricsCleanup(): void {
     // Clean up stale clients every 5 minutes
-    this.metricsTimer = setInterval(() => {
-      const now = Date.now();
-      for (const [id, client] of this.clients.entries()) {
-        // Remove clients inactive for > 30 minutes
-        if (now - client.createdAt > 30 * 60 * 1000) {
-          client.ws.terminate();
-          this.clients.delete(id);
-          activeConnectionsGauge.set(this.clients.size);
+    this.metricsTimer = setInterval(
+      () => {
+        const now = Date.now();
+        for (const [id, client] of this.clients.entries()) {
+          // Remove clients inactive for > 30 minutes
+          if (now - client.createdAt > 30 * 60 * 1000) {
+            client.ws.terminate();
+            this.clients.delete(id);
+            activeConnectionsGauge.set(this.clients.size);
+          }
         }
-      }
-    }, 5 * 60 * 1000);
+      },
+      5 * 60 * 1000
+    );
     this.metricsTimer.unref?.();
   }
 
@@ -357,12 +378,12 @@ export class PriceFeedServer {
     if (this.shutdownStarted) return;
     this.shutdownStarted = true;
     console.log('Shutting down Price Feed Server...');
-    
+
     // Close all connections gracefully
     for (const client of this.clients.values()) {
       client.ws.close(1001, 'Server shutting down');
     }
-    
+
     // Shutdown Redis
     if (this.metricsTimer) clearInterval(this.metricsTimer);
 
@@ -373,7 +394,7 @@ export class PriceFeedServer {
         console.error('Price Feed Server: Redis shutdown failed', error);
       }
     }
-    
+
     // Close WebSocket server
     if (this.ownsWebSocketServer) {
       await new Promise<void>((resolve) => {
@@ -381,7 +402,7 @@ export class PriceFeedServer {
         this.wss.close(() => resolve());
       });
     }
-    
+
     console.log('Price Feed Server shut down complete');
   }
 }
