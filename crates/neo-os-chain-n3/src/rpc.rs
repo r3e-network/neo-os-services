@@ -121,17 +121,15 @@ impl<T: HttpTransport> NeoRpcClient<T> {
                 last_error = Some(format_neo_rpc_error(method, rpc_url, status, &detail));
                 continue;
             }
-            if let Some(error) = parsed.get("error") {
-                let detail = error
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| format!("{method} failed"));
-                last_error = Some(format_neo_rpc_error(method, rpc_url, 200, &detail));
-                continue;
+            match validate_rpc_response(&parsed, &body["id"]) {
+                Ok(result) => {
+                    self.promote(rpc_url);
+                    return Ok(result.clone());
+                }
+                Err(detail) => {
+                    last_error = Some(format_neo_rpc_error(method, rpc_url, status, detail));
+                }
             }
-            self.promote(rpc_url);
-            return Ok(parsed.get("result").cloned().unwrap_or(Value::Null));
         }
         Err(NeoRpcError(
             last_error.unwrap_or_else(|| format!("Neo RPC {method} failed")),
@@ -202,6 +200,32 @@ impl<T: HttpTransport> NeoRpcClient<T> {
     }
 }
 
+fn validate_rpc_response<'a>(
+    response: &'a Value,
+    request_id: &Value,
+) -> Result<&'a Value, &'a str> {
+    let object = response.as_object().ok_or("response must be an object")?;
+    if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+        return Err("jsonrpc must be 2.0");
+    }
+    if object.get("id") != Some(request_id) {
+        return Err("response id does not match request");
+    }
+    match (object.get("result"), object.get("error")) {
+        (Some(result), None) => Ok(result),
+        (None, Some(error)) => {
+            let message = error
+                .as_object()
+                .filter(|object| object.get("code").and_then(Value::as_i64).is_some())
+                .and_then(|object| object.get("message"))
+                .and_then(Value::as_str)
+                .ok_or("error must contain an integer code and string message")?;
+            Err(message)
+        }
+        _ => Err("response must contain exactly one of result or error"),
+    }
+}
+
 pub fn parse_u128_field(value: &Value, field: &str) -> Option<u128> {
     match value.get(field) {
         Some(Value::String(text)) => text.parse::<u128>().ok(),
@@ -244,6 +268,192 @@ mod tests {
         }
         fn get(&self, _url: &str) -> Result<(u16, String), String> {
             Ok((self.status, "{}".to_string()))
+        }
+    }
+
+    fn client_with_response(body: Value) -> NeoRpcClient<OneShotTransport> {
+        NeoRpcClient::new(
+            OneShotTransport {
+                status: 200,
+                body: body.to_string(),
+            },
+            vec!["https://rpc.example".to_string()],
+            false,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn accepts_every_generic_result_type_including_explicit_null() {
+        for result in [
+            json!(null),
+            json!(false),
+            json!(42),
+            json!("ok"),
+            json!([]),
+            json!({}),
+        ] {
+            let client = client_with_response(json!({"jsonrpc":"2.0","id":1,"result":result}));
+            assert_eq!(client.call("test", json!([])).unwrap(), result);
+        }
+    }
+
+    #[test]
+    fn rejects_non_object_responses() {
+        for body in [json!(null), json!([]), json!(true), json!(1), json!("ok")] {
+            let error = client_with_response(body)
+                .call("test", json!([]))
+                .unwrap_err();
+            assert!(error.0.contains("response must be an object"), "{error}");
+        }
+    }
+
+    #[test]
+    fn rejects_missing_or_invalid_protocol_version() {
+        for version in [None, Some(json!(null)), Some(json!(2)), Some(json!("1.0"))] {
+            let mut body = json!({"id":1,"result":42});
+            if let Some(version) = version {
+                body["jsonrpc"] = version;
+            }
+            let error = client_with_response(body)
+                .call("test", json!([]))
+                .unwrap_err();
+            assert!(error.0.contains("jsonrpc must be 2.0"), "{error}");
+        }
+    }
+
+    #[test]
+    fn rejects_missing_mismatched_or_wrong_type_response_ids() {
+        for id in [
+            None,
+            Some(json!(null)),
+            Some(json!(2)),
+            Some(json!("1")),
+            Some(json!(1.0)),
+            Some(json!(true)),
+        ] {
+            let mut body = json!({"jsonrpc":"2.0","result":42});
+            if let Some(id) = id {
+                body["id"] = id;
+            }
+            let error = client_with_response(body)
+                .call("test", json!([]))
+                .unwrap_err();
+            assert!(
+                error.0.contains("response id does not match request"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn requires_exactly_one_result_or_error() {
+        for body in [
+            json!({"jsonrpc":"2.0","id":1}),
+            json!({"jsonrpc":"2.0","id":1,"result":null,"error":null}),
+            json!({"jsonrpc":"2.0","id":1,"result":42,"error":{"code":-1,"message":"failed"}}),
+        ] {
+            let error = client_with_response(body)
+                .call("test", json!([]))
+                .unwrap_err();
+            assert!(
+                error.0.contains("exactly one of result or error"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_rpc_errors() {
+        for error in [
+            json!(null),
+            json!([]),
+            json!("failed"),
+            json!({}),
+            json!({"code":-1}),
+            json!({"message":"failed"}),
+            json!({"code":"-1","message":"failed"}),
+            json!({"code":-1.5,"message":"failed"}),
+            json!({"code":-1,"message":null}),
+        ] {
+            let body = json!({"jsonrpc":"2.0","id":1,"error":error});
+            let error = client_with_response(body)
+                .call("test", json!([]))
+                .unwrap_err();
+            assert!(
+                error
+                    .0
+                    .contains("error must contain an integer code and string message"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn preserves_valid_rpc_error_messages() {
+        let client = client_with_response(json!({"jsonrpc":"2.0","id":1,
+            "error":{"code":-32601,"message":"Method not found","data":{}}}));
+        assert_eq!(
+            client.call("test", json!([])).unwrap_err().0,
+            "Neo RPC test failed via https://rpc.example (200): Method not found"
+        );
+    }
+
+    struct FailoverTransport {
+        fallback: Value,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl HttpTransport for FailoverTransport {
+        fn post(&self, url: &str, body: &str) -> Result<(u16, String), String> {
+            let request: Value = serde_json::from_str(body).unwrap();
+            assert_eq!(request["id"], json!(1));
+            assert_eq!(request["jsonrpc"], json!("2.0"));
+            self.calls.lock().unwrap().push(url.to_string());
+            if url == "https://primary.example" {
+                Err("primary unavailable".into())
+            } else {
+                Ok((201, self.fallback.to_string()))
+            }
+        }
+
+        fn get(&self, _: &str) -> Result<(u16, String), String> {
+            panic!("RPC must only use POST")
+        }
+    }
+
+    #[test]
+    fn only_valid_success_promotes_a_fallback_endpoint() {
+        for (response, succeeds) in [
+            (json!({"jsonrpc":"2.0","id":1,"result":null}), true),
+            (json!({"jsonrpc":"2.0","id":2,"result":42}), false),
+            (json!({"jsonrpc":"2.0","id":1}), false),
+            (
+                json!({"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"unavailable"}}),
+                false,
+            ),
+        ] {
+            let urls = vec![
+                "https://primary.example".to_string(),
+                "https://fallback.example".to_string(),
+            ];
+            let client = NeoRpcClient::new(
+                FailoverTransport {
+                    fallback: response,
+                    calls: Mutex::new(Vec::new()),
+                },
+                urls.clone(),
+                false,
+            )
+            .unwrap();
+            assert_eq!(client.call("test", json!([])).is_ok(), succeeds);
+            assert_eq!(*client.transport.calls.lock().unwrap(), urls);
+            let expected = if succeeds {
+                vec![urls[1].clone(), urls[0].clone()]
+            } else {
+                urls
+            };
+            assert_eq!(client.urls(), expected);
         }
     }
 
