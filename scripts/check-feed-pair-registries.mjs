@@ -438,28 +438,32 @@ async function main() {
   }
 
   // ── 3. retirement must be consistent and must actually retire ─────────────
-  // The box monitor keeps its own retired-pair default (it runs standalone on the
-  // instance and cannot import the web or worker registries). Parse it so it cannot
-  // drift: a pair retired everywhere else but not here makes the monitor
-  // permanently red, and a pair retired only here silences a real outage.
+  // Retired-pair policy is exported once from lib-feed-network.mjs. The monitor
+  // and health audit consume that list; this check fails if any registry drifts.
+  const feedNetwork = await import(
+    pathToFileURL(path.join(REPO_ROOT, 'deploy/feed-pusher/lib-feed-network.mjs')).href
+  );
+  const sharedRetired = new Set(feedNetwork.DEFAULT_RETIRED_FEED_PAIRS || []);
+  const healthSource = await read('scripts/lib-feed-health.mjs');
+  const healthReexportsShared =
+    /DEFAULT_RETIRED_PAIRS = DEFAULT_RETIRED_FEED_PAIRS/.test(healthSource) ||
+    /DEFAULT_RETIRED_FEED_PAIRS/.test(healthSource);
   const monitorSource = await read(MONITOR);
-  const monitorMatch = monitorSource.match(/process\.env\.RETIRED_PAIRS \|\|\s*'([^']*)'/);
-  const monitorRetired = monitorMatch
-    ? new Set(
-        monitorMatch[1]
-          .split(',')
-          .map((entry) => entry.trim().toUpperCase())
-          .filter(Boolean)
-      )
-    : null;
+  const monitorUsesShared = /DEFAULT_RETIRED_FEED_PAIRS/.test(monitorSource);
 
   const retiredLists = [
     [`${RUST_FEED_REGISTRY} retired_feed_pairs`, rustRetired],
     [`${WEB_DEFAULTS} RETIRED_FEED_PAIRS`, webRetired],
     [`Node compatibility ${PUSHER} RETIRED_FEED_PAIRS`, pusherRetired],
     [`Node compatibility ${WORKER_REGISTRY} RETIRED_FEED_PAIRS`, workerRetired],
-    [`${MONITOR} RETIRED_PAIRS`, monitorRetired],
+    ['deploy/feed-pusher/lib-feed-network.mjs DEFAULT_RETIRED_FEED_PAIRS', sharedRetired],
   ];
+  if (!healthReexportsShared) {
+    fail('scripts/lib-feed-health.mjs must consume DEFAULT_RETIRED_FEED_PAIRS');
+  }
+  if (!monitorUsesShared) {
+    fail(`${MONITOR} must consume DEFAULT_RETIRED_FEED_PAIRS`);
+  }
   // A registry with no retired-pair list at all cannot record WHY a pair is gone,
   // which is how "temporarily broken" quietly becomes "permanently stale".
   for (const [label, values] of retiredLists) {

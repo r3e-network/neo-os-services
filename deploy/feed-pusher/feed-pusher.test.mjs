@@ -8,10 +8,13 @@ import { createHash } from 'node:crypto';
 import pkg from '@cityofzion/neon-js';
 const { wallet, tx } = pkg;
 import { ethers } from 'ethers';
+import { readFileSync } from 'node:fs';
+import { UPDATE_FEED_PARAMETERS } from './lib-feed-network.mjs';
 
 process.env.FEED_PUSHER_SKIP_MAIN = '1';
 // Pin a deterministic, single-symbol feed so the integration test is exact.
 process.env.SYMBOLS = 'NEO-USD';
+process.env.PUSH_STATUS = path.join(os.tmpdir(), `feed-pusher-test-${process.pid}.json`);
 const {
   planFeedUpdate,
   parseGetLatestStack,
@@ -25,17 +28,73 @@ const {
   toTwelveDataSymbol,
   partitionMappedSymbols,
   assertTwelveDataResponse,
+  classifyTwelveDataFailure,
+  parseTwelveDataPrices,
   enclaveDroppedStalePairs,
   TD_SYMBOLS,
   RETIRED_FEED_PAIRS,
+  ENCLAVE_FEED_SIGN,
+  FEED_TARGET,
   __setEnclaveFeedSignForTests,
   __resetEnclaveFeedSignForTests,
   __setN3RpcForTests,
   __resetN3RpcForTests,
+  __setSignerHealthForTests,
+  __setConfirmSleepForTests,
+  __resetConfirmSleepForTests,
+  __getLastWriteEvidenceForTests,
 } = await import('./feed-pusher.mjs');
+
+const MAINNET_STATE = JSON.parse(
+  readFileSync(new URL('./fixtures/morpheus-datafeed-mainnet.getcontractstate.json', import.meta.url), 'utf8')
+);
+
+__setSignerHealthForTests(async () => ({
+  ready: true,
+  checks: { compute: true, signer: true },
+  key_source: { updater: 'kms_attested' },
+}));
+
+function provenWriteRpc(method, params) {
+  if (method === 'getversion') return { protocol: { network: FEED_TARGET.magic } };
+  if (method === 'getcontractstate') {
+    return {
+      hash: `0x${FEED_TARGET.feed}`,
+      manifest: MAINNET_STATE.manifest,
+    };
+  }
+  if (method === 'invokefunction' && params?.[1] === 'updater') {
+    return { state: 'HALT', stack: [{ type: 'Hash160', value: `0x${FEED_TARGET.updaterSh}` }] };
+  }
+  return undefined;
+}
 
 const PUSHER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'feed-pusher.mjs');
 const OPTS = { thresholdBps: 10, maxStaleSec: 1800 };
+
+function haltAllRecords(entries) {
+  return {
+    state: 'HALT',
+    stack: [
+      {
+        type: 'Array',
+        value: entries.map(
+          ({ pair = 'TWELVEDATA:NEO-USD', round = 1, price = 5.0, ts = 1_779_000_000 }) => ({
+            type: 'Struct',
+            value: [
+              { type: 'ByteString', value: Buffer.from(pair).toString('base64') },
+              { type: 'Integer', value: String(round) },
+              { type: 'Integer', value: String(Math.round(price * 1e6)) },
+              { type: 'Integer', value: String(ts) },
+              { type: 'ByteString', value: '' },
+              { type: 'Integer', value: '0' },
+            ],
+          })
+        ),
+      },
+    ],
+  };
+}
 
 test('TwelveData HTTP errors fail the whole batch instead of becoming missing symbols', () => {
   assert.throws(
@@ -46,6 +105,50 @@ test('TwelveData HTTP errors fail the whole batch instead of becoming missing sy
       ),
     /HTTP 401, code 401.*subscription has expired/i
   );
+});
+
+test('TwelveData distinguishes daily quota from transient minute limits and subscription errors', () => {
+  assert.equal(classifyTwelveDataFailure({ status: 429 }, { message: 'Daily API credits exhausted' }), 'daily_quota_exhausted');
+  assert.equal(classifyTwelveDataFailure({ status: 200 }, { code: 429, message: 'Too many credits this minute' }), 'minute_rate_limited');
+  assert.equal(classifyTwelveDataFailure({ status: 429 }, {}), 'rate_limited');
+  assert.equal(classifyTwelveDataFailure({ status: 401 }, { message: 'Your subscription has expired' }), 'subscription_expired');
+  assert.equal(classifyTwelveDataFailure({ status: 403 }, {}), 'provider_unauthorized');
+});
+
+test('TwelveData per-symbol quota failure rejects a mixed HTTP 200 batch', () => {
+  assert.throws(() => parseTwelveDataPrices({ ok: true, status: 200 }, {
+    'NEO/USD': { price: '2.1' },
+    'GAS/USD': { status: 'error', code: 429, message: 'Daily credits exhausted' },
+  }, ['NEO-USD', 'GAS-USD']), error => error.providerCategory === 'daily_quota_exhausted');
+});
+
+test('TwelveData preserves valid prices but refuses a batch with no usable prices immediately', () => {
+  assert.deepEqual(parseTwelveDataPrices({ ok: true, status: 200 }, { price: '2.1' }, ['NEO-USD']), { 'NEO-USD': 2.1 });
+  for (const body of [null, {}, { price: '0' }, { price: '-1' }, { price: 'Infinity' }]) {
+    assert.throws(() => parseTwelveDataPrices({ ok: true, status: 200 }, body, ['NEO-USD']),
+      error => error.providerCategory === 'no_usable_prices');
+  }
+  assert.deepEqual(parseTwelveDataPrices({ ok: true, status: 200 }, { 'NEO/USD': { price: '2.1' } },
+    ['NEO-USD', 'GAS-USD']), { 'NEO-USD': 2.1 });
+});
+
+test('TwelveData rejects coercible non-prices in single and mixed batches', () => {
+  const response = { ok: true, status: 200 };
+  for (const price of [true, false, ['2.1'], [], {}, null, '0x10', '0b10', ' 2.1 ', '',
+    '+2', '.5', 'NaN', NaN, Infinity, -1, 0, '1e999', '1e-999']) {
+    assert.throws(() => parseTwelveDataPrices(response, { price }, ['NEO-USD']),
+      error => error.providerCategory === 'no_usable_prices');
+    assert.deepEqual(parseTwelveDataPrices(response, {
+      'NEO/USD': { price }, 'GAS/USD': { price: '2.1' },
+    }, ['NEO-USD', 'GAS-USD']), { 'GAS-USD': 2.1 });
+  }
+});
+
+test('TwelveData accepts positive decimal numeric primitives and exponent notation', () => {
+  for (const price of [2.1, '2.1', '0.000001', '2.1e-3', '2E+2']) {
+    assert.deepEqual(parseTwelveDataPrices({ ok: true, status: 200 }, { price }, ['NEO-USD']),
+      { 'NEO-USD': Number(price) });
+  }
 });
 
 test('TwelveData provider errors fail even when the transport returned HTTP 200', () => {
@@ -335,6 +438,26 @@ test('feed-pusher still runs its main cycle when executed as the systemd entrypo
   assert.match(result.stdout, /no enabled chains\/symbols/);
 });
 
+test('ENCLAVE_FEED_SIGN is a defined boolean so Neo X cannot throw ReferenceError', () => {
+  assert.equal(typeof ENCLAVE_FEED_SIGN, 'boolean');
+  assert.equal(FEED_TARGET.network, 'mainnet');
+  assert.equal(FEED_TARGET.feed, '03013f49c42a14546c8bbe58f9d434c3517fccab');
+});
+
+test('an enabled chain without TD_KEY fails closed instead of skipping with exit 0', () => {
+  const env = {
+    ...process.env,
+    FEED_CHAINS: 'neo-n3',
+    PUSH_LOG: path.join(os.tmpdir(), 'feed-pusher-missing-td.log'),
+    PUSH_STATUS: path.join(os.tmpdir(), 'feed-pusher-missing-td.json'),
+  };
+  delete env.FEED_PUSHER_SKIP_MAIN;
+  delete env.TD_KEY;
+  const result = spawnSync(process.execPath, [PUSHER], { env, encoding: 'utf8', timeout: 30000 });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /missing_td_key/);
+});
+
 test('FEED_PUSHER_SKIP_MAIN=1 suppresses the main cycle for test imports', () => {
   const env = {
     ...process.env,
@@ -371,31 +494,63 @@ test('parseGetAllFeedRecordsStack indexes the batched FeedRecords by pair', () =
       },
     ],
   };
-  const byPair = parseGetAllFeedRecordsStack(halt);
+  const decoded = parseGetAllFeedRecordsStack(halt);
+  assert.equal(decoded.ok, true);
   // Equivalence with the per-pair getLatest decode for every indexed pair.
-  assert.deepEqual(byPair.get('TWELVEDATA:NEO-USD'), {
+  assert.deepEqual(decoded.records.get('TWELVEDATA:NEO-USD'), {
     round: 42,
     price: 5.25,
     ts: 1_780_000_000,
   });
-  assert.deepEqual(byPair.get('TWELVEDATA:BTC-USD'), {
+  assert.deepEqual(decoded.records.get('TWELVEDATA:BTC-USD'), {
     round: 7,
     price: 65000,
     ts: 1_780_000_100,
   });
   // Unregistered pairs are simply absent (callers default to the zeroed record).
-  assert.equal(byPair.get('TWELVEDATA:FLM-USD'), undefined);
+  assert.equal(decoded.records.get('TWELVEDATA:FLM-USD'), undefined);
 });
 
-test('parseGetAllFeedRecordsStack returns null on FAULT so callers fall back to per-pair reads', () => {
-  assert.equal(parseGetAllFeedRecordsStack({ state: 'FAULT', stack: [] }), null);
-  assert.equal(parseGetAllFeedRecordsStack(null), null);
-  // An empty registry still parses (no pairs registered yet).
+test('parseGetAllFeedRecordsStack fails closed on empty, malformed, and mixed registries', () => {
+  assert.equal(parseGetAllFeedRecordsStack({ state: 'FAULT', stack: [] }).reason, 'fault');
+  assert.equal(parseGetAllFeedRecordsStack(null).reason, 'undecodable');
   const empty = parseGetAllFeedRecordsStack({
     state: 'HALT',
     stack: [{ type: 'Array', value: [] }],
   });
-  assert.equal(empty.size, 0);
+  assert.equal(empty.ok, false);
+  assert.equal(empty.reason, 'empty');
+  const mixed = parseGetAllFeedRecordsStack({
+    state: 'HALT',
+    stack: [
+      {
+        type: 'Array',
+        value: [
+          {
+            type: 'Struct',
+            value: [
+              { type: 'ByteString', value: Buffer.from('TWELVEDATA:NEO-USD').toString('base64') },
+              { type: 'Integer', value: '1' },
+              { type: 'Integer', value: '5250000' },
+              { type: 'Integer', value: '1780000000' },
+            ],
+          },
+          { type: 'Struct', value: [{ type: 'ByteString', value: '' }] },
+        ],
+      },
+    ],
+  });
+  assert.equal(mixed.ok, false);
+  assert.equal(mixed.reason, 'undecodable');
+  assert.equal(mixed.record_count, 2);
+  assert.equal(mixed.decoded_count, 1);
+  assert.equal(
+    parseGetAllFeedRecordsStack({
+      state: 'FAULT',
+      exception: 'Method "getAllFeedRecords" with 0 parameter(s) doesn\'t exist in the contract.',
+    }).reason,
+    'unsupported_method'
+  );
 });
 
 test('trackMissingSymbols alerts only after N consecutive missing cycles and resets on recovery', () => {
@@ -548,6 +703,131 @@ test('rebuildUpdateFeedsTxFromEnclavePlan signs against the production updater v
   assert.equal(rebuilt.message, again.message);
 });
 
+test('pushNeoN3 aborts before planning when getAllFeedRecords is empty, malformed, or partial', async () => {
+  const cases = [
+    { state: 'HALT', stack: [{ type: 'Array', value: [] }] },
+    { state: 'HALT', stack: [{ type: 'Integer', value: '1' }] },
+    { state: 'FAULT', exception: 'vm fault' },
+    {
+      state: 'HALT',
+      stack: [
+        {
+          type: 'Array',
+          value: [
+            {
+              type: 'Struct',
+              value: [
+                { type: 'ByteString', value: Buffer.from('TWELVEDATA:NEO-USD').toString('base64') },
+                { type: 'Integer', value: '1' },
+                { type: 'Integer', value: '5250000' },
+                { type: 'Integer', value: '1780000000' },
+              ],
+            },
+            { type: 'Struct', value: [{ type: 'ByteString', value: '' }] },
+          ],
+        },
+      ],
+    },
+  ];
+  for (const recordsResult of cases) {
+    let progressedPastRead = false;
+    __setN3RpcForTests(async (method, params) => {
+      const proven = provenWriteRpc(method, params);
+      if (proven !== undefined) return proven;
+      if (method === 'invokefunction' && params[1] === 'getAllFeedRecords') return recordsResult;
+      progressedPastRead = true;
+      throw new Error('unexpected post-read rpc ' + method);
+    });
+    try {
+      await assert.rejects(
+        () => pushNeoN3({ 'NEO-USD': 5.25 }, 1_780_000_000),
+        /getAllFeedRecords (empty|malformed|fault|undecodable) \(fail-closed, not bootstrap\)/
+      );
+      assert.equal(progressedPastRead, false, 'must not plan or write after an unreadable registry');
+    } finally {
+      __resetN3RpcForTests();
+    }
+  }
+});
+
+test('pushNeoN3 falls back to per-pair getLatest only when getAllFeedRecords is unsupported', async () => {
+  const now = 1_780_000_000;
+  let usedLatest = false;
+  __setN3RpcForTests(async (method, params) => {
+    const proven = provenWriteRpc(method, params);
+    if (proven !== undefined && !(method === 'invokefunction' && params[1] === 'getAllFeedRecords')) {
+      return proven;
+    }
+    if (method === 'invokefunction' && params[1] === 'getAllFeedRecords') {
+      return {
+        state: 'FAULT',
+        exception: 'Method "getAllFeedRecords" with 0 parameter(s) doesn\'t exist in the contract.',
+      };
+    }
+    if (method === 'invokefunction' && params[1] === 'getLatest') {
+      usedLatest = true;
+      return {
+        state: 'HALT',
+        stack: [
+          {
+            type: 'Struct',
+            value: [
+              { type: 'ByteString', value: Buffer.from('TWELVEDATA:NEO-USD').toString('base64') },
+              { type: 'Integer', value: '1' },
+              { type: 'Integer', value: '5000000' },
+              { type: 'Integer', value: String(now - 3600) },
+            ],
+          },
+        ],
+      };
+    }
+    if (method === 'invokefunction' && params[1] === 'balanceOf') {
+      return { state: 'HALT', stack: [{ type: 'Integer', value: String(20 * 1e8) }] };
+    }
+    if (method === 'getblockcount') return 5_000_000;
+    if (method === 'invokescript') return { state: 'HALT', gasconsumed: '1' };
+    if (method === 'calculatenetworkfee') return { networkfee: '1' };
+    throw new Error('unexpected rpc ' + method);
+  });
+  __setEnclaveFeedSignForTests(async () => {
+    throw new Error('enclave not needed for fallback-read assertion');
+  });
+  try {
+    await assert.rejects(() => pushNeoN3({ 'NEO-USD': 5.25 }, now), /enclave not needed|enclave/i);
+    assert.equal(usedLatest, true);
+  } finally {
+    __resetEnclaveFeedSignForTests();
+    __resetN3RpcForTests();
+  }
+});
+
+test('pushNeoN3 does not treat a key-does-not-exist business error as missing getAllFeedRecords', async () => {
+  let usedLatest = false;
+  __setN3RpcForTests(async (method, params) => {
+    const proven = provenWriteRpc(method, params);
+    if (proven !== undefined && !(method === 'invokefunction' && params[1] === 'getAllFeedRecords')) {
+      return proven;
+    }
+    if (method === 'invokefunction' && params[1] === 'getAllFeedRecords') {
+      return { state: 'FAULT', exception: 'getAllFeedRecords: the key does not exist' };
+    }
+    if (method === 'invokefunction' && params[1] === 'getLatest') {
+      usedLatest = true;
+      return { state: 'HALT', stack: [] };
+    }
+    throw new Error('unexpected rpc ' + method);
+  });
+  try {
+    await assert.rejects(
+      () => pushNeoN3({ 'NEO-USD': 5.25 }, 1_780_000_000),
+      /getAllFeedRecords fault \(fail-closed, not bootstrap\)/
+    );
+    assert.equal(usedLatest, false);
+  } finally {
+    __resetN3RpcForTests();
+  }
+});
+
 test('pushNeoN3 delegates compute+sign to mandatory enclave /feed/sign and broadcasts the enclave-signed tx', async () => {
   const signer = new wallet.Account(); // throwaway test updater key
   const blockCount = 5_000_000;
@@ -558,11 +838,12 @@ test('pushNeoN3 delegates compute+sign to mandatory enclave /feed/sign and broad
   // Mock the Neo RPC layer the flag-on pushNeoN3 touches, in the order it calls.
   const broadcast = [];
   __setN3RpcForTests(async (method, params) => {
+    const proven = provenWriteRpc(method, params);
+    if (proven !== undefined) return proven;
     switch (method) {
       case 'invokefunction':
-        // getAllFeedRecords (state read) -> empty registry (bootstrap write).
         if (params[1] === 'getAllFeedRecords') {
-          return { state: 'HALT', stack: [{ type: 'Array', value: [] }] };
+          return haltAllRecords([{ pair: 'TWELVEDATA:NEO-USD', round: 1, price: 5.0, ts: now - 3600 }]);
         }
         // balanceOf (n3UpdaterGas) -> healthy balance.
         if (params[1] === 'balanceOf') {
@@ -577,7 +858,14 @@ test('pushNeoN3 delegates compute+sign to mandatory enclave /feed/sign and broad
         return { networkfee: networkFee };
       case 'sendrawtransaction':
         broadcast.push(params[0]);
-        return { hash: '0xbroadcasted' };
+        {
+          const raw = Buffer.from(params[0], 'base64').toString('hex');
+          const broadcastTx = tx.Transaction.deserialize(raw);
+          const hex = String(broadcastTx.hash()).replace(/^0x/i, '').toLowerCase();
+          return { hash: `0x${hex}` };
+        }
+      case 'getapplicationlog':
+        return { executions: [{ vmstate: 'HALT' }] };
       default:
         throw new Error('unexpected rpc ' + method);
     }
@@ -597,7 +885,7 @@ test('pushNeoN3 delegates compute+sign to mandatory enclave /feed/sign and broad
       systemFee: p.system_fee,
       networkFee: p.network_fee,
     };
-    // Bootstrap: empty on-chain state -> round/ts = now (planFeedUpdate bootstrap).
+    // Existing on-chain NEO-USD is stale/different so the cycle still writes.
     // The enclave signs the rebuilt message with a test key (the production updater
     // key is never available in tests); the host attaches it under the pinned
     // N3_UPDATER_PUB, so the integration assertion checks the host attached the
@@ -613,8 +901,15 @@ test('pushNeoN3 delegates compute+sign to mandatory enclave /feed/sign and broad
     return resp;
   });
 
+  __setConfirmSleepForTests(async () => {});
   try {
     await pushNeoN3({ 'NEO-USD': 5.25 }, now);
+    const evidence = __getLastWriteEvidenceForTests();
+    assert.equal(evidence.write_mode, 'batch_update_feeds');
+    assert.equal(evidence.confirmation_status, 'confirmed');
+    assert.deepEqual(evidence.pairs_confirmed, ['TWELVEDATA:NEO-USD']);
+    assert.deepEqual(evidence.pairs_pending, []);
+    assert.equal(evidence.submitted_identity?.hash, evidence.txids[0]);
 
     // The enclave was asked to compute+sign, carrying the on-chain state + pinned
     // tx_params (the reproducibility key) the host read.
@@ -660,6 +955,61 @@ test('pushNeoN3 delegates compute+sign to mandatory enclave /feed/sign and broad
   } finally {
     __resetEnclaveFeedSignForTests();
     __resetN3RpcForTests();
+    __resetConfirmSleepForTests();
+  }
+});
+
+test('pushNeoN3 fails closed when the target contract has updateFeed but not updateFeeds', async () => {
+  __setN3RpcForTests(async (method) => {
+    if (method === 'getversion') return { protocol: { network: FEED_TARGET.magic } };
+    if (method === 'getcontractstate') {
+      return {
+        hash: `0x${FEED_TARGET.feed}`,
+        manifest: {
+          abi: {
+            methods: [
+              { name: 'updateFeed', parameters: UPDATE_FEED_PARAMETERS },
+              { name: 'getLatest' },
+            ],
+          },
+        },
+      };
+    }
+    throw new Error('unexpected rpc ' + method);
+  });
+  try {
+    await assert.rejects(() => pushNeoN3({ 'NEO-USD': 5.25 }, 1_780_000_000), /has no updateFeeds/);
+  } finally {
+    __resetN3RpcForTests();
+  }
+});
+
+test('pushNeoN3 fails closed on invokescript FAULT instead of exiting 0', async () => {
+  __setN3RpcForTests(async (method, params) => {
+    const proven = provenWriteRpc(method, params);
+    if (proven !== undefined) return proven;
+    switch (method) {
+      case 'invokefunction':
+        if (params[1] === 'getAllFeedRecords')
+          return haltAllRecords([{ pair: 'TWELVEDATA:NEO-USD', round: 1, price: 5.0, ts: 1_779_000_000 }]);
+        if (params[1] === 'balanceOf')
+          return { state: 'HALT', stack: [{ type: 'Integer', value: String(20 * 1e8) }] };
+        throw new Error('unexpected invokefunction ' + params[1]);
+      case 'getblockcount':
+        return 5_000_000;
+      case 'invokescript':
+        return { state: 'FAULT', exception: 'Insufficient funds' };
+      default:
+        throw new Error('unexpected rpc ' + method);
+    }
+  });
+  try {
+    await assert.rejects(
+      () => pushNeoN3({ 'NEO-USD': 5.25 }, 1_780_000_000),
+      /invokescript FAULT \(fail-closed\).*Insufficient funds/
+    );
+  } finally {
+    __resetN3RpcForTests();
   }
 });
 
@@ -669,10 +1019,12 @@ test('pushNeoN3 refuses to broadcast when the enclave tx message diverges from t
   const now = 1_780_000_000;
   const broadcast = [];
   __setN3RpcForTests(async (method, params) => {
+    const proven = provenWriteRpc(method, params);
+    if (proven !== undefined) return proven;
     switch (method) {
       case 'invokefunction':
         if (params[1] === 'getAllFeedRecords')
-          return { state: 'HALT', stack: [{ type: 'Array', value: [] }] };
+          return haltAllRecords([{ pair: 'TWELVEDATA:NEO-USD', round: 1, price: 5.0, ts: now - 3600 }]);
         if (params[1] === 'balanceOf')
           return { state: 'HALT', stack: [{ type: 'Integer', value: String(20 * 1e8) }] };
         throw new Error('unexpected invokefunction ' + params[1]);

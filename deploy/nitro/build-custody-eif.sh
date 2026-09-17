@@ -37,8 +37,10 @@ release="${MORPHEUS_RELEASE:-custody-$(date -u +%Y-%m-%d)}"
 dockerfile="$repo_root/deploy/nitro/Dockerfile.signer"
 measurements_dir="$repo_root/deploy/nitro/measurements"
 manifest="$measurements_dir/${release}.json"
+egress_manifest="$measurements_dir/${release}.egress.yaml"
 custody_host_port="${MORPHEUS_CUSTODY_HOST_PORT:-8789}"
 workload_audience="${SIGNER_SERVICE_WORKLOAD_AUDIENCE:-http://127.0.0.1:${custody_host_port}}"
+profile_file="$repo_root/deploy/nitro/custody-vault-profile.json"
 
 verify_reproducible=0
 build_eif=1
@@ -49,6 +51,16 @@ for arg in "$@"; do
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
+
+if [ "$network" != testnet ]; then
+  echo "ERROR: durable custody coordinator release is TestNet-only" >&2
+  exit 1
+fi
+if [ ! -f "$profile_file" ] || [ -L "$profile_file" ]; then
+  echo "ERROR: prepare the validated public deploy/nitro/custody-vault-profile.json before building" >&2
+  exit 1
+fi
+profile_file_sha256="$(shasum -a 256 "$profile_file" | awk '{print $1}')"
 
 git_commit="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo unknown)"
 
@@ -66,9 +78,14 @@ echo "==> workload audience: $workload_audience"
 DOCKER_BUILDKIT=1 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1749859200}" \
   docker build \
     --build-arg "SIGNER_SERVICE_WORKLOAD_AUDIENCE=$workload_audience" \
+    --build-arg "CUSTODY_PROFILE_FILE_SHA256=$profile_file_sha256" \
     -f "$dockerfile" -t "$image" "$repo_root"
 
 image_id_1="$(docker image inspect --format '{{.Id}}' "$image")"
+profile_identity="$(docker run --rm --network none --entrypoint /app/bin/signer_service "$image_id_1" \
+  validate-vault-profile /app/config/custody-vault-profile.json "$network")"
+printf '%s' "$profile_identity" | jq -e --arg digest "$profile_file_sha256" \
+  '.schema == "neoos/custody-profile-build-identity/v1" and .environment == "testnet" and .file_sha256 == $digest' >/dev/null
 echo "==> image id: $image_id_1"
 
 if [ "$verify_reproducible" -eq 1 ]; then
@@ -87,6 +104,7 @@ if [ "$verify_reproducible" -eq 1 ]; then
   DOCKER_BUILDKIT=1 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1749859200}" \
     docker build --no-cache \
       --build-arg "SIGNER_SERVICE_WORKLOAD_AUDIENCE=$workload_audience" \
+      --build-arg "CUSTODY_PROFILE_FILE_SHA256=$profile_file_sha256" \
       -f "$dockerfile" -t "$image2" "$repo_root"
   image_id_2="$(docker image inspect --format '{{.Id}}' "$image2")"
   echo "    build #1 image id: $image_id_1"
@@ -175,16 +193,22 @@ if [ "$verify_reproducible" -ne 1 ]; then
 fi
 
 echo "==> writing manifest $manifest"
+printf '%s' "$profile_identity" | jq -r '
+  "# Generated from the measured custody vault profile; review before host installation.",
+  "allowlist:",
+  (.required_egress[] | "  - { address: \(.address), port: \(.port) }")
+' > "$egress_manifest"
 RELEASE="$release" APP_ID="morpheus-custody" NETWORK="$network" \
 GIT_COMMIT="$git_commit" EIF_SHA256="$eif_sha256" HASH_ALGO="$hash_algo" \
 PCR0="$pcr0" PCR1="$pcr1" PCR2="$pcr2" BUILT_AT="$built_at" IMAGE_ID="$image_id_1" \
-jq -n '
+jq -n --argjson profile "$profile_identity" '
   {
     release: env.RELEASE,
     app_id: env.APP_ID,
     network: env.NETWORK,
     git_commit: env.GIT_COMMIT,
     image_id: env.IMAGE_ID,
+    vault_profile: $profile,
     eif_sha256: (if env.EIF_SHA256 == "" then null else env.EIF_SHA256 end),
     hash_algorithm: (env.HASH_ALGO // "SHA384"),
     pcr0: env.PCR0,

@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
-import { Redis } from 'redis';
+import { createClient } from 'redis';
+import type { RedisClientType } from 'redis';
 import { PathfindingEngine } from './pathfinding';
 import { MEVRiskScanner } from './mev-scanner';
 import { CACHE_TTL, requestCounter, latencyHistogram, getMetrics } from './metrics';
@@ -7,14 +8,15 @@ import { RouteRequestSchema, RouteResponseSchema } from './validation';
 import type { RouteRequest, RouteResponse, SwapRoute } from './types';
 
 export class RoutingEngineService {
-  private redis: Redis | null = null;
+  private redis: RedisClientType | null = null;
   private pathfinding: PathfindingEngine;
   private mevScanner: MEVRiskScanner;
-  private poolCache: Map<string, any> = new Map();
+  private readonly poolProvider?: () => Promise<RoutingPool[]>;
 
-  constructor(config: { redisUrl?: string }) {
+  constructor(config: { redisUrl?: string; poolProvider?: () => Promise<RoutingPool[]> }) {
     this.pathfinding = new PathfindingEngine();
     this.mevScanner = new MEVRiskScanner();
+    this.poolProvider = config.poolProvider;
     
     if (config.redisUrl) {
       this.redis = this.createRedisClient(config.redisUrl);
@@ -56,18 +58,19 @@ export class RoutingEngineService {
 
       // Find best routes using pathfinding
       const routes = await this.findOptimalRoutes(validated);
+      if (routes.length === 0) throw new Error('No viable swap route');
       
       // MEV scanning
       const mevResult = await this.mevScanner.scanRoute(routes[0]);
       
-      const response: RouteResponse = {
+      const response: RouteResponse = RouteResponseSchema.parse({
         requestId,
         timestamp: Date.now(),
         bestRoute: routes[0],
         alternativeRoutes: routes.slice(1, 4), // Top 3 alternatives
         mevScan: mevResult,
         totalLiquidity: this.aggregateLiquidity(routes).toString(),
-      };
+      });
 
       // Cache the result
       await this.cacheRoute(cacheKey, response);
@@ -75,7 +78,7 @@ export class RoutingEngineService {
       // Record metrics
       const duration = (Date.now() - startTime) / 1000;
       requestCounter.inc({ status: 'success', token_pair: `${validated.tokenIn}/${validated.tokenOut}` });
-      latencyHistogram.observe(duration, 'routing');
+      latencyHistogram.observe({ step: 'routing' }, duration);
 
       return response;
 
@@ -91,13 +94,14 @@ export class RoutingEngineService {
     const pools = await this.getPoolData();
     
     // Build graph
-    this.buildGraph(pools);
+    this.pathfinding.setPools(pools);
     
     // Find all possible routes
     const rawRoutes = this.pathfinding.findBestRoutes(
       request.tokenIn,
       request.tokenOut,
-      request.amount
+      request.amount,
+      request.maxHops
     );
     
     // Filter by excluded/include pools
@@ -109,62 +113,16 @@ export class RoutingEngineService {
         return false;
       }
       return true;
-    }).slice(0, request.maxHops || 4);
+    });
   }
 
-  private buildGraph(pools: any[]): void {
-    for (const pool of pools) {
-      const poolId = pool.id;
-      
-      // Create bidirectional edges
-      if (!this.pathfinding.adjacencyMatrix.has(poolId)) {
-        this.pathfinding.adjacencyMatrix.set(poolId, new Map());
-      }
-      
-      // Add connections to input/output tokens
-      const addConnection = (token: string) => {
-        const key = `${token}:${poolId}`;
-        const weight = 1 / pool.liquidity; // Lower weight = better
-        
-        if (!this.pathfinding.adjacencyMatrix.has(key)) {
-          this.pathfinding.adjacencyMatrix.set(key, new Map());
-        }
-        
-        this.pathfinding.adjacencyMatrix.get(key)!.set(poolId, weight);
-      };
-      
-      addConnection(pool.tokenIn);
-      addConnection(pool.tokenOut);
-      
-      // Cache pool data
-      this.poolCache.set(poolId, pool);
-      this.pathfinding.pools.set(poolId, pool);
+  private async getPoolData(): Promise<RoutingPool[]> {
+    if (!this.poolProvider) {
+      throw new Error('Routing pool provider is not configured');
     }
-  }
-
-  private async getPoolData(): Promise<any[]> {
-    // In production, this would fetch from Neo blockchain or database
-    // For now, return mock data
-    return [
-      {
-        id: 'pool-1',
-        tokenIn: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
-        tokenOut: '0xffffffffffffffffffffffffffffffffffffffffffff',
-        reserveIn: '10000000000000',
-        reserveOut: '9850000000000',
-        liquidity: '10000000',
-        feeTier: 30,
-      },
-      {
-        id: 'pool-2',
-        tokenIn: '0xffffffffffffffffffffffffffffffffffffffffffff',
-        tokenOut: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
-        reserveIn: '9800000000000',
-        reserveOut: '9950000000000',
-        liquidity: '9500000',
-        feeTier: 30,
-      },
-    ];
+    const pools = await this.poolProvider();
+    if (!Array.isArray(pools)) throw new Error('Routing pool provider returned invalid data');
+    return pools;
   }
 
   private aggregateLiquidity(routes: SwapRoute[]): string {
@@ -195,7 +153,7 @@ export class RoutingEngineService {
     if (!this.redis) return;
     
     try {
-      await this.redis.setex(key, CACHE_TTL.ROUTES, JSON.stringify(route));
+      await this.redis.setEx(key, CACHE_TTL.ROUTES, JSON.stringify(route));
     } catch (error) {
       console.error('Cache write failed:', error);
     }
@@ -242,11 +200,20 @@ export class RoutingEngineService {
     }
   }
 
-  createRedisClient(url: string): any {
-    const { createClient } = require('redis');
+  createRedisClient(url: string): RedisClientType {
     return createClient({ url });
   }
 }
+
+type RoutingPool = {
+  id: string;
+  tokenIn: string;
+  tokenOut: string;
+  liquidity?: string;
+  feeTier?: number;
+  reserveIn: string;
+  reserveOut: string;
+};
 
 // Export metrics endpoint
 async function metricsHandler(): Promise<string> {

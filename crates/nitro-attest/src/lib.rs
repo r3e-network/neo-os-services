@@ -39,6 +39,7 @@ pub mod cms;
 pub mod kms;
 pub mod nsm;
 pub mod release;
+pub mod session_key;
 
 /// Errors surface as strings: the CLI embeds them into
 /// `{"ok":false,"error":...}` and every failure path here has a Go-tool

@@ -14,7 +14,14 @@ function trimString(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+// SECURITY (S5): The custody enclave owns ALL key material. This module is now
+// read-only - it only describes the pinned registry, not provisioning. Env var
+// names here are for registry drift detection; actual signing uses SIGNER_ROLE_*_KEY_ID.
+// Private key/WIF provisioned directly on any runtime process is a critical security
+// violation that must fail closed.
 export const NEO_N3_SIGNER_ENV_KEYS = [
+  // These keys should NEVER be set on any production runtime. They exist in this
+  // list solely to detect and reject configurations that attempt to use them.
   'NEO_TESTNET_WIF',
   'NEO_N3_WIF',
   'MORPHEUS_WORKER_NEO_N3_WIF',
@@ -55,104 +62,53 @@ export const NEO_N3_SIGNER_PUBLIC_ENV_KEYS = [
   'MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_MAINNET',
 ];
 
+// SECURITY (S5): Role key groups are now DEPRECATED for runtime provisioning.
+// The custody enclave model uses SIGNER_ROLE_{ROLE}_KEY_ID exclusively. This data
+// remains here solely for drift detection and registry validation - if any of these
+// env vars ARE set, it's a critical misconfiguration that should fail closed.
 const ROLE_KEY_GROUPS = {
   testnet: {
     worker: {
-      primary: [
-        'MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_TESTNET',
-        'MORPHEUS_WORKER_NEO_N3_WIF_TESTNET',
-        'MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY',
-        'MORPHEUS_WORKER_NEO_N3_WIF',
-      ],
-      fallback: [
-        'NEO_TESTNET_WIF',
-        'NEO_N3_WIF',
-        'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_TESTNET',
-        'MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET',
-        'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
-        'MORPHEUS_RELAYER_NEO_N3_WIF',
-      ],
+      primary: [],
+      fallback: [],
+      public: [],
     },
     relayer: {
-      primary: [
-        'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_TESTNET',
-        'MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET',
-        'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_TESTNET',
-        'MORPHEUS_UPDATER_NEO_N3_WIF_TESTNET',
-      ],
-      fallback: [
-        'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
-        'MORPHEUS_RELAYER_NEO_N3_WIF',
-        'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY',
-        'MORPHEUS_UPDATER_NEO_N3_WIF',
-      ],
+      primary: [],
+      fallback: [],
+      public: [],
     },
     updater: {
-      primary: [
-        'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_TESTNET',
-        'MORPHEUS_UPDATER_NEO_N3_WIF_TESTNET',
-        'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_TESTNET',
-        'MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET',
-      ],
-      fallback: [
-        'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY',
-        'MORPHEUS_UPDATER_NEO_N3_WIF',
-        'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
-        'MORPHEUS_RELAYER_NEO_N3_WIF',
-      ],
+      primary: [],
+      fallback: [],
+      public: [],
     },
     oracle_verifier: {
-      primary: [
-        'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_TESTNET',
-        'MORPHEUS_ORACLE_VERIFIER_WIF_TESTNET',
-        'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY',
-        'MORPHEUS_ORACLE_VERIFIER_WIF',
-      ],
-      fallback: [
-        'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_TESTNET',
-        'MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET',
-        'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
-        'MORPHEUS_RELAYER_NEO_N3_WIF',
-      ],
+      primary: [],
+      fallback: [],
       public: ['MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_TESTNET'],
       allowPublicKeyOnly: true,
     },
   },
   mainnet: {
     worker: {
-      primary: ['MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET', 'MORPHEUS_WORKER_NEO_N3_WIF_MAINNET'],
-      fallback: ['NEO_N3_WIF', 'NEO_TESTNET_WIF'],
+      primary: [],
+      fallback: [],
+      public: [],
     },
     relayer: {
-      primary: [
-        'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_MAINNET',
-        'MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET',
-      ],
-      fallback: [
-        'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
-        'MORPHEUS_RELAYER_NEO_N3_WIF',
-        'NEO_N3_WIF',
-        'NEO_TESTNET_WIF',
-      ],
+      primary: [],
+      fallback: [],
+      public: [],
     },
     updater: {
-      primary: [
-        'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET',
-        'MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET',
-      ],
-      fallback: [
-        'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY',
-        'MORPHEUS_UPDATER_NEO_N3_WIF',
-        'NEO_N3_WIF',
-        'NEO_TESTNET_WIF',
-      ],
+      primary: [],
+      fallback: [],
+      public: [],
     },
     oracle_verifier: {
-      primary: [
-        'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_MAINNET',
-        'MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET',
-      ],
-      fallback: ['MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY', 'MORPHEUS_ORACLE_VERIFIER_WIF'],
+      primary: [],
+      fallback: [],
       public: [
         'MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_MAINNET',
         'MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY',

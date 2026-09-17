@@ -131,10 +131,68 @@ pub fn build_kms_decrypt_request(
     ciphertext_b64: &str,
     attestation_document: &[u8],
 ) -> AttestResult<SignedRequest> {
-    if region.is_empty() {
-        return Err("region is required".to_string());
+    build_kms_decrypt_request_with_context(
+        region,
+        credentials,
+        amz_date,
+        ciphertext_b64,
+        attestation_document,
+        &[],
+    )
+}
+
+/// Bind the ciphertext to its intended use through KMS authenticated metadata.
+/// The caller supplies a fixed context, never one received beside the ciphertext.
+pub fn build_kms_decrypt_request_with_context(
+    region: &str,
+    credentials: &Credentials,
+    amz_date: &str,
+    ciphertext_b64: &str,
+    attestation_document: &[u8],
+    encryption_context: &[(&str, &str)],
+) -> AttestResult<SignedRequest> {
+    build_kms_decrypt_request_with_context_and_key(
+        region,
+        credentials,
+        amz_date,
+        ciphertext_b64,
+        attestation_document,
+        encryption_context,
+        None,
+    )
+}
+
+/// Production custody calls pin the complete KMS key ARN. KMS otherwise uses
+/// ciphertext metadata to select a key, which is not strong enough for an
+/// immutable vault profile containing multiple same-purpose keys.
+pub fn build_kms_decrypt_request_with_context_and_key(
+    region: &str,
+    credentials: &Credentials,
+    amz_date: &str,
+    ciphertext_b64: &str,
+    attestation_document: &[u8],
+    encryption_context: &[(&str, &str)],
+    key_id: Option<&str>,
+) -> AttestResult<SignedRequest> {
+    // The region crosses the untrusted provision channel. It must never turn
+    // the pinned AWS hostname into a URL with userinfo, a path, or a fragment.
+    if region.len() < 5
+        || region.len() > 63
+        || !region
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        || region.split('-').any(str::is_empty)
+        || !region.contains('-')
+        || !region.as_bytes().last().is_some_and(u8::is_ascii_digit)
+    {
+        return Err("invalid AWS region".to_string());
     }
-    if amz_date.len() < 8 || !amz_date.ends_with('Z') {
+    let date = amz_date.as_bytes();
+    if date.len() != 16
+        || date[8] != b'T'
+        || date[15] != b'Z'
+        || !date[..8].iter().chain(&date[9..15]).all(u8::is_ascii_digit)
+    {
         return Err("amz date must be YYYYMMDDTHHMMSSZ".to_string());
     }
 
@@ -153,6 +211,27 @@ pub fn build_kms_decrypt_request(
         "CiphertextBlob".to_string(),
         Value::String(ciphertext_b64.to_string()),
     );
+    if !encryption_context.is_empty() {
+        let mut context = std::collections::BTreeMap::new();
+        for &(name, value) in encryption_context {
+            if name.is_empty() || value.is_empty() || context.insert(name, value).is_some() {
+                return Err("encryption context must contain unique, nonempty entries".to_string());
+            }
+        }
+        body_map.insert(
+            "EncryptionContext".to_string(),
+            serde_json::to_value(context).map_err(|_| "invalid encryption context".to_string())?,
+        );
+    }
+    if let Some(key_id) = key_id {
+        if !key_id.starts_with("arn:")
+            || key_id.bytes().any(|byte| byte.is_ascii_whitespace())
+            || key_id.len() > 2048
+        {
+            return Err("invalid expected KMS key id".to_string());
+        }
+        body_map.insert("KeyId".to_string(), Value::String(key_id.to_string()));
+    }
     body_map.insert("Recipient".to_string(), Value::Object(recipient));
     let body = Value::Object(body_map).to_string();
 
@@ -183,8 +262,10 @@ pub fn build_kms_decrypt_request(
         .collect::<Vec<_>>()
         .join(";");
 
+    // SigV4 separates CanonicalHeaders (already newline-terminated) from
+    // SignedHeaders with another newline.
     let canonical_request = format!(
-        "POST\n/\n\n{canonical_headers}{signed_headers}\n{}",
+        "POST\n/\n\n{canonical_headers}\n{signed_headers}\n{}",
         sha256_hex(body.as_bytes())
     );
     let scope = format!("{datestamp}/{region}/kms/aws4_request");
@@ -220,16 +301,62 @@ pub fn build_kms_decrypt_request(
 /// Parses the KMS Decrypt JSON response, returning the CiphertextForRecipient
 /// blob (base64) that decrypt_cms_enveloped_data consumes.
 pub fn parse_kms_decrypt_response(status: u16, body: &str) -> AttestResult<String> {
+    parse_kms_decrypt_response_for_key(status, body, None)
+}
+
+/// Parse a Recipient response and require KMS to report the exact key pinned
+/// by the caller's measured vault profile.
+pub fn parse_kms_decrypt_response_for_key(
+    status: u16,
+    body: &str,
+    expected_key_id: Option<&str>,
+) -> AttestResult<String> {
     if status != 200 {
-        // Best-effort AWS error shape; a non-JSON error body surfaces
-        // verbatim after the status.
+        // AWS signature diagnostics echo canonical headers, including temporary
+        // credentials. Only recognized error codes may cross this boundary.
         let parsed: Value = serde_json::from_str(body).unwrap_or(Value::Null);
-        let typ = parsed["__type"].as_str().unwrap_or("unknown");
-        let message = parsed["message"].as_str().unwrap_or(body);
-        return Err(format!("kms decrypt: HTTP {status} {typ}: {message}"));
+        let typ = parsed["__type"]
+            .as_str()
+            .unwrap_or("")
+            .rsplit('#')
+            .next()
+            .unwrap_or("");
+        let code = match typ {
+            "AccessDeniedException"
+            | "DisabledException"
+            | "InvalidCiphertextException"
+            | "IncorrectKeyException"
+            | "InvalidKeyUsageException"
+            | "KMSInvalidStateException"
+            | "KMSInternalException"
+            | "KeyUnavailableException"
+            | "NotFoundException"
+            | "DependencyTimeoutException"
+            | "InvalidGrantTokenException"
+            | "DryRunOperationException"
+            | "InvalidArnException"
+            | "ValidationException"
+            | "InvalidSignatureException"
+            | "UnrecognizedClientException"
+            | "ExpiredTokenException"
+            | "RequestExpired"
+            | "ThrottlingException"
+            | "InternalFailure"
+            | "ServiceUnavailable"
+            | "IncompleteSignatureException"
+            | "MissingAuthenticationTokenException" => typ,
+            _ => "unknown",
+        };
+        return Err(format!("kms decrypt: HTTP {status} {code}"));
     }
     let parsed: Value =
         serde_json::from_str(body).map_err(|e| format!("kms decrypt: parse response: {e}"))?;
+    if let Some(expected) = expected_key_id {
+        let actual = parsed["KeyId"].as_str().unwrap_or("");
+        if actual != expected {
+            return Err("kms decrypt: response key id did not match the pinned key".to_string());
+        }
+    }
     let ciphertext = parsed["CiphertextForRecipient"].as_str().unwrap_or("");
     if ciphertext.is_empty() {
         return Err(
@@ -253,9 +380,9 @@ mod tests {
         assert_eq!(format_amz_date(1_788_134_400), "20260831T000000Z");
     }
 
-    /// Golden signature cross-checked against an independent Node
-    /// implementation of the AWS SigV4 spec (Node's crypto library, not this
-    /// crate's HMAC chain).
+    /// Expected signatures come from the AWS Smithy SignatureV4 implementation
+    /// with applyChecksum=false and a fixed signingDate, not another handwritten
+    /// canonical-request builder.
     #[test]
     fn sigv4_known_signature() {
         let credentials = Credentials {
@@ -290,7 +417,7 @@ mod tests {
             authorization,
             "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260831/us-east-1/kms/aws4_request, \
              SignedHeaders=content-type;host;x-amz-date;x-amz-target, \
-             Signature=64796ad3ff2af1bf012df2e2ec80380d79db6adce4e2ebc39225e7a96b409ec4"
+             Signature=7f986a35eb0e482a28fb195370ef07ed9a8d5247fe605035d13c2f5a361b0264"
         );
     }
 
@@ -326,6 +453,170 @@ mod tests {
         assert!(request.headers[5].1.contains(
             "SignedHeaders=content-type;host;x-amz-date;x-amz-security-token;x-amz-target"
         ));
+        assert!(request.headers[5].1.ends_with(
+            "Signature=934ba8178f634478e171959b833bb0c8a16426468d82d8c917e1794029a90418"
+        ));
+    }
+
+    #[test]
+    fn untrusted_region_cannot_redirect_the_kms_authority() {
+        let credentials = Credentials {
+            access_key_id: "AKIDEXAMPLE".into(),
+            secret_access_key: "secret".into(),
+            session_token: None,
+        };
+        for region in [
+            "",
+            "us-east-1.amazonaws.com@attacker.example/#",
+            "us-east-1/evil",
+            "us-east-1?x",
+            "us-east-1#",
+            "us-east-1:443",
+            "US-EAST-1",
+            "us--east-1",
+            "us-east-1\n",
+        ] {
+            assert!(build_kms_decrypt_request(
+                region,
+                &credentials,
+                "20260831T000000Z",
+                "AQEB",
+                b"doc"
+            )
+            .is_err());
+        }
+        for date in [
+            "Z",
+            "20260831Z",
+            "20260831T00000Z",
+            "20260831T000000Zextra",
+            "2026083\u{e9}T00000Z",
+        ] {
+            assert!(
+                build_kms_decrypt_request("us-east-1", &credentials, date, "AQEB", b"doc").is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn sigv4_binds_sorted_encryption_context() {
+        let credentials = Credentials {
+            access_key_id: "AKIDEXAMPLE".to_string(),
+            secret_access_key: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY".to_string(),
+            session_token: Some("tok".to_string()),
+        };
+        let request = build_kms_decrypt_request_with_context(
+            "us-east-1",
+            &credentials,
+            "20260831T000000Z",
+            "AQEB",
+            b"attestation-doc-bytes",
+            &[
+                ("neoos:purpose", "master-key/v1"),
+                ("neoos:component", "custody"),
+            ],
+        )
+        .unwrap();
+        let body: Value = serde_json::from_str(&request.body).unwrap();
+        assert_eq!(
+            body["EncryptionContext"],
+            serde_json::json!({
+                "neoos:component": "custody", "neoos:purpose": "master-key/v1",
+            })
+        );
+        // Independently generated with AWS Smithy SignatureV4 5.4.6.
+        assert!(request.headers.last().unwrap().1.ends_with(
+            "Signature=0ab05fa2129946e076cabaee6d3c3d32108c4ea172d0a3a7d59afeb631a64248"
+        ));
+        for context in [
+            vec![("", "v")],
+            vec![("k", "")],
+            vec![("k", "v"), ("k", "other")],
+        ] {
+            assert!(build_kms_decrypt_request_with_context(
+                "us-east-1",
+                &credentials,
+                "20260831T000000Z",
+                "AQEB",
+                b"doc",
+                &context,
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn decrypt_request_and_response_are_bound_to_the_pinned_kms_key() {
+        const KEY_ARN: &str =
+            "arn:aws:kms:us-east-1:736326664265:key/11111111-2222-3333-4444-555555555555";
+        let credentials = Credentials {
+            access_key_id: "AKIDEXAMPLE".to_string(),
+            secret_access_key: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY".to_string(),
+            session_token: None,
+        };
+        let request = build_kms_decrypt_request_with_context_and_key(
+            "us-east-1",
+            &credentials,
+            "20260831T000000Z",
+            "AQEB",
+            b"attestation-doc-bytes",
+            &[("neoos:vault-id", "testnet-primary")],
+            Some(KEY_ARN),
+        )
+        .unwrap();
+        let body: Value = serde_json::from_str(&request.body).unwrap();
+        assert_eq!(body["KeyId"], KEY_ARN);
+        assert_eq!(
+            body["EncryptionContext"]["neoos:vault-id"],
+            "testnet-primary"
+        );
+
+        assert_eq!(
+            parse_kms_decrypt_response_for_key(
+                200,
+                &serde_json::json!({
+                    "CiphertextForRecipient": "YWJj",
+                    "KeyId": KEY_ARN,
+                })
+                .to_string(),
+                Some(KEY_ARN),
+            )
+            .unwrap(),
+            "YWJj"
+        );
+        for response_key in [
+            "",
+            "arn:aws:kms:us-east-1:736326664265:key/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "arn:aws:kms:us-east-1:736326664265:alias/testnet-primary",
+        ] {
+            let response = serde_json::json!({
+                "CiphertextForRecipient": "YWJj",
+                "KeyId": response_key,
+            });
+            assert_eq!(
+                parse_kms_decrypt_response_for_key(200, &response.to_string(), Some(KEY_ARN))
+                    .unwrap_err(),
+                "kms decrypt: response key id did not match the pinned key"
+            );
+        }
+
+        for invalid_key_id in [
+            "",
+            "alias/testnet-primary",
+            "11111111-2222-3333-4444-555555555555",
+            "arn:aws:kms:us-east-1:736326664265:key/id with spaces",
+        ] {
+            assert!(build_kms_decrypt_request_with_context_and_key(
+                "us-east-1",
+                &credentials,
+                "20260831T000000Z",
+                "AQEB",
+                b"doc",
+                &[],
+                Some(invalid_key_id),
+            )
+            .is_err());
+        }
     }
 
     #[test]
@@ -349,16 +640,35 @@ mod tests {
             "{\"__type\":\"AccessDeniedException\",\"message\":\"not authorized\"}",
         )
         .unwrap_err();
-        assert_eq!(
-            err,
-            "kms decrypt: HTTP 400 AccessDeniedException: not authorized"
-        );
+        assert_eq!(err, "kms decrypt: HTTP 400 AccessDeniedException");
 
-        // Non-JSON error body surfaces verbatim after the status/type.
+        // Upstream diagnostics may contain the signed AWS session token.
         let err = parse_kms_decrypt_response(503, "upstream timeout").unwrap_err();
-        assert_eq!(err, "kms decrypt: HTTP 503 unknown: upstream timeout");
+        assert_eq!(err, "kms decrypt: HTTP 503 unknown");
 
         let err = parse_kms_decrypt_response(200, "not json").unwrap_err();
         assert!(err.starts_with("kms decrypt: parse response:"));
+    }
+
+    #[test]
+    fn kms_error_diagnostics_never_expose_request_credentials() {
+        let secret = "private-session-token-must-not-be-returned";
+        let body = serde_json::json!({
+            "__type": "com.amazon.coral.service#InvalidSignatureException",
+            "message": format!("Canonical request: x-amz-security-token:{secret}"),
+        });
+        assert_eq!(
+            parse_kms_decrypt_response(400, &body.to_string()).unwrap_err(),
+            "kms decrypt: HTTP 400 InvalidSignatureException"
+        );
+        for body in [
+            secret.to_string(),
+            serde_json::json!({"__type":secret}).to_string(),
+        ] {
+            assert_eq!(
+                parse_kms_decrypt_response(503, &body).unwrap_err(),
+                "kms decrypt: HTTP 503 unknown"
+            );
+        }
     }
 }

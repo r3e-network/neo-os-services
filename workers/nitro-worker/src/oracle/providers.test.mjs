@@ -174,13 +174,23 @@ test('re-setting an existing cache key refreshes recency without growing size (C
 test('builtin provider catalog exposes kernel lane compatibility metadata', () => {
   const providers = listBuiltinProviders();
   assert.ok(Array.isArray(providers));
-  assert.ok(providers.length >= 3);
+  assert.ok(providers.length >= 5);
   for (const provider of providers) {
     assert.ok(Array.isArray(provider.supports));
     assert.ok(Array.isArray(provider.kernel_supports));
     assert.ok(provider.kernel_supports.includes('oracle.fetch'));
     assert.ok(provider.kernel_supports.includes('feed.publish'));
   }
+});
+
+test('public NEO/GAS providers are present without credentials', async () => {
+  const { buildProviderRequest } = await import('./providers.js');
+  const neo = buildProviderRequest({ provider: 'coingecko', symbol: 'NEO-USD' });
+  const gas = buildProviderRequest({ provider: 'coinpaprika', symbol: 'GAS-USD' });
+  assert.equal(neo.url, 'https://api.coingecko.com/api/v3/simple/price?ids=neo&vs_currencies=usd');
+  assert.equal(gas.url, 'https://api.coinpaprika.com/v1/tickers/gas-gas');
+  assert.equal(neo.auth_mode, 'none');
+  assert.equal(gas.auth_mode, 'none');
 });
 
 test('fetchProviderJSON blocks private/internal hosts when the unsafe base-URL override is enabled (finding 18)', async () => {

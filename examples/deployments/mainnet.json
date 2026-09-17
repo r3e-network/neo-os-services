@@ -10,7 +10,7 @@
     "datafeed_hash": "0x03013f49c42a14546c8bbe58f9d434c3517fccab",
     "abstract_account_hash": "0x0268a387913b250166ddec032b03332690a1ef78",
     "aa_web3auth_verifier_hash": "0xf5c452cd4ba29dcdc47026383568c0d8b38d9272",
-    "aa_recovery_verifier_hash": "0x198b3a9cec9bccc2110d19bd929b10374a9d034d",
+    "aa_recovery_verifier_hash": "0xfb3f605fc6bcd59d265d7c18230093d7dc24ac26",
     "neodid_registry_hash": "0xb81f31ea81e279793b30411b82c2e82078b63105",
     "example_consumer_hash": "0x89b05cac00804648c666b47ecb1c57bc185821b7",
     "example_feed_reader_hash": "0x11e454261c21a32f1c9262472ca72a3156f9051f",
@@ -58,9 +58,9 @@
         "txid": "0x82d7ffa35f7ad8f2e5f7e75523af1d968523e69411d59c59db2e04ff9d1477c6"
       },
       "recovery.smartwallet.neo": {
-        "contract_hash": "0x198b3a9cec9bccc2110d19bd929b10374a9d034d",
-        "address": "NSwBYfH3TfKfkx8Mqt1LEWvT4PjnoFXmhr",
-        "txid": "0x8310d076a33bf8934c222bf70a7e721e5e5a92d555423812c3658d5506ca7b54"
+        "contract_hash": "0xfb3f605fc6bcd59d265d7c18230093d7dc24ac26",
+        "address": "NPST5pWZnNne9xFuVsS5hvnVRGEmUma695",
+        "txid": "0x50f151b4cc5bbbbf41ccf988ed6e6a381db313998a2a1a135d3006ae2921a718"
       },
       "teeverifier.smartwallet.neo": {
         "contract_hash": "0xcde2d9e92951cad84712d45e3643ab6d3bc30ba3",
@@ -68,9 +68,9 @@
         "txid": "0xa0edbe47ada1e6966af49f6c6df2b69df3ecf116648b1d85a4702b6f0dac8993"
       },
       "sessionkey.smartwallet.neo": {
-        "contract_hash": "0x3ba8333406e59f9fd83cf378b33706a33d9f3755",
-        "address": "NTgZFkMHzZ1Yg89hGAmAqVaDokddNwCbhb",
-        "txid": "0x44bd389fd0e0d4714a1921ff5ecc248cf4d59a4501ded30cab672d11d883102e"
+        "contract_hash": "0x63d6a10d388dd4885bc42ba69593734476f47151",
+        "address": "NTLcS2CgeT57anMoEgY5bJrPHtZEkugGKS",
+        "txid": "0x937889e054e8bc2c10d52c18b8cc67fd75807be4e45be0a1987e01135b6eb699"
       },
       "webauthn.smartwallet.neo": {
         "contract_hash": "0x504326693cb367c506250c5068ff7ad7989e885a",
@@ -133,8 +133,8 @@
       "latest_address": "NWwRLdtBuvsr845Vi2RcRetATyDqwduxnX",
       "latest_deploy_tx": "0x029403034a14cd86f956c6e52dbd253476b3a70c3cfa41444c36255078d4ca11",
       "latest_web3auth_verifier_hash": "0xf5c452cd4ba29dcdc47026383568c0d8b38d9272",
-      "latest_recovery_verifier_hash": "0x198b3a9cec9bccc2110d19bd929b10374a9d034d",
-      "latest_sessionkey_verifier_hash": "0x3ba8333406e59f9fd83cf378b33706a33d9f3755",
+      "latest_recovery_verifier_hash": "0xfb3f605fc6bcd59d265d7c18230093d7dc24ac26",
+      "latest_sessionkey_verifier_hash": "0x63d6a10d388dd4885bc42ba69593734476f47151",
       "latest_address_market_hash": "0xae7afe3a85ab08bfd1d4907b35ae8b80c75b3a69",
       "latest_paymaster_hash": "0xa0defa2bc6d7a71ba1e237149287c8ca4ff46caf",
       "mainnet_paymaster_smoke": {
@@ -190,8 +190,8 @@
       "aa_paymaster_smoke_policy": "0x0de0c2cfbdaec7014300793a7739b74ab12da20d8658dfcdba843c3326129ce8",
       "aa_paymaster_smoke_sponsored": "0xaabcfdf91e77f320bee204ea59ca0c98114b9c71c875a4cdac4abdbd4443ee57"
     },
-    "aa_sessionkey_verifier_hash": "0x3ba8333406e59f9fd83cf378b33706a33d9f3755",
-    "aa_recovery_verifier_hash": "0x198b3a9cec9bccc2110d19bd929b10374a9d034d",
+    "aa_sessionkey_verifier_hash": "0x63d6a10d388dd4885bc42ba69593734476f47151",
+    "aa_recovery_verifier_hash": "0xfb3f605fc6bcd59d265d7c18230093d7dc24ac26",
     "aa_address_market_hash": "0xae7afe3a85ab08bfd1d4907b35ae8b80c75b3a69",
     "aa_paymaster_hash": "0xa0defa2bc6d7a71ba1e237149287c8ca4ff46caf"
   }

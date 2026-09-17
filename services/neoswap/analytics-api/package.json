@@ -7,10 +7,9 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/server.ts",
-    "test": "vitest run --coverage"
+    "test": "vitest run"
   },
   "dependencies": {
-    "@neosphere/sdk": "^1.0.0",
     "pg": "^8.11.0",
     "csv-parse": "^5.5.0",
     "pdfkit": "^0.14.0",

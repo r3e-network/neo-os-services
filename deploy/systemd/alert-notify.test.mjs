@@ -206,6 +206,9 @@ test('every feed unit routes its failure to the alert notifier', () => {
   for (const unit of [
     'morpheus-feed-monitor.service',
     'morpheus-feed-pusher.service',
+    'morpheus-feed-pusher-neox.service',
+    'morpheus-feed-pusher-testnet.service',
+    'morpheus-feed-monitor-testnet.service',
     'morpheus-feed-topup.service',
   ]) {
     const text = readFileSync(path.join(feedPusherDir, unit), 'utf8');

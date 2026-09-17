@@ -17,7 +17,7 @@ MORPHEUS_TESTNET_FEED_ORIGIN_URL = "https://www.morpheus-matrix.dev"
 # /oracle/message-reveal). The edge supplies the box token (MORPHEUS_RUNTIME_BOX_TOKEN
 # secret, falling back to MORPHEUS_ORIGIN_TOKEN); the in-TEE worker enforces
 # recipient/time-lock access per message.
-MORPHEUS_RUNTIME_BOX_URL = "https://runtime.meshmini.app"
+MORPHEUS_RUNTIME_BOX_URL = "https://runtime.neoos.network"
 UPSTASH_REDIS_REST_URL = "https://major-sawfish-77541.upstash.io"
 
 [[routes]]
@@ -27,3 +27,7 @@ zone_name = "meshmini.app"
 [[routes]]
 pattern = "oracle.meshmini.app/*"
 zone_name = "meshmini.app"
+
+[[routes]]
+pattern = "edge.neoos.network"
+custom_domain = true

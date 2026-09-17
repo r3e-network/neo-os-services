@@ -3,7 +3,7 @@ import { createClient } from 'redis';
 import promClient, { Counter, Gauge, Histogram } from 'prom-client';
 
 const metricRegistry = new promClient.Registry();
-metricRegistry.setDefaultMetrics({ register: metricRegistry });
+promClient.collectDefaultMetrics({ register: metricRegistry });
 
 // Source health metrics
 export const sourceHealthGauge = new Gauge({
@@ -24,7 +24,7 @@ export const sourceLatencyHistogram = new Histogram({
 // Data freshness metrics
 export const twapStalenessGauge = new Gauge({
   name: 'neoswap_twap_staleness_seconds',
-  lastUpdated: 'Most recent TWAP update timestamp',
+  help: 'Age of the most recent TWAP update in seconds',
   labelNames: ['token_pair'] as const,
   registers: [metricRegistry],
 });

@@ -14,6 +14,16 @@ test('public network registry export exposes canonical Morpheus runtime metadata
     'https://edge.meshmini.app/mainnet',
   ]);
   assert.equal(registry.mainnet.morpheus.datafeedCvmId, 'ac5b6886a2832df36e479294206611652400178f');
+  assert.deepEqual(registry.mainnet.morpheus.datafeedProviders, [
+    'TWELVEDATA',
+    'COINGECKO',
+    'COINPAPRIKA',
+  ]);
+  assert.deepEqual(registry.testnet.morpheus.datafeedProviders, [
+    'TWELVEDATA',
+    'COINGECKO',
+    'COINPAPRIKA',
+  ]);
   assert.equal(registry.testnet.morpheus.datafeedAttestationExplorerUrl, '');
   assert.equal(registry.mainnet.contracts.aaCore, '0x0268a387913b250166ddec032b03332690a1ef78');
   assert.equal(
@@ -22,11 +32,11 @@ test('public network registry export exposes canonical Morpheus runtime metadata
   );
   assert.equal(
     registry.mainnet.contracts.aaSessionKeyVerifier,
-    '0x3ba8333406e59f9fd83cf378b33706a33d9f3755'
+    '0x63d6a10d388dd4885bc42ba69593734476f47151'
   );
   assert.equal(
     registry.mainnet.contracts.aaSocialRecoveryVerifier,
-    '0x198b3a9cec9bccc2110d19bd929b10374a9d034d'
+    '0xfb3f605fc6bcd59d265d7c18230093d7dc24ac26'
   );
   assert.equal(
     registry.mainnet.contracts.aaAddressMarket,
@@ -36,8 +46,11 @@ test('public network registry export exposes canonical Morpheus runtime metadata
     registry.mainnet.contracts.aaPaymaster,
     '0xa0defa2bc6d7a71ba1e237149287c8ca4ff46caf'
   );
-  assert.equal(registry.mainnet.domains.aaPaymaster, 'paymaster.smartwallet.neo');
-  assert.equal(registry.mainnet.domains.callbackConsumer, 'callback.morpheus.neo');
+  // Contract NNS bindings live under miniapp.neo / neoos.neo; the pre-migration
+  // names (paymaster.smartwallet.neo, callback.morpheus.neo) are not policy-compliant
+  // and are what the on-chain migration moved off.
+  assert.equal(registry.mainnet.domains.aaPaymaster, 'aa-paymaster.miniapp.neo');
+  assert.equal(registry.mainnet.domains.callbackConsumer, 'morpheus-callback-consumer.miniapp.neo');
   assert.equal(
     registry.mainnet.contracts.oracleCallbackConsumer,
     '0xe1226268f2fe08bea67fb29e1c8fda0d7c8e9844'
@@ -49,5 +62,13 @@ test('public network registry export exposes canonical Morpheus runtime metadata
   assert.equal(
     registry.testnet.contracts.oracleCallbackConsumer,
     '0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b'
+  );
+  assert.equal(
+    registry.testnet.contracts.aaSessionKeyVerifier,
+    '0x63d6a10d388dd4885bc42ba69593734476f47151'
+  );
+  assert.equal(
+    registry.testnet.contracts.aaSocialRecoveryVerifier,
+    '0xfb3f605fc6bcd59d265d7c18230093d7dc24ac26'
   );
 });

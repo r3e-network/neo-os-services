@@ -1,0 +1,7 @@
+[Unit]
+Description=Run Morpheus Node feed pusher (Neo N3, COMPATIBILITY ONLY)
+ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_FEED_PUSHER_COMPAT
+Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
+Before=morpheus-relayer.service morpheus-relayer-nitro.service
+[Timer]
+OnBootSec=3min

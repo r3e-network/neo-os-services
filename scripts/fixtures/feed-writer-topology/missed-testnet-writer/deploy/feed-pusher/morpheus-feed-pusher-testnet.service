@@ -1,0 +1,8 @@
+[Unit]
+Description=Morpheus DataFeed pusher - Neo N3 testnet (8789-signed)
+After=network-online.target morpheus-nitro-signer-testnet.service
+Requires=morpheus-nitro-signer-testnet.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/node feed-pusher.mjs

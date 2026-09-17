@@ -617,10 +617,16 @@ pub fn get_latest_request_id<T: HttpTransport>(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let first = stack.first().cloned().unwrap_or(Value::Null);
+    let first = stack
+        .first()
+        .cloned()
+        .ok_or_else(|| "Neo N3 getTotalRequests returned an empty stack".to_string())?;
     let decoded = decode_neo_item(&first, Encoding::Base64);
-    let text = decoded.as_str().unwrap_or("0");
-    Ok(text.parse::<u64>().unwrap_or(0))
+    let text = decoded
+        .as_str()
+        .ok_or_else(|| "Neo N3 getTotalRequests returned a non-string value".to_string())?;
+    text.parse::<u64>()
+        .map_err(|_| "Neo N3 getTotalRequests returned an invalid numeric value".to_string())
 }
 
 /// getNeoN3LatestBlock: `getblockcount - 1`.

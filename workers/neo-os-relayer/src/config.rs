@@ -1,7 +1,7 @@
 //! Relayer configuration loading and schema mapping.
 //!
 //! Wraps `neo_os_core::config::derive_pure_fields` and adds IO-bound paths:
-//! state file location, network registry loading, and process instance id.
+//! state file location and process instance id. Network registries are embedded.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -79,13 +79,29 @@ impl RelayerConfig {
         !self.is_feed_only()
     }
 
-    /// Refuse only lanes whose complete commit protocol is unavailable.
-    /// Automation is deliberately NOT a startup gate (review P2-16): enabling
-    /// it must not take down the whole request/combined runtime. The automation
-    /// lane itself is fail-closed — it reports
-    /// `rust_automation_execution_not_implemented` in its own result and the
-    /// control plane returns 503 — so the capability is unavailable without
-    /// losing core request scanning.
+    pub fn is_production(&self) -> bool {
+        self.node_env.eq_ignore_ascii_case("production")
+    }
+
+    pub fn automation_enabled(&self) -> bool {
+        self.raw
+            .pointer("/automation/enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+
+    pub fn allows_unavailable_automation(&self) -> bool {
+        self.raw
+            .pointer("/automation/allowUnavailable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+
+    /// Refuse lanes whose complete commit protocol is unavailable.
+    /// Production always rejects `automation.enabled`. Non-production may
+    /// start only with an explicit `automation.allowUnavailable` /
+    /// `MORPHEUS_ALLOW_UNAVAILABLE_AUTOMATION=true` opt-in; the lane itself
+    /// still reports `rust_automation_execution_not_implemented`.
     pub fn ensure_runtime_ready(&self) -> Result<(), String> {
         if self.is_feed_only()
             && !self
@@ -96,29 +112,44 @@ impl RelayerConfig {
         {
             return Err(Self::FEED_ONLY_REQUIRES_FEED_SYNC.to_string());
         }
+        if self.automation_enabled()
+            && (self.is_production() || !self.allows_unavailable_automation())
+        {
+            return Err(Self::AUTOMATION_DELIVERY_UNAVAILABLE.to_string());
+        }
+        if self.is_production() && !crate::durable_v2::enabled(self) {
+            return Err("production request delivery requires MORPHEUS_DELIVERY_PROTOCOL=v2 and the durable migration/cutover".into());
+        }
+        if crate::durable_v2::enabled(self)
+            && (self.active_chains.is_empty()
+                || self
+                    .active_chains
+                    .iter()
+                    .any(|chain| !matches!(chain.as_str(), "neo_n3" | "neox")))
+        {
+            return Err(
+                "durable v2 requires at least one supported active chain (neo_n3 or neox)".into(),
+            );
+        }
+        if !crate::durable_v2::enabled(self)
+            && !self.is_production()
+            && self.node_env != "test"
+            && !self
+                .raw
+                .get("allowLegacyLocal")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        {
+            return Err("legacy local delivery requires MORPHEUS_ALLOW_LEGACY_LOCAL=true outside production".into());
+        }
         Ok(())
     }
 }
 
 pub fn load_network_registry(network: &str) -> JsValue {
-    let candidates = [
-        format!("config/networks/{network}.json"),
-        format!("../../config/networks/{network}.json"),
-        format!("../../../config/networks/{network}.json"),
-    ];
-
-    for candidate in &candidates {
-        let p = Path::new(candidate);
-        if p.exists() {
-            if let Ok(content) = std::fs::read_to_string(p) {
-                if let Ok(val) = serde_json::from_str::<Value>(&content) {
-                    return JsValue::from_json(&val);
-                }
-            }
-        }
-    }
-
-    JsValue::Undefined
+    neo_os_core::network_identity::known_network_registry(network)
+        .map(JsValue::from_json)
+        .unwrap_or(JsValue::Undefined)
 }
 
 pub fn resolve_repo_root() -> PathBuf {
@@ -261,14 +292,56 @@ pub fn create_relayer_config_from_env(
     let mut raw_val = js_value_to_json(&JsValue::Object(pure_fields));
     if let Value::Object(ref mut map) = raw_val {
         map.insert(
+            "deliveryProtocol".into(),
+            Value::String(env_source.env(&["MORPHEUS_DELIVERY_PROTOCOL"])),
+        );
+        map.insert(
+            "allowLegacyLocal".into(),
+            Value::Bool(
+                env_source
+                    .env(&["MORPHEUS_ALLOW_LEGACY_LOCAL"])
+                    .eq_ignore_ascii_case("true"),
+            ),
+        );
+        map.insert(
             "repoRoot".to_string(),
             Value::String(repo_root.to_string_lossy().to_string()),
         );
         map.insert("instanceId".to_string(), Value::String(instance_id.clone()));
+        let archives = env_source.env(&["MORPHEUS_N3_RECONCILIATION_ARCHIVE_RPC_URLS"]);
+        if !archives.trim().is_empty() {
+            if let Some(n3) = map.get_mut("neo_n3").and_then(Value::as_object_mut) {
+                n3.insert(
+                    "reconciliationArchiveRpcUrls".into(),
+                    serde_json::json!(archives
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()),
+                );
+            }
+        }
         map.insert(
             "stateFile".to_string(),
             Value::String(state_file.to_string_lossy().to_string()),
         );
+        let allow_unavailable = env_source
+            .env(&["MORPHEUS_ALLOW_UNAVAILABLE_AUTOMATION"])
+            .eq_ignore_ascii_case("true");
+        match map.get_mut("automation") {
+            Some(Value::Object(automation)) => {
+                automation.insert(
+                    "allowUnavailable".to_string(),
+                    Value::Bool(allow_unavailable),
+                );
+            }
+            _ => {
+                map.insert(
+                    "automation".to_string(),
+                    serde_json::json!({ "allowUnavailable": allow_unavailable }),
+                );
+            }
+        }
     }
 
     Ok(RelayerConfig {
@@ -332,10 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn automation_does_not_gate_core_request_startup() {
-        // Review P2-16: enabling automation must not take down the whole
-        // request/combined runtime. The lane fails closed in its own result;
-        // the core pipeline stays ready.
+    fn production_rejects_unavailable_automation_at_startup() {
         for mode in ["combined", "requests_only"] {
             let mut ready = config(mode);
             ready.active_chains = vec!["neo_n3".into(), "neox".into()];
@@ -344,11 +414,35 @@ mod tests {
                 .expect("both chains have complete custody-to-confirmation pipelines");
         }
 
-        let mut automation = config("requests_only");
-        automation.raw = serde_json::json!({"automation": {"enabled": true}});
-        automation
+        let mut production = config("requests_only");
+        production.node_env = "production".into();
+        production.raw = serde_json::json!({
+            "automation": { "enabled": true, "allowUnavailable": true }
+        });
+        assert_eq!(
+            production
+                .ensure_runtime_ready()
+                .expect_err("production cannot opt into unavailable automation"),
+            RelayerConfig::AUTOMATION_DELIVERY_UNAVAILABLE
+        );
+
+        let mut development = config("requests_only");
+        development.node_env = "development".into();
+        development.raw = serde_json::json!({"automation": {"enabled": true}});
+        assert_eq!(
+            development
+                .ensure_runtime_ready()
+                .expect_err("development still requires an explicit allow"),
+            RelayerConfig::AUTOMATION_DELIVERY_UNAVAILABLE
+        );
+
+        development.raw = serde_json::json!({
+            "allowLegacyLocal": true,
+            "automation": { "enabled": true, "allowUnavailable": true }
+        });
+        development
             .ensure_runtime_ready()
-            .expect("automation is a bounded capability, not a startup failure");
+            .expect("development may explicitly allow the unavailable lane");
 
         let mut feed = config("feed_only");
         assert_eq!(

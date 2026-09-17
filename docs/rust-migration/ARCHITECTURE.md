@@ -79,9 +79,13 @@
 
 **去重结论**：nitro-worker 的**计算/Oracle/game 引擎主体已经全量落在 `morpheus-compute` + `nitro-enclave-host`**。剩余净新增约 **4,500 行**，集中在表里加粗的 6 个模块 + 6 条未折叠路由的 host 适配。
 
-`docs/RUST_SERVICE_MIGRATION.md` 已明确列出 6 条未折叠路由，与审计一致：
-
-> `/session/*`、`/vrf/random`、`/automation/execute`、`/paymaster/authorize`、`/oracle/feed`、`/neodid/zklogin-ticket` 返回 `rust-compute-lane-unavailable`
+`docs/RUST_SERVICE_MIGRATION.md` 与
+`docs/rust-migration/SERVICE_CONTRACT_MATRIX.md` 是当前权威：`/session/*`、
+`/vrf/random`、`/paymaster/authorize`、`/neodid/zklogin-ticket`、
+`/automation/execute`（已 claim 的单次 adapter）和 `/oracle/feed`
+（观测/聚合/策略 adapter）已在 `nitro-enclave-host` 落地。Durable
+relayer scheduler 仍未实现；`workers/morpheus-relater-rs` 已从活跃
+workspace 退役，不得当作生产 relayer。
 
 ### 1.3 packages/shared（4,615 行）
 

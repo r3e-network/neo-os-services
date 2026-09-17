@@ -38,6 +38,13 @@ export function resolveNetworkScopedValue({
   ]);
 }
 
+export function resolveCanonicalCallbackHash({ registry = {}, deployments = {} } = {}) {
+  return firstNonEmpty([
+    registry.neo_n3?.contracts?.oracle_callback_consumer,
+    deployments.neo_n3?.example_consumer_hash,
+  ]);
+}
+
 export function detectMorpheusOracleInterface(methods) {
   const methodSet = methods instanceof Set ? methods : new Set(methods || []);
   const supportsMiniAppRuntime =

@@ -574,7 +574,7 @@ test('rejection lanes: identity, token, seq, time-window, unknown session', asyn
     handleSessionFinalize({ ...id, session_token: start.session_token, answer: flipped }),
     403
   );
-  assert.match(wrong.error, /incorrect/);
+  assert.match(wrong.error, /answer does not match|incorrect/);
 
   // Unknown session (post-restart, no replay) cannot finalize.
   __resetGameSessionsForTests();

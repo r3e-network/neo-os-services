@@ -4,6 +4,10 @@
 
 use std::future::Future;
 use std::path::Path;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use neo_os_chain_evm::SystemEvmWaiter;
@@ -17,13 +21,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::automation::{process_automation_jobs, AutomationResult};
-use crate::durable::{drain_durable_jobs, DurableDrainConfig};
 use crate::config::RelayerConfig;
+use crate::durable::{drain_durable_jobs, DurableDrainConfig};
 use crate::feed_sync::{process_feed_sync_with, FeedSyncResult};
 use crate::heartbeat::send_heartbeat;
 use crate::scan::{process_chain_neo_n3, process_chain_neox, ChainProcessResult};
 use crate::transport::RelayerHttpTransport;
-use crate::xcm_lane::{drain_xcm_lane, relay_xcm_message, XcmDrainConfig, XcmDrainOutcome, XCM_DEFAULT_MAX_RETRIES, XCM_DEFAULT_RETRY_BASE_DELAY_MS, XCM_DEFAULT_RETRY_MAX_DELAY_MS};
+use crate::xcm_lane::{
+    drain_xcm_lane, relay_xcm_message, XcmDrainConfig, XcmDrainOutcome, XCM_DEFAULT_MAX_RETRIES,
+    XCM_DEFAULT_RETRY_BASE_DELAY_MS, XCM_DEFAULT_RETRY_MAX_DELAY_MS,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayerRunResult {
@@ -51,10 +58,25 @@ pub fn load_or_init_state(path_str: &str) -> Result<JsObject, String> {
     }
     let content = std::fs::read_to_string(p)
         .map_err(|error| format!("cannot read relayer state {}: {error}", p.display()))?;
-    let parsed = serde_json::from_str::<Value>(&content)
-        .map_err(|error| format!("relayer state {} is not recoverable JSON: {error}", p.display()))?;
+    let parsed = serde_json::from_str::<Value>(&content).map_err(|error| {
+        format!(
+            "relayer state {} is not recoverable JSON: {error}",
+            p.display()
+        )
+    })?;
     let js_val = JsValue::from_json(&parsed);
-    Ok(normalize_state_file_value(&js_val))
+    let mut state = normalize_state_file_value(&js_val);
+    if parsed
+        .get("delivery_v2_local_imported")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        state.set("delivery_v2_local_imported", JsValue::Bool(true));
+    }
+    if let Some(baselines) = parsed.get("feed_baselines") {
+        state.set("feed_baselines", JsValue::from_json(baselines));
+    }
+    Ok(state)
 }
 
 /// Report the first active chain whose request discovery failed this tick.
@@ -85,6 +107,13 @@ fn run_relayer_once_blocking(
     transport: &RelayerHttpTransport,
 ) -> Result<RelayerRunResult, String> {
     let mut state = load_or_init_state(&config.state_file)?;
+    let delivery_v2 = crate::durable_v2::enabled(config);
+    if delivery_v2 {
+        crate::durable_v2::import_recovery(config, &mut state, transport)?;
+    }
+    if delivery_v2 && config.should_run_request_processing() {
+        crate::durable_v2::restore_cursors(config, &mut state, transport)?;
+    }
     let start_ms = now_ms();
     let start_iso = ms_to_iso_string(start_ms);
 
@@ -94,7 +123,9 @@ fn run_relayer_once_blocking(
     increment_metric(&mut state, "ticks_total", 1.0);
 
     // 1. Feed sync
-    let feed_sync = if config.should_run_feed_sync() {
+    let feed_sync = if delivery_v2 && config.should_run_feed_sync() {
+        crate::durable_v2::schedule_feeds(config, transport)
+    } else if config.should_run_feed_sync() {
         process_feed_sync_with(
             config,
             &mut state,
@@ -152,11 +183,34 @@ fn run_relayer_once_blocking(
     // Only a configured, enabled durable queue constructs a client; otherwise
     // the lane is a strict no-op so a single-instance local deployment keeps
     // its existing behavior.
-    if config
-        .raw
-        .pointer("/durableQueue/enabled")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
+    let mut durable_error = None;
+    if delivery_v2 {
+        for chain in &config.active_chains {
+            match crate::durable_v2::visit(config, chain, transport) {
+                Ok(summary) => {
+                    tracing::info!(summary=%summary,"durable v2 lane visit");
+                    if summary.get("status").and_then(Value::as_str) == Some("terminal") {
+                        increment_metric(&mut state, "durable_terminal_total", 1.0);
+                        durable_error = Some(
+                            "delivery job entered terminal state; inspect its persisted outcome"
+                                .into(),
+                        );
+                    }
+                }
+                Err(error) => {
+                    increment_metric(&mut state, "durable_failures_total", 1.0);
+                    durable_error = Some(error);
+                    break;
+                }
+            }
+        }
+    }
+    if !delivery_v2
+        && config
+            .raw
+            .pointer("/durableQueue/enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
         && config.should_run_request_processing()
     {
         let supabase_url = std::env::var("SUPABASE_URL")
@@ -194,7 +248,7 @@ fn run_relayer_once_blocking(
             let chains = config.active_chains.clone();
             for chain in &chains {
                 let event_now_ms = now_ms;
-                let _ = drain_durable_jobs(
+                let drain_result = drain_durable_jobs(
                     &client,
                     &DurableDrainConfig {
                         enabled: true,
@@ -215,14 +269,26 @@ fn run_relayer_once_blocking(
                         // non-terminal failure is surfaced to the outer drain so
                         // the row is patched retry_scheduled, not completed.
                         let js_event = JsValue::from_json(event);
-                        let result =
-                            crate::fulfillment::process_event(config, &mut state, chain, &js_event, event_now_ms);
+                        let result = crate::fulfillment::process_event(
+                            config,
+                            &mut state,
+                            chain,
+                            &js_event,
+                            event_now_ms,
+                        );
                         match result.status.as_str() {
                             "fulfilled" | "already_fulfilled" => Ok(()),
-                            _ => Err(result.error.unwrap_or_else(|| "durable execution failed".to_string())),
+                            _ => Err(result
+                                .error
+                                .unwrap_or_else(|| "durable execution failed".to_string())),
                         }
                     },
                 );
+                if let Err(error) = drain_result {
+                    durable_error = Some(error);
+                    increment_metric(&mut state, "durable_failures_total", 1.0);
+                    break;
+                }
             }
         }
     }
@@ -234,11 +300,12 @@ fn run_relayer_once_blocking(
     // otherwise it is a strict no-op, preserving single-instance local
     // behavior. Chain delivery reuses the existing N3/EVM adapters via
     // relay_xcm_message; no new RPC or signing code lives in the lane.
-    if config
-        .raw
-        .pointer("/xcm/enabled")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
+    if !delivery_v2
+        && config
+            .raw
+            .pointer("/xcm/enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
         && config.should_run_request_processing()
     {
         let supabase_url = std::env::var("SUPABASE_URL")
@@ -306,7 +373,15 @@ fn run_relayer_once_blocking(
                 &xcm_now_iso,
                 &stale_before_iso,
                 |msg, existing_tx, persist| {
-                    relay_xcm_message(config, msg, existing_tx, persist, transport, &OsNonce, &SystemWaiter)
+                    relay_xcm_message(
+                        config,
+                        msg,
+                        existing_tx,
+                        persist,
+                        transport,
+                        &OsNonce,
+                        &SystemWaiter,
+                    )
                 },
             ) {
                 Ok(outcomes) => {
@@ -344,6 +419,9 @@ fn run_relayer_once_blocking(
 
     // Persist state
     save_state(&config.state_file, &state)?;
+    if let Some(error) = durable_error {
+        return Err(format!("durable delivery unavailable: {error}"));
+    }
 
     // Discovery failures are a degraded capability, not a healthy no-op. The
     // scan functions distinguish an empty successful range from an RPC/cursor
@@ -384,14 +462,35 @@ fn run_relayer_once_blocking(
 /// Run all blocking filesystem, RPC, and store work on Tokio's blocking pool.
 /// The blocking reqwest client is both created and dropped inside that worker.
 pub async fn run_relayer_once(config: &RelayerConfig) -> Result<RelayerRunResult, String> {
+    run_relayer_once_cancellable(config, Arc::new(AtomicBool::new(false))).await
+}
+
+async fn run_relayer_once_cancellable(
+    config: &RelayerConfig,
+    stopping: Arc<AtomicBool>,
+) -> Result<RelayerRunResult, String> {
     config.ensure_runtime_ready()?;
     let blocking_config = config.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        let transport = RelayerHttpTransport::new();
+    let outcome = tokio::task::spawn_blocking(move || {
+        let transport = RelayerHttpTransport::with_cancellation(
+            if crate::durable_v2::enabled(&blocking_config) {
+                5000
+            } else {
+                30000
+            },
+            stopping,
+        );
         run_relayer_once_blocking(&blocking_config, &transport)
     })
     .await
-    .map_err(|error| format!("relayer blocking task failed: {error}"))??;
+    .map_err(|error| format!("relayer blocking task failed: {error}"))?;
+    let health = serde_json::json!({"checked_at_ms":now_ms(),"healthy":outcome.is_ok(),"network":config.network,"mode":config.mode,"protocol":if crate::durable_v2::enabled(config){"v2"}else{"legacy"}});
+    neo_os_relayer_store::state_file::save_state_json_atomic(
+        Path::new(&format!("{}.health.json", config.state_file)),
+        &health,
+    )
+    .map_err(|e| format!("runtime health persistence failed: {e}"))?;
+    let result = outcome?;
 
     let heartbeat_url = if config.is_feed_only() {
         config
@@ -422,13 +521,58 @@ pub async fn run_relayer_once(config: &RelayerConfig) -> Result<RelayerRunResult
     Ok(result)
 }
 
+pub fn runtime_health(config: &RelayerConfig) -> Result<serde_json::Value, String> {
+    let path = format!("{}.health.json", config.state_file);
+    let health = neo_os_relayer_store::state_file::load_state_json(Path::new(&path))
+        .map_err(|e| e.to_string())?
+        .ok_or("runtime has not completed a tick")?;
+    let checked = health
+        .get("checked_at_ms")
+        .and_then(Value::as_f64)
+        .ok_or("invalid runtime health timestamp")?;
+    let age = now_ms() - checked;
+    if health.get("healthy").and_then(Value::as_bool) != Some(true)
+        || age < 0.0
+        || age
+            > (config
+                .poll_interval_ms
+                .saturating_mul(3)
+                .saturating_add(90000)) as f64
+    {
+        return Err("runtime is degraded or its progress heartbeat is stale".into());
+    }
+    Ok(health)
+}
+
 pub async fn run_relayer_loop(
     config: &RelayerConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     run_relayer_loop_until(config, neo_os_service_runtime::shutdown_signal()).await
 }
 
+mod supervisor;
+#[cfg(test)]
+use supervisor::{prepare_chain_workers, supervise_chain_tasks};
+
 async fn run_relayer_loop_until<F>(
+    config: &RelayerConfig,
+    shutdown: F,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+where
+    F: Future<Output = neo_os_service_runtime::ShutdownReason>,
+{
+    config
+        .ensure_runtime_ready()
+        .map_err(std::io::Error::other)?;
+    if crate::durable_v2::enabled(config) {
+        return supervisor::run_v2_loop_until(config, shutdown)
+            .await
+            .map_err(|e| std::io::Error::other(e).into());
+    }
+    run_single_relayer_loop_until(config, shutdown).await
+}
+
+async fn run_single_relayer_loop_until<F>(
     config: &RelayerConfig,
     shutdown: F,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
@@ -450,7 +594,8 @@ where
 
     tokio::pin!(shutdown);
     loop {
-        let tick = run_relayer_once(config);
+        let stopping = Arc::new(AtomicBool::new(false));
+        let tick = run_relayer_once_cancellable(config, stopping.clone());
         tokio::pin!(tick);
         let (tick_result, shutdown_after_tick) = tokio::select! {
             // Poll the tick first so a signal received during a tick drains
@@ -458,7 +603,7 @@ where
             // blocking scan or atomic state write in the background.
             biased;
             result = &mut tick => (result, None),
-            reason = &mut shutdown => (tick.await, Some(reason)),
+            reason = &mut shutdown => {stopping.store(true,Ordering::Release);(tick.await, Some(reason))},
         };
 
         let sleep_ms = match tick_result {
@@ -570,7 +715,10 @@ mod tests {
         let error = super::load_or_init_state(path.to_str().expect("utf8 path"))
             .expect_err("corrupt existing state must stop rather than reset");
         assert!(error.contains("not recoverable JSON"));
-        assert_eq!(std::fs::read_to_string(&path).expect("state remains"), original);
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("state remains"),
+            original
+        );
         std::fs::remove_file(&path).expect("remove corrupt fixture");
     }
 
@@ -604,7 +752,10 @@ mod tests {
             retries: vec![],
         };
         assert_eq!(
-            super::unresolved_discovery_chain(&Some(healthy_ref.clone()), &Some(unhealthy_ref.clone())),
+            super::unresolved_discovery_chain(
+                &Some(healthy_ref.clone()),
+                &Some(unhealthy_ref.clone())
+            ),
             Some("neox discovery unavailable".to_string())
         );
         assert_eq!(
@@ -623,22 +774,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn automation_is_a_bounded_capability_not_a_startup_failure() {
-        // Review P2-16: an operator who enables automation must not lose the
-        // core request/combined runtime. The tick runs, persists state, and
-        // reports `automation` with the fail-closed reason — it does not abort.
+    async fn production_rejects_unavailable_automation_before_the_tick() {
+        let path = unique_absent_state_path("requests_only");
+        let mut config = request_mode_config("requests_only", path.to_string_lossy().into_owned());
+        config.node_env = "production".to_string();
+        config.raw = serde_json::json!({
+            "allowLegacyLocal": true,
+            "automation": {"enabled": true, "allowUnavailable": true},
+            "neo_n3": {"oracleContract": "", "rpcUrls": []},
+            "neox": {"oracleContract": "", "rpcUrls": []}
+        });
+        let error = run_relayer_once(&config)
+            .await
+            .expect_err("production must refuse unavailable automation");
+        assert_eq!(error, RelayerConfig::AUTOMATION_DELIVERY_UNAVAILABLE);
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(format!("{}.health.json", path.display())).ok();
+    }
+
+    #[tokio::test]
+    async fn development_may_explicitly_allow_unavailable_automation_and_still_skip_the_lane() {
         for mode in ["combined", "requests_only"] {
             let path = unique_absent_state_path(mode);
             let mut config = request_mode_config(mode, path.to_string_lossy().into_owned());
+            config.node_env = "development".to_string();
             config.raw = serde_json::json!({
-                "automation": {"enabled": true},
+                "allowLegacyLocal": true,
+                "automation": {"enabled": true, "allowUnavailable": true},
                 "neo_n3": {"oracleContract": "", "rpcUrls": []},
                 "neox": {"oracleContract": "", "rpcUrls": []}
             });
 
             let result = run_relayer_once(&config)
                 .await
-                .expect("core tick must run even when automation is unavailable");
+                .expect("explicit non-production allow may start the core tick");
             assert!(result.automation.skipped);
             assert!(
                 result.automation.reason.is_some(),
@@ -646,6 +815,7 @@ mod tests {
             );
             assert_eq!(result.automation.queued, 0);
             std::fs::remove_file(&path).ok();
+            std::fs::remove_file(format!("{}.health.json", path.display())).ok();
         }
     }
 
@@ -669,6 +839,7 @@ mod tests {
         let persisted = std::fs::read_to_string(&path).expect("persisted state");
         assert!(persisted.contains("ticks_total"));
         std::fs::remove_file(&path).expect("remove test state");
+        std::fs::remove_file(format!("{}.health.json", path.display())).ok();
     }
 
     #[tokio::test]
@@ -694,5 +865,30 @@ mod tests {
         let persisted = std::fs::read_to_string(&path).expect("persisted failure state");
         assert!(persisted.contains("feed_sync_error_total"));
         std::fs::remove_file(&path).expect("remove test state");
+        std::fs::remove_file(format!("{}.health.json", path.display())).ok();
+    }
+
+    #[test]
+    fn runtime_health_requires_recent_success_not_only_valid_configuration() {
+        let path = unique_absent_state_path("health");
+        let config = request_mode_config("requests_only", path.to_string_lossy().into_owned());
+        let health_path = format!("{}.health.json", path.display());
+        assert!(super::runtime_health(&config).is_err());
+        for (healthy, time, expected) in [
+            (false, super::now_ms(), false),
+            (true, 1.0, false),
+            (true, super::now_ms(), true),
+        ] {
+            neo_os_relayer_store::state_file::save_state_json_atomic(
+                std::path::Path::new(&health_path),
+                &serde_json::json!({"healthy":healthy,"checked_at_ms":time}),
+            )
+            .unwrap();
+            assert_eq!(super::runtime_health(&config).is_ok(), expected);
+        }
+        std::fs::remove_file(health_path).unwrap();
     }
 }
+
+#[cfg(test)]
+mod supervisor_tests;

@@ -188,6 +188,24 @@ pub fn extract_quote_price(data: &Json) -> Json {
             return value.clone();
         }
     }
+    if let Some(value) = fields
+        .get("quotes")
+        .and_then(Json::as_object)
+        .and_then(|quotes| quotes.get("USD"))
+        .and_then(Json::as_object)
+        .and_then(|usd| usd.get("price"))
+        .filter(|value| !value.is_null())
+    {
+        return value.clone();
+    }
+    if let Some(value) = fields.values().find_map(|value| {
+        value
+            .as_object()
+            .and_then(|entry| entry.get("usd"))
+            .filter(|value| !value.is_null())
+    }) {
+        return value.clone();
+    }
     fields
         .get("data")
         .and_then(Json::as_object)
@@ -720,7 +738,7 @@ mod tests {
         // "all" is not a provider — the registry availability decides.
         assert_eq!(
             resolve_requested_providers("NEO-USD", &json!({ "provider": "All" }), &env),
-            vec!["twelvedata", "binance-spot"]
+            vec!["twelvedata", "binance-spot", "coingecko", "coinpaprika"]
         );
         assert_eq!(
             resolve_requested_providers("NEO-USD", &json!({ "source": "binance-spot" }), &env),
@@ -765,6 +783,14 @@ mod tests {
             Json::Null
         );
         assert_eq!(extract_quote_price(&json!({})), Json::Null);
+        assert_eq!(
+            extract_quote_price(&json!({ "neo": { "usd": 2.28 } })),
+            json!(2.28)
+        );
+        assert_eq!(
+            extract_quote_price(&json!({ "quotes": { "USD": { "price": 2.28 } } })),
+            json!(2.28)
+        );
     }
 
     #[test]

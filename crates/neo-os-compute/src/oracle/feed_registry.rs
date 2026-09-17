@@ -20,8 +20,13 @@ pub const FEED_PAIR_ALIASES: [(&str, &str); 1] = [("OIL-USD", "WTI-USD")];
 
 /// `KNOWN_FEED_PROVIDER_PREFIXES` — storage-pair prefixes stripped before
 /// registry lookups.
-pub const KNOWN_FEED_PROVIDER_PREFIXES: [&str; 3] =
-    ["TWELVEDATA:", "BINANCE-SPOT:", "COINBASE-SPOT:"];
+pub const KNOWN_FEED_PROVIDER_PREFIXES: [&str; 5] = [
+    "TWELVEDATA:",
+    "BINANCE-SPOT:",
+    "COINBASE-SPOT:",
+    "COINGECKO:",
+    "COINPAPRIKA:",
+];
 
 /// `RETIRED_FEED_PAIRS` — pairs retired from every active registry, with the
 /// reason. Mirrors `RETIRED_FEED_PAIRS` in `deploy/feed-pusher/feed-pusher.mjs`
@@ -57,12 +62,16 @@ pub fn default_feed_pairs() -> &'static Json {
                 "providers": {
                     "twelvedata": { "symbol": "NEO/USD" },
                     "binance-spot": { "symbol": "NEOUSDT" },
+                    "coingecko": { "id": "neo" },
+                    "coinpaprika": { "id": "neo-neo" },
                 },
             },
             "GAS-USD": {
                 "providers": {
                     "twelvedata": { "symbol": "GAS/USD" },
                     "binance-spot": { "symbol": "GASUSDT" },
+                    "coingecko": { "id": "gas" },
+                    "coinpaprika": { "id": "gas-gas" },
                 },
             },
             "BTC-USD": {
@@ -165,8 +174,13 @@ pub fn default_feed_pairs() -> &'static Json {
 }
 
 /// `DEFAULT_SOURCE_SET_IDS`.
-pub const DEFAULT_SOURCE_SET_IDS: [(&str, i64); 3] =
-    [("twelvedata", 1), ("binance-spot", 2), ("coinbase-spot", 3)];
+pub const DEFAULT_SOURCE_SET_IDS: [(&str, i64); 5] = [
+    ("twelvedata", 1),
+    ("binance-spot", 2),
+    ("coinbase-spot", 3),
+    ("coingecko", 4),
+    ("coinpaprika", 5),
+];
 
 /// `deepMerge(base, override)` over JSON objects: a non-object override returns
 /// the base untouched; nested plain objects merge recursively, everything else
@@ -496,7 +510,12 @@ mod tests {
         assert_eq!(get_feed_price_transform("JPY-USD", &env), "inverse");
         assert_eq!(
             get_feed_providers_for_pair("NEO-USD", &env),
-            vec!["twelvedata".to_string(), "binance-spot".to_string()]
+            vec![
+                "twelvedata".to_string(),
+                "binance-spot".to_string(),
+                "coingecko".to_string(),
+                "coinpaprika".to_string()
+            ]
         );
         assert_eq!(
             get_feed_providers_for_pair("BTC-USD", &env),

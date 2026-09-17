@@ -1,9 +1,10 @@
-import { Redis } from 'redis';
+import { createClient } from 'redis';
+import type { RedisClientType } from 'redis';
 import promClient, { Counter, Gauge, Histogram } from 'prom-client';
 
 // Register metrics
 export const metricRegistry = new promClient.Registry();
-metricClient.register.setDefaultMetrics({ register: metricRegistry });
+promClient.collectDefaultMetrics({ register: metricRegistry });
 
 // Request metrics
 export const requestCounter = new Counter({
@@ -53,8 +54,8 @@ export const frontRunProtectionGauge = new Gauge({
 });
 
 // Redis client factory
-export function createRedisClient(url: string): Redis {
-  return Redis.createClient({ url });
+export function createRedisClient(url: string): RedisClientType {
+  return createClient({ url });
 }
 
 // TTL configuration for caching

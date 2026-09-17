@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   detectMorpheusOracleInterface,
+  resolveCanonicalCallbackHash,
   resolveNetworkScopedValue,
 } from './lib-verify-morpheus-n3.mjs';
 
@@ -54,4 +55,31 @@ test('verify:n3 detects legacy and miniapp MorpheusOracle ABIs', () => {
     'miniapp_runtime'
   );
   assert.equal(detectMorpheusOracleInterface(['request/4']), 'unknown');
+});
+
+test('verify:n3 uses the canonical network callback before an example consumer', () => {
+  assert.equal(
+    resolveCanonicalCallbackHash({
+      registry: {
+        neo_n3: {
+          contracts: { oracle_callback_consumer: '0xcanonical' },
+        },
+      },
+      deployments: {
+        neo_n3: { example_consumer_hash: '0xexample' },
+      },
+    }),
+    '0xcanonical'
+  );
+});
+
+test('verify:n3 falls back to the example consumer when no canonical callback exists', () => {
+  assert.equal(
+    resolveCanonicalCallbackHash({
+      deployments: {
+        neo_n3: { example_consumer_hash: '0xexample' },
+      },
+    }),
+    '0xexample'
+  );
 });

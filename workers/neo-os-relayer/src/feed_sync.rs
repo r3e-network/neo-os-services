@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::config::RelayerConfig;
+use crate::delivery::{resume_signed, DeliveryJournal, DeliveryReceipt};
 use crate::transport::RelayerHttpTransport;
 
 pub fn get_feed_sync_delay_ms(config: &RelayerConfig, state: &JsObject, now_ms: f64) -> f64 {
@@ -218,8 +219,12 @@ where
     let mut no_update = 0usize;
     for chain in targets {
         let outcome = match chain.as_str() {
-            "neox" => deliver_neox_feed(config, state, now_ms, transport, waiter, nonce_source),
-            "neo_n3" => deliver_n3_feed(config, state, now_ms, transport, waiter, nonce_source),
+            "neox" => {
+                deliver_neox_feed(config, state, now_ms, transport, waiter, nonce_source, None)
+            }
+            "neo_n3" => {
+                deliver_n3_feed(config, state, now_ms, transport, waiter, nonce_source, None)
+            }
             other => Err(format!("unsupported feed target chain {other}")),
         };
         match outcome {
@@ -276,6 +281,7 @@ fn deliver_neox_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter, N: NonceS
     transport: &T,
     waiter: &W,
     nonce_source: &N,
+    journal: Option<&dyn DeliveryJournal>,
 ) -> Result<bool, String> {
     let neox = object_at(&config.raw, "neox")?;
     let nitro = object_at(&config.raw, "nitro")?;
@@ -394,7 +400,15 @@ fn deliver_neox_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter, N: NonceS
         return Err("Rust enclave feed response has the wrong chain".to_string());
     }
     match response.get("status").and_then(Value::as_str) {
-        Some("no-update") => return Ok(false),
+        Some("no-update") => {
+            if let Some(j) = journal {
+                j.persist(
+                    "prepared",
+                    json!({"no_update":true,"feed_response":response}),
+                )?;
+            }
+            return Ok(false);
+        }
         Some("ok") => {}
         _ => return Err("Rust enclave feed response has no terminal status".to_string()),
     }
@@ -447,6 +461,13 @@ fn deliver_neox_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter, N: NonceS
             "NeoX feed gas estimate {estimate} exceeds configured/signed limit {gas_limit}"
         ));
     }
+    if let Some(journal) = journal {
+        let stage =
+            json!({"chain":"neox","request_id":"feed","tx_hash":decoded.tx_hash,"raw":signed_tx});
+        persist_feed_prepared(journal, "neox", &response, &stage)?;
+        return crate::delivery::persist_and_publish(config, "neox", transport, journal, &stage)
+            .map(|_| true);
+    }
     let node_hash = rpc
         .send_raw_transaction(&signed_tx)
         .map_err(|error| format!("NeoX feed broadcast failed: {error}"))?;
@@ -484,6 +505,93 @@ fn deliver_neox_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter, N: NonceS
     Ok(true)
 }
 
+/// The prepared feed stage contains its exact signed delivery, so a restart
+/// between the two durable writes promotes those same bytes without refetching
+/// prices or signing another nonce.
+pub fn deliver_feed_journaled<T, W, N>(
+    config: &RelayerConfig,
+    chain: &str,
+    baseline: &Value,
+    transport: &T,
+    waiter: &W,
+    nonce: &N,
+    journal: &dyn DeliveryJournal,
+) -> Result<DeliveryReceipt, String>
+where
+    T: HttpTransport + N3HttpTransport,
+    W: EvmWaiter + Sync,
+    N: NonceSource,
+{
+    journal.ensure_lease()?;
+    if journal.get("signed").is_none() {
+        if let Some(stage) = journal
+            .get("prepared")
+            .and_then(|p| p.get("signed_delivery").cloned())
+        {
+            journal.persist("signed", stage)?;
+        }
+    }
+    if let Some(stage) = journal.get("signed") {
+        return resume_signed(config, chain, transport, journal, &stage);
+    }
+    let no_update = || DeliveryReceipt {
+        request_id: "feed".into(),
+        tx_hash: String::new(),
+        vm_state: "NO_UPDATE".into(),
+        target_chain: chain.into(),
+        exception: None,
+        onchain_state: None,
+    };
+    if journal
+        .get("prepared")
+        .and_then(|p| p.get("no_update").and_then(Value::as_bool))
+        == Some(true)
+    {
+        return Ok(no_update());
+    }
+    let mut state = neo_os_core::state::create_empty_relayer_state();
+    if baseline.is_object() {
+        state.set(
+            "feed_baselines",
+            JsValue::from_json(&json!({chain:baseline})),
+        );
+    }
+    let now_ms = waiter.now_ms() as f64;
+    let updated = match chain {
+        "neox" => deliver_neox_feed(
+            config,
+            &mut state,
+            now_ms,
+            transport,
+            waiter,
+            nonce,
+            Some(journal),
+        )?,
+        "neo_n3" => deliver_n3_feed(
+            config,
+            &mut state,
+            now_ms,
+            transport,
+            waiter,
+            nonce,
+            Some(journal),
+        )?,
+        _ => return Err("unsupported feed chain".into()),
+    };
+    if !updated {
+        return Ok(no_update());
+    }
+    resume_signed(
+        config,
+        chain,
+        transport,
+        journal,
+        &journal
+            .get("signed")
+            .ok_or("feed omitted durable signed stage")?,
+    )
+}
+
 struct N3SignedPlan {
     response: Value,
     script: Vec<u8>,
@@ -511,6 +619,7 @@ fn deliver_n3_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter + Sync, N: N
     transport: &T,
     waiter: &W,
     nonce_source: &N,
+    journal: Option<&dyn DeliveryJournal>,
 ) -> Result<bool, String> {
     let n3 = object_at(&config.raw, "neo_n3")?;
     let nitro = object_at(&config.raw, "nitro")?;
@@ -576,6 +685,9 @@ fn deliver_n3_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter + Sync, N: N
         timeout_ms,
     )?;
     if first.get("status").and_then(Value::as_str) == Some("no-update") {
+        if let Some(j) = journal {
+            j.persist("prepared", json!({"no_update":true,"feed_response":first}))?;
+        }
         return Ok(false);
     }
     let first_plan = parse_n3_signed_plan(
@@ -634,6 +746,12 @@ fn deliver_n3_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter + Sync, N: N
         timeout_ms,
     )?;
     if fee_plan.get("status").and_then(Value::as_str) == Some("no-update") {
+        if let Some(j) = journal {
+            j.persist(
+                "prepared",
+                json!({"no_update":true,"feed_response":fee_plan}),
+            )?;
+        }
         return Ok(false);
     }
     let fee_plan = parse_n3_signed_plan(
@@ -688,6 +806,12 @@ fn deliver_n3_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter + Sync, N: N
             timeout_ms,
         )?;
         if response.get("status").and_then(Value::as_str) == Some("no-update") {
+            if let Some(j) = journal {
+                j.persist(
+                    "prepared",
+                    json!({"no_update":true,"feed_response":response}),
+                )?;
+            }
             return Ok(false);
         }
         let plan = parse_n3_signed_plan(
@@ -752,6 +876,12 @@ fn deliver_n3_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter + Sync, N: N
     let (plan, signed_base64, tx_hash) = final_plan.ok_or_else(|| {
         "Neo N3 feed plan changed across all bounded fee/sign attempts".to_string()
     })?;
+    if let Some(journal) = journal {
+        let stage = json!({"chain":"neo_n3","request_id":"feed","tx_hash":tx_hash,"raw":signed_base64,"valid_until_block":plan.valid_until_block});
+        persist_feed_prepared(journal, "neo_n3", &plan.response, &stage)?;
+        return crate::delivery::persist_and_publish(config, "neo_n3", transport, journal, &stage)
+            .map(|_| true);
+    }
     if !rpc
         .send_raw_transaction(&signed_base64)
         .map_err(|error| error.to_string())?
@@ -1037,11 +1167,30 @@ fn ensure_n3_invoke_halt(value: &Value, label: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn persist_feed_prepared(
+    journal: &dyn DeliveryJournal,
+    chain: &str,
+    response: &Value,
+    stage: &Value,
+) -> Result<(), String> {
+    let mut state = neo_os_core::state::create_empty_relayer_state();
+    if chain == "neox" {
+        persist_feed_baseline(&mut state, chain, response)?;
+    } else {
+        persist_n3_feed_baseline(&mut state, response)?;
+    }
+    journal.persist("prepared",json!({"feed_response":response,"feed_baseline_patch":feed_baseline(&state,chain),"signed_delivery":stage}))
+}
+
 fn persist_n3_feed_baseline(state: &mut JsObject, response: &Value) -> Result<(), String> {
     let pairs = value_array(response, "pairs")?;
     let prices = value_array(response, "prices_scaled")?;
     let timestamps = value_array(response, "timestamps")?;
     let rounds = value_array(response, "rounds")?;
+    if prices.len() != pairs.len() || timestamps.len() != pairs.len() || rounds.len() != pairs.len()
+    {
+        return Err("feed baseline array lengths disagree".into());
+    }
     let mut baseline = feed_baseline(state, "neo_n3");
     let records = baseline
         .as_object_mut()
@@ -1201,6 +1350,12 @@ fn persist_feed_baseline(
     let rounds = response["round_ids"]
         .as_array()
         .ok_or_else(|| "feed response rounds are missing".to_string())?;
+    if prices.len() != symbols.len()
+        || timestamps.len() != symbols.len()
+        || rounds.len() != symbols.len()
+    {
+        return Err("feed baseline array lengths disagree".into());
+    }
     let mut baseline = feed_baseline(state, chain);
     let baseline_object = baseline
         .as_object_mut()

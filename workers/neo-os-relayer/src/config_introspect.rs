@@ -538,6 +538,45 @@ fn dynamic_requirements(config: &Value) -> Vec<DynamicRequirement> {
     requirements
 }
 
+fn parse_explicit_true(value: Option<&str>) -> bool {
+    value
+        .map(|raw| raw.trim().eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn is_production_runtime(node_env: &str) -> bool {
+    node_env.trim().eq_ignore_ascii_case("production")
+}
+
+fn resolve_validation_node_env(env: &BTreeMap<String, String>, config: Option<&Value>) -> String {
+    if let Some(config) = config {
+        if let Some(node_env) = config.get("nodeEnv").and_then(Value::as_str) {
+            if !node_env.trim().is_empty() {
+                return node_env.to_string();
+            }
+        }
+    }
+    env.get("NODE_ENV").cloned().unwrap_or_default()
+}
+
+fn resolve_allow_unavailable_automation(
+    env: &BTreeMap<String, String>,
+    config: Option<&Value>,
+) -> bool {
+    if let Some(config) = config {
+        if let Some(allow) = config
+            .pointer("/automation/allowUnavailable")
+            .and_then(Value::as_bool)
+        {
+            return allow;
+        }
+    }
+    parse_explicit_true(
+        env.get("MORPHEUS_ALLOW_UNAVAILABLE_AUTOMATION")
+            .map(String::as_str),
+    )
+}
+
 pub fn validate_relayer_config(
     env: &BTreeMap<String, String>,
     explicit_config: Option<&Value>,
@@ -548,6 +587,25 @@ pub fn validate_relayer_config(
 
     let mut errors = Vec::new();
     let mut automation_capability_warning: Option<ValidationWarning> = None;
+
+    // The legacy pure config port normalizes any unknown name to testnet.
+    // Inspect the selected raw label first so configuration mistakes cannot
+    // silently switch chains. Custody currently supports only reviewed labels.
+    let requested_network = match explicit_config {
+        Some(config) => config.get("network").and_then(Value::as_str),
+        None => report_by_key
+            .get("network")
+            .and_then(|entry| entry.value.as_deref()),
+    };
+    if let Some(requested) = requested_network {
+        if neo_os_core::network_identity::known_neo_n3_identity(
+            &requested.trim().to_ascii_lowercase(),
+        )
+        .is_none()
+        {
+            errors.push(ValidationError { key: "network".into(), message: "relayer network must have a reviewed registry and custody identity; unknown labels cannot default to testnet".into() });
+        }
+    }
 
     let built_config = match explicit_config {
         Some(c) => Some(c.clone()),
@@ -568,11 +626,15 @@ pub fn validate_relayer_config(
                     message,
                 });
             }
-            match neo_os_core::config::derive_pure_fields(
-                &env_source,
-                &neo_os_core::js_value::JsValue::Undefined,
-                "",
-            ) {
+            let registry_network =
+                env_source.env(&["MORPHEUS_NETWORK", "NEXT_PUBLIC_MORPHEUS_NETWORK"]);
+            let registry_network = if registry_network.is_empty() {
+                "testnet".to_string()
+            } else {
+                neo_os_core::config::normalize_morpheus_network(&JsValue::Str(registry_network))
+            };
+            let registry = crate::config::load_network_registry(&registry_network);
+            match neo_os_core::config::derive_pure_fields(&env_source, &registry, "") {
                 Ok(obj) => {
                     let serde_val = crate::config::js_value_to_json(&JsValue::Object(obj));
                     Some(serde_val)
@@ -645,6 +707,21 @@ pub fn validate_relayer_config(
 
     // Dynamic requirements
     if let Some(config) = &built_config {
+        if let Some(value) = config.pointer("/neo_n3/networkMagic") {
+            let network = config.get("network").and_then(Value::as_str).unwrap_or("");
+            let result = value
+                .as_f64()
+                .ok_or_else(|| neo_os_core::CoreError::new("Neo N3 network magic must be numeric"))
+                .and_then(|magic| {
+                    neo_os_core::network_identity::validate_neo_n3_magic(network, magic)
+                });
+            if let Err(error) = result {
+                errors.push(ValidationError {
+                    key: "neo_n3.networkMagic".into(),
+                    message: error.to_string(),
+                });
+            }
+        }
         for path in ["/neox/updaterPrivateKey", "/neox/verifierPrivateKey"] {
             if config
                 .pointer(path)
@@ -661,20 +738,58 @@ pub fn validate_relayer_config(
             .get("mode")
             .and_then(Value::as_str)
             .unwrap_or("combined");
-        // Review P2-16: automation is a bounded capability, not a startup gate.
-        // The config validator therefore surfaces it as a warning (the core
-        // request/combined runtime still starts) rather than a hard validation
-        // error that would block deployment of an otherwise-healthy relayer.
+        if is_production_runtime(&resolve_validation_node_env(env, Some(config))) {
+            let protocol = env
+                .get("MORPHEUS_DELIVERY_PROTOCOL")
+                .map(String::as_str)
+                .or_else(|| config.get("deliveryProtocol").and_then(Value::as_str));
+            if protocol != Some("v2") {
+                errors.push(ValidationError{key:"deliveryProtocol".into(),message:"production request delivery requires MORPHEUS_DELIVERY_PROTOCOL=v2 and its database migration/cutover".into()});
+            }
+            if protocol == Some("v2") {
+                for (key, aliases) in [
+                    (
+                        "deliveryStore.url",
+                        ["SUPABASE_URL", "morpheus_SUPABASE_URL"],
+                    ),
+                    (
+                        "deliveryStore.serviceRole",
+                        [
+                            "SUPABASE_SERVICE_ROLE_KEY",
+                            "morpheus_SUPABASE_SERVICE_ROLE_KEY",
+                        ],
+                    ),
+                ] {
+                    if !aliases.iter().any(|alias| {
+                        env.get(*alias)
+                            .is_some_and(|value| !value.trim().is_empty())
+                    }) {
+                        errors.push(ValidationError{key:key.into(),message:"durable v2 requires its configured Supabase service endpoint and service-role credential".into()});
+                    }
+                }
+            }
+        }
         if mode != "feed_only"
             && config
                 .pointer("/automation/enabled")
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
         {
-            automation_capability_warning = Some(ValidationWarning {
-                name: "automation.enabled".to_string(),
-                message: crate::config::RelayerConfig::AUTOMATION_DELIVERY_UNAVAILABLE.to_string(),
-            });
+            let node_env = resolve_validation_node_env(env, Some(config));
+            let allow = resolve_allow_unavailable_automation(env, Some(config));
+            if is_production_runtime(&node_env) || !allow {
+                errors.push(ValidationError {
+                    key: "automation.enabled".to_string(),
+                    message: crate::config::RelayerConfig::AUTOMATION_DELIVERY_UNAVAILABLE
+                        .to_string(),
+                });
+            } else {
+                automation_capability_warning = Some(ValidationWarning {
+                    name: "automation.enabled".to_string(),
+                    message: crate::config::RelayerConfig::AUTOMATION_DELIVERY_UNAVAILABLE
+                        .to_string(),
+                });
+            }
         }
         for req in dynamic_requirements(config) {
             if !req.present {
@@ -795,6 +910,64 @@ mod tests {
     use serde_json::json;
 
     use super::validate_relayer_config;
+
+    #[test]
+    fn network_identity_magic_drift_is_rejected_before_custody() {
+        for (network, magic) in [("mainnet", 894710606_u64), ("testnet", 860833102_u64)] {
+            let config = json!({"network":network,"mode":"feed_only","activeChains":["neo_n3"],"neo_n3":{"networkMagic":magic}});
+            let result = validate_relayer_config(&BTreeMap::new(), Some(&config));
+            assert!(
+                result.errors.iter().any(|e| e.key == "neo_n3.networkMagic"),
+                "network drift reached custody: {:?}",
+                result.errors
+            );
+        }
+    }
+
+    #[test]
+    fn network_identity_validation_checks_resolved_env_and_numeric_shape() {
+        let env = BTreeMap::from([
+            ("MORPHEUS_NETWORK".to_owned(), "mainnet".to_owned()),
+            ("NEO_MAINNET_MAGIC".to_owned(), "894710606".to_owned()),
+        ]);
+        let result = validate_relayer_config(&env, None);
+        assert!(result.errors.iter().any(|e| e.key == "neo_n3.networkMagic"));
+        for magic in [
+            json!("860833102"),
+            json!(860833102.5),
+            json!(0),
+            json!(4294967296_u64),
+        ] {
+            let config = json!({"network":"mainnet","mode":"feed_only","activeChains":["neo_n3"],"neo_n3":{"networkMagic":magic}});
+            assert!(validate_relayer_config(&BTreeMap::new(), Some(&config))
+                .errors
+                .iter()
+                .any(|e| e.key == "neo_n3.networkMagic"));
+        }
+        for (network, magic) in [("mainnet", 860833102_u64), ("testnet", 894710606_u64)] {
+            let config = json!({"network":network,"mode":"feed_only","activeChains":["neo_n3"],"neo_n3":{"networkMagic":magic}});
+            assert!(!validate_relayer_config(&BTreeMap::new(), Some(&config))
+                .errors
+                .iter()
+                .any(|e| e.key == "neo_n3.networkMagic"));
+        }
+    }
+
+    #[test]
+    fn network_identity_introspection_does_not_silently_map_custom_label_to_testnet() {
+        for env in [
+            BTreeMap::from([("MORPHEUS_NETWORK".to_owned(), "private-A".to_owned())]),
+            BTreeMap::from([(
+                "MORPHEUS_RUNTIME_CONFIG_JSON".to_owned(),
+                r#"{"MORPHEUS_NETWORK":"private-A"}"#.to_owned(),
+            )]),
+        ] {
+            assert!(validate_relayer_config(&env, None)
+                .errors
+                .iter()
+                .any(|e| e.key == "network"));
+        }
+    }
 
     #[test]
     fn neox_request_mode_requires_measured_host_rpc_and_distinct_custody_keys() {
@@ -929,5 +1102,55 @@ mod tests {
             .expect("Rust ownership violation must be reported");
         assert!(error.message.contains("forbidden in the Rust relayer"));
         assert!(!error.message.contains("secret"));
+    }
+
+    #[test]
+    fn production_validation_rejects_unavailable_automation() {
+        let config = json!({
+            "network": "testnet",
+            "nodeEnv": "production",
+            "mode": "requests_only",
+            "activeChains": ["neo_n3"],
+            "automation": { "enabled": true, "allowUnavailable": true }
+        });
+        let result = validate_relayer_config(&BTreeMap::new(), Some(&config));
+        assert!(!result.ok);
+        assert!(result
+            .errors
+            .iter()
+            .any(|error| error.key == "automation.enabled"));
+    }
+
+    #[test]
+    fn development_validation_allows_unavailable_automation_only_with_explicit_opt_in() {
+        let denied = json!({
+            "network": "testnet",
+            "nodeEnv": "development",
+            "mode": "requests_only",
+            "activeChains": ["neo_n3"],
+            "automation": { "enabled": true }
+        });
+        let denied_result = validate_relayer_config(&BTreeMap::new(), Some(&denied));
+        assert!(denied_result
+            .errors
+            .iter()
+            .any(|error| error.key == "automation.enabled"));
+
+        let allowed = json!({
+            "network": "testnet",
+            "nodeEnv": "development",
+            "mode": "requests_only",
+            "activeChains": ["neo_n3"],
+            "automation": { "enabled": true, "allowUnavailable": true }
+        });
+        let allowed_result = validate_relayer_config(&BTreeMap::new(), Some(&allowed));
+        assert!(!allowed_result
+            .errors
+            .iter()
+            .any(|error| error.key == "automation.enabled"));
+        assert!(allowed_result
+            .warnings
+            .iter()
+            .any(|warning| warning.name == "automation.enabled"));
     }
 }

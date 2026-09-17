@@ -14,6 +14,8 @@ namespace MorpheusOracle.Contracts
     public delegate void NeoDidActionTicketUsedHandler(UInt160 disposableAccount, string actionId, ByteString actionNullifier);
     public delegate void NeoDidAdminChangedHandler(UInt160 oldAdmin, UInt160 newAdmin);
     public delegate void NeoDidVerifierChangedHandler(ECPoint oldVerifier, ECPoint newVerifier);
+    public delegate void NeoDidVerifierTimelockProposedHandler(ECPoint proposed, BigInteger executeAfter);
+    public delegate void NeoDidBindingCommitmentRegisteredHandler(UInt160 vaultAccount, string provider, string claimType, ByteString claimCommitment, ByteString masterNullifier, ByteString metadataHash);
     public delegate void NeoDidAdminTimelockProposedHandler(UInt160 proposed, BigInteger executeAfter);
     public delegate void NeoDidUpgradeScheduledHandler(BigInteger executeAfter);
     public delegate void NeoDidContractUpgradedHandler(ByteString nefHash, ByteString manifestHash);
@@ -31,7 +33,7 @@ namespace MorpheusOracle.Contracts
     [ManifestExtra("Author", "Morpheus Oracle")]
     [ManifestExtra("Version", "1.0.0")]
     [ManifestExtra("Description", "Independent NeoDID binding and action-ticket registry")]
-    public class NeoDIDRegistry : SmartContract
+    public partial class NeoDIDRegistry : SmartContract
     {
         private static readonly byte[] PREFIX_ADMIN = new byte[] { 0x01 };
         private static readonly byte[] PREFIX_VERIFIER = new byte[] { 0x02 };
@@ -91,23 +93,11 @@ namespace MorpheusOracle.Contracts
         [DisplayName("VerifierChanged")]
         public static event NeoDidVerifierChangedHandler OnVerifierChanged;
 
+
         public static void _deploy(object data, bool update)
         {
             if (update) return;
             Storage.Put(Storage.CurrentContext, PREFIX_ADMIN, Runtime.Transaction.Sender);
-        }
-
-        [Safe]
-        public static UInt160 Admin()
-        {
-            return (UInt160)Storage.Get(Storage.CurrentContext, PREFIX_ADMIN);
-        }
-
-        [Safe]
-        public static ECPoint Verifier()
-        {
-            ByteString raw = Storage.Get(Storage.CurrentContext, PREFIX_VERIFIER);
-            return raw == null ? null : (ECPoint)(byte[])raw;
         }
 
         /// <summary>Propose a new admin; executable after the 24h timelock (P0-07).</summary>
@@ -153,8 +143,15 @@ namespace MorpheusOracle.Contracts
             ValidateAdmin();
             ExecutionEngine.Assert(publicKey != null && publicKey.IsValid, "invalid verifier");
             ECPoint oldVerifier = Verifier();
-            Storage.Put(Storage.CurrentContext, PREFIX_VERIFIER, (byte[])publicKey);
-            OnVerifierChanged(oldVerifier, publicKey);
+            // Bootstrap is the only immediate write. Once a verifier exists,
+            // every change must use the explicit propose -> wait -> execute flow.
+            if (oldVerifier == null)
+            {
+                Storage.Put(Storage.CurrentContext, PREFIX_VERIFIER, (byte[])publicKey);
+                OnVerifierChanged(oldVerifier, publicKey);
+                return;
+            }
+            ProposeVerifier(publicKey);
         }
 
         /// <summary>Schedule a hash-pinned self-upgrade; executable after the 24h timelock.</summary>
@@ -192,51 +189,6 @@ namespace MorpheusOracle.Contracts
             ValidateAdmin();
             Storage.Delete(Storage.CurrentContext, PREFIX_UPGRADE_TIME);
             Storage.Delete(Storage.CurrentContext, PREFIX_UPGRADE_HASH);
-        }
-
-        /// <summary>
-        /// Registers a new identity binding after verifying the signed binding digest.
-        /// </summary>
-        public static void RegisterBinding(
-            UInt160 vaultAccount,
-            string provider,
-            string claimType,
-            string claimValue,
-            ByteString masterNullifier,
-            ByteString metadataHash,
-            ByteString verificationSignature)
-        {
-            ValidateBindingArguments(vaultAccount, provider, claimType, claimValue, masterNullifier, metadataHash, verificationSignature);
-            // The worker's verification signature proves the identity claim was
-            // TEE-verified, but NOT that the caller owns the vault. Without this
-            // gate anyone holding a worker-signed ticket could bind (or preempt) a
-            // binding for a victim's vault. Require the vault owner's witness (or
-            // admin), matching RevokeBinding / UseActionTicket.
-            ExecutionEngine.Assert(Runtime.CheckWitness(vaultAccount) || Runtime.CheckWitness(Admin()), "unauthorized");
-            ExecutionEngine.Assert(!IsMasterNullifierUsed(masterNullifier), "master nullifier already used");
-
-            BindingRecord existing = GetBinding(vaultAccount, provider, claimType);
-            ExecutionEngine.Assert(!existing.Active, "binding already exists");
-
-            ByteString digest = ComputeBindingDigest(vaultAccount, provider, claimType, claimValue, masterNullifier, metadataHash);
-            VerifySignature(digest, verificationSignature);
-
-            BindingRecord record = new BindingRecord
-            {
-                VaultAccount = vaultAccount,
-                Provider = provider,
-                ClaimType = claimType,
-                ClaimValue = claimValue ?? "",
-                MasterNullifier = masterNullifier,
-                MetadataHash = metadataHash,
-                CreatedAt = Runtime.Time,
-                RevokedAt = 0,
-                Active = true,
-            };
-
-            BindingMap().Put(BuildBindingKey(vaultAccount, provider, claimType), StdLib.Serialize(record));
-            MasterNullifierMap().Put((byte[])masterNullifier, 1);
-            OnBindingRegistered(vaultAccount, provider, claimType, claimValue, masterNullifier, metadataHash);
         }
 
         public static void RevokeBinding(UInt160 vaultAccount, string provider, string claimType)

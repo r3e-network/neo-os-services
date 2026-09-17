@@ -9,6 +9,11 @@
     "oracle_attestation_explorer_url": "",
     "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
     "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
+    "datafeed_providers": [
+      "TWELVEDATA",
+      "COINGECKO",
+      "COINPAPRIKA"
+    ],
     "datafeed_attestation_explorer_url": ""
   },
   "neo_n3": {
@@ -22,20 +27,23 @@
       "http://seed3.neo.org:10332"
     ],
     "network_magic": 860833102,
+    "genesis_hash": "0x1f4d1defa46faa5e7b9b8d3f79a06bec777d7c26c4aa5f6f5899a291daa87c15",
+    "genesis_source": "neo-go/6d7bd0c7d612c1e9eeaf08efbb8788efef5a449b/config/protocol.mainnet.yml#CreateGenesisBlock",
     "domains": {
-      "morpheus_oracle": "oracle.morpheus.neo",
-      "morpheus_callback_consumer": "callback.morpheus.neo",
-      "morpheus_datafeed": "pricefeed.morpheus.neo",
-      "morpheus_aa": "smartwallet.neo",
-      "morpheus_aa_alias": "aa.morpheus.neo",
-      "morpheus_neodid": "neodid.morpheus.neo"
+      "platform_registry": "platform-registry.miniapp.neo",
+      "morpheus_oracle": "morpheus-oracle.miniapp.neo",
+      "morpheus_callback_consumer": "morpheus-callback-consumer.miniapp.neo",
+      "morpheus_datafeed": "morpheus-datafeed.miniapp.neo",
+      "morpheus_aa": "morpheus-aa.miniapp.neo",
+      "morpheus_aa_alias": "morpheus-aa-alias.miniapp.neo",
+      "morpheus_neodid": "morpheus-neodid.miniapp.neo"
     },
     "aa_subdomains": {
-      "core": "core.smartwallet.neo",
-      "web3auth": "web3auth.smartwallet.neo",
-      "recovery": "recovery.smartwallet.neo",
+      "core": "aa-core.miniapp.neo",
+      "web3auth": "aa-web3auth.miniapp.neo",
+      "recovery": "aa-recovery.miniapp.neo",
       "tee": "teeverifier.smartwallet.neo",
-      "session": "sessionkey.smartwallet.neo",
+      "session": "aa-session.miniapp.neo",
       "webauthn": "webauthn.smartwallet.neo",
       "multisig": "multisig.smartwallet.neo",
       "subscription": "subscription.smartwallet.neo",
@@ -44,17 +52,19 @@
       "daily_limit_hook": "dailylimit.smartwallet.neo",
       "token_hook": "tokenhook.smartwallet.neo",
       "multi_hook": "multihook.smartwallet.neo",
-      "market": "market.smartwallet.neo",
-      "paymaster": "paymaster.smartwallet.neo"
+      "market": "aa-market.miniapp.neo",
+      "paymaster": "aa-paymaster.miniapp.neo"
     },
     "contracts": {
+      "platform_registry": "0x2cac9aba4db53fdb92b68e09e49349a2a1f08381",
       "morpheus_oracle": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
       "oracle_callback_consumer": "0xe1226268f2fe08bea67fb29e1c8fda0d7c8e9844",
       "morpheus_datafeed": "0x03013f49c42a14546c8bbe58f9d434c3517fccab",
       "abstract_account": "0x0268a387913b250166ddec032b03332690a1ef78",
       "morpheus_neodid": "0xb81f31ea81e279793b30411b82c2e82078b63105",
       "aa_address_market": "0xae7afe3a85ab08bfd1d4907b35ae8b80c75b3a69",
-      "aa_paymaster": "0xa0defa2bc6d7a71ba1e237149287c8ca4ff46caf"
+      "aa_paymaster": "0xa0defa2bc6d7a71ba1e237149287c8ca4ff46caf",
+      "matrix_nameservice": "0x994c3cbe0d8641b9c911452c37191de8dd9f5f4e"
     },
     "aa_runtime": {
       "display_name": "UnifiedSmartWalletV3",
@@ -67,12 +77,22 @@
     },
     "aa_verifiers": {
       "web3auth": "0xf5c452cd4ba29dcdc47026383568c0d8b38d9272",
-      "social_recovery": "0x198b3a9cec9bccc2110d19bd929b10374a9d034d",
-      "session_key": "0x3ba8333406e59f9fd83cf378b33706a33d9f3755"
+      "social_recovery": "0xfb3f605fc6bcd59d265d7c18230093d7dc24ac26",
+      "session_key": "0x63d6a10d388dd4885bc42ba69593734476f47151"
     },
     "examples": {
       "oracle_callback_consumer": "0x89b05cac00804648c666b47ecb1c57bc185821b7",
       "feed_reader": "0x11e454261c21a32f1c9262472ca72a3156f9051f"
+    },
+    "name_services": {
+      "matrix": {
+        "contract_hash": "0x994c3cbe0d8641b9c911452c37191de8dd9f5f4e",
+        "root": "matrix",
+        "managed_root": "neoos.matrix",
+        "deploy_tx": "0x98f4b42ada24a7a1d51d0d64953df032efe35b10bfabf2e862eff00459929e38",
+        "nef_sha256": "ab331e71b569be405a83e7a6a395a860358c4efa7287b7ff09f762091745d9d4",
+        "binding_tx": "0x2ae018ee4b358b4b75a23d8a9c0c1b1a5874133bb41a3a0e58ed01b89e1f0149"
+      }
     }
   }
 }

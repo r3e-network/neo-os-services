@@ -2,6 +2,7 @@
 Description=Check/topup feed updater GAS every 6h (NODE COMPATIBILITY ONLY)
 ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_FEE_TOPUP_COMPAT
 Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
+Before=morpheus-relayer.service morpheus-relayer-nitro.service
 [Timer]
 OnBootSec=10min
 OnUnitActiveSec=6h

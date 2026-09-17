@@ -304,8 +304,12 @@ They do not usually change trust assumptions.
 ### Automation / 自动化任务
 
 - `MORPHEUS_AUTOMATION_ENABLED`
-  English: Legacy automation scheduler switch. The production Rust relayer currently requires `false` and rejects `true` during config validation because durable automation claim/confirmation/persistence is not yet authoritative.
-  中文：旧自动化调度器开关。当前生产 Rust relayer 必须设为 `false`；由于自动化的持久 claim/确认/落盘协议尚未成为权威实现，配置校验会拒绝 `true`。
+  English: Legacy automation scheduler switch. The production Rust relayer currently requires `false` and rejects `true` during `config:validate` and `ensure_runtime_ready` because durable automation claim/confirmation/persistence is not yet authoritative. `NODE_ENV=production` cannot override this refusal.
+  中文：旧自动化调度器开关。当前生产 Rust relayer 必须设为 `false`；由于自动化的持久 claim/确认/落盘协议尚未成为权威实现，`config:validate` 与启动 `ensure_runtime_ready` 都会拒绝 `true`。`NODE_ENV=production` 不能覆盖该拒绝。
+
+- `MORPHEUS_ALLOW_UNAVAILABLE_AUTOMATION`
+  English: Non-production opt-in only. When `true` and `NODE_ENV` is not `production`, `config:validate` / startup may proceed with a warning while the automation lane still reports `rust_automation_execution_not_implemented`. Production ignores this flag and still refuses `MORPHEUS_AUTOMATION_ENABLED=true`.
+  中文：仅非生产显式允许。设为 `true` 且 `NODE_ENV` 不是 `production` 时，校验/启动可以带着警告继续，但 automation 车道仍报告未实现。生产环境忽略此开关，仍然拒绝 `MORPHEUS_AUTOMATION_ENABLED=true`。
 
 - `MORPHEUS_AUTOMATION_BATCH_SIZE`
   English: Maximum active automation jobs loaded from Supabase per tick.

@@ -1,13 +1,40 @@
-import { appendFileSync, writeFileSync, renameSync } from 'node:fs';
-const RPCS = (
-  process.env.FEED_RPCS ||
-  'https://api.n3index.dev/mainnet,https://rpc10.n3.nspcc.ru:10331,https://mainnet1.neo.coz.io:443'
-)
+import { appendFileSync, existsSync, writeFileSync, renameSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import path from 'node:path';
+
+async function loadFeedNetworkLibrary() {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.join(here, 'lib-feed-network.mjs'),
+    path.join(process.cwd(), 'lib-feed-network.mjs'),
+    path.join(process.cwd(), 'deploy/feed-pusher/lib-feed-network.mjs'),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return import(pathToFileURL(candidate).href);
+  }
+  throw new Error(
+    'lib-feed-network.mjs is missing. Install it beside this script or under deploy/feed-pusher/ — do not copy only feed-monitor.mjs'
+  );
+}
+
+const feedNetwork = await loadFeedNetworkLibrary();
+const {
+  DEFAULT_RETIRED_FEED_PAIRS,
+  decodeGetAllFeedRecords,
+  readChainUnixTime,
+  resolveFeedNetwork,
+  selectRpcsMatchingMagic,
+} = feedNetwork;
+const CLOCK_SKEW_TOLERANCE_SEC = Number(feedNetwork.CLOCK_SKEW_TOLERANCE_SEC) || 120;
+
+const FEED_TARGET = resolveFeedNetwork(process.env);
+const CONFIGURED_RPCS = (process.env.FEED_RPCS || FEED_TARGET.rpcs.join(','))
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
-const FEED = '0x03013f49c42a14546c8bbe58f9d434c3517fccab',
-  UPDATER = '0x9fb28bdacfaa7fcc0a4d660d0dc990b0e7d46118',
+let RPCS = CONFIGURED_RPCS;
+const FEED = `0x${FEED_TARGET.feed}`,
+  UPDATER = `0x${FEED_TARGET.updaterSh}`,
   GASH = '0xd2a4cff31913016155e38e474a2c06d08be276cf';
 // Network label for the Prometheus metrics (this monitor watches the Neo N3
 // MorpheusDataFeed; a second timer unit can run it against another chain by
@@ -47,7 +74,7 @@ const TRADFI_WEEKEND_AGE = Number(process.env.TRADFI_WEEKEND_AGE_SEC || 270000);
 // and workers/nitro-worker/src/oracle/feed-registry.js — enforced by
 // scripts/check-feed-pair-registries.mjs.
 const RETIRED_PAIRS = new Set(
-  (process.env.RETIRED_PAIRS || 'COPPER-USD,FLM-USD,1000FLM-USD,1000JPY-USD')
+  (process.env.RETIRED_PAIRS || DEFAULT_RETIRED_FEED_PAIRS.join(','))
     .split(',')
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean)
@@ -106,23 +133,29 @@ async function rpc(m, p) {
 // Decode the batched getAllFeedRecords stack into { pair, age } rows. `pair` is
 // the on-chain pair string with the TWELVEDATA: prefix stripped (e.g. NEO-USD).
 // FeedRecord = [Pair, RoundId, Price, Timestamp, AttestationHash, SourceSetId].
+// FAULT / empty / malformed / any undecodable row is a hard failure — a fresh
+// NEO-USD getLatest must never upgrade an unreadable registry to healthy.
 export function parseAllRecords(result, now) {
-  if (!result || result.state !== 'HALT') return null;
-  const records =
-    result.stack && result.stack[0] && Array.isArray(result.stack[0].value)
-      ? result.stack[0].value
-      : [];
-  const rows = [];
-  for (const record of records) {
-    const v = record && record.value;
-    if (!Array.isArray(v) || v.length < 4) continue;
-    const rawPair = Buffer.from(String(v[0].value || ''), 'base64').toString('utf8');
-    if (!rawPair) continue;
-    const pair = rawPair.replace(/^TWELVEDATA:/, '');
-    const ts = Number(v[3].value || 0);
-    rows.push({ pair, ts, age: now - ts });
-  }
-  return rows;
+  const decoded = decodeGetAllFeedRecords(result);
+  return {
+    ok: decoded.ok,
+    reason: decoded.reason,
+    record_count: decoded.record_count,
+    decoded_count: decoded.decoded_count,
+    undecodable_count: decoded.undecodable_count,
+    rows: decoded.ok
+      ? decoded.rows.map((row) => {
+          const ts = Number(row.timestamp);
+          const age = now - ts;
+          return {
+            pair: String(row.pair).replace(/^TWELVEDATA:/, ''),
+            ts,
+            age,
+            clock_skew: Number.isFinite(age) && age < -CLOCK_SKEW_TOLERANCE_SEC,
+          };
+        })
+      : [],
+  };
 }
 
 // Pure staleness predicate (exported for tests): TradFi pairs get the widened
@@ -178,35 +211,61 @@ function writePromTextfile(rows, gas) {
 
 // FEED_MONITOR_SKIP_MAIN=1 lets tests import the pure helpers without running a
 // live cycle; the systemd entrypoint never sets it.
+function writeUnreadableStatus(reason, extra = {}) {
+  writeFileSync(
+    STATUS,
+    JSON.stringify(
+      {
+        ts: new Date().toISOString(),
+        network: FEED_TARGET.network,
+        feed: FEED,
+        updater: UPDATER,
+        ok: false,
+        unreadable_reason: reason,
+        problems: [`getAllFeedRecords ${reason}`],
+        ...extra,
+      },
+      null,
+      2
+    )
+  );
+}
+
 if (process.env.FEED_MONITOR_SKIP_MAIN !== '1') {
-  const now = Math.floor(Date.now() / 1000);
-  const date = new Date(now * 1000);
+  const wallNow = Math.floor(Date.now() / 1000);
   const problems = [];
   try {
-    // Per-pair iteration: read the FULL registry in one getAllFeedRecords invoke
-    // so every registered pair is checked (not just NEO-USD). Fall back to the
-    // single-pair getLatest if the batched invoke faults (older RPC / contract).
-    let rows = null;
+    const selected = await selectRpcsMatchingMagic(CONFIGURED_RPCS, FEED_TARGET.magic);
+    RPCS = selected.matched;
+    let now = wallNow;
     try {
-      rows = parseAllRecords(await rpc('invokefunction', [FEED, 'getAllFeedRecords', []]), now);
+      now = await readChainUnixTime((method, params) => rpc(method, params));
     } catch {
-      rows = null;
+      now = wallNow;
     }
-    if (!rows || rows.length === 0) {
-      const j = await rpc('invokefunction', [
-        FEED,
-        'getLatest',
-        [{ type: 'String', value: 'TWELVEDATA:NEO-USD' }],
-      ]);
-      // FeedRecord = [Pair, RoundId, Price, Timestamp, AttestationHash, SourceSetId]:
-      // age comes from Timestamp (v[3]); RoundId only coincidentally tracks time
-      // for the current pusher (round = max(cur+1, now)) and is a plain counter.
-      const v = j.stack[0].value;
-      rows = [{ pair: 'NEO-USD', ts: Number(v[3].value), age: now - Number(v[3].value) }];
+    const date = new Date(now * 1000);
+    const decoded = parseAllRecords(
+      await rpc('invokefunction', [FEED, 'getAllFeedRecords', []]),
+      now
+    );
+    if (!decoded.ok) {
+      writeUnreadableStatus(decoded.reason, {
+        record_count: decoded.record_count,
+        decoded_count: decoded.decoded_count,
+        undecodable_count: decoded.undecodable_count,
+      });
+      log(`ALERT: getAllFeedRecords ${decoded.reason} (fail-closed, not healthy)`);
+      process.exit(2);
     }
+    const rows = decoded.rows;
+    const clockSkewRows = rows.filter((r) => r.clock_skew && !isRetiredPair(r.pair));
     for (const r of rows) {
       // A retired pair has no writer, so its age is expected, not a fault.
       if (isRetiredPair(r.pair)) continue;
+      if (r.clock_skew) {
+        problems.push(`CLOCK SKEW ${r.pair} ahead=${Math.abs(r.age)}s`);
+        continue;
+      }
       const limit = staleAgeLimit(r.pair, date);
       if (r.age > limit) problems.push(`FEED STALE ${r.pair} age=${(r.age / 60).toFixed(0)}min`);
     }
@@ -224,15 +283,21 @@ if (process.env.FEED_MONITOR_SKIP_MAIN !== '1') {
       JSON.stringify(
         {
           ts: new Date().toISOString(),
+          network: FEED_TARGET.network,
+          feed: FEED,
+          updater: UPDATER,
           // feed_age_min retains its original meaning (NEO-USD age) for back-compat;
           // pairs[] carries the full per-pair view for the new monitoring path.
           feed_age_min: neo ? Math.round(neo.age / 60) : null,
           pairs: rows.map((r) => ({
             pair: r.pair,
             age_min: Math.round(r.age / 60),
+            age_seconds: r.age,
             retired: isRetiredPair(r.pair),
+            clock_skew: Boolean(r.clock_skew),
           })),
           updater_gas: gas,
+          clock_skew: clockSkewRows.length > 0,
           ok: problems.length === 0,
           problems,
         },
@@ -240,6 +305,10 @@ if (process.env.FEED_MONITOR_SKIP_MAIN !== '1') {
         2
       )
     );
+    if (clockSkewRows.length) {
+      log('ALERT: ' + problems.join(' | '));
+      process.exit(2);
+    }
     if (problems.length) {
       log('ALERT: ' + problems.join(' | '));
       process.exit(1);

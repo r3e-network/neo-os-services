@@ -43,9 +43,11 @@ pub struct DeliveryReceipt {
     pub target_chain: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exception: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub onchain_state: Option<Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PreparedFulfillment {
     request_id: String,
     request_type: String,
@@ -59,6 +61,32 @@ struct PreparedFulfillment {
     error: String,
     signature: String,
     public_key: String,
+}
+
+/// Durable stage writes are fenced by the database lease generation. A signed
+/// stage is immutable and therefore safe to resend after an uncertain response.
+pub trait DeliveryJournal: Send + Sync {
+    fn get(&self, stage: &str) -> Option<Value>;
+    fn persist(&self, stage: &str, value: Value) -> Result<(), String>;
+    fn ensure_lease(&self) -> Result<(), String>;
+    fn durable(&self) -> bool {
+        true
+    }
+}
+struct VolatileJournal;
+impl DeliveryJournal for VolatileJournal {
+    fn get(&self, _: &str) -> Option<Value> {
+        None
+    }
+    fn persist(&self, _: &str, _: Value) -> Result<(), String> {
+        Ok(())
+    }
+    fn ensure_lease(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn durable(&self) -> bool {
+        false
+    }
 }
 
 /// Execute the authoritative delivery for either chain. Neo N3 uses one
@@ -78,9 +106,50 @@ where
     N: NonceSource,
     W: Waiter,
 {
+    deliver_event_journaled(
+        config,
+        chain,
+        event,
+        transport,
+        nonce_source,
+        waiter,
+        &VolatileJournal,
+    )
+}
+
+pub fn deliver_event_journaled<T, N, W>(
+    config: &RelayerConfig,
+    chain: &str,
+    event: &JsValue,
+    transport: &T,
+    nonce_source: &N,
+    waiter: &W,
+    journal: &dyn DeliveryJournal,
+) -> Result<DeliveryReceipt, String>
+where
+    T: N3HttpTransport + EvmHttpTransport,
+    N: NonceSource,
+    W: Waiter,
+{
+    journal.ensure_lease()?;
+    if let Some(signed) = journal.get("signed") {
+        return resume_signed(config, chain, transport, journal, &signed);
+    }
+    if journal.durable() {
+        if let Some(evidence) = settled_request(config, chain, event, transport)? {
+            return Ok(DeliveryReceipt {
+                request_id: event_field(event.as_object().ok_or("invalid event")?, "requestId"),
+                tx_hash: String::new(),
+                vm_state: "RECONCILED".into(),
+                target_chain: chain.into(),
+                exception: None,
+                onchain_state: Some(evidence),
+            });
+        }
+    }
     match chain {
-        "neo_n3" => deliver_neo_n3(config, event, transport, nonce_source, waiter),
-        "neox" => deliver_neox(config, event, transport, nonce_source, waiter),
+        "neo_n3" => deliver_neo_n3(config, event, transport, nonce_source, waiter, journal),
+        "neox" => deliver_neox(config, event, transport, nonce_source, waiter, journal),
         other => Err(format!("unsupported delivery chain {other}")),
     }
 }
@@ -91,6 +160,7 @@ fn deliver_neo_n3<T, N, W>(
     transport: &T,
     nonce_source: &N,
     waiter: &W,
+    journal: &dyn DeliveryJournal,
 ) -> Result<DeliveryReceipt, String>
 where
     T: N3HttpTransport + EvmHttpTransport,
@@ -130,7 +200,15 @@ where
         .ok_or_else(|| {
             "Neo N3 custody updater key is not configured (SIGNER_ROLE_UPDATER_KEY_ID)".to_string()
         })?;
-    let prepared = prepare_in_enclave(config, "neo_n3", event, nitro, transport, nonce_source)?;
+    let prepared = prepare_once(
+        config,
+        "neo_n3",
+        event,
+        nitro,
+        transport,
+        nonce_source,
+        journal,
+    )?;
     let custody = CustodyClient::new(transport, connection);
     let updater = resolve_signer(&custody, updater_key_id)?;
     let request_id = prepared.request_id.parse::<i64>().map_err(|_| {
@@ -185,6 +263,19 @@ where
         })),
         ensure_fee_balance: None,
     };
+    journal.ensure_lease()?;
+    if journal.durable() {
+        let signed = neo_os_chain_n3::tx::build_and_sign(
+            &rpc,
+            &custody,
+            &updater,
+            nonce_source,
+            &script,
+            &options,
+        )?;
+        let stage = json!({"chain":"neo_n3","request_id":prepared.request_id,"tx_hash":signed.tx_hash,"raw":signed.signed_base64,"valid_until_block":signed.valid_until_block});
+        return persist_and_publish(config, "neo_n3", transport, journal, &stage);
+    }
     let broadcast =
         build_sign_and_broadcast(&rpc, &custody, &updater, nonce_source, &script, &options)?;
     let timeout_ms = n3
@@ -208,6 +299,7 @@ where
         vm_state: outcome.vm_state,
         target_chain: "neo_n3".to_string(),
         exception: outcome.exception,
+        onchain_state: None,
     })
 }
 
@@ -230,6 +322,7 @@ fn deliver_neox<T, N, W>(
     transport: &T,
     nonce_source: &N,
     waiter: &W,
+    journal: &dyn DeliveryJournal,
 ) -> Result<DeliveryReceipt, String>
 where
     T: N3HttpTransport + EvmHttpTransport,
@@ -282,7 +375,15 @@ where
         );
     }
 
-    let prepared = prepare_in_enclave(config, "neox", event, nitro, transport, nonce_source)?;
+    let prepared = prepare_once(
+        config,
+        "neox",
+        event,
+        nitro,
+        transport,
+        nonce_source,
+        journal,
+    )?;
     let semantic = EvmFulfillment {
         request_id: prepared.request_id.clone(),
         app_id: prepared.app_id.clone(),
@@ -358,6 +459,7 @@ where
         tx_nonce,
         &expected_signing_hash[2..18]
     );
+    journal.ensure_lease()?;
     let signed = custody.sign_transaction(
         &updater_key_id,
         chain_id,
@@ -387,6 +489,10 @@ where
     if !signed.digest.eq_ignore_ascii_case(&decoded.tx_hash) {
         return Err("NeoX custody transaction response changed the signed transaction hash".into());
     }
+    if journal.durable() {
+        let stage = json!({"chain":"neox","request_id":prepared.request_id,"tx_hash":decoded.tx_hash,"raw":signed.signed_transaction});
+        return persist_and_publish(config, "neox", transport, journal, &stage);
+    }
     let node_hash = rpc
         .send_raw_transaction(&signed.signed_transaction)
         .map_err(|error| format!("NeoX fulfillRequest broadcast failed: {error}"))?;
@@ -410,7 +516,371 @@ where
         vm_state: "HALT".to_string(),
         target_chain: "neox".to_string(),
         exception: None,
+        onchain_state: None,
     })
+}
+
+fn settled_request<T: N3HttpTransport + EvmHttpTransport>(
+    config: &RelayerConfig,
+    chain: &str,
+    event: &JsValue,
+    transport: &T,
+) -> Result<Option<Value>, String> {
+    let id = event_field(
+        event.as_object().ok_or("invalid delivery event")?,
+        "requestId",
+    );
+    let lane = object_at(&config.raw, chain)?;
+    let contract = required_string(lane, "oracleContract", "oracle contract")?;
+    if chain == "neox" {
+        let rpc = EvmRpcClient::new(
+            required_string(lane, "rpcUrl", "NeoX RPC")?,
+            string_array(lane.get("rpcUrls")),
+            transport,
+        );
+        let record = rpc
+            .get_request(&contract, id.parse().map_err(|_| "request id overflow")?)
+            .map_err(|e| e.to_string())?
+            .ok_or("unresolved request")?;
+        if record
+            .get("id")
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| v.to_string())
+            })
+            .as_deref()
+            != Some(id.as_str())
+        {
+            return Err("request state identity mismatch".into());
+        }
+        let status = record
+            .get("status")
+            .and_then(Value::as_u64)
+            .ok_or("request state omitted status")?;
+        return Ok(matches!(status,2|3).then(||json!({"chain":chain,"contract":contract,"request_id":id,"status":status,"record":record})));
+    }
+    let rpc = NeoRpcClient::new(transport, string_array(lane.get("rpcUrls")), !cfg!(test))?;
+    let result = rpc
+        .invoke_function(
+            &contract,
+            "getRequest",
+            json!([{"type":"Integer","value":id}]),
+        )
+        .map_err(|e| e.to_string())?;
+    if result.get("state").and_then(Value::as_str) != Some("HALT") {
+        return Err("request state lookup did not HALT".into());
+    }
+    let first = result
+        .pointer("/stack/0")
+        .ok_or("request lookup omitted stack")?;
+    let decoded =
+        neo_os_chain_n3::scan::decode_neo_item(first, neo_os_chain_n3::scan::Encoding::Base64);
+    let fields = decoded.as_array().ok_or("request state is not an array")?;
+    let fulfilled_index = if fields.len() >= 14 {
+        10
+    } else if fields.len() >= 12 {
+        8
+    } else {
+        return Err("request state tuple truncated".into());
+    };
+    let observed_id = fields
+        .first()
+        .map(|v| {
+            v.as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| v.to_string())
+        })
+        .unwrap_or_default();
+    if observed_id != id {
+        return Err("request state identity mismatch".into());
+    }
+    let fulfilled = fields[fulfilled_index]
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| fields[fulfilled_index].to_string());
+    let settled = fulfilled
+        .parse::<u64>()
+        .map_err(|_| "invalid fulfilled timestamp")?
+        > 0;
+    Ok(settled.then(||json!({"chain":chain,"contract":contract,"request_id":id,"fulfilled_at":fulfilled,"record":decoded})))
+}
+
+fn prepare_once<T, N>(
+    config: &RelayerConfig,
+    chain: &str,
+    event: &JsValue,
+    nitro: &serde_json::Map<String, Value>,
+    transport: &T,
+    nonce: &N,
+    journal: &dyn DeliveryJournal,
+) -> Result<PreparedFulfillment, String>
+where
+    T: N3HttpTransport + EvmHttpTransport,
+    N: NonceSource,
+{
+    if let Some(prepared) = journal.get("prepared") {
+        return serde_json::from_value(prepared)
+            .map_err(|e| format!("invalid prepared journal: {e}"));
+    }
+    journal.ensure_lease()?;
+    let prepared = prepare_in_enclave(config, chain, event, nitro, transport, nonce)?;
+    journal.persist(
+        "prepared",
+        serde_json::to_value(&prepared).map_err(|e| e.to_string())?,
+    )?;
+    Ok(prepared)
+}
+
+/// One observation per scheduled visit. Pending confirmation leaves the exact
+/// signed transaction in the journal and frees the worker's compute slot.
+pub fn observe_existing_transaction<T: N3HttpTransport + EvmHttpTransport>(
+    config: &RelayerConfig,
+    chain: &str,
+    hash: &str,
+    transport: &T,
+) -> Result<DeliveryReceipt, String> {
+    let lane = object_at(&config.raw, chain)?;
+    let vm_state = if chain == "neox" {
+        let rpc = EvmRpcClient::new(
+            required_string(lane, "rpcUrl", "NeoX RPC")?,
+            string_array(lane.get("rpcUrls")),
+            transport,
+        );
+        let receipt = rpc
+            .transaction_receipt(hash)
+            .map_err(|e| e.to_string())?
+            .ok_or("transaction still unconfirmed")?;
+        match receipt.status {
+            1 => "HALT",
+            0 => "FAULT",
+            _ => return Err("unexpected EVM receipt status".into()),
+        }
+    } else if chain == "neo_n3" {
+        let rpc = NeoRpcClient::new(transport, string_array(lane.get("rpcUrls")), !cfg!(test))?;
+        let result = rpc.get_application_log(hash).map_err(|e| e.to_string())?;
+        match result
+            .pointer("/executions/0/vmstate")
+            .and_then(Value::as_str)
+        {
+            Some("HALT") => "HALT",
+            Some("FAULT") => "FAULT",
+            _ => return Err("transaction execution is not yet observable".into()),
+        }
+    } else {
+        return Err("unsupported reconciliation chain".into());
+    };
+    Ok(DeliveryReceipt {
+        request_id: String::new(),
+        tx_hash: hash.into(),
+        vm_state: vm_state.into(),
+        target_chain: chain.into(),
+        exception: None,
+        onchain_state: None,
+    })
+}
+
+/// Expiry is not absence. Require two explicitly configured archive nodes,
+/// matching canonical hashes at the expiry height, and the RPC's exact -103
+/// unknown-transaction response before authorizing another signed attempt.
+pub fn observe_expired_n3<T: N3HttpTransport + EvmHttpTransport>(
+    config: &RelayerConfig,
+    signed: &Value,
+    transport: &T,
+) -> Result<DeliveryReceipt, String> {
+    use sha2::Digest;
+    let lane = object_at(&config.raw, "neo_n3")?;
+    let urls = string_array(lane.get("reconciliationArchiveRpcUrls"));
+    let unique: std::collections::BTreeSet<_> = urls.into_iter().collect();
+    if unique.len() < 2 {
+        return Err(
+            "expired N3 delivery requires two configured archive RPCs for absence evidence".into(),
+        );
+    }
+    let hash = signed
+        .get("tx_hash")
+        .and_then(Value::as_str)
+        .ok_or("journal hash missing")?;
+    let expiry = signed
+        .get("valid_until_block")
+        .and_then(Value::as_u64)
+        .ok_or("journal expiry missing")?;
+    let mut checks = vec![];
+    let mut canonical = None;
+    for url in unique {
+        let rpc = NeoRpcClient::new(transport, vec![url.clone()], !cfg!(test))?;
+        let tip = rpc.get_block_count().map_err(|e| e.to_string())? as u64;
+        if tip <= expiry {
+            return Err("archive node has not passed the transaction expiry".into());
+        }
+        let expiry_hash = rpc
+            .call("getblockhash", json!([expiry]))
+            .map_err(|e| e.to_string())?
+            .as_str()
+            .ok_or("archive omitted expiry block hash")?
+            .to_owned();
+        if expiry_hash.len() != 66 {
+            return Err("archive returned malformed block hash".into());
+        }
+        if canonical.as_ref().is_some_and(|h| h != &expiry_hash) {
+            return Err("archive nodes disagree at expiry height".into());
+        }
+        canonical = Some(expiry_hash.clone());
+        let (status, raw) = N3HttpTransport::post(
+            transport,
+            &url,
+            &json!({"jsonrpc":"2.0","id":1,"method":"getrawtransaction","params":[hash,true]})
+                .to_string(),
+        )?;
+        let response: Value = serde_json::from_str(&raw)
+            .map_err(|_| "archive returned non-JSON transaction evidence")?;
+        if status != 200 || response.pointer("/error/code").and_then(Value::as_i64) != Some(-103) {
+            return Err("archive has not proved this expired transaction absent".into());
+        }
+        checks.push(json!({"rpc_id":hex::encode(sha2::Sha256::digest(url.as_bytes())),"tip":tip,"expiry_hash":expiry_hash}));
+    }
+    Ok(DeliveryReceipt {
+        request_id: signed
+            .get("request_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .into(),
+        tx_hash: hash.into(),
+        vm_state: "EXPIRED_UNSEEN".into(),
+        target_chain: "neo_n3".into(),
+        exception: None,
+        onchain_state: Some(json!({"valid_until_block":expiry,"archive_checks":checks})),
+    })
+}
+
+pub(crate) fn persist_and_publish<T: N3HttpTransport + EvmHttpTransport>(
+    config: &RelayerConfig,
+    chain: &str,
+    transport: &T,
+    journal: &dyn DeliveryJournal,
+    stage: &Value,
+) -> Result<DeliveryReceipt, String> {
+    journal.persist("signed", stage.clone())?;
+    resume_signed(config, chain, transport, journal, stage)
+}
+
+pub(crate) fn resume_signed<T: N3HttpTransport + EvmHttpTransport>(
+    config: &RelayerConfig,
+    chain: &str,
+    transport: &T,
+    journal: &dyn DeliveryJournal,
+    signed: &Value,
+) -> Result<DeliveryReceipt, String> {
+    if signed.get("chain").and_then(Value::as_str) != Some(chain) {
+        return Err("journal target chain mismatch".into());
+    }
+    let hash = signed
+        .get("tx_hash")
+        .and_then(Value::as_str)
+        .filter(|v| !v.is_empty())
+        .ok_or("journal omitted tx hash")?;
+    let raw = signed
+        .get("raw")
+        .and_then(Value::as_str)
+        .filter(|v| !v.is_empty())
+        .ok_or("journal omitted signed bytes")?;
+    let id = signed
+        .get("request_id")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let receipt = || DeliveryReceipt {
+        request_id: id.into(),
+        tx_hash: hash.into(),
+        vm_state: "HALT".into(),
+        target_chain: chain.into(),
+        exception: None,
+        onchain_state: None,
+    };
+    let broadcast = if chain == "neox" {
+        let lane = object_at(&config.raw, "neox")?;
+        let decoded = decode_signed_eip1559(raw)?;
+        if !decoded.tx_hash.eq_ignore_ascii_case(hash) {
+            return Err("journal signed transaction hash mismatch".into());
+        }
+        let rpc = EvmRpcClient::new(
+            required_string(lane, "rpcUrl", "NeoX RPC")?,
+            string_array(lane.get("rpcUrls")),
+            transport,
+        );
+        if let Some(found) = rpc.transaction_receipt(hash).map_err(|e| e.to_string())? {
+            if found.status == 0 {
+                let mut failed = receipt();
+                failed.vm_state = "FAULT".into();
+                return Ok(failed);
+            }
+            if found.status != 1 {
+                return Err("terminal: unexpected EVM receipt status".into());
+            }
+            return Ok(receipt());
+        }
+        journal.ensure_lease()?;
+        rpc.send_raw_transaction(raw)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    } else if chain == "neo_n3" {
+        let lane = object_at(&config.raw, "neo_n3")?;
+        let rpc = NeoRpcClient::new(transport, string_array(lane.get("rpcUrls")), !cfg!(test))?;
+        if let Ok(log) = rpc.get_application_log(hash) {
+            if let Some(execution) = log.pointer("/executions/0") {
+                if execution
+                    .get("vmstate")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| !s.is_empty())
+                {
+                    if execution
+                        .get("vmstate")
+                        .and_then(Value::as_str)
+                        .is_some_and(|v| v.eq_ignore_ascii_case("FAULT"))
+                    {
+                        let mut failed = receipt();
+                        failed.vm_state = "FAULT".into();
+                        failed.exception = execution
+                            .get("exception")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned);
+                        return Ok(failed);
+                    }
+                    neo_os_chain_n3::tx::assert_halt_execution(
+                        id,
+                        hash,
+                        execution,
+                        "fulfillRequest",
+                    )
+                    .map_err(|e| format!("terminal: {e}"))?;
+                    return Ok(receipt());
+                }
+            }
+        }
+        if let Some(expiry) = signed.get("valid_until_block").and_then(Value::as_u64) {
+            if rpc.get_block_count().map_err(|e| e.to_string())? as u64 > expiry {
+                // No application log does not prove the old transaction never
+                // landed. Preserve the bytes and require evidence to reconcile.
+                return observe_expired_n3(config, signed, transport).map_err(|error| {
+                    format!("terminal: N3 transaction {hash} expired without confirmation; {error}")
+                });
+            }
+        }
+        journal.ensure_lease()?;
+        let accepted = rpc.send_raw_transaction(raw).map_err(|e| e.to_string())?;
+        if !accepted {
+            return Err("Neo N3 RPC rejected the re-broadcast transaction".into());
+        }
+        Ok(())
+    } else {
+        return Err("unsupported journal chain".into());
+    };
+    if let Err(error) = broadcast {
+        let lower = error.to_ascii_lowercase();
+        if !lower.contains("already") && !lower.contains("duplicate") {
+            return Err(error);
+        }
+    }
+    Err(format!("delivery pending confirmation: {hash}"))
 }
 
 fn prepare_in_enclave<T, N>(
@@ -869,11 +1339,253 @@ mod tests {
 
     struct NoWait;
 
+    struct TestJournal(Mutex<Value>);
+    impl DeliveryJournal for TestJournal {
+        fn get(&self, stage: &str) -> Option<Value> {
+            self.0.lock().unwrap().get(stage).cloned()
+        }
+        fn persist(&self, stage: &str, value: Value) -> Result<(), String> {
+            self.0.lock().unwrap()[stage] = value;
+            Ok(())
+        }
+        fn ensure_lease(&self) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn resumed_signed_delivery_only_observes_and_resends_identical_bytes() {
+        let journal = TestJournal(Mutex::new(
+            json!({"signed":{"chain":"neo_n3","request_id":"42","tx_hash":"0xabc","raw":"signed-original"}}),
+        ));
+        let transport = ScriptedTransport::new(vec![
+            (200, json!({"result":{"executions":[]}})),
+            (200, json!({"result":true})),
+        ]);
+        let pending = deliver_event_journaled(
+            &config(),
+            "neo_n3",
+            &event(),
+            &transport,
+            &FixedNonce(9),
+            &NoWait,
+            &journal,
+        )
+        .unwrap_err();
+        assert!(pending.contains("pending confirmation"));
+        let calls = transport.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert!(calls[0].1.contains("getapplicationlog"));
+        assert!(calls[1].1.contains("signed-original"));
+        drop(calls);
+        // Re-open the serialized durable record, without any process-local
+        // processed cache, compute reply or custody state.
+        let restored = TestJournal(Mutex::new(
+            serde_json::from_str(&journal.0.lock().unwrap().to_string()).unwrap(),
+        ));
+        let observed = ScriptedTransport::new(vec![(
+            200,
+            json!({"result":{"executions":[{"vmstate":"HALT"}]}}),
+        )]);
+        let receipt = deliver_event_journaled(
+            &config(),
+            "neo_n3",
+            &event(),
+            &observed,
+            &FixedNonce(999),
+            &NoWait,
+            &restored,
+        )
+        .unwrap();
+        assert_eq!(receipt.tx_hash, "0xabc");
+        assert_eq!(observed.calls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn lost_lease_refuses_even_a_previously_signed_broadcast() {
+        struct LostLease;
+        impl DeliveryJournal for LostLease {
+            fn get(&self, _: &str) -> Option<Value> {
+                panic!("must check lease before reading stages")
+            }
+            fn persist(&self, _: &str, _: Value) -> Result<(), String> {
+                panic!("no writes after lease lost")
+            }
+            fn ensure_lease(&self) -> Result<(), String> {
+                Err("delivery lease lost".into())
+            }
+        }
+        let transport = ScriptedTransport::new(vec![]);
+        assert!(deliver_event_journaled(
+            &config(),
+            "neo_n3",
+            &event(),
+            &transport,
+            &FixedNonce(9),
+            &NoWait,
+            &LostLease
+        )
+        .unwrap_err()
+        .contains("lease lost"));
+        assert!(transport.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn journal_commit_failure_prevents_all_broadcast_or_confirmation_requests() {
+        struct FailedCommit;
+        impl DeliveryJournal for FailedCommit {
+            fn get(&self, _: &str) -> Option<Value> {
+                None
+            }
+            fn persist(&self, stage: &str, _: Value) -> Result<(), String> {
+                assert_eq!(stage, "signed");
+                Err("database commit failed".into())
+            }
+            fn ensure_lease(&self) -> Result<(), String> {
+                Ok(())
+            }
+        }
+        let transport = ScriptedTransport::new(vec![]);
+        let error = persist_and_publish(
+            &config(),
+            "neo_n3",
+            &transport,
+            &FailedCommit,
+            &json!({"chain":"neo_n3","raw":"signed","tx_hash":"0xabc"}),
+        )
+        .unwrap_err();
+        assert!(error.contains("commit failed"));
+        assert!(transport.calls.lock().unwrap().is_empty());
+    }
+
     impl Waiter for NoWait {
         fn now_ms(&self) -> u64 {
             1_000
         }
         fn sleep(&self, _ms: u64) {}
+    }
+    impl EvmWaiter for NoWait {
+        fn now_ms(&self) -> u64 {
+            1000
+        }
+        fn sleep(&self, _: std::time::Duration) {}
+    }
+
+    #[test]
+    fn feed_and_xcm_resume_prepared_signed_bytes_without_host_or_custody_calls() {
+        let stage =
+            json!({"chain":"neo_n3","request_id":"feed","tx_hash":"0xabc","raw":"original-signed"});
+        let journal = TestJournal(Mutex::new(
+            json!({"prepared":{"signed_delivery":stage,"feed_response":{"rounds":[1]}}}),
+        ));
+        let transport = ScriptedTransport::new(vec![(
+            200,
+            json!({"result":{"executions":[{"vmstate":"HALT"}]}}),
+        )]);
+        let receipt = crate::feed_sync::deliver_feed_journaled(
+            &config(),
+            "neo_n3",
+            &Value::Null,
+            &transport,
+            &NoWait,
+            &FixedNonce(4),
+            &journal,
+        )
+        .unwrap();
+        assert_eq!(receipt.tx_hash, "0xabc");
+        assert_eq!(transport.calls.lock().unwrap().len(), 1);
+        let msg = crate::xcm::CrossChainMessage::new("neox", "neo_n3", 1, vec![1, 2, 3]);
+        let event = json!({"source_chain":"neox","dest_chain":"neo_n3","nonce":1,"payload_hex":"010203","commitment":msg.commitment()});
+        let journal = TestJournal(Mutex::new(
+            json!({"prepared":{"signed_delivery":stage,"message":msg}}),
+        ));
+        let transport = ScriptedTransport::new(vec![(
+            200,
+            json!({"result":{"executions":[{"vmstate":"HALT"}]}}),
+        )]);
+        let receipt = crate::xcm_lane::relay_xcm_journaled(
+            &config(),
+            &event,
+            &transport,
+            &FixedNonce(5),
+            &NoWait,
+            &journal,
+        )
+        .unwrap();
+        assert_eq!(receipt.tx_hash, "0xabc");
+        assert_eq!(transport.calls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn n3_expiry_needs_two_matching_archive_absence_observations() {
+        let mut config = config();
+        config.raw["neo_n3"]["reconciliationArchiveRpcUrls"] =
+            json!(["https://archive-a.example", "https://archive-b.example"]);
+        let signed = json!({"request_id":"42","tx_hash":"0xabc","valid_until_block":100});
+        let hash = format!("0x{}", "a".repeat(64));
+        let responses = vec![
+            (200, json!({"result":102})),
+            (200, json!({"result":hash})),
+            (
+                200,
+                json!({"error":{"code":-103,"message":"Unknown transaction"}}),
+            ),
+            (200, json!({"result":103})),
+            (200, json!({"result":hash})),
+            (
+                200,
+                json!({"error":{"code":-103,"message":"Unknown transaction"}}),
+            ),
+        ];
+        let receipt =
+            observe_expired_n3(&config, &signed, &ScriptedTransport::new(responses)).unwrap();
+        assert_eq!(receipt.vm_state, "EXPIRED_UNSEEN");
+        config.raw["neo_n3"]["reconciliationArchiveRpcUrls"] = json!(["https://archive-a.example"]);
+        assert!(observe_expired_n3(&config, &signed, &ScriptedTransport::new(vec![])).is_err());
+    }
+
+    #[test]
+    fn settled_request_reconciles_from_bound_chain_state_without_compute_or_signing() {
+        let vector: Value = serde_json::from_str(include_str!(
+            "../../../crates/neo-os-chain-evm/tests/vectors/get_request.json"
+        ))
+        .unwrap();
+        let transport = ScriptedTransport::new(vec![(200, json!({"result":vector["encoded"]}))]);
+        let journal = TestJournal(Mutex::new(json!({})));
+        let receipt = deliver_event_journaled(
+            &config(),
+            "neox",
+            &event(),
+            &transport,
+            &FixedNonce(4),
+            &NoWait,
+            &journal,
+        )
+        .unwrap();
+        assert_eq!(receipt.vm_state, "RECONCILED");
+        assert!(receipt.tx_hash.is_empty());
+        assert_eq!(receipt.onchain_state.as_ref().unwrap()["request_id"], "42");
+        assert_eq!(transport.calls.lock().unwrap().len(), 1);
+        let mut fields = vec![json!({"type":"Integer","value":"0"}); 14];
+        fields[0] = json!({"type":"Integer","value":"42"});
+        fields[10] = json!({"type":"Integer","value":"1700000000000"});
+        let transport = ScriptedTransport::new(vec![(
+            200,
+            json!({"result":{"state":"HALT","stack":[{"type":"Array","value":fields}]}}),
+        )]);
+        let receipt = deliver_event_journaled(
+            &config(),
+            "neo_n3",
+            &event(),
+            &transport,
+            &FixedNonce(4),
+            &NoWait,
+            &journal,
+        )
+        .unwrap();
+        assert_eq!(receipt.vm_state, "RECONCILED");
+        assert!(receipt.tx_hash.is_empty());
+        assert_eq!(transport.calls.lock().unwrap().len(), 1);
     }
 
     struct ScriptedTransport {

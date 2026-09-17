@@ -219,13 +219,31 @@ pub fn list_builtin_providers() -> Json {
             "kernel_supports": ["oracle.fetch", "feed.publish"],
             "auth": "none",
         },
+        {
+            "id": "coingecko",
+            "category": "market-data",
+            "description": "CoinGecko simple-price market data source for supported crypto assets. No API key is sent by the worker.",
+            "supports": ["oracle", "datafeed"],
+            "kernel_supports": ["oracle.fetch", "feed.publish"],
+            "auth": "none",
+        },
+        {
+            "id": "coinpaprika",
+            "category": "market-data",
+            "description": "CoinPaprika ticker market data source for supported crypto assets. No API key is sent by the worker.",
+            "supports": ["oracle", "datafeed"],
+            "kernel_supports": ["oracle.fetch", "feed.publish"],
+            "auth": "none",
+        },
     ])
 }
 
-const FEED_PROVIDER_PREFIXES: [(&str, &str); 3] = [
+const FEED_PROVIDER_PREFIXES: [(&str, &str); 5] = [
     ("TWELVEDATA:", "twelvedata"),
     ("BINANCE-SPOT:", "binance-spot"),
     ("COINBASE-SPOT:", "coinbase-spot"),
+    ("COINGECKO:", "coingecko"),
+    ("COINPAPRIKA:", "coinpaprika"),
 ];
 
 fn matched_feed_prefix(normalized: &str) -> Option<&'static str> {
@@ -563,6 +581,46 @@ fn build_coinbase_spot_request(payload: &Json, provider: &str) -> ProviderReques
     }
 }
 
+fn crypto_provider_id(payload: &Json, default_pair: &str, ids: &[(&str, &str)]) -> Result<(String, String), String> {
+    let params = coerce_provider_params(
+        &payload
+            .get("provider_params")
+            .cloned()
+            .unwrap_or(Json::Null),
+    );
+    let fallback_pair = js_first_truthy(payload, &["symbol"])
+        .cloned()
+        .or_else(|| js_first_truthy(&params, &["pair"]).cloned())
+        .unwrap_or(Json::String(default_pair.to_string()));
+    let pair = {
+        let stripped = strip_provider_prefix_from_pair_symbol(&fallback_pair);
+        if stripped.is_empty() { default_pair.to_string() } else { stripped }
+    };
+    let id = js_trim_string(Some(
+        &js_first_truthy(&params, &["id"])
+            .cloned()
+            .or_else(|| js_first_truthy(payload, &["provider_symbol"]).cloned())
+            .unwrap_or(Json::Null),
+    ));
+    let id = if id.is_empty() {
+        ids.iter().find(|(candidate, _)| *candidate == pair).map(|(_, id)| id.to_string()).unwrap_or_default()
+    } else { id };
+    if id.is_empty() { return Err(format!("provider does not support {pair}")); }
+    Ok((pair.replace('_', "-").to_uppercase(), id))
+}
+
+fn build_coingecko_request(payload: &Json, provider: &str) -> Result<ProviderRequestSpec, String> {
+    let (pair, id) = crypto_provider_id(payload, "NEO-USD", &[("NEO-USD", "neo"), ("GAS-USD", "gas")])?;
+    let mut url = Url::parse("https://api.coingecko.com/api/v3/simple/price").map_err(|_| "Invalid URL".to_string())?;
+    url.query_pairs_mut().append_pair("ids", &id).append_pair("vs_currencies", "usd");
+    Ok(ProviderRequestSpec { provider: provider.to_string(), pair, method: "GET".to_string(), url: url.to_string(), headers: Vec::new(), body: None, auth_mode: "none".to_string() })
+}
+
+fn build_coinpaprika_request(payload: &Json, provider: &str) -> Result<ProviderRequestSpec, String> {
+    let (pair, id) = crypto_provider_id(payload, "NEO-USD", &[("NEO-USD", "neo-neo"), ("GAS-USD", "gas-gas")])?;
+    Ok(ProviderRequestSpec { provider: provider.to_string(), pair, method: "GET".to_string(), url: format!("https://api.coinpaprika.com/v1/tickers/{id}"), headers: Vec::new(), body: None, auth_mode: "none".to_string() })
+}
+
 /// `buildProviderRequest(payload)` — `Ok(None)` when no provider is named,
 /// `Err` for unknown builtin providers.
 pub fn build_provider_request(
@@ -599,6 +657,8 @@ pub fn build_provider_request(
         "twelvedata" => build_twelvedata_request(payload, &provider, env).map(Some),
         "binance-spot" => build_binance_spot_request(payload, &provider, env).map(Some),
         "coinbase-spot" => Ok(Some(build_coinbase_spot_request(payload, &provider))),
+        "coingecko" => build_coingecko_request(payload, &provider).map(Some),
+        "coinpaprika" => build_coinpaprika_request(payload, &provider).map(Some),
         other => Err(format!("unknown builtin provider: {other}")),
     }
 }

@@ -685,6 +685,11 @@ test('neodid bind returns deterministic master nullifier and ticket signature', 
   assert.match(first.master_nullifier, /^0x[0-9a-f]{64}$/);
   assert.match(first.metadata_hash, /^0x[0-9a-f]{64}$/);
   assert.match(first.digest, /^0x[0-9a-f]{64}$/);
+  assert.equal(first.binding_mode, 'commitment-v1');
+  assert.match(first.claim_commitment, /^0x[0-9a-f]{64}$/);
+  assert.match(first.commitment_digest, /^0x[0-9a-f]{64}$/);
+  assert.ok(first.commitment_signature);
+  assert.ok(first.commitment_public_key);
   assert.ok(first.signature);
   assert.ok(first.public_key);
 

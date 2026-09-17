@@ -1,18 +1,37 @@
-import { readFileSync, appendFileSync } from 'node:fs';
+import { readFileSync, appendFileSync, existsSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import path from 'node:path';
 import pkg from '@cityofzion/neon-js';
 const { sc, wallet, tx, u } = pkg;
-const RPCS = (
-  process.env.FEED_RPCS ||
-  'https://api.n3index.dev/mainnet,https://rpc10.n3.nspcc.ru:10331,https://mainnet1.neo.coz.io:443'
-)
-  .split(',')
-  .map((s) => s.trim());
-const GAS = 'd2a4cff31913016155e38e474a2c06d08be276cf';
-const UPDATER = '0x9fb28bdacfaa7fcc0a4d660d0dc990b0e7d46118';
+
+async function loadFeedNetworkLibrary() {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.join(here, 'lib-feed-network.mjs'),
+    path.join(process.cwd(), 'lib-feed-network.mjs'),
+    path.join(process.cwd(), 'deploy/feed-pusher/lib-feed-network.mjs'),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return import(pathToFileURL(candidate).href);
+  }
+  throw new Error(
+    'lib-feed-network.mjs is missing. Install it beside this script or under deploy/feed-pusher/ — do not copy only feed-topup.mjs'
+  );
+}
+
+const { resolveFeedNetwork, resolveFeedTopupPaths, selectRpcsMatchingMagic } =
+  await loadFeedNetworkLibrary();
+const FEED_TARGET = resolveFeedNetwork(process.env);
+const TOPUP_PATHS = resolveFeedTopupPaths(process.env);
+const CONFIGURED_RPCS = FEED_TARGET.rpcs;
+let RPCS = CONFIGURED_RPCS;
+const MAGIC = FEED_TARGET.magic,
+  GAS = 'd2a4cff31913016155e38e474a2c06d08be276cf';
+const UPDATER = '0x' + FEED_TARGET.updaterSh;
 const THRESHOLD = Number(process.env.TOPUP_THRESHOLD || 25),
   AMOUNT = Number(process.env.TOPUP_AMOUNT || 40);
-const LOG = '/opt/morpheus/nitro/feed-topup.log';
-const ENV_FILE = process.env.FEED_TOPUP_ENV_FILE || '/opt/morpheus/nitro/feed-topup.env';
+const LOG = TOPUP_PATHS.log;
+const ENV_FILE = TOPUP_PATHS.envFile;
 const env = {};
 // Keep this parser byte-identical with db-prune.mjs (each box script is deployed
 // as a standalone file): [A-Z0-9_] key charset + matched surrounding-quote strip.
@@ -109,6 +128,8 @@ async function bal(sh) {
   return Number(j.stack[0].value) / 1e8;
 }
 (async () => {
+  const selected = await selectRpcsMatchingMagic(CONFIGURED_RPCS, MAGIC);
+  RPCS = selected.matched;
   const key = await custodyRequest('GET', `/keys/${encodeURIComponent(FUNDER_KEY_ID)}`);
   const funderPublicKey = (key.public_key || '').trim();
   const funderScriptHash = (key.script_hash || '').trim().replace(/^0x/i, '').toLowerCase();

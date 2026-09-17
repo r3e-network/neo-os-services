@@ -6,9 +6,11 @@ import { RedisClientType } from 'redis';
 import { createClient } from 'redis';
 import { PriceSubscriptionsManager } from './subscriptions';
 import { TWAPCalculator } from './twap-calculator';
-import { getMetrics, subscriptionCountGauge } from './metrics';
+import { getMetrics } from './metrics';
 import { WebSocketServer } from 'ws';
 import type { Server as HttpServer } from 'http';
+import { createServer } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export class OracleAggregatorService {
   private redis: RedisClientType;
@@ -113,9 +115,7 @@ export class OracleAggregatorService {
 
   private startHTTPLServer(): void {
     // Simple HTTP server for health checks and metrics
-    const http = require('http');
-    
-    this.httpServer = http.createServer(async (req, res) => {
+    this.httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
       res.setHeader('Content-Type', 'application/json');
 
       if (req.url === '/health') {
@@ -134,7 +134,8 @@ export class OracleAggregatorService {
       }
     });
 
-    this.httpServer.listen(parseInt(process.env.METRICS_PORT || '9090'), () => {
+    const httpServer = this.httpServer;
+    httpServer.listen(parseInt(process.env.METRICS_PORT || '9090'), () => {
       console.log(`HTTP metrics server listening on port ${process.env.METRICS_PORT || 9090}`);
     });
   }
@@ -159,8 +160,11 @@ export class OracleAggregatorService {
       throw new Error(`No price data available for ${tokenPairId}`);
     }
 
-    const values = await Promise.all(keys.map(k => this.redis.get(k)));
-    return JSON.parse(values[0]!);
+    const firstKey = keys[0];
+    if (!firstKey) throw new Error(`No price data available for ${tokenPairId}`);
+    const value = await this.redis.get(firstKey);
+    if (!value) throw new Error(`Price data is empty for ${tokenPairId}`);
+    return JSON.parse(value);
   }
 
   /**
@@ -170,14 +174,18 @@ export class OracleAggregatorService {
     this.running = false;
 
     if (this.wsServer) {
-      this.wsServer.close();
+      const wsServer = this.wsServer;
+      this.wsServer = null;
+      await new Promise<void>((resolve) => wsServer.close(() => resolve()));
     }
 
     if (this.httpServer) {
-      this.httpServer.close();
+      const httpServer = this.httpServer;
+      this.httpServer = null;
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
     }
 
-    await this.redis.quit();
+    if (this.redis.isOpen) await this.redis.quit();
     
     console.log('Oracle Aggregator shutdown complete');
   }
@@ -193,7 +201,7 @@ export function getService(): OracleAggregatorService {
   return serviceInstance;
 }
 
-export async function initializeService(config: Parameters<typeof OracleAggregatorService.prototype.start>[0]): Promise<OracleAggregatorService> {
+export async function initializeService(config: { redisUrl: string }): Promise<OracleAggregatorService> {
   serviceInstance = new OracleAggregatorService(config);
   await serviceInstance.start();
   return serviceInstance;

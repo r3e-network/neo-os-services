@@ -349,7 +349,7 @@ fn session_finalize_fulfillment_uses_the_session_handler() {
         response["error"]
             .as_str()
             .expect("session error")
-            .contains("app_id must be one of"),
+            .contains("SEALED_KIND_UNSUPPORTED"),
         "{response}"
     );
     assert!(harness.bridge.forwards().is_empty());

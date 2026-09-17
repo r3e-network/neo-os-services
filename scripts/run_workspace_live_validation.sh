@@ -22,7 +22,7 @@ resolve_sibling_repo_root() {
   printf "%s\n" "$canonical_root"
 }
 
-AA_ROOT="${AA_ROOT:-$(resolve_sibling_repo_root neo-abstract-account)}"
+AA_ROOT="${AA_ROOT:-$(resolve_sibling_repo_root neo-os-aa)}"
 PLATFORM_ROOT="${PLATFORM_ROOT:-${MINIAPPS_ROOT:-$(resolve_sibling_repo_root neo-os-web)}}"
 
 run_services=1
@@ -78,7 +78,7 @@ Usage: scripts/run_workspace_live_validation.sh [--services-only|--aa-only|--pla
 
 Runs live testnet validation across the NeoOS workspace:
 - neo-os-services
-- neo-abstract-account
+- neo-os-aa
 - neo-os-web
 
 Compatibility aliases: --oracle-only, --miniapps-only, MINIAPPS_ROOT.

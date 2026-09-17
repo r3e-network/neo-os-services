@@ -31,6 +31,8 @@ use crate::js::{
 use crate::stable_stringify::stable_stringify;
 
 const NEODID_BINDING_DOMAIN: &[u8] = b"neodid-binding-v1";
+const NEODID_CLAIM_COMMITMENT_DOMAIN: &[u8] = b"neodid-claim-secret-v1";
+const NEODID_BINDING_COMMITMENT_DOMAIN: &[u8] = b"neodid-claim-commitment-v1";
 const NEODID_ACTION_DOMAIN: &[u8] = b"neodid-action-v1";
 const NEODID_RECOVERY_DOMAIN: &[u8] = b"neodid-recovery-v1";
 const NEODID_ZKLOGIN_DOMAIN: &[u8] = b"neodid-zklogin-v1";
@@ -427,6 +429,25 @@ pub fn compute_metadata_hash(metadata: Option<&Json>) -> String {
     }
 }
 
+/// Private claim commitment. The claim value is only an input to this digest;
+/// it is never part of the on-chain binding authorization preimage.
+fn compute_claim_commitment(
+    provider: &str,
+    provider_uid: &str,
+    claim_type: &str,
+    claim_value: &str,
+    salt: &[u8],
+) -> Result<String, String> {
+    let mut input = Vec::new();
+    input.extend_from_slice(NEODID_CLAIM_COMMITMENT_DOMAIN);
+    input.extend_from_slice(&encode_length_prefixed_ascii(provider)?);
+    input.extend_from_slice(&encode_length_prefixed_ascii(provider_uid)?);
+    input.extend_from_slice(&encode_length_prefixed_ascii(claim_type)?);
+    input.extend_from_slice(&encode_length_prefixed_ascii(claim_value)?);
+    input.extend_from_slice(salt);
+    Ok(hex_encode(&Sha256::digest(&input)))
+}
+
 /// `encodeLengthPrefixedAscii` — utf8 body, one length byte; > 255 throws.
 fn encode_length_prefixed_ascii(value: &str) -> Result<Vec<u8>, String> {
     let body = value.as_bytes();
@@ -627,6 +648,7 @@ struct BindingTicket {
     provider: String,
     claim_type: String,
     claim_value: String,
+    claim_commitment: String,
     master_nullifier: String,
     metadata_hash: String,
     network: String,
@@ -642,6 +664,22 @@ fn build_binding_digest_bytes(
     input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.provider)?);
     input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.claim_type)?);
     input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.claim_value)?);
+    input.extend_from_slice(&hex_decode_stop_at_invalid(&ticket.master_nullifier));
+    input.extend_from_slice(&hex_decode_stop_at_invalid(&ticket.metadata_hash));
+    input.extend_from_slice(&neo_n3_network_magic_le4(&ticket.network, env));
+    Ok(Sha256::digest(&input).into())
+}
+
+fn build_binding_commitment_digest_bytes(
+    ticket: &BindingTicket,
+    env: EnvReader<'_>,
+) -> Result<[u8; 32], String> {
+    let mut input = Vec::new();
+    input.extend_from_slice(NEODID_BINDING_COMMITMENT_DOMAIN);
+    input.extend_from_slice(&hex_bytes_0x(&ticket.vault_account));
+    input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.provider)?);
+    input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.claim_type)?);
+    input.extend_from_slice(&hex_decode_stop_at_invalid(&ticket.claim_commitment));
     input.extend_from_slice(&hex_decode_stop_at_invalid(&ticket.master_nullifier));
     input.extend_from_slice(&hex_decode_stop_at_invalid(&ticket.metadata_hash));
     input.extend_from_slice(&neo_n3_network_magic_le4(&ticket.network, env));
@@ -768,19 +806,30 @@ pub fn neodid_bind(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Result<Json, S
         provider: provider.clone(),
         claim_type: claim_type.clone(),
         claim_value: claim_value.clone(),
+        claim_commitment: compute_claim_commitment(
+            &provider,
+            &provider_uid,
+            &claim_type,
+            &claim_value,
+            &salt_bytes,
+        )?,
         master_nullifier: master_nullifier.clone(),
         metadata_hash: metadata_hash.clone(),
         network: network.clone(),
     };
     let digest_bytes = build_binding_digest_bytes(&ticket, io.env)?;
+    let commitment_digest_bytes = build_binding_commitment_digest_bytes(&ticket, io.env)?;
     Ok(json!({
+        "binding_mode": "commitment-v1",
         "vault_account": ticket.vault_account,
         "provider": ticket.provider,
         "claim_type": ticket.claim_type,
         "claim_value": ticket.claim_value,
+        "claim_commitment": format!("0x{}", ticket.claim_commitment),
         "master_nullifier": format!("0x{master_nullifier}"),
         "metadata_hash": format!("0x{metadata_hash}"),
         "digest": format!("0x{}", hex_encode(&digest_bytes)),
+        "commitment_digest": format!("0x{}", hex_encode(&commitment_digest_bytes)),
     }))
 }
 
@@ -1347,13 +1396,16 @@ mod tests {
         assert_keys(
             &result,
             &[
+                "binding_mode",
                 "vault_account",
                 "provider",
                 "claim_type",
                 "claim_value",
+                "claim_commitment",
                 "master_nullifier",
                 "metadata_hash",
                 "digest",
+                "commitment_digest",
             ],
         );
         assert_eq!(result["vault_account"], format!("0x{}", "11".repeat(20)));
@@ -1372,6 +1424,16 @@ mod tests {
         );
         // Testnet fallback magic (env unset) rides at the end of the preimage.
         assert_eq!(result["digest"], format!("0x{GOLDEN_BIND_DIGEST}"));
+        // Commitment-v1 golden from the Nitro worker implementation. The
+        // private claim domain and the on-chain binding domain are distinct.
+        assert_eq!(
+            result["claim_commitment"],
+            "0xbfb2467d287825542532cfb80e20df976eece730fb1fc5f93b50247593226256"
+        );
+        assert_eq!(
+            result["commitment_digest"],
+            "0x4ade82db86aeffadd0ef0c603c0e24ecb4d9ac182938710fffebe4b3cd3e7d51"
+        );
     }
 
     #[test]

@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     "workers/neo-signer",
     "workers/nitro-enclave-host",
-    "workers/morpheus-relater-rs",
     "crates/neo-os-core",
     "crates/neo-os-compute",
     "crates/nitro-attest",
@@ -18,7 +17,9 @@ members = [
 # The cross-repository CI job checks NeoNexus out here after this workspace's
 # own gates. Keep that standalone package outside this workspace so Cargo can
 # evaluate its manifest from the nested checkout exactly as CI invokes it.
-exclude = ["neo-nexus-contract"]
+# `workers/morpheus-relater-rs` is a retired heartbeat skeleton; excluding it
+# keeps cargo --workspace and measured Docker resolves off its unused graph.
+exclude = ["neo-nexus-contract", "workers/morpheus-relater-rs"]
 
 # Every member keeps `workers/` or `crates/` positioning without a package.json,
 # so npm's `workers/*` glob and the JS lint/format gates keep skipping them.

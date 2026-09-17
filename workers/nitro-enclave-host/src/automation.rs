@@ -174,7 +174,7 @@ fn run_nested(state: &AppState, execution: &AutomationExecution) -> DispatchOutc
         )),
         "/session/step" => crate::session::handle_session_step(state, &execution.execution_payload),
         "/session/finalize" => {
-            crate::session::handle_session_finalize(state, &execution.execution_payload)
+            crate::session::handle_session_finalize_kernel(state, &execution.execution_payload)
         }
         route => Err(http_error(
             400,

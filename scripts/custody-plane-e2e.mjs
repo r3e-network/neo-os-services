@@ -178,6 +178,7 @@ async function main() {
     const roleKeys = {};
     for (const [role, label] of [
       ['worker', 'e2e-worker'],
+      ['relayer', 'e2e-relayer'],
       ['updater', 'e2e-updater'],
       ['oracle_verifier', 'e2e-verifier'],
     ]) {
@@ -228,6 +229,7 @@ async function main() {
         SIGNER_SERVICE_URL: custody,
         SIGNER_SERVICE_TOKEN: hostCaller.body.token,
         SIGNER_ROLE_WORKER_KEY_ID: roleKeys.worker.key_id,
+        SIGNER_ROLE_RELAYER_KEY_ID: roleKeys.relayer.key_id,
         SIGNER_ROLE_UPDATER_KEY_ID: roleKeys.updater.key_id,
         SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID: roleKeys.oracle_verifier.key_id,
       },
@@ -320,17 +322,17 @@ async function main() {
       'the signature verifies under @noble p256 over SHA-256(data) — the neon-js byte contract'
     );
 
-    // -- 5. an unpinned role still fails closed ----------------------------
+    // -- 5. an unsupported role is rejected before any signer lookup --------
     const unpinned = await fetch(`${enclave}/sign/payload`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${hostToken}` },
-      body: JSON.stringify({ key_role: 'relayer', data_hex: DATA_MESSAGE.toString('hex') }),
+      body: JSON.stringify({ key_role: 'neox_updater', data_hex: DATA_MESSAGE.toString('hex') }),
     });
     const unpinnedBody = await unpinned.json();
-    check(unpinned.status === 503, 'an unpinned role answers the unconfigured 503', unpinnedBody);
+    check(unpinned.status === 400, 'an unsupported role is rejected', unpinnedBody);
     check(
-      unpinnedBody.error === 'relayer signer is not configured or does not match pinned identity',
-      "the unconfigured 503 keeps the merged server's message",
+      unpinnedBody.error === 'key_role must be one of oracle_verifier, updater, relayer, worker',
+      'the role allowlist error is explicit',
       unpinnedBody.error
     );
 

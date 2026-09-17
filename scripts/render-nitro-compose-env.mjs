@@ -3,7 +3,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseDotEnv } from './lib-env.mjs';
 import { findCredentialDomainCollisions } from './lib-credential-separation.mjs';
-import { NEO_N3_SIGNER_ENV_KEYS, resolvePinnedNeoN3RolePreferMatch } from './lib-neo-signers.mjs';
+import {
+  NEO_N3_SIGNER_ENV_KEYS,
+  getPinnedNeoN3Role,
+  resolvePinnedNeoN3RolePreferMatch,
+} from './lib-neo-signers.mjs';
 
 const repoRoot = process.cwd();
 const rootEnvPath = path.resolve(repoRoot, '.env');
@@ -576,7 +580,12 @@ const lines = [
   // role key ids through the custody service. The verifier value emitted here
   // is the PUBLIC key only (on-chain result verification); no WIF/private key
   // is ever rendered into a runtime env file.
-  line('MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY', verifierSigner.publicKey),
+  // The verifier identity is a public registry fact. It must remain stable
+  // even when local signer material is rejected during custody migration.
+  line(
+    'MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY',
+    getPinnedNeoN3Role(network, 'oracle_verifier')?.public_key || ''
+  ),
   line('SIGNER_SERVICE_URL', get('SIGNER_SERVICE_URL')),
   line('SIGNER_SERVICE_TOKEN', get('SIGNER_SERVICE_TOKEN')),
   line('SIGNER_ROLE_UPDATER_KEY_ID', get('SIGNER_ROLE_UPDATER_KEY_ID')),

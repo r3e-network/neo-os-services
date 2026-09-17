@@ -54,6 +54,13 @@
       "types": "./src/node-runtime.d.ts",
       "default": "./src/node-runtime.js"
     },
+    "./anchor-profit-policy": {
+      "types": "./src/anchor-profit-policy.d.ts",
+      "default": "./src/anchor-profit-policy.js"
+    },
+    "./anchor-profit-scheduler": {
+      "default": "./src/anchor-profit-scheduler.js"
+    },
     "./logger": {
       "types": "./src/logger/index.d.ts",
       "default": "./src/logger/index.js"

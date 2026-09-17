@@ -4,6 +4,7 @@ After=network-online.target morpheus-nitro-custody.service
 Wants=network-online.target morpheus-nitro-custody.service
 ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_FEE_TOPUP_COMPAT
 Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
+Before=morpheus-relayer.service morpheus-relayer-nitro.service
 # A failing topup is the leading indicator of the updater running dry, which is
 # exactly what killed the mainnet feed on 2026-07-29.
 OnFailure=morpheus-alert@%n.service
@@ -11,5 +12,8 @@ OnFailure=morpheus-alert@%n.service
 [Service]
 Type=oneshot
 Environment=NODE_ENV=production
+# WorkingDirectory must contain feed-topup.mjs AND lib-feed-network.mjs.
 WorkingDirectory=/opt/neoos/services/deploy/feed-pusher
-ExecStart=/usr/bin/node feed-topup.mjs
+# Exec-time pins keep a leftover FEED_NETWORK=testnet from writing the mainnet
+# topup log or reading the mainnet funding-key file.
+ExecStart=/usr/bin/env FEED_NETWORK=mainnet FEED_TOPUP_ENV_FILE=/opt/morpheus/nitro/feed-topup.env TOPUP_LOG=/opt/morpheus/nitro/feed-topup.log /usr/bin/node feed-topup.mjs

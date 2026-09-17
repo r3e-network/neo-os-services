@@ -1,0 +1,164 @@
+{
+  "hash": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
+  "manifest": {
+    "name": "MorpheusDataFeed",
+    "abi": {
+      "methods": [
+        {
+          "name": "_deploy",
+          "offset": 0,
+          "parameters": [
+            {
+              "name": "data",
+              "type": "Any"
+            },
+            {
+              "name": "update",
+              "type": "Boolean"
+            }
+          ],
+          "returntype": "Void",
+          "safe": false
+        },
+        {
+          "name": "admin",
+          "offset": 47,
+          "parameters": [],
+          "returntype": "Hash160",
+          "safe": true
+        },
+        {
+          "name": "updater",
+          "offset": 76,
+          "parameters": [],
+          "returntype": "Hash160",
+          "safe": true
+        },
+        {
+          "name": "setAdmin",
+          "offset": 261,
+          "parameters": [
+            {
+              "name": "newAdmin",
+              "type": "Hash160"
+            }
+          ],
+          "returntype": "Void",
+          "safe": false
+        },
+        {
+          "name": "setUpdater",
+          "offset": 351,
+          "parameters": [
+            {
+              "name": "updater",
+              "type": "Hash160"
+            }
+          ],
+          "returntype": "Void",
+          "safe": false
+        },
+        {
+          "name": "getPairCount",
+          "offset": 466,
+          "parameters": [],
+          "returntype": "Integer",
+          "safe": true
+        },
+        {
+          "name": "getPairByIndex",
+          "offset": 600,
+          "parameters": [
+            {
+              "name": "index",
+              "type": "Integer"
+            }
+          ],
+          "returntype": "String",
+          "safe": true
+        },
+        {
+          "name": "getAllPairs",
+          "offset": 668,
+          "parameters": [],
+          "returntype": "Array",
+          "safe": true
+        },
+        {
+          "name": "updateFeed",
+          "offset": 772,
+          "parameters": [
+            {
+              "name": "pair",
+              "type": "String"
+            },
+            {
+              "name": "roundId",
+              "type": "Integer"
+            },
+            {
+              "name": "price",
+              "type": "Integer"
+            },
+            {
+              "name": "timestamp",
+              "type": "Integer"
+            },
+            {
+              "name": "attestationHash",
+              "type": "ByteArray"
+            },
+            {
+              "name": "sourceSetId",
+              "type": "Integer"
+            }
+          ],
+          "returntype": "Void",
+          "safe": false
+        },
+        {
+          "name": "getLatest",
+          "offset": 1036,
+          "parameters": [
+            {
+              "name": "pair",
+              "type": "String"
+            }
+          ],
+          "returntype": "Array",
+          "safe": true
+        },
+        {
+          "name": "getAllFeedRecords",
+          "offset": 1083,
+          "parameters": [],
+          "returntype": "Array",
+          "safe": true
+        },
+        {
+          "name": "update",
+          "offset": 1173,
+          "parameters": [
+            {
+              "name": "nefFile",
+              "type": "ByteArray"
+            },
+            {
+              "name": "manifest",
+              "type": "String"
+            }
+          ],
+          "returntype": "Void",
+          "safe": false
+        },
+        {
+          "name": "_initialize",
+          "offset": 1192,
+          "parameters": [],
+          "returntype": "Void",
+          "safe": false
+        }
+      ]
+    }
+  }
+}

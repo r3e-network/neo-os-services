@@ -2,35 +2,31 @@
  * Generate PDF and CSV exports for transaction history
  */
 
-import { Document, Page, Text, View, Image } from '@pdfkit/pdfkit';
-import { parse } from 'csv-parse/sync';
-import { Readable } from 'stream';
-import { TransactionRecord } from '../types';
+import fs from 'node:fs';
+import PDFDocument from 'pdfkit';
+import { TransactionRecord } from './types';
+
+function csvCell(value: string): string {
+  return /[",\n\r]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
+}
 
 export function generateCSVExport(transactions: TransactionRecord[]): Buffer {
-  const csvString = JSON.stringify(transactions, null, 2);
-  
-  // Parse JSON to CSV format
-  const records = transactions.map(t => ({
-    timestamp: new Date(t.timestamp).toISOString(),
-    tokenIn: t.tokenIn,
-    tokenOut: t.tokenOut,
-    amountIn: t.amountIn,
-    amountOut: t.amountOut,
-    feeAmount: t.feeAmount,
-    hash: t.txHash,
-  }));
+  const headers = ['timestamp', 'tokenIn', 'tokenOut', 'amountIn', 'amountOut', 'feeAmount', 'hash'];
+  const rows = transactions.map((t) => [
+    new Date(t.timestamp).toISOString(),
+    t.tokenIn,
+    t.tokenOut,
+    t.amountIn,
+    t.amountOut,
+    t.feeAmount,
+    t.txHash ?? '',
+  ].map((value) => csvCell(value)));
 
-  const parser = parse(records, {
-    columns: true,
-    quoted: true,
-  });
-
-  return Buffer.from(parser.toString());
+  return Buffer.from([headers.map(csvCell).join(','), ...rows.map((row) => row.join(','))].join('\n') + '\n');
 }
 
 export function generatePDFExport(transactions: TransactionRecord[], outputPath: string): void {
-  const doc = new Document();
+  const doc = new PDFDocument({ autoFirstPage: true });
   
   // Cover page
   doc.fontSize(24).text('NeoSwap v2 Trading Activity Report', { align: 'center' });

@@ -1,0 +1,24 @@
+[Unit]
+Description=NeoOS Morpheus public-provider NEO/GAS feed writer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=morpheus
+Group=morpheus
+WorkingDirectory=/opt/neoos/services/workers/nitro-worker
+ExecStart=/usr/bin/flock -n /var/lib/morpheus/public-feed-writer.lock /usr/bin/node /opt/neoos/services/workers/nitro-worker/.neoos-live-feed-write.mjs --execute
+EnvironmentFile=/opt/morpheus/nitro/nitro-worker.env
+EnvironmentFile=/opt/morpheus/nitro/morpheus-relayer.env
+EnvironmentFile=/opt/morpheus/nitro/morpheus-nitro-signer.env
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/morpheus
+Environment=NODE_ENV=production
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

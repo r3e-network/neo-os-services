@@ -46,7 +46,7 @@ jobs:
       - run: npm ci
       - run: node --test scripts/release-gating.test.mjs scripts/check-rust-production-topology.test.mjs
       - run: npm run check:production-topology
-      - run: cargo fmt --all --check
+      - run: node scripts/check-rust-format.mjs
       - run: cargo clippy --locked --all-targets -p neo-signer -p nitro-enclave-host -p neo-os-relayer -- -D warnings
       - run: cargo test --locked --all-targets -p neo-signer -p nitro-enclave-host -p neo-os-relayer
 

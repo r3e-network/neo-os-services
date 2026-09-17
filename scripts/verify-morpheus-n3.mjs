@@ -10,6 +10,7 @@ import {
 } from './lib-neo-signers.mjs';
 import {
   detectMorpheusOracleInterface,
+  resolveCanonicalCallbackHash,
   resolveNetworkScopedValue,
   snapshotEnv,
   withRetries,
@@ -128,10 +129,7 @@ const rpcUrl = trimString(
 );
 const registryOracleHash =
   deployments?.neo_n3?.oracle_hash || registry.neo_n3?.contracts?.morpheus_oracle || '';
-const registryCallbackHash =
-  deployments?.neo_n3?.example_consumer_hash ||
-  registry.neo_n3?.contracts?.oracle_callback_consumer ||
-  '';
+const registryCallbackHash = resolveCanonicalCallbackHash({ registry, deployments });
 const candidateOracleHash = trimString(
   resolveNetworkScopedValue({
     network,

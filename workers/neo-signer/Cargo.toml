@@ -42,6 +42,7 @@ ed25519-dalek = { version = "3.0.0", features = ["rand_core"] }
 fs2 = "0.4.3"
 hex = "0.4"
 hkdf = "0.12"
+hmac = "0.12"
 k256 = { version = "0.13", features = ["ecdsa", "sha256"] }
 neo-os-core = { path = "../../crates/neo-os-core" }
 neo-os-chain-evm = { path = "../../crates/neo-os-chain-evm" }
@@ -51,12 +52,15 @@ p256 = { version = "0.13", features = ["ecdsa"] }
 prost = "0.13"
 rlp = "0.5"
 ripemd = "0.1"
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.37", features = ["bundled", "backup", "serialize"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+rsa = { version = "0.9", features = ["sha2"] }
 scrypt = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 sha3 = "0.10"
+time = { version = "0.3", features = ["parsing", "formatting"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync"] }
 tonic = { version = "0.12", features = ["transport"] }
 tracing = "0.1"
@@ -80,5 +84,9 @@ tonic-build = "0.12"
 # service whose tests can be blocked by a firewall.
 http-body-util = "0.1"
 http-body = "1"
+# Same pins as [build-dependencies]: proto identity regenerates SignClient
+# stubs without a system protoc.
+protoc-bin-vendored = "3"
 tempfile = "3"
+tonic-build = "0.12"
 tower = { version = "0.5", features = ["util"] }

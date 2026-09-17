@@ -7,6 +7,17 @@ describe('TWAPCalculator', () => {
 
   beforeEach(() => {
     calculator = new TWAPCalculator('redis://localhost:6379');
+    const store = new Map<string, string>();
+    (calculator as any).redis = {
+      keys: async (pattern: string) => [...store.keys()].filter((key) =>
+        pattern.endsWith('*') ? key.startsWith(pattern.slice(0, -1)) : key === pattern,
+      ),
+      get: async (key: string) => store.get(key) ?? null,
+      setEx: async (key: string, _ttl: number, value: string) => {
+        store.set(key, value);
+        return 'OK';
+      },
+    };
   });
 
   describe('calculateVolumeWeightedTWAP', () => {
@@ -52,12 +63,17 @@ describe('TWAPCalculator', () => {
 
   describe('queryPriceHistory', () => {
     it('should filter prices within time window', async () => {
-      // Mock Redis responses would go here
-      // For unit test, we mock the private method behavior
-      
       const startTime = Date.now() - 60000; // 1 minute ago
       const endTime = Date.now();
       const bucketSize = 60; // 1 second buckets
+
+      const redis = (calculator as any).redis;
+      await redis.setEx('price:NEO/USDT:source-a', 60, JSON.stringify({
+        price: '25', volume: '10', timestamp: endTime - 1000,
+      }));
+      await redis.setEx('price:NEO/USDT:source-b', 60, JSON.stringify({
+        price: '30', volume: '10', timestamp: endTime - 120000,
+      }));
 
       // This would call actual Redis in production
       const prices = await (calculator as any).queryPriceHistory(
@@ -67,13 +83,9 @@ describe('TWAPCalculator', () => {
         bucketSize
       );
 
-      // Verify structure (mock data may not return anything)
-      if (prices.length > 0) {
-        prices.forEach(p => {
-          expect(p.price).toBeInstanceOf(BigNumber);
-          expect(p.volume).toBeInstanceOf(BigNumber);
-        });
-      }
+      expect(prices).toHaveLength(1);
+      expect(prices[0]?.price).toBeInstanceOf(BigNumber);
+      expect(prices[0]?.volume).toBeInstanceOf(BigNumber);
     });
   });
 

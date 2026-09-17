@@ -15,8 +15,8 @@ UPSTASH_REDIS_REST_URL = "https://major-sawfish-77541.upstash.io"
 # serve. Apply only AFTER the gateway is live + DNS points runtime.meshmini.app at
 # the box (the runbook gates the order). Production accepts exactly one
 # confidential execution origin and never retries a credential across origins.
-MORPHEUS_MAINNET_EXECUTION_BASE_URL = "https://runtime.meshmini.app/mainnet"
-MORPHEUS_TESTNET_EXECUTION_BASE_URL = "https://runtime.meshmini.app/testnet"
+MORPHEUS_MAINNET_EXECUTION_BASE_URL = "https://runtime.neoos.network/mainnet"
+MORPHEUS_TESTNET_EXECUTION_BASE_URL = "https://runtime.neoos.network/testnet"
 # Feed lane RETIRED: /feeds/tick is a no-op at ingress (worker.mjs) because feeds
 # are pushed on-chain in-TEE by the box feed-pusher. The old
 # MORPHEUS_{MAINNET,TESTNET}_FEED_EXECUTION_BASE_URL pointed at the retired legacy
@@ -24,7 +24,7 @@ MORPHEUS_TESTNET_EXECUTION_BASE_URL = "https://runtime.meshmini.app/testnet"
 # there on every tick (a credential leak) — removed. Do NOT re-add a feed URL
 # without also re-enabling the lane and routing it at the in-TEE box.
 MORPHEUS_APP_BACKEND_URL = "https://neo-morpheus-oracle-web.vercel.app"
-MORPHEUS_CONTROL_PLANE_URL = "https://control.meshmini.app"
+MORPHEUS_CONTROL_PLANE_URL = "https://control.neoos.network"
 
 [[queues.producers]]
 binding = "MORPHEUS_ORACLE_REQUEST_QUEUE"
@@ -84,3 +84,7 @@ class_name = "AutomationExecuteWorkflow"
 [[routes]]
 pattern = "control.meshmini.app/*"
 zone_name = "meshmini.app"
+
+[[routes]]
+pattern = "control.neoos.network"
+custom_domain = true

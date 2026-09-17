@@ -31,7 +31,7 @@ const referenceHeavyStages =
 const referenceAllStages =
   args.has('--reference-all-stages') ||
   process.env.ATTACK_REGRESSION_REFERENCE_ALL_STAGES === '1';
-const aaRepoRoot = path.resolve(repoRoot, '..', 'neo-abstract-account');
+const aaRepoRoot = path.resolve(repoRoot, '..', 'neo-os-aa');
 const aaSdkRoot = path.resolve(aaRepoRoot, 'sdk/js');
 const aaSuiteLatestPath = path.resolve(
   aaRepoRoot,

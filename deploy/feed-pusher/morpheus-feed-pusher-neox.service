@@ -4,11 +4,17 @@ After=network-online.target
 Wants=network-online.target
 ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_FEED_PUSHER_COMPAT
 Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
+Before=morpheus-relayer.service morpheus-relayer-nitro.service
+OnFailure=morpheus-alert@%n.service
 [Service]
 Type=oneshot
 EnvironmentFile=/opt/morpheus/nitro/feed-pusher.env
 Environment=NODE_ENV=production
 # Neo X lane only - runs on a faster (2 min) cadence than Neo N3 (5 min).
 Environment=FEED_CHAINS=neox
+# WorkingDirectory must contain feed-pusher.mjs, lib-feed-network.mjs, and
+# lib-feed-writer-metrics.mjs.
 WorkingDirectory=/opt/neoos/services/deploy/feed-pusher
-ExecStart=/usr/bin/node feed-pusher.mjs
+# Exec-time pins: leftover FEED_NETWORK / FEED_CHAINS / PUSH_* in the shared
+# env file cannot retarget this Neo X lane or collide with N3 / testnet state.
+ExecStart=/usr/bin/env FEED_NETWORK=mainnet FEED_CHAINS=neox PUSH_LOG=/opt/morpheus/nitro/feed-pusher-neox.log PUSH_STATUS=/opt/morpheus/nitro/feed-pusher-neox-status.json MISSING_STATE=/opt/morpheus/nitro/feed-pusher-neox-missing.json PUSH_PROM_TEXTFILE= /usr/bin/node feed-pusher.mjs

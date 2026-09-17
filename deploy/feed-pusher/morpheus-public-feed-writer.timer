@@ -1,0 +1,11 @@
+[Unit]
+Description=Run NeoOS Morpheus public-provider NEO/GAS feed writer
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+Persistent=true
+Unit=morpheus-public-feed-writer.service
+
+[Install]
+WantedBy=timers.target

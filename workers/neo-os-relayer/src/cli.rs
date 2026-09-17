@@ -21,6 +21,12 @@ const CLI_MODES: &[&str] = &[
     "serve:metrics",
     "config:validate",
     "config:dump",
+    "health",
+    "delivery:import",
+    "delivery:replay",
+    "delivery:resolve-legacy",
+    "delivery:reconcile",
+    "delivery:rescan",
 ];
 
 fn validate_cli_mode(mode: &str) -> Result<(), String> {
@@ -82,6 +88,128 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = create_relayer_config().map_err(std::io::Error::other)?;
 
     match mode {
+        "delivery:rescan" => {
+            let chain = args
+                .get(2)
+                .ok_or("rescan requires chain, from, to")?
+                .clone();
+            let from = args.get(3).ok_or("rescan from required")?.parse::<u64>()?;
+            let to = args.get(4).ok_or("rescan to required")?.parse::<u64>()?;
+            let config = config.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                crate::durable_v2::rescan(
+                    &config,
+                    &chain,
+                    from,
+                    to,
+                    &crate::transport::RelayerHttpTransport::new(),
+                )
+            })
+            .await?
+            .map_err(std::io::Error::other)?;
+            println!("{result}");
+        }
+        "delivery:reconcile" => {
+            let key = args
+                .get(2)
+                .ok_or("reconcile requires job_key, actor and reason")?
+                .clone();
+            let actor = args.get(3).ok_or("reconcile actor required")?.clone();
+            let reason = args
+                .get(4)
+                .ok_or("reconcile evidence reason required")?
+                .clone();
+            let config = config.clone();
+            tokio::task::spawn_blocking(move || -> Result<(), String> {
+                let transport = crate::transport::RelayerHttpTransport::new();
+                let client = crate::durable_v2::client(&config, &transport)?;
+                let store = neo_os_relayer_store::delivery::DeliveryStore { client: &client };
+                let job = store.lookup(&key, now_ms() as u64)?;
+                let hash = job
+                    .journal
+                    .pointer("/signed/tx_hash")
+                    .or_else(|| job.journal.pointer("/legacy/tx_hash"))
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|v| !v.is_empty())
+                    .ok_or("no recorded transaction hash; use evidence-based legacy resolution")?;
+                let receipt = match crate::delivery::observe_existing_transaction(
+                    &config, &job.chain, hash, &transport,
+                ) {
+                    Ok(receipt) => receipt,
+                    Err(error) if job.chain == "neo_n3" => crate::delivery::observe_expired_n3(
+                        &config,
+                        job.journal.get("signed").ok_or(error)?,
+                        &transport,
+                    )?,
+                    Err(error) => return Err(error),
+                };
+                store.reconcile(
+                    &job,
+                    serde_json::to_value(receipt).map_err(|e| e.to_string())?,
+                    &actor,
+                    &reason,
+                    now_ms() as u64,
+                )
+            })
+            .await?
+            .map_err(std::io::Error::other)?;
+            println!("{}", serde_json::json!({"reconciled":true}));
+        }
+        "delivery:import" => {
+            let path = args
+                .get(2)
+                .ok_or("delivery:import requires a JSON job-export file")?;
+            let rows: Vec<serde_json::Value> =
+                serde_json::from_str(&std::fs::read_to_string(path)?)?;
+            let config = config.clone();
+            let count = tokio::task::spawn_blocking(move || {
+                crate::durable_v2::import_legacy_rows(
+                    &config,
+                    &rows,
+                    &crate::transport::RelayerHttpTransport::new(),
+                )
+            })
+            .await?
+            .map_err(std::io::Error::other)?
+            .len();
+            println!(
+                "{}",
+                serde_json::json!({"imported":count,"prior_execution":"quarantined until reconciliation"})
+            );
+        }
+        "delivery:replay" | "delivery:resolve-legacy" => {
+            let key = args
+                .get(2)
+                .ok_or("delivery replay requires job_key, actor and reason")?
+                .clone();
+            let actor = args.get(3).ok_or("delivery replay actor required")?.clone();
+            let reason = args
+                .get(4)
+                .ok_or("delivery replay reason/evidence reference required")?
+                .clone();
+            let resolve = mode == "delivery:resolve-legacy";
+            let config = config.clone();
+            tokio::task::spawn_blocking(move || {
+                let transport = crate::transport::RelayerHttpTransport::new();
+                let client = crate::durable_v2::client(&config, &transport)?;
+                neo_os_relayer_store::delivery::DeliveryStore { client: &client }.replay(
+                    &key,
+                    &actor,
+                    &reason,
+                    resolve,
+                    now_ms() as u64,
+                )
+            })
+            .await?
+            .map_err(std::io::Error::other)?;
+            println!("{}", serde_json::json!({"requeued":true}));
+        }
+        "health" => {
+            println!(
+                "{}",
+                crate::relayer::runtime_health(&config).map_err(std::io::Error::other)?
+            );
+        }
         "loop" => {
             run_relayer_loop(&config).await?;
         }

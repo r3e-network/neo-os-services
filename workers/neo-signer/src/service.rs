@@ -51,6 +51,7 @@ use crate::{
     audit::{self, GuardRejection, Refusal},
     auth::{self, AccessRejection, CallerCredentials},
     crypto,
+    durable::{self, DurableState, DurableStatus},
     evm_tx::{self, EvmIntent, UnsignedEvmTransaction},
     metrics,
     model::{
@@ -256,6 +257,10 @@ pub struct SignerService {
     /// the cloned service also orders policy edits, caller revocation and key
     /// kill-switch changes against signing.
     decision_lock: Arc<Mutex<()>>,
+    /// Covers one complete externally observable operation, including the
+    /// remote durable commit that follows the local decision.
+    operation_lock: Arc<Mutex<()>>,
+    durable: Option<Arc<DurableState>>,
 }
 
 /// Which bytes a signing request covers, and whether value moved afterwards.
@@ -358,7 +363,78 @@ impl SignerService {
             repository,
             master_key: Arc::new(master_key),
             decision_lock: Arc::new(Mutex::new(())),
+            operation_lock: Arc::new(Mutex::new(())),
+            durable: None,
         }
+    }
+
+    /// Attach a state machine created from an authenticated HEAD and lease.
+    /// Production transports must then use [`Self::execute_observable`] for
+    /// every operation that can reveal a result.
+    pub fn with_durable_state(mut self, durable: Arc<DurableState>) -> Self {
+        self.durable = Some(durable);
+        self
+    }
+
+    pub fn durable_status(&self) -> Option<DurableStatus> {
+        self.durable.as_ref().map(|durable| durable.status())
+    }
+
+    /// Ask the remote authority to renew the exact current lease. A local
+    /// timestamp is insufficient for health because takeover may already have
+    /// fenced this process at the coordinator.
+    pub fn verify_durable_lease(&self) -> Result<Option<crate::durable::AuthorityHead>> {
+        self.durable
+            .as_ref()
+            .map(|durable| durable.verify_remote_lease())
+            .transpose()
+    }
+
+    /// Run one complete transport operation and commit the resulting SQLite
+    /// state before its result can be serialized or handed to SignClient.
+    pub fn execute_observable<T>(
+        &self,
+        action: SignerAuditAction,
+        key_id: Option<&str>,
+        call: impl FnOnce() -> Result<Outcome<T>>,
+    ) -> Result<Outcome<T>> {
+        let _operation = self.operation_lock.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "the signer operation lock is poisoned; restart and restore before serving"
+            )
+        })?;
+        if let Some(durable) = &self.durable {
+            durable.ensure_ready()?;
+        }
+
+        let result = call();
+        if let Err(error) = &result {
+            let audit = self.repository.record_signer_audit(&SignerAuditRecord {
+                id: 0,
+                recorded_at_unix: now_unix().unwrap_or_default(),
+                action,
+                outcome: SignerAuditOutcome::Failed,
+                caller_id: None,
+                key_id: key_id.map(str::to_owned),
+                tx_id: None,
+                reason: Some("signer-service-failed".to_string()),
+                detail: Some(error.to_string().chars().take(1_000).collect()),
+                origin: None,
+            });
+            if let Err(audit_error) = audit {
+                if let Some(durable) = &self.durable {
+                    durable.fence("the transport failure audit could not be persisted");
+                }
+                return Err(audit_error).context("failed to persist the transport failure audit");
+            }
+        }
+        if let Some(durable) = &self.durable {
+            durable.commit(
+                &self.repository,
+                durable::operation_digest(action.label(), key_id),
+            )?;
+        }
+        result
     }
 
     /// Build the service for a workspace, resolving the master key against
@@ -593,31 +669,35 @@ impl SignerService {
             Ok(caller) => caller,
             Err(refusal) => return Ok(Outcome::Refused(refusal)),
         };
-        if self.custody_row(id)?.is_none() {
-            return self.deny(credentials, &caller, action, Some(id), &unknown_key(id));
-        }
-        self.repository.set_signer_key_disabled(id, disabled)?;
-        let key = self.repository.get_signer_key(id)?;
-        self.record_entry(admin_entry(
-            credentials,
-            &caller,
-            action,
-            Some(id.to_string()),
-            format!(
-                "{} ({}) {}",
-                key.address(),
-                key.label,
-                if disabled {
-                    "switched off"
-                } else {
-                    "switched on"
-                }
-            ),
-        )?)?;
-        match identity(&key) {
-            Err(refusal) => self.deny(credentials, &caller, action, Some(id), &refusal),
-            Ok(info) => Ok(Outcome::Allowed(info)),
-        }
+        let mut key = match self.custody_row(id)? {
+            Some(key) => key,
+            None => return self.deny(credentials, &caller, action, Some(id), &unknown_key(id)),
+        };
+        key.disabled = disabled;
+        let info = match identity(&key) {
+            Err(refusal) => return self.deny(credentials, &caller, action, Some(id), &refusal),
+            Ok(info) => info,
+        };
+        self.repository.record_signer_management(
+            crate::store::ManagementChange::DisableKey(id, disabled),
+            &admin_entry(
+                credentials,
+                &caller,
+                action,
+                Some(id.to_string()),
+                format!(
+                    "{} ({}) {}",
+                    key.address(),
+                    key.label,
+                    if disabled {
+                        "switched off"
+                    } else {
+                        "switched on"
+                    }
+                ),
+            )?,
+        )?;
+        Ok(Outcome::Allowed(info))
     }
 
     /// Drop a key. Its audit rows and ledger rows survive deliberately — see
@@ -641,14 +721,16 @@ impl SignerService {
                 )
             }
         };
-        self.repository.delete_signer_key(id)?;
-        self.record_entry(admin_entry(
-            credentials,
-            &caller,
-            SignerAuditAction::KeyDeleted,
-            Some(id.to_string()),
-            format!("{} ({}) released from custody", key.address(), key.label),
-        )?)?;
+        self.repository.record_signer_management(
+            crate::store::ManagementChange::DeleteKey(id),
+            &admin_entry(
+                credentials,
+                &caller,
+                SignerAuditAction::KeyDeleted,
+                Some(id.to_string()),
+                format!("{} ({}) released from custody", key.address(), key.label),
+            )?,
+        )?;
         Ok(Outcome::Allowed(()))
     }
 
@@ -721,14 +803,15 @@ impl SignerService {
             stored.chain_family = Some(ChainFamily::NeoX);
             stored.evm_chain_id = Some(key.chain_id);
         }
-        self.repository
-            .save_signer_policy(id, &stored, now_unix()?)?;
-        self.record_entry(SignerAuditRecord {
-            origin: credentials.origin_label(),
-            caller_id: Some(caller.id),
-            key_id: Some(id.to_string()),
-            ..entry(SignerAuditAction::PolicySaved, policy_summary(&stored))?
-        })?;
+        self.repository.record_signer_management(
+            crate::store::ManagementChange::SavePolicy(id, &stored),
+            &SignerAuditRecord {
+                origin: credentials.origin_label(),
+                caller_id: Some(caller.id),
+                key_id: Some(id.to_string()),
+                ..entry(SignerAuditAction::PolicySaved, policy_summary(&stored))?
+            },
+        )?;
         Ok(Outcome::Allowed(stored))
     }
 
@@ -813,12 +896,14 @@ impl SignerService {
             disabled: false,
         }
         .normalized();
-        self.repository.create_signer_caller(&created)?;
-        self.record_entry(SignerAuditRecord {
-            origin: credentials.origin_label(),
-            caller_id: Some(caller.id),
-            ..entry(SignerAuditAction::CallerCreated, caller_summary(&created))?
-        })?;
+        self.repository.record_signer_management(
+            crate::store::ManagementChange::CreateCaller(&created),
+            &SignerAuditRecord {
+                origin: credentials.origin_label(),
+                caller_id: Some(caller.id),
+                ..entry(SignerAuditAction::CallerCreated, caller_summary(&created))?
+            },
+        )?;
         Ok(Outcome::Allowed((CallerInfo::from(&created), token)))
     }
 
@@ -907,12 +992,14 @@ impl SignerService {
             disabled: false,
         }
         .normalized();
-        self.repository.create_signer_caller(&created)?;
-        self.record_entry(SignerAuditRecord {
-            origin: credentials.origin_label(),
-            caller_id: Some(caller.id),
-            ..entry(SignerAuditAction::CallerCreated, caller_summary(&created))?
-        })?;
+        self.repository.record_signer_management(
+            crate::store::ManagementChange::CreateCaller(&created),
+            &SignerAuditRecord {
+                origin: credentials.origin_label(),
+                caller_id: Some(caller.id),
+                ..entry(SignerAuditAction::CallerCreated, caller_summary(&created))?
+            },
+        )?;
         Ok(Outcome::Allowed(CallerInfo::from(&created)))
     }
 
@@ -953,13 +1040,14 @@ impl SignerService {
             );
         }
         let token = auth::generate_token();
-        self.repository
-            .set_signer_caller_digest(id, &auth::token_digest(&token))?;
-        self.record_entry(SignerAuditRecord {
-            origin: credentials.origin_label(),
-            caller_id: Some(caller.id),
-            ..entry(SignerAuditAction::CallerRotated, rotated.label)?
-        })?;
+        self.repository.record_signer_management(
+            crate::store::ManagementChange::RotateCaller(id, &auth::token_digest(&token)),
+            &SignerAuditRecord {
+                origin: credentials.origin_label(),
+                caller_id: Some(caller.id),
+                ..entry(SignerAuditAction::CallerRotated, rotated.label)?
+            },
+        )?;
         Ok(Outcome::Allowed(token))
     }
 
@@ -980,23 +1068,26 @@ impl SignerService {
             Ok(caller) => caller,
             Err(refusal) => return Ok(Outcome::Refused(refusal)),
         };
-        if self.caller_row(id)?.is_none() {
-            return self.deny(credentials, &caller, action, None, &unknown_caller(id));
-        }
-        self.repository.set_signer_caller_disabled(id, disabled)?;
-        let updated = self.repository.get_signer_caller(id)?;
-        self.record_entry(SignerAuditRecord {
-            origin: credentials.origin_label(),
-            caller_id: Some(caller.id),
-            ..entry(
-                action,
-                format!(
-                    "{} {}",
-                    updated.label,
-                    if disabled { "disabled" } else { "enabled" }
-                ),
-            )?
-        })?;
+        let mut updated = match self.caller_row(id)? {
+            Some(caller) => caller,
+            None => return self.deny(credentials, &caller, action, None, &unknown_caller(id)),
+        };
+        updated.disabled = disabled;
+        self.repository.record_signer_management(
+            crate::store::ManagementChange::DisableCaller(id, disabled),
+            &SignerAuditRecord {
+                origin: credentials.origin_label(),
+                caller_id: Some(caller.id),
+                ..entry(
+                    action,
+                    format!(
+                        "{} {}",
+                        updated.label,
+                        if disabled { "disabled" } else { "enabled" }
+                    ),
+                )?
+            },
+        )?;
         Ok(Outcome::Allowed(CallerInfo::from(&updated)))
     }
 
@@ -1019,15 +1110,17 @@ impl SignerService {
                 )
             }
         };
-        self.repository.delete_signer_caller(id)?;
-        self.record_entry(SignerAuditRecord {
-            origin: credentials.origin_label(),
-            // The acting caller, not the one being deleted: the row answers "who
-            // did this", and naming the retired caller would read as if it had
-            // retired itself.
-            caller_id: Some(caller.id),
-            ..entry(SignerAuditAction::CallerDeleted, deleted.label)?
-        })?;
+        self.repository.record_signer_management(
+            crate::store::ManagementChange::DeleteCaller(id),
+            &SignerAuditRecord {
+                origin: credentials.origin_label(),
+                // The acting caller, not the one being deleted: the row answers "who
+                // did this", and naming the retired caller would read as if it had
+                // retired itself.
+                caller_id: Some(caller.id),
+                ..entry(SignerAuditAction::CallerDeleted, deleted.label)?
+            },
+        )?;
         Ok(Outcome::Allowed(()))
     }
 
@@ -2950,21 +3043,20 @@ impl SignerService {
             created_at_unix: now_unix()?,
             disabled: false,
         };
-        self.repository.create_signer_key(&key)?;
-        // Written before the identity is derived, not after: a key in custody with
-        // no row saying it arrived is the exact gap this service exists to close,
-        // so the record cannot be the thing that fails.
-        self.record_entry(admin_entry(
-            credentials,
-            caller,
-            action,
-            Some(key.id.clone()),
-            format!("{} sealed into custody", key.address()),
-        )?)?;
         let info = match identity(&key) {
             Ok(info) => info,
             Err(refusal) => return self.deny(credentials, caller, action, Some(&key.id), &refusal),
         };
+        self.repository.record_signer_management(
+            crate::store::ManagementChange::CreateKey(&key),
+            &admin_entry(
+                credentials,
+                caller,
+                action,
+                Some(key.id.clone()),
+                format!("{} sealed into custody", key.address()),
+            )?,
+        )?;
         Ok(Outcome::Allowed(info))
     }
 }
@@ -3119,16 +3211,6 @@ fn unsigned_256_to_i128(bytes: &[u8; 32]) -> Option<i128> {
 /// the database directly — painful and visible on purpose, because the
 /// alternative is a credentialless path that always works.
 pub fn provision_admin_caller(repository: &Store, label: &str) -> Result<(CallerInfo, String)> {
-    let existing = repository.list_signer_callers()?;
-    if existing
-        .iter()
-        .any(|caller| caller.has_capability(CallerCapability::Admin))
-    {
-        anyhow::bail!(
-            "this vault already has an admin caller; provision a second one through the \
-             management API so the change is attributed and audited"
-        );
-    }
     let token = auth::generate_token();
     let caller = SignerCaller {
         id: format!("caller-{}", Uuid::new_v4()),
@@ -3144,14 +3226,16 @@ pub fn provision_admin_caller(repository: &Store, label: &str) -> Result<(Caller
         disabled: false,
     }
     .normalized();
-    repository.create_signer_caller(&caller)?;
-    repository.record_signer_audit(&SignerAuditRecord {
-        caller_id: Some(caller.id.clone()),
-        ..entry(
-            SignerAuditAction::CallerCreated,
-            format!("{} (provisioned)", caller_summary(&caller)),
-        )?
-    })?;
+    repository.record_signer_management(
+        crate::store::ManagementChange::BootstrapAdmin(&caller),
+        &SignerAuditRecord {
+            caller_id: Some(caller.id.clone()),
+            ..entry(
+                SignerAuditAction::CallerCreated,
+                format!("{} (provisioned)", caller_summary(&caller)),
+            )?
+        },
+    )?;
     Ok((CallerInfo::from(&caller), token))
 }
 

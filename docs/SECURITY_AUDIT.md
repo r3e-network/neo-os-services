@@ -116,7 +116,7 @@ Before a production release, verify:
 5. Callback, relayer, paymaster, and txproxy allowlists are reviewed against the intended deployment contracts.
 6. Any live smoke tests use dedicated testnet funds/accounts and do not reuse production signer material.
 7. `cargo audit --ignore RUSTSEC-2023-0071` reports no other vulnerability.
-8. `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
+8. `npm run format:rust:check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
    and `cargo test --workspace --all-targets --locked` pass under Rust 1.98.0.
 9. `npm run check:rust-migration`, documentation coverage, worker/relayer/ops/script
    suites, custody-plane E2E, the NeoNexus real-process contract, and gitleaks pass.

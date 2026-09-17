@@ -62,7 +62,7 @@ export function engineHashOfFile(file) {
 // source). Loading verifies each module's live hash against this table; a
 // mismatch (tamper / un-reviewed edit) rejects the engine.
 export const ENGINE_MANIFEST = Object.freeze({
-  'miniapp-sudoku': '679aea4220667dec0e921eb364392f7983dae440a3aa9e43a215a4d054ab58c8',
+  'miniapp-sudoku': '8d9ed338a95211be2cf2b92e09fe9e6b4cf8085295eb272359fe8dac8a5bb8a6',
   'miniapp-game-2048': '9625b729f6bf9ce2cfc3849fd62cb8cbd9b4af1a05f2a56caba0d67d2b966fef',
   'miniapp-flappy-dash': '401bb3de1c04a8b20c18d35a9f0750f33647361060884f275d6954d3c74c2b1c',
   'miniapp-snake-bounty': 'fda503867ba9592db786de45a9be1e1ae8125f57d2d7eaddcbf5f5251dabe06a',

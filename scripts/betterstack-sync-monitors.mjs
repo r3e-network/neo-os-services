@@ -47,14 +47,14 @@ const desired = [
   },
   {
     pronounceable_name: 'morpheus-aa-home',
-    url: 'https://neo-abstract-account.vercel.app/',
+    url: 'https://aa.neoos.network/',
     monitor_type: 'expected_status_code',
     expected_status_codes: [200],
     check_frequency: 300,
   },
   {
     pronounceable_name: 'morpheus-aa-identity',
-    url: 'https://neo-abstract-account.vercel.app/identity',
+    url: 'https://aa.neoos.network/identity',
     monitor_type: 'expected_status_code',
     expected_status_codes: [200],
     check_frequency: 300,

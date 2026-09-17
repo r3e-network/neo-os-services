@@ -246,6 +246,14 @@ fn run(
             crate::session::handle_session_finalize(state, &payload)
         }
 
+        Target::SessionSettle => {
+            // This route is intentionally absent from the public capability
+            // table; only the authenticated relay bearer may reach it.
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+            let payload = parse_body(body)?;
+            crate::session::handle_session_finalize_kernel(state, &payload)
+        }
+
         Target::AutomationExecute => {
             assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
             let payload = parse_body(body)?;

@@ -58,6 +58,8 @@ COPY crates/neo-os-chain-evm ./crates/neo-os-chain-evm
 COPY crates/neo-os-relayer-store ./crates/neo-os-relayer-store
 COPY crates/neo-os-service-runtime ./crates/neo-os-service-runtime
 COPY workers/neo-os-relayer ./workers/neo-os-relayer
+COPY config/networks/mainnet.json config/networks/mainnet.json
+COPY config/networks/testnet.json config/networks/testnet.json
 RUN cargo build --locked --release -p neo-os-relayer --bin neo-os-relayer
 
 FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171

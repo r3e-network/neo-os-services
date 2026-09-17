@@ -4,7 +4,13 @@ import { normalizeProviderId } from './providers.js';
 const FEED_PAIR_ALIASES = {
   'OIL-USD': 'WTI-USD',
 };
-const KNOWN_FEED_PROVIDER_PREFIXES = ['TWELVEDATA:', 'BINANCE-SPOT:', 'COINBASE-SPOT:'];
+const KNOWN_FEED_PROVIDER_PREFIXES = [
+  'TWELVEDATA:',
+  'BINANCE-SPOT:',
+  'COINBASE-SPOT:',
+  'COINGECKO:',
+  'COINPAPRIKA:',
+];
 
 /**
  * Pairs retired from every active registry, with the reason. Mirrors
@@ -39,12 +45,16 @@ export const DEFAULT_FEED_PAIRS = {
     providers: {
       twelvedata: { symbol: 'NEO/USD' },
       'binance-spot': { symbol: 'NEOUSDT' },
+      coingecko: { id: 'neo' },
+      coinpaprika: { id: 'neo-neo' },
     },
   },
   'GAS-USD': {
     providers: {
       twelvedata: { symbol: 'GAS/USD' },
       'binance-spot': { symbol: 'GASUSDT' },
+      coingecko: { id: 'gas' },
+      coinpaprika: { id: 'gas-gas' },
     },
   },
   'BTC-USD': {
@@ -207,6 +217,8 @@ const DEFAULT_SOURCE_SET_IDS = {
   twelvedata: 1,
   'binance-spot': 2,
   'coinbase-spot': 3,
+  coingecko: 4,
+  coinpaprika: 5,
 };
 
 function deepMerge(base, override) {

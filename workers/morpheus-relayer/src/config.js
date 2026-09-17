@@ -174,12 +174,21 @@ export function resolveNeoN3NetworkMagic(network, registry) {
   const genericMagic = parseBoolean(env('ALLOW_GENERIC_NEO_NETWORK_MAGIC'), false)
     ? env('NEO_NETWORK_MAGIC')
     : '';
-  return Number(
-    scopedMagic ||
-      registry.neo_n3?.network_magic ||
-      genericMagic ||
-      (network === 'mainnet' ? 860833102 : 894710606)
-  );
+  const registryMagic = Number(registry?.neo_n3?.network_magic);
+  const configuredMagic = scopedMagic || genericMagic;
+
+  // The reviewed workspace registry is the authority for network identity.
+  // Environment values are accepted only as a consistency assertion; allowing
+  // them to win lets a mistyped production env sign for another network.
+  if (Number.isSafeInteger(registryMagic) && registryMagic > 0) {
+    if (configuredMagic && Number(configuredMagic) !== registryMagic) {
+      throw new Error(
+        `Neo N3 network magic conflicts with reviewed ${network} registry identity`,
+      );
+    }
+    return registryMagic;
+  }
+  return Number(configuredMagic || (network === 'mainnet' ? 860833102 : 894710606));
 }
 
 function parseIntegerString(value, fallback) {

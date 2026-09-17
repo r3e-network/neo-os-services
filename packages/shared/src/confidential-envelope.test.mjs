@@ -35,7 +35,7 @@ import {
 const sharedVector = JSON.parse(
   await readFile(
     new URL(
-      '../../../crates/morpheus-compute/tests/vectors/confidential-envelope-v2-client.json',
+      '../../../crates/neo-os-compute/tests/vectors/confidential-envelope-v2-client.json',
       import.meta.url
     ),
     'utf8'

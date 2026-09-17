@@ -4,7 +4,7 @@
  */
 
 import WebSocket, { WebSocketServer } from 'ws';
-import { createClient } from 'ioredis';
+import Redis from 'ioredis';
 import { Mutex } from 'async-mutex';
 import { 
   activeConnectionsGauge, 
@@ -19,31 +19,72 @@ interface ClientInfo {
   ws: WebSocket;
   id: string;
   subscribedTokens: Set<string>;
-  subscriptions: Map<string, () => void>;
+  subscriptions: Map<string, { quit: () => Promise<unknown> }>;
   createdAt: number;
+}
+
+interface RedisLike {
+  status?: string;
+  connect?: () => Promise<unknown>;
+  quit: () => Promise<unknown>;
+  publish: (channel: string, message: string) => Promise<unknown>;
+  subscribe?: (channel: string, callback: (message: string) => void) => Promise<unknown> | unknown;
+  unsubscribe?: (channel: string) => Promise<unknown> | unknown;
+  duplicate?: () => RedisLike;
+  on?: (event: string, listener: (...args: unknown[]) => void) => unknown;
+}
+
+interface PriceFeedDependencies {
+  redis?: RedisLike;
+  calculateTWAP?: (tokenPair: string) => Promise<number>;
 }
 
 export class PriceFeedServer {
   private wss: WebSocketServer;
   private clients: Map<string, ClientInfo> = new Map();
-  private redis: any;
+  private redis: RedisLike;
   private mutex: Mutex = new Mutex();
   private queueSize: number = 0;
+  private readonly ownsWebSocketServer: boolean;
+  private readonly twapProvider?: (tokenPair: string) => Promise<number>;
+  private metricsTimer?: ReturnType<typeof setInterval>;
+  private shutdownStarted = false;
   
-  constructor(port: number = parseInt(process.env.WS_PORT || '8081')) {
-    this.wss = new WebSocketServer({ port });
+  constructor(
+    portOrServer: number | WebSocketServer = parseInt(process.env.WS_PORT || '8081'),
+    dependencies: PriceFeedDependencies = {},
+  ) {
+    this.ownsWebSocketServer = typeof portOrServer === 'number';
+    this.wss = typeof portOrServer === 'number'
+      ? new WebSocketServer({ port: portOrServer })
+      : portOrServer;
+    this.twapProvider = dependencies.calculateTWAP;
     
-    // Connect to Redis for pub/sub
-    this.redis = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
-    this.connectRedis();
+    // Use an injected client in tests and create a lazy ioredis client in production.
+    // ioredis does not expose node-redis's createClient({ url }) API.
+    this.redis = (dependencies.redis ?? new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+      lazyConnect: true,
+      maxRetriesPerRequest: 2,
+    })) as unknown as RedisLike;
+    if (!dependencies.redis) void this.connectRedis();
     
     this.initializeWebSocketHandlers();
     this.startMetricsCleanup();
   }
 
   private async connectRedis(): Promise<void> {
-    await this.redis.connect();
-    console.log('Price Feed Server: Redis connected');
+    try {
+      this.redis.on?.('error', (error: unknown) => {
+        console.error('Price Feed Server: Redis error', error);
+      });
+      if (this.redis.connect && this.redis.status !== 'ready') {
+        await this.redis.connect();
+      }
+      console.log('Price Feed Server: Redis connected');
+    } catch (error) {
+      // Keep the feed alive for health/read-only connections, but never claim Redis is ready.
+      console.error('Price Feed Server: Redis connection failed', error);
+    }
   }
 
   private initializeWebSocketHandlers(): void {
@@ -73,6 +114,10 @@ export class PriceFeedServer {
     connectionCountCounter.inc({ status: 'connected' });
     
     console.log(`Connected client: ${clientId}`);
+    ws.send(JSON.stringify({
+      type: 'health_check',
+      payload: { sources: {}, lastUpdate: Date.now() },
+    }));
     
     // Handle messages
     ws.on('message', async (data: WebSocket.Data) => {
@@ -85,7 +130,7 @@ export class PriceFeedServer {
         ws.send(JSON.stringify({ type: 'error', message: 'Invalid request' }));
       }
       
-      latencyHistogram.observe((Date.now() - opStartTime) / 1000, 'message_processing');
+      latencyHistogram.observe({ operation: 'message_processing' }, (Date.now() - opStartTime) / 1000);
     });
     
     // Handle disconnect
@@ -110,7 +155,7 @@ export class PriceFeedServer {
         break;
         
       case 'request_twap':
-        await this.requestTWAP(message.tokenPair);
+        await this.requestTWAP(clientId, message.tokenPair);
         break;
         
       default:
@@ -132,7 +177,7 @@ export class PriceFeedServer {
           client.subscribedTokens.add(token);
           
           // Subscribe to Redis channel
-          const subscriber = await this.redis.subscribe(`token:${token}`, (msg: string) => {
+          const subscriber = await this.openSubscription(`token:${token}`, (msg: string) => {
             if (client && client.ws.readyState === WebSocket.OPEN) {
               client.ws.send(msg);
               messageThroughputCounter.inc({ type: 'price_update' });
@@ -151,6 +196,39 @@ export class PriceFeedServer {
     } finally {
       release();
     }
+  }
+
+  private async openSubscription(
+    channel: string,
+    callback: (message: string) => void,
+  ): Promise<{ quit: () => Promise<unknown> }> {
+    if (!this.redis.subscribe) throw new Error('Redis subscription is unavailable');
+
+    // ioredis requires a dedicated connection after SUBSCRIBE. Reusing the
+    // command connection would make subsequent PUBLISH/GET calls invalid.
+    if (this.redis.duplicate) {
+      const subscriber = this.redis.duplicate();
+      subscriber.on?.('error', (error: unknown) => {
+        console.error('Price Feed Server: Redis subscriber error', error);
+      });
+      if (subscriber.connect && subscriber.status !== 'ready') await subscriber.connect();
+      const subscribe = subscriber.subscribe;
+      if (!subscribe) throw new Error('Redis subscriber is unavailable');
+      await subscribe.call(subscriber, channel, callback);
+      return { quit: () => subscriber.quit() };
+    }
+
+    const subscribe = this.redis.subscribe;
+    if (!subscribe) throw new Error('Redis subscription is unavailable');
+    const result = await subscribe.call(this.redis, channel, callback);
+    if (result && typeof result === 'object' && 'quit' in result && typeof result.quit === 'function') {
+      return result as { quit: () => Promise<unknown> };
+    }
+    return {
+      quit: async () => {
+        if (this.redis.unsubscribe) await this.redis.unsubscribe(channel);
+      },
+    };
   }
 
   private async unsubscribe(clientId: string, tokens: string[]): Promise<void> {
@@ -178,13 +256,12 @@ export class PriceFeedServer {
     }
   }
 
-  private async requestTWAP(tokenPair: string): Promise<void> {
+  private async requestTWAP(clientId: string, tokenPair: string): Promise<void> {
     const release = await this.mutex.acquire();
     try {
       // Query TWAP from Oracle Aggregator service
       const twapValue = await this.calculateTWAP(tokenPair);
       
-      const clientId = Array.from(this.clients.keys())[0]; // For now, send to first client
       const client = this.clients.get(clientId);
       
       if (client?.ws.readyState === WebSocket.OPEN) {
@@ -195,16 +272,28 @@ export class PriceFeedServer {
           timestamp: Date.now(),
         }));
       }
+    } catch (error) {
+      const client = this.clients.get(clientId);
+      if (client?.ws.readyState === WebSocket.OPEN) {
+        client.ws.send(JSON.stringify({
+          type: 'error',
+          message: `TWAP calculation failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+        }));
+      }
     } finally {
       release();
     }
   }
 
   private async calculateTWAP(tokenPair: string): Promise<number> {
-    // Mock calculation - in production would call Oracle Aggregator
-    const samples = Math.random() * 10 + 20;
-    const average = parseFloat((samples * Math.random()).toFixed(6));
-    return average;
+    if (!this.twapProvider) {
+      throw new Error(`TWAP provider is not configured for ${tokenPair}`);
+    }
+    const value = await this.twapProvider(tokenPair);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error('TWAP provider returned an invalid value');
+    }
+    return value;
   }
 
   /**
@@ -237,7 +326,7 @@ export class PriceFeedServer {
       messageThroughputCounter.inc({ type: 'broadcast' });
       
       const duration = (Date.now() - startTimestamp) / 1000;
-      latencyHistogram.observe(duration, 'broadcast');
+      latencyHistogram.observe({ operation: 'broadcast' }, duration);
       
     } finally {
       this.queueSize++;
@@ -250,7 +339,7 @@ export class PriceFeedServer {
 
   private startMetricsCleanup(): void {
     // Clean up stale clients every 5 minutes
-    setInterval(() => {
+    this.metricsTimer = setInterval(() => {
       const now = Date.now();
       for (const [id, client] of this.clients.entries()) {
         // Remove clients inactive for > 30 minutes
@@ -261,9 +350,12 @@ export class PriceFeedServer {
         }
       }
     }, 5 * 60 * 1000);
+    this.metricsTimer.unref?.();
   }
 
   async shutdown(): Promise<void> {
+    if (this.shutdownStarted) return;
+    this.shutdownStarted = true;
     console.log('Shutting down Price Feed Server...');
     
     // Close all connections gracefully
@@ -272,12 +364,23 @@ export class PriceFeedServer {
     }
     
     // Shutdown Redis
-    await this.redis.quit();
+    if (this.metricsTimer) clearInterval(this.metricsTimer);
+
+    if (this.redis?.quit) {
+      try {
+        await this.redis.quit();
+      } catch (error) {
+        console.error('Price Feed Server: Redis shutdown failed', error);
+      }
+    }
     
     // Close WebSocket server
-    await new Promise<void>((resolve) => {
-      this.wss.close(() => resolve());
-    });
+    if (this.ownsWebSocketServer) {
+      await new Promise<void>((resolve) => {
+        if (this.wss.address() === null) return resolve();
+        this.wss.close(() => resolve());
+      });
+    }
     
     console.log('Price Feed Server shut down complete');
   }

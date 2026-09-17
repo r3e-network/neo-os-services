@@ -7,6 +7,26 @@ describe('PathfindingEngine', () => {
 
   beforeEach(() => {
     engine = new PathfindingEngine();
+    engine.setPools([
+      {
+        id: 'pool-a',
+        tokenIn: 'token-a',
+        tokenOut: 'token-b',
+        reserveIn: '10000000',
+        reserveOut: '10000000',
+        liquidity: '10000000',
+        feeTier: 30,
+      },
+      {
+        id: 'pool-b',
+        tokenIn: 'token-a',
+        tokenOut: 'token-b',
+        reserveIn: '8000000',
+        reserveOut: '12000000',
+        liquidity: '10000000',
+        feeTier: 30,
+      },
+    ]);
   });
 
   afterEach(() => {

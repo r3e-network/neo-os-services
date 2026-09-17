@@ -23,6 +23,8 @@ apply flag and network.
 - `npm run upgrade:datafeed:n3` (read-only dry-run; broadcast requires
   `node scripts/upgrade-morpheus-datafeed.mjs --apply --network testnet|mainnet`)
 - `npm run audit:feeds -- --network mainnet`
+- `npm run audit:feeds:health` (read-only 6-hour SLO + root-cause report; see `docs/FEED-HEALTH-AUDIT.md`)
+- TestNet per-pair `updateFeed` writer (not a live write until deployed): `docs/TESTNET-FEED-WRITER.md`
 - `npm run backfill:feeds -- --network mainnet`
 
 ### Runtime env rendering
@@ -60,6 +62,8 @@ checked-in engine parity goldens still run.
 
 ## Validation Suites
 
+- `npm run format:rust:check` (handwritten rustfmt plus generated proto/schema identity; see `docs/RUST-FORMAT-GATE.md`)
+- `npm run check:cargo-lock-provenance` (retired-graph deny-list plus documented leftover lock upgrades)
 - `npm run verify:repo`
 - `bash scripts/run-neo-nexus-signer-contract.sh` (requires a sibling
   `neo-nexus` checkout or `NEO_NEXUS_DIR`; owns a disposable signer/vault)

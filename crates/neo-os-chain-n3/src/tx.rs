@@ -129,6 +129,7 @@ impl Default for BroadcastOptions<'_> {
 pub struct BroadcastReceipt {
     pub tx_hash: String,
     pub signed_base64: String,
+    pub valid_until_block: u32,
 }
 
 /// `publicKeyFromSignedWitness`: the pinned verification script carries the
@@ -244,6 +245,26 @@ pub fn build_sign_and_broadcast<T: HttpTransport, N: NonceSource>(
     script: &[u8],
     options: &BroadcastOptions<'_>,
 ) -> Result<BroadcastReceipt, String> {
+    let signed = build_and_sign(client, custody, signer, nonce_source, script, options)?;
+    let accepted = client
+        .send_raw_transaction(&signed.signed_base64)
+        .map_err(|error| error.to_string())?;
+    if !accepted {
+        return Err("Neo N3 sendrawtransaction rejected the signed transaction".into());
+    }
+    Ok(signed)
+}
+
+/// Prepare the exact bytes without broadcasting. Durable callers must persist
+/// this receipt before asking any RPC node to accept the transaction.
+pub fn build_and_sign<T: HttpTransport, N: NonceSource>(
+    client: &NeoRpcClient<T>,
+    custody: &CustodyClient<T>,
+    signer: &CustodySigner,
+    nonce_source: &N,
+    script: &[u8],
+    options: &BroadcastOptions<'_>,
+) -> Result<BroadcastReceipt, String> {
     let signer_hash = normalize_hash160(&signer.script_hash);
     if signer_hash.is_empty() {
         return Err("invalid signer script hash".to_string());
@@ -345,12 +366,10 @@ pub fn build_sign_and_broadcast<T: HttpTransport, N: NonceSource>(
             .as_slice(),
     );
     let tx_hash = final_tx.hash_display();
-    client
-        .send_raw_transaction(&signed_base64)
-        .map_err(|error| error.to_string())?;
     Ok(BroadcastReceipt {
         tx_hash,
         signed_base64,
+        valid_until_block,
     })
 }
 
@@ -409,7 +428,7 @@ pub fn confirm_fulfill_execution<T: HttpTransport, W: Waiter>(
     timeout_ms: u64,
     throw_on_timeout: bool,
 ) -> Result<VmOutcome, String> {
-    let deadline = waiter.now_ms() + timeout_ms;
+    let deadline = waiter.now_ms().saturating_add(timeout_ms);
     let mut last_error: Option<String> = None;
     loop {
         match client.get_application_log(tx_hash) {
@@ -545,9 +564,10 @@ pub fn read_gas_balance<T: HttpTransport>(
     let text = match &stack_value {
         Value::String(text) => text.clone(),
         Value::Number(number) => number.to_string(),
-        _ => "0".to_string(),
+        _ => return Err("Neo N3 GAS balance read returned no numeric value".to_string()),
     };
-    Ok(text.parse::<u128>().unwrap_or(0))
+    text.parse::<u128>()
+        .map_err(|_| "Neo N3 GAS balance read returned an invalid numeric value".to_string())
 }
 
 /// sendNeoN3GasTransfer: the GAS `transfer` script + the shared broadcast

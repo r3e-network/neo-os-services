@@ -61,24 +61,24 @@ impl CrossChainMessage {
     /// Format: `[source_len:u32][source][dest_len:u32][dest][nonce:u64][payload_len:u64][payload]`
     pub fn encode_canonical(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        
+
         // Source chain: length-prefixed UTF-8
         let source_bytes = self.source_chain.as_bytes();
         out.extend_from_slice(&(source_bytes.len() as u32).to_be_bytes());
         out.extend_from_slice(source_bytes);
-        
+
         // Destination chain: length-prefixed UTF-8
         let dest_bytes = self.dest_chain.as_bytes();
         out.extend_from_slice(&(dest_bytes.len() as u32).to_be_bytes());
         out.extend_from_slice(dest_bytes);
-        
+
         // Nonce: big-endian u64
         out.extend_from_slice(&self.nonce.to_be_bytes());
-        
+
         // Payload: length-prefixed bytes
         out.extend_from_slice(&(self.payload.len() as u64).to_be_bytes());
         out.extend_from_slice(&self.payload);
-        
+
         out
     }
 
@@ -204,7 +204,7 @@ impl CrossChainMessage {
                 self.source_chain
             ));
         }
-        
+
         // Reject control characters and null bytes in chain identifiers
         for (name, chain) in [
             ("source", &self.source_chain),
@@ -214,7 +214,7 @@ impl CrossChainMessage {
                 return Err(format!("{name} chain contains control characters"));
             }
         }
-        
+
         Ok(())
     }
 
@@ -238,8 +238,8 @@ mod tests {
     fn message_encode_decode_roundtrip() {
         let msg = CrossChainMessage::new("neo_n3", "neox", 42, vec![1, 2, 3, 4]);
         let canonical = msg.encode_canonical();
-        let decoded = CrossChainMessage::decode_canonical(&canonical)
-            .expect("decode should succeed");
+        let decoded =
+            CrossChainMessage::decode_canonical(&canonical).expect("decode should succeed");
         assert_eq!(msg, decoded);
     }
 
@@ -248,7 +248,7 @@ mod tests {
         let msg1 = CrossChainMessage::new("neo_n3", "neox", 1, vec![0xff]);
         let msg2 = CrossChainMessage::new("neo_n3", "neox", 1, vec![0xff]);
         assert_eq!(msg1.commitment(), msg2.commitment());
-        
+
         let msg3 = CrossChainMessage::new("neo_n3", "neox", 2, vec![0xff]);
         assert_ne!(msg1.commitment(), msg3.commitment());
     }
@@ -266,7 +266,7 @@ mod tests {
     fn message_validation_rejects_empty_chains() {
         let msg = CrossChainMessage::new("", "neox", 1, vec![]);
         assert!(msg.validate().is_err());
-        
+
         let msg = CrossChainMessage::new("neo_n3", "", 1, vec![]);
         assert!(msg.validate().is_err());
     }
@@ -349,8 +349,7 @@ mod tests {
     fn message_json_roundtrip() {
         let msg = CrossChainMessage::new("neox", "neo_n3", 999, b"hello".to_vec());
         let json = msg.to_json_value();
-        let decoded = CrossChainMessage::from_json_value(&json)
-            .expect("JSON roundtrip");
+        let decoded = CrossChainMessage::from_json_value(&json).expect("JSON roundtrip");
         assert_eq!(msg, decoded);
     }
 }

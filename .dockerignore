@@ -31,6 +31,11 @@ test-results
 # the builder stage to rebuild it anyway, and it is hundreds of megabytes.
 target
 **/target
+# Retired heartbeat skeleton: excluded from the Cargo workspace and never
+# compiled into a measured image. Keep it out of the build context so a
+# future COPY cannot revive it by accident.
+workers/morpheus-relater-rs
+workers/morpheus-relater-rs/**
 # `bin` and `**/bin` above are Node conventions, and one of them happens to match
 # the signer service's process entry point (`workers/neo-signer/src/bin`). These
 # two lines re-include that path and only that path; a cargo build in the image

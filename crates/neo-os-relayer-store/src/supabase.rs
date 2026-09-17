@@ -302,16 +302,27 @@ impl<T: HttpTransport> SupabaseClient<T> {
             body_str = String::new();
         }
 
-        let (status, raw) = self.transport.request(
-            method,
-            url.as_str(),
-            &headers,
-            if payload.is_some() {
-                Some(&body_str)
-            } else {
-                None
-            },
-        )?;
+        let (status, raw) = self
+            .transport
+            .request(
+                method,
+                url.as_str(),
+                &headers,
+                if payload.is_some() {
+                    Some(&body_str)
+                } else {
+                    None
+                },
+            )
+            .map_err(|error| {
+                // Connectivity failures do not carry an HTTP status, but must arm
+                // the same cross-tick circuit breaker as 5xx responses.
+                self.backoff
+                    .lock()
+                    .unwrap()
+                    .mark_unavailable(&format!("network unavailable: {error}"), now_ms);
+                error
+            })?;
 
         if !(200..300).contains(&status) {
             let error_msg = format!("supabase {table} {method} failed: {status} {raw}")

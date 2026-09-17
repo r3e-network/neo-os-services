@@ -1,5 +1,5 @@
 import { Pool, QueryResult } from 'pg';
-import { PnLResult, HistoricalDataPoint, TransactionRecord } from '../types';
+import { PnLResult, HistoricalDataPoint, TransactionRecord } from './types';
 
 export class AnalyticsDatabase {
   private pool: Pool;
@@ -96,44 +96,37 @@ export class AnalyticsDatabase {
    * Calculate PnL for a specific user
    */
   async calculatePnL(userId: string, startDate?: number, endDate?: number): Promise<PnLResult> {
-    const whereClause = startDate && endDate
-      ? 'AND t.timestamp BETWEEN $3 AND $4'
-      : '';
-    const params = [userId, startDate, endDate];
+    const filters = ['user_id = $1'];
+    const params: Array<string | number> = [userId];
+    if (startDate !== undefined) {
+      params.push(startDate);
+      filters.push(`timestamp >= TO_TIMESTAMP($${params.length} / 1000.0)`);
+    }
+    if (endDate !== undefined) {
+      params.push(endDate);
+      filters.push(`timestamp <= TO_TIMESTAMP($${params.length} / 1000.0)`);
+    }
 
-    const volumeQuery = await this.pool.query(`
-      SELECT 
-        SUM(CASE WHEN u.token_in = $1 THEN u.amount_out ELSE s.amount_out END) as total_volume,
-        SUM(CASE WHEN u.token_in = $1 THEN u.fee_amount ELSE s.fee_amount END) as total_fees
-      FROM trades t
-      JOIN swaps u ON u.trade_id = t.id AND u.user_id = $1
-      LEFT JOIN swaps s ON s.trade_id = t.id AND s.user_id != $1
-      WHERE t.user_id = $1 ${whereClause}
+    // Derive only from the immutable trades table. There is no position or
+    // slippage ledger in this service's schema, so unsupported PnL fields stay
+    // explicitly zero instead of returning fabricated values.
+    const ledgerQuery = await this.pool.query(`
+      SELECT
+        COALESCE(SUM(amount_in), 0)::text AS total_volume,
+        COALESCE(SUM(fee_amount), 0)::text AS total_fees,
+        COALESCE(SUM(amount_out) / NULLIF(SUM(amount_in), 0), 0)::text AS average_execution_price
+      FROM trades
+      WHERE ${filters.join(' AND ')}
     `, params);
-
-    const realizedQuery = await this.pool.query(`
-      SELECT 
-        SUM(position.profit_loss::numeric) as profit_loss
-      FROM positions position
-      WHERE position.user_id = $1 
-        AND position.closed_at IS NOT NULL
-        AND ($3 IS NULL OR position.closed_at >= TO_TIMESTAMP($3))
-        AND ($4 IS NULL OR position.closed_at <= TO_TIMESTAMP($4))
-    `, params.slice(0, 4));
-
-    const slippageQuery = await this.pool.query(`
-      SELECT COALESCE(SUM(slippage_loss::numeric), 0) as loss
-      FROM trade_slippage
-      WHERE user_id = $1 AND trade_id IN (SELECT id FROM trades WHERE user_id = $1)
-    `, [userId]);
+    const ledger = ledgerQuery.rows[0] ?? {};
 
     return {
-      realizedPnL: parseFloat(realizedQuery.rows[0]?.profit_loss || '0').toFixed(8),
-      unrealizedPnL: '0.00000000', // Would require position tracking
-      totalVolume: volumeQuery.rows[0]?.total_volume || '0',
-      totalFees: volumeQuery.rows[0]?.total_fees || '0',
-      averageExecutionPrice: '25.500000', // Placeholder
-      slippageLoss: slippageQuery.rows[0]?.loss || '0',
+      realizedPnL: '0.00000000',
+      unrealizedPnL: '0.00000000',
+      totalVolume: ledger.total_volume || '0',
+      totalFees: ledger.total_fees || '0',
+      averageExecutionPrice: ledger.average_execution_price || '0',
+      slippageLoss: '0',
     };
   }
 
@@ -146,40 +139,36 @@ export class AnalyticsDatabase {
     startDate?: number,
     endDate?: number
   ): Promise<HistoricalDataPoint[]> {
-    const intervals = {
-      '1h': '1 hour',
-      '24h': '1 day',
-      '7d': '7 days',
-      '30d': '30 days',
-    };
-
-    const selectClause = {
-      volume: 'SUM(amount_in + amount_out)',
-      trades: 'COUNT(*)',
-      users: 'COUNT(DISTINCT user_id)',
-    }[metricType];
+    const granularity = { '1h': 'hour', '24h': 'day', '7d': 'day', '30d': 'day' }[interval];
+    const filters: string[] = [];
+    const params: Array<string | number> = [granularity];
+    if (startDate !== undefined) {
+      params.push(startDate);
+      filters.push(`timestamp >= TO_TIMESTAMP($${params.length} / 1000.0)`);
+    }
+    if (endDate !== undefined) {
+      params.push(endDate);
+      filters.push(`timestamp <= TO_TIMESTAMP($${params.length} / 1000.0)`);
+    }
 
     const result = await this.pool.query(`
-      SELECT 
-        time_bucket($1, timestamp) as bucket,
-        avg(avg_price::numeric) as avg_price
-      FROM (
-        SELECT 
-          timestamp,
-          SUM(amount_in::numeric + amount_out::numeric) as avg_price
-        FROM trades
-        WHERE user_id = $2 OR $2 IS NULL
-        GROUP BY DATE_TRUNC('hour', timestamp)
-      ) hourly_data
+      SELECT
+        date_trunc($1, timestamp) AS bucket,
+        COALESCE(SUM(amount_in), 0)::text AS volume,
+        COUNT(*)::int AS trades,
+        COUNT(DISTINCT user_id)::int AS unique_users,
+        COALESCE(SUM(amount_out) / NULLIF(SUM(amount_in), 0), 0)::text AS avg_price
+      FROM trades
+      ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
       GROUP BY bucket
       ORDER BY bucket ASC
-    `, [intervals[interval], startDate, endDate]);
+    `, params);
 
     return result.rows.map(row => ({
       timestamp: Math.floor(Date.parse(row.bucket) * 1000),
-      volume: row.sum || '0',
-      trades: parseInt(row.count || '0'),
-      uniqueUsers: parseInt(row.unique_users || '0'),
+      volume: row.volume || '0',
+      trades: Number(row.trades || 0),
+      uniqueUsers: Number(row.unique_users || 0),
       avgPrice: row.avg_price?.toString() || '0',
     }));
   }

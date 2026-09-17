@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICES_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORKSPACE_ROOT="$(cd "$SERVICES_ROOT/.." && pwd)"
-AA_ROOT="${AA_ROOT:-$WORKSPACE_ROOT/neo-abstract-account}"
+AA_ROOT="${AA_ROOT:-$WORKSPACE_ROOT/neo-os-aa}"
 PLATFORM_ROOT="${PLATFORM_ROOT:-${MINIAPPS_ROOT:-$WORKSPACE_ROOT/neo-os-web}}"
 
 run_services=1
@@ -17,7 +17,7 @@ Usage: scripts/run_workspace_local_validation.sh [--services-only|--aa-only|--pl
 
 Runs local validation gates across the NeoOS workspace:
 - neo-os-services
-- neo-abstract-account
+- neo-os-aa
 - neo-os-web
 
 Compatibility aliases: --oracle-only, --miniapps-only, MINIAPPS_ROOT.

@@ -1,0 +1,1043 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  NeoOS TestNet custody durable-state authority, isolated from the Nitro parent
+  and admitting sessions only after pinned AWS Nitro attestation verification.
+
+Parameters:
+  ServiceName:
+    Type: String
+    Default: neoos-testnet-custody-state
+    AllowedPattern: '^[a-z0-9][a-z0-9-]{2,39}$'
+  StageName:
+    Type: String
+    Default: '$default'
+    AllowedValues:
+      - '$default'
+  ExpectedPcr0:
+    Type: String
+    AllowedPattern: '^(?!0{96}$)[0-9a-f]{96}$'
+    Description: Exact SHA-384 PCR0 for the admitted TestNet custody EIF.
+  ExpectedPcr1:
+    Type: String
+    AllowedPattern: '^(?!0{96}$)[0-9a-f]{96}$'
+    Description: Exact SHA-384 PCR1 for the admitted TestNet custody EIF.
+  ExpectedPcr2:
+    Type: String
+    AllowedPattern: '^(?!0{96}$)[0-9a-f]{96}$'
+    Description: Exact SHA-384 PCR2 for the admitted TestNet custody EIF.
+  ExpectedVaultId:
+    Type: String
+    AllowedPattern: '^[0-9a-f]{64}$'
+    Description: Exact derived vault identity admitted by this dedicated authority stack.
+  ExpectedProfileId:
+    Type: String
+    AllowedPattern: '^[0-9a-f]{64}$'
+    Description: Exact immutable vault-profile digest admitted by this stack.
+  ExpectedNetworkId:
+    Type: String
+    AllowedPattern: '^[0-9a-f]{64}$'
+    Description: Exact canonical network-set digest admitted by this stack.
+  ExpectedRootCommitment:
+    Type: String
+    AllowedPattern: '^[0-9a-f]{64}$'
+    Description: Exact released root-key commitment admitted by this stack.
+  ChallengeTtlSeconds:
+    Type: Number
+    Default: 120
+    MinValue: 30
+    MaxValue: 300
+  SessionTtlSeconds:
+    Type: Number
+    Default: 300
+    MinValue: 60
+    MaxValue: 900
+  RequestProofMaxSkewSeconds:
+    Type: Number
+    Default: 30
+    MinValue: 5
+    MaxValue: 120
+  LeaseDurationSeconds:
+    Type: Number
+    Default: 60
+    MinValue: 15
+    MaxValue: 300
+  UploadUrlTtlSeconds:
+    Type: Number
+    Default: 120
+    MinValue: 30
+    MaxValue: 300
+  SnapshotRetentionDays:
+    Type: Number
+    Default: 3650
+    MinValue: 365
+    MaxValue: 36500
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues:
+      - 14
+      - 30
+      - 60
+      - 90
+      - 120
+      - 180
+      - 365
+  ReceiptKeyId:
+    Type: String
+    Default: neoos-testnet-custody-receipt-v1
+    AllowedPattern: '^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$'
+    Description: Stable logical verifier key id embedded in canonical receipts.
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures:
+      - arm64
+    CodeUri: .
+    MemorySize: 256
+    Timeout: 10
+    Environment:
+      Variables:
+        AUTHORITY_TABLE_NAME: !Ref AuthorityTable
+        SNAPSHOT_BUCKET_NAME: !Ref SnapshotBucket
+        SNAPSHOT_KMS_KEY_ARN: !GetAtt SnapshotEncryptionKey.Arn
+        RECEIPT_SIGNING_KEY_ARN: !GetAtt ReceiptSigningKey.Arn
+        RECEIPT_KEY_ID: !Ref ReceiptKeyId
+        SNAPSHOT_RETENTION_DAYS: !Ref SnapshotRetentionDays
+        CHALLENGE_TTL_SECONDS: !Ref ChallengeTtlSeconds
+        SESSION_TTL_SECONDS: !Ref SessionTtlSeconds
+        REQUEST_PROOF_MAX_SKEW_SECONDS: !Ref RequestProofMaxSkewSeconds
+        LEASE_DURATION_SECONDS: !Ref LeaseDurationSeconds
+        UPLOAD_URL_TTL_SECONDS: !Ref UploadUrlTtlSeconds
+        MAX_SNAPSHOT_BYTES: '67109024'
+        EXPECTED_PCR0: !Ref ExpectedPcr0
+        EXPECTED_PCR1: !Ref ExpectedPcr1
+        EXPECTED_PCR2: !Ref ExpectedPcr2
+        EXPECTED_VAULT_ID: !Ref ExpectedVaultId
+        EXPECTED_PROFILE_ID: !Ref ExpectedProfileId
+        EXPECTED_NETWORK_ID: !Ref ExpectedNetworkId
+        EXPECTED_ROOT_COMMITMENT: !Ref ExpectedRootCommitment
+
+Resources:
+  StateEncryptionKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Sub '${ServiceName} DynamoDB state encryption'
+      EnableKeyRotation: true
+      KeySpec: SYMMETRIC_DEFAULT
+      KeyUsage: ENCRYPT_DECRYPT
+      PendingWindowInDays: 30
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableAccountAdministrationAndIamPolicies
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+      Tags:
+        - Key: neoos:network
+          Value: testnet
+        - Key: neoos:component
+          Value: custody-state-authority
+
+  SnapshotEncryptionKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Sub '${ServiceName} immutable snapshot encryption'
+      EnableKeyRotation: true
+      KeySpec: SYMMETRIC_DEFAULT
+      KeyUsage: ENCRYPT_DECRYPT
+      PendingWindowInDays: 30
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableAccountAdministrationAndIamPolicies
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+      Tags:
+        - Key: neoos:network
+          Value: testnet
+        - Key: neoos:component
+          Value: custody-state-authority
+
+  ReceiptSigningKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Sub '${ServiceName} asymmetric commit receipt signing'
+      KeySpec: ECC_NIST_P256
+      KeyUsage: SIGN_VERIFY
+      PendingWindowInDays: 30
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableAccountAdministrationAndIamPolicies
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+      Tags:
+        - Key: neoos:network
+          Value: testnet
+        - Key: neoos:component
+          Value: custody-state-authority
+        - Key: neoos:purpose
+          Value: receipt-signing
+
+  AuthorityTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      DeletionProtectionEnabled: true
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !Ref StateEncryptionKey
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      Tags:
+        - Key: neoos:network
+          Value: testnet
+        - Key: neoos:component
+          Value: custody-state-authority
+
+  SnapshotBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: true
+            ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !GetAtt SnapshotEncryptionKey.Arn
+      ObjectLockEnabled: true
+      ObjectLockConfiguration:
+        ObjectLockEnabled: Enabled
+        Rule:
+          DefaultRetention:
+            Mode: COMPLIANCE
+            Days: !Ref SnapshotRetentionDays
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: neoos:network
+          Value: testnet
+        - Key: neoos:component
+          Value: custody-state-authority
+
+  SnapshotBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SnapshotBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt SnapshotBucket.Arn
+              - !Sub '${SnapshotBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: DenySnapshotDeletion
+            Effect: Deny
+            Principal: '*'
+            Action:
+              - s3:DeleteObject
+              - s3:DeleteObjectVersion
+            Resource: !Sub '${SnapshotBucket.Arn}/snapshots/v2/*'
+          - Sid: DenyUnencryptedSnapshotWrites
+            Effect: Deny
+            Principal: '*'
+            Action: s3:PutObject
+            Resource: !Sub '${SnapshotBucket.Arn}/snapshots/v2/*'
+            Condition:
+              StringNotEquals:
+                s3:x-amz-server-side-encryption: aws:kms
+          - Sid: DenyWrongSnapshotEncryptionKey
+            Effect: Deny
+            Principal: '*'
+            Action: s3:PutObject
+            Resource: !Sub '${SnapshotBucket.Arn}/snapshots/v2/*'
+            Condition:
+              StringNotEquals:
+                s3:x-amz-server-side-encryption-aws-kms-key-id: !GetAtt SnapshotEncryptionKey.Arn
+
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/aws/apigateway/${ServiceName}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  AuthorityApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref StageName
+      Auth:
+        EnableIamAuthorizer: true
+        DefaultAuthorizer: AWS_IAM
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+        Format: >-
+          {"requestId":"$context.requestId","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","status":"$context.status","responseLength":"$context.responseLength","integrationError":"$context.integrationErrorMessage"}
+      DefaultRouteSettings:
+        DetailedMetricsEnabled: true
+        ThrottlingBurstLimit: 50
+        ThrottlingRateLimit: 25
+      Tags:
+        neoos:network: testnet
+        neoos:component: custody-state-authority
+
+  NitroParentInvokeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: TestNet Nitro parent; API invocation only, with explicit state-write denials.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeCustodyStateApiOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: execute-api:Invoke
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${AuthorityApi}/${StageName}/*/*
+        - PolicyName: DenyDirectCustodyStateMutation
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Deny
+                Action:
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:PartiQLDelete
+                  - dynamodb:PartiQLInsert
+                  - dynamodb:PartiQLUpdate
+                  - dynamodb:PutItem
+                  - dynamodb:TransactWriteItems
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt AuthorityTable.Arn
+              - Effect: Deny
+                Action:
+                  - s3:AbortMultipartUpload
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                  - s3:PutObjectRetention
+                Resource: !Sub '${SnapshotBucket.Arn}/*'
+              - Effect: Deny
+                Action: 'kms:*'
+                Resource:
+                  - !GetAtt StateEncryptionKey.Arn
+                  - !GetAtt SnapshotEncryptionKey.Arn
+                  - !GetAtt ReceiptSigningKey.Arn
+      Tags:
+        - Key: neoos:network
+          Value: testnet
+        - Key: neoos:component
+          Value: custody-state-authority-parent
+
+  NitroParentInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref NitroParentInvokeRole
+
+  ChallengeLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ServiceName}-challenge'
+      RetentionInDays: !Ref LogRetentionDays
+
+  ChallengeFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ChallengeWrites
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'CHALLENGE#*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt ChallengeLogGroup.Arn
+
+  ChallengeFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: ChallengeLogGroup
+    Properties:
+      FunctionName: !Sub '${ServiceName}-challenge'
+      Handler: src/handlers/challenge.handler
+      Role: !GetAtt ChallengeFunctionRole.Arn
+      Events:
+        Challenge:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AuthorityApi
+            Method: POST
+            Path: /v1/challenges
+
+  SessionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ServiceName}-session'
+      RetentionInDays: !Ref LogRetentionDays
+
+  SessionFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SessionChallengeExchange
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:GetItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'CHALLENGE#*'
+              - Effect: Allow
+                Action: dynamodb:TransactWriteItems
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'CHALLENGE#*'
+                      - 'SESSION#*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt SessionLogGroup.Arn
+
+  SessionFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: SessionLogGroup
+    Properties:
+      FunctionName: !Sub '${ServiceName}-session'
+      Handler: src/handlers/session.handler
+      Role: !GetAtt SessionFunctionRole.Arn
+      Events:
+        Session:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AuthorityApi
+            Method: POST
+            Path: /v1/sessions
+
+  HeadLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ServiceName}-head'
+      RetentionInDays: !Ref LogRetentionDays
+
+  HeadFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: HeadReads
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:GetItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'SESSION#*'
+                      - 'STATE#*'
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'PROOF#*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt HeadLogGroup.Arn
+
+  HeadFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: HeadLogGroup
+    Properties:
+      FunctionName: !Sub '${ServiceName}-head'
+      Handler: src/handlers/head.handler
+      Role: !GetAtt HeadFunctionRole.Arn
+      Events:
+        Head:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AuthorityApi
+            Method: GET
+            Path: /v1/vaults/{vaultId}/profiles/{profileId}/head
+
+  UploadTicketLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ServiceName}-upload-ticket'
+      RetentionInDays: !Ref LogRetentionDays
+
+  UploadTicketFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ClaimAndPresignSnapshot
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:GetItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'SESSION#*'
+                      - 'COMMIT#*'
+                      - 'STATE#*'
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'PROOF#*'
+              - Effect: Allow
+                Action: dynamodb:TransactWriteItems
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'STATE#*'
+                      - 'COMMIT#*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectRetention
+                Resource: !Sub '${SnapshotBucket.Arn}/snapshots/v2/*'
+              - Effect: Allow
+                Action: kms:GenerateDataKey
+                Resource: !GetAtt SnapshotEncryptionKey.Arn
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub 's3.${AWS::Region}.${AWS::URLSuffix}'
+                  StringLike:
+                    kms:EncryptionContext:aws:s3:arn:
+                      - !GetAtt SnapshotBucket.Arn
+                      - !Sub '${SnapshotBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt UploadTicketLogGroup.Arn
+
+  UploadTicketFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: UploadTicketLogGroup
+    Properties:
+      FunctionName: !Sub '${ServiceName}-upload-ticket'
+      Handler: src/handlers/upload-ticket.handler
+      Role: !GetAtt UploadTicketFunctionRole.Arn
+      Events:
+        UploadTicket:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AuthorityApi
+            Method: POST
+            Path: /v1/vaults/{vaultId}/profiles/{profileId}/upload-tickets
+
+  UploadStatusLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ServiceName}-upload-status'
+      RetentionInDays: !Ref LogRetentionDays
+
+  UploadStatusFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ResolveExactSnapshotVersion
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:GetItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'SESSION#*'
+                      - 'COMMIT#*'
+                      - 'STATE#*'
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'PROOF#*'
+              - Effect: Allow
+                Action: s3:ListBucketVersions
+                Resource: !GetAtt SnapshotBucket.Arn
+                Condition:
+                  StringLike:
+                    s3:prefix: 'snapshots/v2/*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObjectRetention
+                  - s3:GetObjectVersion
+                Resource: !Sub '${SnapshotBucket.Arn}/snapshots/v2/*'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !GetAtt SnapshotEncryptionKey.Arn
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub 's3.${AWS::Region}.${AWS::URLSuffix}'
+                  StringLike:
+                    kms:EncryptionContext:aws:s3:arn:
+                      - !GetAtt SnapshotBucket.Arn
+                      - !Sub '${SnapshotBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt UploadStatusLogGroup.Arn
+
+  UploadStatusFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: UploadStatusLogGroup
+    Properties:
+      FunctionName: !Sub '${ServiceName}-upload-status'
+      Handler: src/handlers/upload-status.handler
+      Role: !GetAtt UploadStatusFunctionRole.Arn
+      Events:
+        UploadStatus:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AuthorityApi
+            Method: POST
+            Path: /v1/vaults/{vaultId}/profiles/{profileId}/upload-status
+
+  DownloadTicketLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ServiceName}-download-ticket'
+      RetentionInDays: !Ref LogRetentionDays
+
+  DownloadTicketFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: VerifyHeadAndPresignExactSnapshotVersion
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:GetItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'SESSION#*'
+                      - 'STATE#*'
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'PROOF#*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub '${SnapshotBucket.Arn}/snapshots/v2/*'
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: !GetAtt SnapshotEncryptionKey.Arn
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub 's3.${AWS::Region}.${AWS::URLSuffix}'
+                  StringLike:
+                    kms:EncryptionContext:aws:s3:arn:
+                      - !GetAtt SnapshotBucket.Arn
+                      - !Sub '${SnapshotBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt DownloadTicketLogGroup.Arn
+
+  DownloadTicketFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: DownloadTicketLogGroup
+    Properties:
+      FunctionName: !Sub '${ServiceName}-download-ticket'
+      Handler: src/handlers/download-ticket.handler
+      Role: !GetAtt DownloadTicketFunctionRole.Arn
+      Events:
+        DownloadTicket:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AuthorityApi
+            Method: POST
+            Path: /v1/vaults/{vaultId}/profiles/{profileId}/download-tickets
+
+  CommitLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ServiceName}-commit'
+      RetentionInDays: !Ref LogRetentionDays
+
+  CommitFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CommitSnapshotCas
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:GetItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'SESSION#*'
+                      - 'COMMIT#*'
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'PROOF#*'
+              - Effect: Allow
+                Action: dynamodb:TransactWriteItems
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'STATE#*'
+                      - 'COMMIT#*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectRetention
+                  - s3:GetObjectVersion
+                Resource: !Sub '${SnapshotBucket.Arn}/snapshots/v2/*'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !GetAtt SnapshotEncryptionKey.Arn
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub 's3.${AWS::Region}.${AWS::URLSuffix}'
+                  StringLike:
+                    kms:EncryptionContext:aws:s3:arn:
+                      - !GetAtt SnapshotBucket.Arn
+                      - !Sub '${SnapshotBucket.Arn}/*'
+              - Effect: Allow
+                Action: kms:Sign
+                Resource: !GetAtt ReceiptSigningKey.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt CommitLogGroup.Arn
+
+  CommitFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: CommitLogGroup
+    Properties:
+      FunctionName: !Sub '${ServiceName}-commit'
+      Handler: src/handlers/commit.handler
+      Role: !GetAtt CommitFunctionRole.Arn
+      Timeout: 20
+      Events:
+        Commit:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AuthorityApi
+            Method: POST
+            Path: /v1/vaults/{vaultId}/profiles/{profileId}/commits
+
+  TakeoverLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ServiceName}-takeover'
+      RetentionInDays: !Ref LogRetentionDays
+
+  TakeoverFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: FencedTakeover
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:GetItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'SESSION#*'
+                      - 'STATE#*'
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'PROOF#*'
+              - Effect: Allow
+                Action: dynamodb:TransactWriteItems
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'STATE#*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt TakeoverLogGroup.Arn
+
+  TakeoverFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: TakeoverLogGroup
+    Properties:
+      FunctionName: !Sub '${ServiceName}-takeover'
+      Handler: src/handlers/takeover.handler
+      Role: !GetAtt TakeoverFunctionRole.Arn
+      Events:
+        Takeover:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AuthorityApi
+            Method: POST
+            Path: /v1/vaults/{vaultId}/profiles/{profileId}/takeover
+
+  RenewLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ServiceName}-renew'
+      RetentionInDays: !Ref LogRetentionDays
+
+  RenewFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: FencedLeaseRenewal
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:GetItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'SESSION#*'
+                      - 'STATE#*'
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'PROOF#*'
+              - Effect: Allow
+                Action: dynamodb:UpdateItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - 'STATE#*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt RenewLogGroup.Arn
+
+  RenewFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: RenewLogGroup
+    Properties:
+      FunctionName: !Sub '${ServiceName}-renew'
+      Handler: src/handlers/renew.handler
+      Role: !GetAtt RenewFunctionRole.Arn
+      Events:
+        Renew:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AuthorityApi
+            Method: POST
+            Path: /v1/vaults/{vaultId}/profiles/{profileId}/renew
+
+Outputs:
+  ApiBaseUrl:
+    Description: IAM-authenticated TestNet custody state authority URL.
+    Value: !Sub 'https://${AuthorityApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+  AuthorityTableName:
+    Value: !Ref AuthorityTable
+  SnapshotBucketName:
+    Value: !Ref SnapshotBucket
+  SnapshotEncryptionKeyArn:
+    Value: !GetAtt SnapshotEncryptionKey.Arn
+  ReceiptSigningKeyArn:
+    Value: !GetAtt ReceiptSigningKey.Arn
+  ReceiptKeyId:
+    Value: !Ref ReceiptKeyId
+  NitroParentRoleArn:
+    Description: Parent role has API invoke only and explicit direct-state denials.
+    Value: !GetAtt NitroParentInvokeRole.Arn
+  NitroParentInstanceProfile:
+    Value: !Ref NitroParentInstanceProfile

@@ -8,11 +8,21 @@ import {
 
 const esc = (s) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
+// Rust's durable delivery and automation controls have no JS runtime equivalent.
+const RUST_DIRECT_CONTROL_ENV_KEYS = [
+  'MORPHEUS_ALLOW_UNAVAILABLE_AUTOMATION',
+  'MORPHEUS_DELIVERY_PROTOCOL',
+  'MORPHEUS_N3_RECONCILIATION_ARCHIVE_RPC_URLS',
+  'MORPHEUS_ALLOW_LEGACY_LOCAL',
+];
+
 const out = [];
 out.push(`/// Direct-control env keys consumed outside env() alias chains`);
-out.push(`/// (port of config-schema.js DIRECT_CONTROL_ENV_KEYS).`);
+out.push(`/// (JS direct controls plus Rust-only controls owned by this generator).`);
 out.push(`pub static DIRECT_CONTROL_ENV_KEYS: &[&str] = &[`);
-for (const k of DIRECT_CONTROL_ENV_KEYS) out.push(`    "${esc(k)}",`);
+for (const k of new Set([...DIRECT_CONTROL_ENV_KEYS, ...RUST_DIRECT_CONTROL_ENV_KEYS])) {
+  out.push(`    "${esc(k)}",`);
+}
 out.push(`];`);
 out.push(``);
 out.push(`/// Declarative manifest of every env var createRelayerConfig() reads`);

@@ -23,6 +23,10 @@ impl Store {
     /// Store a newly sealed key.
     pub fn create_signer_key(&self, key: &SignerKey) -> Result<()> {
         let connection = self.connection()?;
+        Self::create_signer_key_on(&connection, key)
+    }
+
+    pub(super) fn create_signer_key_on(connection: &Connection, key: &SignerKey) -> Result<()> {
         connection.execute(
             "INSERT INTO signer_keys (
                 id, label, network, public_key, nonce, ciphertext, created_at_unix, disabled,
@@ -90,6 +94,14 @@ impl Store {
     /// to understand the policy to stop a key signing.
     pub fn set_signer_key_disabled(&self, id: &str, disabled: bool) -> Result<()> {
         let connection = self.connection()?;
+        Self::set_signer_key_disabled_on(&connection, id, disabled)
+    }
+
+    pub(super) fn set_signer_key_disabled_on(
+        connection: &Connection,
+        id: &str,
+        disabled: bool,
+    ) -> Result<()> {
         let changed = connection.execute(
             "UPDATE signer_keys SET disabled = ?1 WHERE id = ?2",
             params![disabled, id],
@@ -105,6 +117,10 @@ impl Store {
     /// remove the only record of the transfers the window was supposed to bound.
     pub fn delete_signer_key(&self, id: &str) -> Result<()> {
         let connection = self.connection()?;
+        Self::delete_signer_key_on(&connection, id)
+    }
+
+    pub(super) fn delete_signer_key_on(connection: &Connection, id: &str) -> Result<()> {
         let deleted = connection.execute("DELETE FROM signer_keys WHERE id = ?1", params![id])?;
         ensure_affected_rows(deleted, "custody key", id)?;
         Ok(())

@@ -168,7 +168,7 @@ function resolveWorkspaceRoots(oracleRoot) {
   });
   const aaRepo = resolveSiblingRepoRoot({
     workspaceRoot,
-    repoName: 'neo-abstract-account',
+    repoName: 'neo-os-aa',
     worktreeName: oracleRepo.worktreeName,
   });
   return {

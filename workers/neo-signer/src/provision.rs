@@ -29,22 +29,26 @@
 //! script can make it.
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
-use crate::{service::SignerService, store::Store, vault::MasterKey};
+use crate::{
+    coordinator::{self, AwsCredentials},
+    service::SignerService,
+    vault::MasterKey,
+    vault_profile::ValidatedVaultProfile,
+};
 
 /// The base64 KMS ciphertext the transport token envelope is released from.
 pub const TOKEN_CIPHERTEXT_ENV: &str = "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64";
 
-/// The base64 KMS ciphertext the vault's master key is released from. When it
-/// is absent the vault falls back to the enclave-born master key file — an
-/// operator's explicit choice, with the rootfs-persistence caveat in the
-/// runbook.
+/// Required base64 KMS ciphertext for the vault master key. Attested provision
+/// never falls back to a host-supplied or enclave-local master key.
 pub const MASTER_KEY_CIPHERTEXT_ENV: &str = "SIGNER_SERVICE_MASTER_KEY_KMS_CIPHERTEXT";
 
 /// Region override, falling back through the standard AWS names.
@@ -64,6 +68,7 @@ const ALLOWED_ENV_KEYS: &[&str] = &[
 
 /// The raw `/provision` body.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProvisionBody {
     pub env: serde_json::Map<String, serde_json::Value>,
 }
@@ -129,12 +134,25 @@ impl ProvisionEnv {
             session_token: self.get("AWS_SESSION_TOKEN").map(str::to_string),
         })
     }
+
+    fn coordinator_credentials(&self) -> Result<AwsCredentials, ProvisionError> {
+        let credentials = self.credentials()?;
+        Ok(AwsCredentials {
+            access_key_id: credentials.access_key_id,
+            secret_access_key: credentials.secret_access_key,
+            session_token: credentials.session_token,
+        })
+    }
 }
 
 /// What goes wrong with a provision attempt, with the HTTP status the route
 /// answers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProvisionError {
+    /// Another attempt already opened the vault. `409`.
+    AlreadyProvisioned,
+    /// Another blocking task owns initialization. `503`.
+    InProgress,
     /// A plaintext `SIGNER_SERVICE_MASTER_KEY` crossed the channel. RC2's
     /// bright line; `403`.
     PlaintextMasterKey,
@@ -146,6 +164,8 @@ pub enum ProvisionError {
     EmptyValue(String),
     /// A required whitelist key is absent. `400`.
     MissingField(&'static str),
+    /// The two different purposes name the same ciphertext. `400`.
+    ReusedCiphertext,
     /// The presented transport token does not match its KMS-released
     /// envelope. `401`.
     TokenMismatch,
@@ -157,6 +177,16 @@ impl ProvisionError {
     /// `(code, status, message)` as the route answers it.
     pub fn answer(&self) -> (&'static str, u16, String) {
         match self {
+            ProvisionError::AlreadyProvisioned => (
+                "signer-provision-already-done",
+                409,
+                "the vault is already provisioned; provisioning happens once per boot".to_string(),
+            ),
+            ProvisionError::InProgress => (
+                "signer-service-busy",
+                503,
+                "another provision attempt is in progress".to_string(),
+            ),
             ProvisionError::PlaintextMasterKey => (
                 "signer-provision-forbidden",
                 403,
@@ -189,6 +219,12 @@ impl ProvisionError {
                 401,
                 "the presented transport token does not match its released envelope".to_string(),
             ),
+            ProvisionError::ReusedCiphertext => (
+                "signer-provision-invalid",
+                400,
+                "transport token and master key require distinct purpose-bound ciphertexts"
+                    .to_string(),
+            ),
             ProvisionError::Release(detail) => (
                 "signer-provision-failed",
                 503,
@@ -201,48 +237,155 @@ impl ProvisionError {
 /// Releases a KMS-sealed envelope named by its ciphertext. Production builds
 /// the [`release_envelope`] closure; tests substitute canned bytes, which is
 /// what keeps every rule above exercisable without an NSM device.
-pub type EnvelopeReleaser =
-    Arc<dyn Fn(&ProvisionEnv, &str) -> Result<Vec<u8>, String> + Send + Sync>;
+pub type EnvelopeReleaser = Arc<
+    dyn Fn(&ProvisionEnv, &str, EnvelopePurpose) -> Result<Zeroizing<Vec<u8>>, String>
+        + Send
+        + Sync,
+>;
+
+pub type VaultRecoverer = Arc<
+    dyn Fn(
+            Arc<ValidatedVaultProfile>,
+            AwsCredentials,
+            MasterKey,
+            &Path,
+        ) -> Result<SignerService, String>
+        + Send
+        + Sync,
+>;
+
+/// Selected only by enclave code. The host cannot choose the KMS purpose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnvelopePurpose {
+    TransportToken,
+    MasterKey,
+}
+
+impl EnvelopePurpose {
+    fn encryption_context(self) -> [(&'static str, &'static str); 2] {
+        [
+            ("neoos:component", "custody"),
+            (
+                "neoos:purpose",
+                match self {
+                    Self::TransportToken => "transport-token/v1",
+                    Self::MasterKey => "master-key/v1",
+                },
+            ),
+        ]
+    }
+}
 
 /// The enclave side of the route: the still-sealed vault plus the one gate it
 /// opens through. Held in `Arc` so the handler can clone it out of the router
 /// state and run the (blocking) release off the async workers.
 pub struct ProvisionGate {
-    /// The database, opened at boot — only its rows are sealed; opening it
-    /// needed no key.
-    pub repository: Store,
-    /// Where an enclave-born master key file would be created.
+    /// The database path remains unopened until the authenticated remote HEAD
+    /// has selected genesis or an exact immutable snapshot restore.
+    pub database_path: PathBuf,
+    /// The enclave-local data directory; never a source of provisioned keys.
     pub data_dir: PathBuf,
+    /// Immutable, measured identity of this vault. It supplies every KMS
+    /// binding and the expected root-key commitment.
+    pub profile: Arc<ValidatedVaultProfile>,
     pub releaser: EnvelopeReleaser,
-    /// Serializes concurrent provisions so two simultaneous calls cannot both
-    /// walk the release path; the route's final state flip is separately
-    /// guarded by the vault's write lock.
+    pub recoverer: VaultRecoverer,
+    /// Serializes direct release calls. The API's Provisioning state owns the
+    /// wider lifecycle, including publication after this lock is released.
     pub mutex: Mutex<()>,
 }
 
 /// The production release path: a fresh NSM attestation binding a single-use
 /// RSA keypair, KMS Decrypt, CMS open — all in-process, no helper binary.
-pub fn release_envelope(env: &ProvisionEnv, ciphertext_b64: &str) -> Result<Vec<u8>, String> {
+fn release_envelope(
+    profile: &ValidatedVaultProfile,
+    env: &ProvisionEnv,
+    ciphertext_b64: &str,
+    purpose: EnvelopePurpose,
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    release_envelope_with(
+        profile,
+        env,
+        ciphertext_b64,
+        purpose,
+        &nitro_attest::release::NsmAttestation,
+        &nitro_attest::release::HttpKmsTransport,
+    )
+}
+
+fn release_envelope_with(
+    profile: &ValidatedVaultProfile,
+    env: &ProvisionEnv,
+    ciphertext_b64: &str,
+    purpose: EnvelopePurpose,
+    source: &dyn nitro_attest::release::AttestationSource,
+    transport: &dyn nitro_attest::release::KmsTransport,
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    let requested_region = env.region().map_err(|error| format!("{error:?}"))?;
+    let profile_region = profile.document().coordinator.aws_region.as_str();
+    if requested_region != profile_region {
+        return Err(
+            "the provisioned KMS region does not match the immutable vault profile".to_string(),
+        );
+    }
     let credentials = env
         .credentials()
         .map_err(|error| format!("provisioned environment: {:?}", error))?;
     let params = nitro_attest::release::ReleaseParams {
-        region: env.region().map_err(|error| format!("{error:?}"))?,
+        region: profile_region,
         credentials: &credentials,
         ciphertext_b64,
         amz_date: &nitro_attest::kms::utc_amz_date_now(),
     };
-    nitro_attest::release::release_bytes(
-        &nitro_attest::release::NsmAttestation,
-        &nitro_attest::release::HttpKmsTransport,
+    let profile_hash = hex::encode(profile.profile_hash());
+    let network_set_hash = hex::encode(profile.network_set_hash());
+    let context = [
+        ("neoos:component", "custody"),
+        ("neoos:purpose", purpose.encryption_context()[1].1),
+        ("neoos:vault-id", profile.document().vault_id.as_str()),
+        ("neoos:profile-sha256", profile_hash.as_str()),
+        ("neoos:network-set-sha256", network_set_hash.as_str()),
+        (
+            "neoos:root-key-version",
+            profile.document().root_key_version.as_str(),
+        ),
+    ];
+    nitro_attest::release::release_bytes_with_context_and_key(
+        source,
+        transport,
         &params,
+        &context,
+        Some(profile.document().custody_kms_key_arn.as_str()),
     )
+    .map(Zeroizing::new)
+}
+
+/// Construct the only production release closure. The validated profile is
+/// captured before untrusted provision data arrives and cannot be replaced by
+/// request fields.
+pub fn profile_bound_releaser(profile: Arc<ValidatedVaultProfile>) -> EnvelopeReleaser {
+    Arc::new(move |env, ciphertext_b64, purpose| {
+        release_envelope(&profile, env, ciphertext_b64, purpose)
+    })
+}
+
+pub fn coordinator_recoverer() -> VaultRecoverer {
+    Arc::new(|profile, credentials, master_key, database_path| {
+        coordinator::recover(
+            profile,
+            credentials,
+            master_key,
+            database_path,
+            Arc::new(nitro_attest::release::NsmAttestation),
+        )
+        .map_err(|error| error.to_string())
+    })
 }
 
 /// The whole provision transaction: validate, check the transport token,
-/// release the master key, open the vault. On success the caller moves the
-/// router state to provisioned; this function has already handed back a
-/// service that can sign.
+/// release the master key, open the vault. The API must own its Provisioning
+/// claim before calling this function and publish Ready in the same blocking
+/// task, so HTTP cancellation cannot discard a successfully initialized vault.
 pub fn run(
     gate: &ProvisionGate,
     env: &ProvisionEnv,
@@ -251,13 +394,18 @@ pub fn run(
     let _guard = gate.mutex.lock().map_err(|_| {
         ProvisionError::Release("the provision lock is poisoned; restart the service".to_string())
     })?;
+    let token_ciphertext = env.required(TOKEN_CIPHERTEXT_ENV)?;
+    let master_ciphertext = env.required(MASTER_KEY_CIPHERTEXT_ENV)?;
+    if token_ciphertext == master_ciphertext {
+        return Err(ProvisionError::ReusedCiphertext);
+    }
 
     // The transport token: released through the same attested path the master
     // key will take, then compared in constant time. A plaintext token in the
     // provisioned environment is not on the whitelist, so there is no fallback
     // to check against.
-    let token_ciphertext = env.required(TOKEN_CIPHERTEXT_ENV)?;
-    let released = (gate.releaser)(env, token_ciphertext).map_err(ProvisionError::Release)?;
+    let released = (gate.releaser)(env, token_ciphertext, EnvelopePurpose::TransportToken)
+        .map_err(ProvisionError::Release)?;
     let expected = std::str::from_utf8(&released)
         .map_err(|_| ProvisionError::Release("the released transport token is not UTF-8".into()))?;
     let presented = presented_token.unwrap_or("");
@@ -265,26 +413,29 @@ pub fn run(
         return Err(ProvisionError::TokenMismatch);
     }
 
-    // The master key: released, or enclave-born when no ciphertext was
-    // provisioned. The plaintext-env refusal already happened in
-    // `ProvisionEnv::from_body`, and the process-level refusal happened at
-    // boot — a host-supplied key has two locked doors in front of it.
-    let master_key = match env.get(MASTER_KEY_CIPHERTEXT_ENV) {
-        Some(ciphertext) => {
-            let released = (gate.releaser)(env, ciphertext).map_err(ProvisionError::Release)?;
-            let bytes: [u8; 32] = released.as_slice().try_into().map_err(|_| {
-                ProvisionError::Release(format!(
-                    "the released master key is {} bytes, expected 32",
-                    released.len()
-                ))
-            })?;
-            MasterKey::from_bytes(bytes)
-        }
-        None => MasterKey::open(&gate.data_dir).map_err(|error| {
-            ProvisionError::Release(format!("enclave-born master key: {error}"))
-        })?,
-    };
-    Ok(SignerService::new(gate.repository.clone(), master_key))
+    drop(released);
+    let released = (gate.releaser)(env, master_ciphertext, EnvelopePurpose::MasterKey)
+        .map_err(ProvisionError::Release)?;
+    if released.len() != 32 {
+        return Err(ProvisionError::Release(format!(
+            "the released master key is {} bytes, expected 32",
+            released.len()
+        )));
+    }
+    let mut bytes = Zeroizing::new([0u8; 32]);
+    bytes.copy_from_slice(&released);
+    let master_key = MasterKey::from_bytes(*bytes);
+    gate.profile
+        .verify_master(&master_key)
+        .map_err(|error| ProvisionError::Release(error.to_string()))?;
+    let credentials = env.coordinator_credentials()?;
+    (gate.recoverer)(
+        Arc::clone(&gate.profile),
+        credentials,
+        master_key,
+        &gate.database_path,
+    )
+    .map_err(ProvisionError::Release)
 }
 
 /// Constant-time digest comparison, the same shape `auth` uses for caller

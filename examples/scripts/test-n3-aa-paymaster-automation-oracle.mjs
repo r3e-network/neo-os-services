@@ -30,7 +30,7 @@ const oracleRepoRoot = path.resolve(scriptDirectory, '..', '..');
 async function resolveAbstractAccountRepoRoot() {
   const candidates = [
     process.env.NEO_ABSTRACT_ACCOUNT_REPO,
-    path.resolve(oracleRepoRoot, '..', 'neo-abstract-account'),
+    path.resolve(oracleRepoRoot, '..', 'neo-os-aa'),
   ].filter(Boolean);
 
   for (const candidate of candidates) {

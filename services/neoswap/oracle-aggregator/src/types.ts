@@ -6,6 +6,7 @@ export interface PriceSource {
   url: string;
   latencyMs: number;
   isHealthy: boolean;
+  lastUpdate?: number;
 }
 
 export interface PriceTick {

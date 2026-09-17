@@ -1,7 +1,7 @@
 import promClient, { Gauge, Histogram, Counter } from 'prom-client';
 
 const metricRegistry = new promClient.Registry();
-metricRegistry.setDefaultMetrics({ register: metricRegistry });
+promClient.collectDefaultMetrics({ register: metricRegistry });
 
 // Connection metrics
 export const activeConnectionsGauge = new Gauge({

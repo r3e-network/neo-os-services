@@ -142,7 +142,7 @@ pub fn claim_relayer_job<T: HttpTransport>(
     if raw.trim().is_empty() {
         return Ok(None);
     }
-    let rows: Vec<Value> = serde_json::from_str(&raw).unwrap_or_default();
+    let rows = parse_rows(&raw, "claim relayer job response")?;
     Ok(rows.into_iter().next())
 }
 
@@ -392,7 +392,10 @@ pub fn claim_automation_job<T: HttpTransport>(
         now_ms,
     ) {
         Ok(raw) => {
-            let rows: Vec<Value> = serde_json::from_str(&raw).unwrap_or_default();
+            if raw.trim().is_empty() {
+                return Ok(None);
+            }
+            let rows = parse_rows(&raw, "claim automation job response")?;
             Ok(rows.into_iter().next())
         }
         Err(err) => {
@@ -411,13 +414,22 @@ pub fn claim_automation_job<T: HttpTransport>(
                     &options,
                     now_ms,
                 )?;
-                let rows: Vec<Value> = serde_json::from_str(&raw).unwrap_or_default();
+                if raw.trim().is_empty() {
+                    return Ok(None);
+                }
+                let rows = parse_rows(&raw, "fallback automation job response")?;
                 Ok(rows.into_iter().next())
             } else {
                 Err(err)
             }
         }
     }
+}
+
+fn parse_rows(raw: &str, context: &str) -> Result<Vec<Value>, String> {
+    let rows: Vec<Value> = serde_json::from_str(raw)
+        .map_err(|error| format!("{context} was not a JSON array: {error}"))?;
+    Ok(rows)
 }
 
 pub fn fetch_automation_job_by_id<T: HttpTransport>(

@@ -34,7 +34,8 @@ directly — the same quantity either way).
 Retirement removes a pair from every active registry and from the health count. It is
 the honest alternative to leaving a pair advertised and permanently stale. All four
 are recorded in `RETIRED_FEED_PAIRS` in `feed-defaults.ts`, `feed-pusher.mjs`,
-`feed-registry.js` and as `RETIRED_PAIRS` in `feed-monitor.mjs`.
+and `feed-registry.js`. The host monitor and health audit consume the same
+checked list from `DEFAULT_RETIRED_FEED_PAIRS` in `lib-feed-network.mjs`.
 
 ### COPPER-USD — the provider symbol is a German equity
 

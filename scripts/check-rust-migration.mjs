@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 
@@ -57,6 +58,46 @@ export function cargoWorkspaceMembers(root = process.cwd()) {
   const manifest = read(root, 'Cargo.toml');
   const members = manifest.match(/\bmembers\s*=\s*\[([\s\S]*?)\]/m)?.[1] || '';
   return [...members.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]);
+}
+
+export function cargoWorkspaceExclude(root = process.cwd()) {
+  const manifest = read(root, 'Cargo.toml');
+  const exclude = manifest.match(/\bexclude\s*=\s*\[([\s\S]*?)\]/m)?.[1] || '';
+  return [...exclude.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]);
+}
+
+const RETIRED_WORKSPACE_PATHS = ['workers/morpheus-relater-rs'];
+const RETIRED_DIRECT_MANIFESTS = [
+  'workers/morpheus-relater-rs/Cargo.toml',
+  'workers/morpheus-relater-rs/crates/tee-attestation/Cargo.toml',
+];
+const RETIRED_ACTIONABLE_MARKDOWN = [
+  'workers/morpheus-relater-rs/DEPLOYMENT_GUIDE.md',
+  'workers/morpheus-relater-rs/README.md',
+  'workers/morpheus-relater-rs/RETIRED.md',
+  'workers/morpheus-relater-rs/PROJECT_SUMMARY.md',
+  'workers/morpheus-relater-rs/PERFORMANCE_COMPARISON.md',
+];
+
+export const RETIRED_ACTIONABLE_COMMAND =
+  /(?:cargo\s+(?:build|run)(?![^\n]*-p\s+neo-os-relayer)|systemctl\s+(?:enable|start|stop)\b|docker\s+(?:build|run)\b|helm\s+install\b)/;
+
+export function retiredMarkdownHasActionableCommands(source) {
+  const blocks = [...source.matchAll(/```(?:[a-zA-Z0-9_-]+)?\n([\s\S]*?)```/g)];
+  return blocks.some((match) => RETIRED_ACTIONABLE_COMMAND.test(match[1]));
+}
+
+export function retiredManifestIsArchiveStub(source) {
+  return !/^\s*\[package\]/m.test(source) && /retired archive/i.test(source);
+}
+
+export function cargoMetadataFails(root, relativeManifest) {
+  const result = spawnSync(
+    'cargo',
+    ['metadata', '--format-version', '1', '--manifest-path', relativeManifest],
+    { cwd: root, encoding: 'utf8' }
+  );
+  return result.status !== 0;
 }
 
 export function documentationCoverage(root = process.cwd()) {
@@ -121,6 +162,94 @@ export function auditRustMigration(root = process.cwd()) {
   }
 
   const workspaceMembers = cargoWorkspaceMembers(root);
+  const workspaceExclude = cargoWorkspaceExclude(root);
+  for (const retired of RETIRED_WORKSPACE_PATHS) {
+    if (workspaceMembers.includes(retired)) {
+      failures.push(`${retired}: retired crate must not be an active Cargo workspace member`);
+    }
+    if (!workspaceExclude.includes(retired)) {
+      failures.push(`${retired}: retired crate must remain in Cargo workspace exclude`);
+    }
+    for (const dockerfile of [
+      'deploy/nitro/Dockerfile.enclave',
+      'deploy/nitro/Dockerfile.signer',
+    ]) {
+      if (!existsSync(resolve(root, dockerfile))) continue;
+      reject(
+        dockerfile,
+        read(root, dockerfile),
+        new RegExp(`COPY\\s+${retired.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}/`),
+        `measured build copies retired crate ${retired}`
+      );
+    }
+  }
+  for (const manifest of RETIRED_DIRECT_MANIFESTS) {
+    if (!requireFile(manifest)) continue;
+    if (!retiredManifestIsArchiveStub(read(root, manifest))) {
+      failures.push(`${manifest}: retired crate still exposes a buildable [package] manifest`);
+    }
+    const historical = `${manifest}.retired`;
+    if (!existsSync(resolve(root, historical))) {
+      failures.push(`${historical}: historical manifest is missing`);
+    }
+    if (!cargoMetadataFails(root, manifest)) {
+      failures.push(`${manifest}: cargo metadata on the retired archive must fail`);
+    }
+  }
+  for (const doc of RETIRED_ACTIONABLE_MARKDOWN) {
+    if (!requireFile(doc)) continue;
+    const source = read(root, doc);
+    if (retiredMarkdownHasActionableCommands(source)) {
+      failures.push(
+        `${doc}: retired archive still contains an actionable build/run/deploy command`
+      );
+    }
+  }
+  const migrationDoc = 'docs/RUST_SERVICE_MIGRATION.md';
+  if (requireFile(migrationDoc)) {
+    const source = read(root, migrationDoc);
+    requireMatch(
+      migrationDoc,
+      source,
+      /morpheus-relater-rs/,
+      'must name the retired heartbeat crate'
+    );
+    requireMatch(
+      migrationDoc,
+      source,
+      /already-claimed/,
+      'must describe /automation/execute as a one-shot already-claimed adapter'
+    );
+    requireMatch(
+      migrationDoc,
+      source,
+      /durable (?:relayer )?scheduler/,
+      'must distinguish the unimplemented durable automation scheduler'
+    );
+    reject(
+      migrationDoc,
+      source,
+      /The remaining `\/session\/\*`, `\/automation\/execute`, and `\/oracle\/feed` routes[\s\S]*?rust-compute-lane-unavailable/,
+      'must not describe landed host adapters as rust-compute-lane-unavailable'
+    );
+  }
+  const matrixDoc = 'docs/rust-migration/SERVICE_CONTRACT_MATRIX.md';
+  if (requireFile(matrixDoc)) {
+    const source = read(root, matrixDoc);
+    requireMatch(matrixDoc, source, /morpheus-relater-rs/, 'must name the retired heartbeat crate');
+    requireMatch(
+      matrixDoc,
+      source,
+      /already-claimed upkeep/,
+      'must keep the one-shot automation adapter wording'
+    );
+    requireMatch(
+      matrixDoc,
+      source,
+      /durable relayer scheduler remains disabled/,
+      'must keep the unimplemented durable scheduler wording'
+    );
+  }
   for (const dockerfile of ['deploy/nitro/Dockerfile.enclave', 'deploy/nitro/Dockerfile.signer']) {
     if (!requireFile(dockerfile)) continue;
     const source = read(root, dockerfile);

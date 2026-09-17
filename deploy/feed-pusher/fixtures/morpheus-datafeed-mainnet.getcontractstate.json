@@ -1,0 +1,196 @@
+{
+  "hash": "0x03013f49c42a14546c8bbe58f9d434c3517fccab",
+  "manifest": {
+    "name": "MorpheusDataFeed",
+    "abi": {
+      "methods": [
+        {
+          "name": "_deploy",
+          "offset": 0,
+          "parameters": [
+            {
+              "name": "data",
+              "type": "Any"
+            },
+            {
+              "name": "update",
+              "type": "Boolean"
+            }
+          ],
+          "returntype": "Void",
+          "safe": false
+        },
+        {
+          "name": "admin",
+          "offset": 47,
+          "parameters": [],
+          "returntype": "Hash160",
+          "safe": true
+        },
+        {
+          "name": "updater",
+          "offset": 76,
+          "parameters": [],
+          "returntype": "Hash160",
+          "safe": true
+        },
+        {
+          "name": "setAdmin",
+          "offset": 261,
+          "parameters": [
+            {
+              "name": "newAdmin",
+              "type": "Hash160"
+            }
+          ],
+          "returntype": "Void",
+          "safe": false
+        },
+        {
+          "name": "setUpdater",
+          "offset": 351,
+          "parameters": [
+            {
+              "name": "updater",
+              "type": "Hash160"
+            }
+          ],
+          "returntype": "Void",
+          "safe": false
+        },
+        {
+          "name": "getPairCount",
+          "offset": 466,
+          "parameters": [],
+          "returntype": "Integer",
+          "safe": true
+        },
+        {
+          "name": "getPairByIndex",
+          "offset": 859,
+          "parameters": [
+            {
+              "name": "index",
+              "type": "Integer"
+            }
+          ],
+          "returntype": "String",
+          "safe": true
+        },
+        {
+          "name": "getAllPairs",
+          "offset": 927,
+          "parameters": [],
+          "returntype": "Array",
+          "safe": true
+        },
+        {
+          "name": "updateFeed",
+          "offset": 1031,
+          "parameters": [
+            {
+              "name": "pair",
+              "type": "String"
+            },
+            {
+              "name": "roundId",
+              "type": "Integer"
+            },
+            {
+              "name": "price",
+              "type": "Integer"
+            },
+            {
+              "name": "timestamp",
+              "type": "Integer"
+            },
+            {
+              "name": "attestationHash",
+              "type": "ByteArray"
+            },
+            {
+              "name": "sourceSetId",
+              "type": "Integer"
+            }
+          ],
+          "returntype": "Void",
+          "safe": false
+        },
+        {
+          "name": "updateFeeds",
+          "offset": 1051,
+          "parameters": [
+            {
+              "name": "pairs",
+              "type": "Array"
+            },
+            {
+              "name": "roundIds",
+              "type": "Array"
+            },
+            {
+              "name": "prices",
+              "type": "Array"
+            },
+            {
+              "name": "timestamps",
+              "type": "Array"
+            },
+            {
+              "name": "attestationHashes",
+              "type": "Array"
+            },
+            {
+              "name": "sourceSetIds",
+              "type": "Array"
+            }
+          ],
+          "returntype": "Void",
+          "safe": false
+        },
+        {
+          "name": "getLatest",
+          "offset": 1398,
+          "parameters": [
+            {
+              "name": "pair",
+              "type": "String"
+            }
+          ],
+          "returntype": "Array",
+          "safe": true
+        },
+        {
+          "name": "getAllFeedRecords",
+          "offset": 1445,
+          "parameters": [],
+          "returntype": "Array",
+          "safe": true
+        },
+        {
+          "name": "update",
+          "offset": 1535,
+          "parameters": [
+            {
+              "name": "nefFile",
+              "type": "ByteArray"
+            },
+            {
+              "name": "manifest",
+              "type": "String"
+            }
+          ],
+          "returntype": "Void",
+          "safe": false
+        },
+        {
+          "name": "_initialize",
+          "offset": 1554,
+          "parameters": [],
+          "returntype": "Void",
+          "safe": false
+        }
+      ]
+    }
+  }
+}

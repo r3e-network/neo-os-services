@@ -74,3 +74,15 @@ test('invalid override JSON falls back to the default registry', () => {
   const registry = getFeedPairRegistry();
   assert.ok(registry['NEO-USD'], 'malformed override does not break the default registry');
 });
+
+test('NEO and GAS have two public no-key fallback sources', () => {
+  for (const pair of ['NEO-USD', 'GAS-USD']) {
+    const config = getFeedPairConfig(pair);
+    assert.deepEqual(Object.keys(config.providers), [
+      'twelvedata',
+      'binance-spot',
+      'coingecko',
+      'coinpaprika',
+    ]);
+  }
+});

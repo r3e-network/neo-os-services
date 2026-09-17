@@ -87,7 +87,8 @@
     "datafeed": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
     "aa_core": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
     "aa_web3auth_verifier": "0x7147f9a508594a7656a25f45d0a7a7dede7c227f",
-    "aa_session_key_verifier": "0xed44c88535650b4dd6b8d59776e6ed045462cab6"
+    "aa_session_key_verifier": "0x63d6a10d388dd4885bc42ba69593734476f47151",
+    "aa_recovery_verifier": "0xfb3f605fc6bcd59d265d7c18230093d7dc24ac26"
   },
   "notes": [
     "Oracle testnet encryption key drift was corrected; on-chain and runtime keys now match.",

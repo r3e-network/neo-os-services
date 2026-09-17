@@ -29,7 +29,7 @@ function recordStruct(pair, { roundId = 1, price = 5_250_000, timestamp }) {
 
 // Mock RPC that serves the batched getAllFeedRecords (the new per-pair path) and
 // the updater GAS balance. `records` = array of { pair, timestamp, ... }.
-function startMockAllRecordsRpc({ records, gasBalance }) {
+function startMockAllRecordsRpc({ records, gasBalance, magic = 860833102, headerTime = null }) {
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
       let raw = '';
@@ -38,6 +38,33 @@ function startMockAllRecordsRpc({ records, gasBalance }) {
       });
       req.on('end', () => {
         const body = JSON.parse(raw);
+        if (body.method === 'getversion') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: body.id,
+              result: { protocol: { network: magic } },
+            })
+          );
+          return;
+        }
+        if (body.method === 'getblockcount') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: 100 }));
+          return;
+        }
+        if (body.method === 'getblock') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: body.id,
+              result: { time: headerTime ?? Math.floor(Date.now() / 1000) },
+            })
+          );
+          return;
+        }
         const operation = body.params && body.params[1];
         let result;
         if (operation === 'getAllFeedRecords') {
@@ -73,7 +100,14 @@ function feedRecordStruct({ roundId, price, timestamp }) {
   };
 }
 
-function startMockRpc({ roundId, timestamp, gasBalance }) {
+function startMockRpc({
+  roundId,
+  timestamp,
+  gasBalance,
+  magic = 860833102,
+  allRecords = 'neo',
+  headerTime = null,
+}) {
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
       let raw = '';
@@ -82,11 +116,64 @@ function startMockRpc({ roundId, timestamp, gasBalance }) {
       });
       req.on('end', () => {
         const body = JSON.parse(raw);
+        if (body.method === 'getversion') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: body.id,
+              result: { protocol: { network: magic } },
+            })
+          );
+          return;
+        }
+        if (body.method === 'getblockcount') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: 100 }));
+          return;
+        }
+        if (body.method === 'getblock') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: body.id,
+              result: { time: headerTime ?? Math.floor(Date.now() / 1000) },
+            })
+          );
+          return;
+        }
         const operation = body.params && body.params[1];
-        const result =
-          operation === 'getLatest'
-            ? { state: 'HALT', stack: [feedRecordStruct({ roundId, price: 5_250_000, timestamp })] }
-            : { state: 'HALT', stack: [{ type: 'Integer', value: String(gasBalance) }] };
+        let result;
+        if (operation === 'getAllFeedRecords') {
+          if (allRecords === 'fault') result = { state: 'FAULT', exception: 'bad' };
+          else if (allRecords === 'empty')
+            result = { state: 'HALT', stack: [{ type: 'Array', value: [] }] };
+          else if (allRecords === 'malformed')
+            result = { state: 'HALT', stack: [{ type: 'Integer', value: '1' }] };
+          else if (allRecords === 'partial')
+            result = {
+              state: 'HALT',
+              stack: [
+                {
+                  type: 'Array',
+                  value: [
+                    feedRecordStruct({ roundId, price: 5_250_000, timestamp }),
+                    { type: 'Struct', value: [{ type: 'ByteString', value: '' }] },
+                  ],
+                },
+              ],
+            };
+          else
+            result = {
+              state: 'HALT',
+              stack: [{ type: 'Array', value: [feedRecordStruct({ roundId, price: 5_250_000, timestamp })] }],
+            };
+        } else if (operation === 'getLatest') {
+          result = { state: 'HALT', stack: [feedRecordStruct({ roundId, price: 5_250_000, timestamp })] };
+        } else {
+          result = { state: 'HALT', stack: [{ type: 'Integer', value: String(gasBalance) }] };
+        }
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }));
       });
@@ -190,7 +277,7 @@ test('monitor alerts on a low updater GAS balance', async () => {
 
 test('parseAllRecords strips the TWELVEDATA: prefix and computes per-pair age', () => {
   const now = 1_780_000_000;
-  const rows = parseAllRecords(
+  const decoded = parseAllRecords(
     {
       state: 'HALT',
       stack: [
@@ -205,13 +292,28 @@ test('parseAllRecords strips the TWELVEDATA: prefix and computes per-pair age', 
     },
     now
   );
-  assert.deepEqual(rows, [
-    { pair: 'NEO-USD', ts: now - 120, age: 120 },
-    { pair: 'BTC-USD', ts: now - 300, age: 300 },
+  assert.equal(decoded.ok, true);
+  assert.deepEqual(decoded.rows, [
+    { pair: 'NEO-USD', ts: now - 120, age: 120, clock_skew: false },
+    { pair: 'BTC-USD', ts: now - 300, age: 300, clock_skew: false },
   ]);
-  // FAULT / null fall through so the caller uses the single-pair getLatest path.
-  assert.equal(parseAllRecords({ state: 'FAULT', stack: [] }, now), null);
-  assert.equal(parseAllRecords(null, now), null);
+  const future = parseAllRecords(
+    {
+      state: 'HALT',
+      stack: [
+        {
+          type: 'Array',
+          value: [recordStruct('TWELVEDATA:NEO-USD', { timestamp: now + 200 })],
+        },
+      ],
+    },
+    now
+  );
+  assert.equal(future.rows[0].clock_skew, true);
+  assert.equal(future.rows[0].age, -200);
+  assert.equal(parseAllRecords({ state: 'FAULT', stack: [] }, now).reason, 'fault');
+  assert.equal(parseAllRecords(null, now).ok, false);
+  assert.equal(parseAllRecords({ state: 'HALT', stack: [{ type: 'Array', value: [] }] }, now).reason, 'empty');
 });
 
 test('isMarketClosed flags weekends and configured holidays only', () => {
@@ -327,6 +429,51 @@ test('monitor does not alert on retired pairs but still reports them', async () 
 
 // A pair that is NOT retired must still fail the monitor at the same age, so the
 // exclusion above cannot be widened into a way of silencing a real outage.
+test('FEED_NETWORK=testnet points the monitor at 0x9bea… and records it in the snapshot', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const server = await startMockAllRecordsRpc({
+    records: [{ pair: 'TWELVEDATA:NEO-USD', timestamp: now - 60 }],
+    gasBalance: 100e8,
+    magic: 894710606,
+  });
+  const { port } = server.address();
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'feed-monitor-'));
+  const statusFile = path.join(tmp, 'feed-status.json');
+  try {
+    const result = await runMonitor(`http://127.0.0.1:${port}`, statusFile, {
+      FEED_NETWORK: 'testnet',
+    });
+    assert.equal(result.code, 0, result.stdout + result.stderr);
+    const status = JSON.parse(readFileSync(statusFile, 'utf8'));
+    assert.equal(status.network, 'testnet');
+    assert.equal(status.feed, '0x9bea75cf702f6afc09125aa6d22f082bfd2ee064');
+    assert.equal(status.updater, '0xe421999c396ee0249a8a8c9dd95bfbdaf55f8bf7');
+  } finally {
+    server.close();
+  }
+});
+
+test('monitor exits 2 when getversion magic does not match the pinned network', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const server = await startMockAllRecordsRpc({
+    records: [{ pair: 'TWELVEDATA:NEO-USD', timestamp: now - 60 }],
+    gasBalance: 100e8,
+    magic: 860833102,
+  });
+  const { port } = server.address();
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'feed-monitor-'));
+  const statusFile = path.join(tmp, 'feed-status.json');
+  try {
+    const result = await runMonitor(`http://127.0.0.1:${port}`, statusFile, {
+      FEED_NETWORK: 'testnet',
+    });
+    assert.equal(result.code, 2);
+    assert.match(result.stdout, /no RPC matched magic|getversion|monitor RPC error/i);
+  } finally {
+    server.close();
+  }
+});
+
 test('monitor still alerts on a stale pair that is not retired', async () => {
   const now = Math.floor(Date.now() / 1000);
   const server = await startMockAllRecordsRpc({
@@ -343,6 +490,133 @@ test('monitor still alerts on a stale pair that is not retired', async () => {
     const result = await runMonitor(`http://127.0.0.1:${port}`, statusFile);
     assert.equal(result.code, 1);
     assert.match(result.stdout, /FEED STALE CORN-USD/);
+  } finally {
+    server.close();
+  }
+});
+
+test('monitor fails closed on FAULT, empty, malformed, and partial getAllFeedRecords', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  for (const [mode, reason] of [
+    ['fault', 'fault'],
+    ['empty', 'empty'],
+    ['malformed', 'malformed'],
+    ['partial', 'undecodable'],
+  ]) {
+    const server = await startMockRpc({
+      roundId: 42,
+      timestamp: now - 60,
+      gasBalance: 100e8,
+      allRecords: mode,
+    });
+    const { port } = server.address();
+    const tmp = mkdtempSync(path.join(os.tmpdir(), 'feed-monitor-'));
+    const statusFile = path.join(tmp, 'feed-status.json');
+    try {
+      const result = await runMonitor(`http://127.0.0.1:${port}`, statusFile);
+      assert.equal(result.code, 2, `${mode} must exit 2: ${result.stdout}${result.stderr}`);
+      assert.match(result.stdout, /getAllFeedRecords/);
+      const status = JSON.parse(readFileSync(statusFile, 'utf8'));
+      assert.equal(status.ok, false);
+      assert.equal(status.unreadable_reason, reason);
+    } finally {
+      server.close();
+    }
+  }
+});
+
+test('monitor uses chain header time so wall-clock drift cannot hide staleness', async () => {
+  const header = 1_788_177_600;
+  const server = await startMockAllRecordsRpc({
+    records: [{ pair: 'TWELVEDATA:NEO-USD', timestamp: header - 10 * 86400 }],
+    gasBalance: 100e8,
+    headerTime: header * 1000,
+  });
+  const { port } = server.address();
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'feed-monitor-'));
+  const statusFile = path.join(tmp, 'feed-status.json');
+  try {
+    const result = await runMonitor(`http://127.0.0.1:${port}`, statusFile);
+    assert.equal(result.code, 1, result.stdout + result.stderr);
+    assert.match(result.stdout, /FEED STALE NEO-USD/);
+    const status = JSON.parse(readFileSync(statusFile, 'utf8'));
+    assert.equal(status.ok, false);
+    assert.ok(status.pairs[0].age_seconds >= 10 * 86400 - 5);
+  } finally {
+    server.close();
+  }
+});
+
+test('monitor accepts a seconds-scale header time without inventing clock_skew', async () => {
+  const header = 1_788_177_600;
+  const server = await startMockAllRecordsRpc({
+    records: [{ pair: 'TWELVEDATA:NEO-USD', timestamp: header - 60 }],
+    gasBalance: 100e8,
+    headerTime: header,
+  });
+  const { port } = server.address();
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'feed-monitor-'));
+  const statusFile = path.join(tmp, 'feed-status.json');
+  try {
+    const result = await runMonitor(`http://127.0.0.1:${port}`, statusFile);
+    assert.equal(result.code, 0, result.stdout + result.stderr);
+    const status = JSON.parse(readFileSync(statusFile, 'utf8'));
+    assert.equal(status.ok, true);
+    assert.equal(status.clock_skew, false);
+    assert.equal(status.pairs[0].clock_skew, false);
+    assert.ok(status.pairs[0].age_seconds >= 55 && status.pairs[0].age_seconds <= 65);
+  } finally {
+    server.close();
+  }
+});
+
+test('monitor accepts a milliseconds-scale header time without inventing clock_skew', async () => {
+  const header = 1_788_177_600;
+  const server = await startMockAllRecordsRpc({
+    records: [{ pair: 'TWELVEDATA:NEO-USD', timestamp: header - 90 }],
+    gasBalance: 100e8,
+    headerTime: header * 1000,
+  });
+  const { port } = server.address();
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'feed-monitor-'));
+  const statusFile = path.join(tmp, 'feed-status.json');
+  try {
+    const result = await runMonitor(`http://127.0.0.1:${port}`, statusFile);
+    assert.equal(result.code, 0, result.stdout + result.stderr);
+    const status = JSON.parse(readFileSync(statusFile, 'utf8'));
+    assert.equal(status.ok, true);
+    assert.equal(status.clock_skew, false);
+    assert.equal(status.pairs[0].clock_skew, false);
+    assert.ok(status.pairs[0].age_seconds >= 85 && status.pairs[0].age_seconds <= 95);
+  } finally {
+    server.close();
+  }
+});
+
+test('monitor flags a pair more than 120s ahead of header time as clock_skew and exits 2', async () => {
+  const header = 1_788_177_600;
+  const server = await startMockAllRecordsRpc({
+    records: [
+      { pair: 'TWELVEDATA:NEO-USD', timestamp: header + 200 },
+      { pair: 'TWELVEDATA:BTC-USD', timestamp: header - 60 },
+    ],
+    gasBalance: 100e8,
+    headerTime: header,
+  });
+  const { port } = server.address();
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'feed-monitor-'));
+  const statusFile = path.join(tmp, 'feed-status.json');
+  try {
+    const result = await runMonitor(`http://127.0.0.1:${port}`, statusFile);
+    assert.equal(result.code, 2, result.stdout + result.stderr);
+    assert.match(result.stdout, /CLOCK SKEW|clock_skew/i);
+    const status = JSON.parse(readFileSync(statusFile, 'utf8'));
+    assert.equal(status.ok, false);
+    assert.equal(status.clock_skew, true);
+    const neo = status.pairs.find((row) => row.pair === 'NEO-USD');
+    const btc = status.pairs.find((row) => row.pair === 'BTC-USD');
+    assert.equal(neo.clock_skew, true);
+    assert.equal(btc.clock_skew, false);
   } finally {
     server.close();
   }

@@ -184,9 +184,7 @@ function buildCommonDocumentMetadata(
 ) {
   return {
     canonicalId: parsed.did,
-    deactivated: false,
     versionId: runtime?.compose_hash || 'unversioned',
-    updated: new Date().toISOString(),
     network: parsed.network,
     anchorContract: NETWORKS.neo_n3.neodid,
   };
@@ -234,8 +232,17 @@ function buildServiceDidDocument(
           network: parsed.network,
           contract: NETWORKS.neo_n3.neodid,
           nns: NETWORKS.neo_n3.domains.neodid,
-          read_methods: ['getBinding', 'isMasterNullifierUsed', 'isActionNullifierUsed'],
-          write_methods: ['registerBinding', 'revokeBinding', 'useActionTicket'],
+          read_methods: [
+            'getBinding',
+            'getClaimCommitment',
+            'isMasterNullifierUsed',
+            'isActionNullifierUsed',
+          ],
+          write_methods: [
+            'registerBindingCommitment',
+            'revokeBinding',
+            'useActionTicket',
+          ],
         },
       },
       {

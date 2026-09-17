@@ -22,7 +22,7 @@ use std::{
     convert::Infallible,
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Condvar, Mutex,
     },
     task::{Context, Poll},
@@ -1721,7 +1721,7 @@ async fn cancelled_requests_cannot_release_still_running_blocking_capacity() {
     let releaser: provision::EnvelopeReleaser = {
         let started = Arc::clone(&started);
         let release = Arc::clone(&release);
-        Arc::new(move |_env: &ProvisionEnv, ciphertext: &str| {
+        Arc::new(move |_env: &ProvisionEnv, ciphertext: &str, purpose| {
             started.store(true, Ordering::SeqCst);
             let (lock, wake) = &*release;
             let released = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1731,16 +1731,25 @@ async fn cancelled_requests_cannot_release_still_running_blocking_capacity() {
             if !*released {
                 return Err("the test did not release the blocking operation".to_string());
             }
-            match ciphertext {
-                "token-cipher" => Ok(ENCLAVE_TOKEN.as_bytes().to_vec()),
-                "master-cipher" => Ok([0x6b; 32].to_vec()),
-                other => Err(format!("the canned KMS has no envelope for {other}")),
+            match (ciphertext, purpose) {
+                ("token-cipher", provision::EnvelopePurpose::TransportToken) => {
+                    Ok(zeroize::Zeroizing::new(ENCLAVE_TOKEN.as_bytes().to_vec()))
+                }
+                ("master-cipher", provision::EnvelopePurpose::MasterKey) => {
+                    Ok(zeroize::Zeroizing::new([0x6b; 32].to_vec()))
+                }
+                _ => Err("ciphertext encryption context mismatch".to_string()),
             }
         })
     };
-    let state = ApiState::attested_pending(repository, directory.path().to_path_buf(), releaser)
-        .with_workload_auth(workload_auth())
-        .with_max_in_flight_requests(1);
+    let state = ApiState::attested_pending_with_releaser(
+        repository,
+        directory.path().to_path_buf(),
+        enclave_profile(),
+        releaser,
+    )
+    .with_workload_auth(workload_auth())
+    .with_max_in_flight_requests(1);
     let bounded_router = router(state.clone());
 
     // This unauthenticated provision reaches the blocking KMS seam and waits.
@@ -2505,19 +2514,23 @@ fn a_grant_that_names_keys_under_any_mode_is_refused() {
 const ENCLAVE_TOKEN: &str = "enclave-transport-token-0002";
 
 /// The canned release answers: the token bytes for the token ciphertext, a
-/// 32-byte key for the master ciphertext — branching on the ciphertext, the
-/// way the real releaser branches on a KMS response.
+/// 32-byte key for the master ciphertext, each with its required purpose.
 fn enclave_releaser() -> provision::EnvelopeReleaser {
     use std::sync::Arc;
-    Arc::new(|_env: &ProvisionEnv, ciphertext: &str| {
-        if ciphertext == "token-cipher" {
-            Ok(ENCLAVE_TOKEN.as_bytes().to_vec())
-        } else if ciphertext == "master-cipher" {
-            Ok([0x6b; 32].to_vec())
+    Arc::new(|_env: &ProvisionEnv, ciphertext: &str, purpose| {
+        if ciphertext == "token-cipher" && purpose == provision::EnvelopePurpose::TransportToken {
+            Ok(zeroize::Zeroizing::new(ENCLAVE_TOKEN.as_bytes().to_vec()))
+        } else if ciphertext == "master-cipher" && purpose == provision::EnvelopePurpose::MasterKey
+        {
+            Ok(zeroize::Zeroizing::new([0x6b; 32].to_vec()))
         } else {
             Err(format!("the canned KMS has no envelope for {ciphertext}"))
         }
     })
+}
+
+fn enclave_profile() -> Arc<crate::vault_profile::ValidatedVaultProfile> {
+    Arc::new(crate::vault_profile::test_profile([0x6b; 32]))
 }
 
 /// The provision body the start script would send: the token ciphertext, the
@@ -2533,13 +2546,17 @@ fn enclave_provision_body() -> Value {
 }
 
 /// A vault sealed behind [`ApiState::attested_pending`], plus its data
-/// directory (the enclave-born fallback would write into it).
+/// directory, which provision must not populate with a master key file.
 fn sealed_router() -> (Router, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
     let repository = Store::open(dir.path().join("signer.db")).expect("store");
-    let state =
-        ApiState::attested_pending(repository, dir.path().to_path_buf(), enclave_releaser())
-            .with_workload_auth(workload_auth());
+    let state = ApiState::attested_pending_with_releaser(
+        repository,
+        dir.path().to_path_buf(),
+        enclave_profile(),
+        enclave_releaser(),
+    )
+    .with_workload_auth(workload_auth());
     (router(state), dir)
 }
 
@@ -2659,6 +2676,319 @@ async fn provision_opens_the_vault_once_and_refuses_the_second_call() {
     .await;
     assert_eq!(second.status, StatusCode::CONFLICT, "{second:?}");
     assert_eq!(second.json()["code"], "signer-provision-already-done");
+}
+
+#[tokio::test]
+async fn concurrent_provisioning_releases_the_master_key_only_once() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let repository = Store::open(directory.path().join("signer.db")).expect("store");
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let master_releases = Arc::new(AtomicUsize::new(0));
+    let releaser: provision::EnvelopeReleaser = {
+        let started = Arc::clone(&started);
+        let release = Arc::clone(&release);
+        let master_releases = Arc::clone(&master_releases);
+        Arc::new(move |env, ciphertext, purpose| {
+            if purpose == provision::EnvelopePurpose::TransportToken {
+                started.notify_one();
+                let (lock, wake) = &*release;
+                let released = lock.lock().expect("release lock");
+                let (released, _) = wake
+                    .wait_timeout_while(released, Duration::from_secs(5), |released| !*released)
+                    .expect("release wait");
+                if !*released {
+                    return Err("the test did not release provisioning".to_string());
+                }
+            } else {
+                master_releases.fetch_add(1, Ordering::SeqCst);
+            }
+            enclave_releaser()(env, ciphertext, purpose)
+        })
+    };
+    let state = ApiState::attested_pending_with_releaser(
+        repository,
+        directory.path().to_path_buf(),
+        enclave_profile(),
+        releaser,
+    )
+    .with_max_in_flight_requests(2);
+    let app = router(state.clone());
+    let request = || {
+        root_request(
+            Method::POST,
+            "/provision",
+            Some(ENCLAVE_TOKEN),
+            Some(enclave_provision_body()),
+        )
+    };
+    let first = tokio::spawn(send_raw(app.clone(), request()));
+    tokio::time::timeout(Duration::from_secs(5), started.notified())
+        .await
+        .expect("the first request must reach KMS");
+    let second = tokio::spawn(send_raw(app.clone(), request()));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while state.blocking_slots.available_permits() != 0 && !second.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the second request must be admitted or refused");
+
+    let health = tokio::time::timeout(
+        Duration::from_secs(1),
+        send_raw(app, root_request(Method::GET, "/health", None, None)),
+    )
+    .await
+    .expect("KMS must not hold the vault read lock");
+    assert_eq!(health.json()["status"], "unprovisioned");
+    let (lock, wake) = &*release;
+    *lock.lock().expect("release lock") = true;
+    wake.notify_all();
+
+    let first = first.await.expect("first request task");
+    let second = second.await.expect("second request task");
+    assert_eq!(first.status, StatusCode::OK, "{first:?}");
+    assert!(
+        matches!(
+            second.status,
+            StatusCode::CONFLICT | StatusCode::SERVICE_UNAVAILABLE
+        ),
+        "{second:?}"
+    );
+    assert_eq!(
+        master_releases.load(Ordering::SeqCst),
+        1,
+        "a losing request must not initialize another service"
+    );
+    assert_eq!(
+        state
+            .service_snapshot()
+            .expect("the winner stays ready")
+            .vault_fingerprint(),
+        first.field("vault_fingerprint")
+    );
+}
+
+#[tokio::test]
+async fn cancelling_a_successful_provision_request_cannot_discard_the_ready_vault() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let repository = Store::open(directory.path().join("signer.db")).expect("store");
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let releaser: provision::EnvelopeReleaser = {
+        let started = Arc::clone(&started);
+        let release = Arc::clone(&release);
+        Arc::new(move |env, ciphertext, purpose| {
+            if purpose == provision::EnvelopePurpose::MasterKey {
+                started.notify_one();
+                let (lock, wake) = &*release;
+                let released = lock.lock().expect("release lock");
+                let (released, _) = wake
+                    .wait_timeout_while(released, Duration::from_secs(5), |released| !*released)
+                    .expect("release wait");
+                if !*released {
+                    return Err("the test did not release the master key".to_string());
+                }
+            }
+            enclave_releaser()(env, ciphertext, purpose)
+        })
+    };
+    let state = ApiState::attested_pending_with_releaser(
+        repository,
+        directory.path().to_path_buf(),
+        enclave_profile(),
+        releaser,
+    )
+    .with_max_in_flight_requests(1);
+    let app = router(state.clone());
+    let pending = tokio::spawn(send_raw(
+        app.clone(),
+        root_request(
+            Method::POST,
+            "/provision",
+            Some(ENCLAVE_TOKEN),
+            Some(enclave_provision_body()),
+        ),
+    ));
+    tokio::time::timeout(Duration::from_secs(5), started.notified())
+        .await
+        .expect("the request must reach master key release");
+    pending.abort();
+    assert!(pending
+        .await
+        .expect_err("HTTP request was cancelled")
+        .is_cancelled());
+    assert_eq!(state.request_slots.available_permits(), 1);
+    assert_eq!(state.blocking_slots.available_permits(), 0);
+
+    let (lock, wake) = &*release;
+    *lock.lock().expect("release lock") = true;
+    wake.notify_all();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while state.blocking_slots.available_permits() != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the detached blocking operation must finish");
+
+    let service = state
+        .service_snapshot()
+        .expect("a cancelled HTTP future must still publish the initialized winner");
+    assert_eq!(
+        service.vault_fingerprint(),
+        MasterKey::from_bytes([0x6b; 32]).fingerprint()
+    );
+    let retry = send_raw(
+        app,
+        root_request(
+            Method::POST,
+            "/provision",
+            Some(ENCLAVE_TOKEN),
+            Some(enclave_provision_body()),
+        ),
+    )
+    .await;
+    assert_eq!(retry.status, StatusCode::CONFLICT, "{retry:?}");
+    assert_eq!(retry.code(), "signer-provision-already-done");
+}
+
+#[tokio::test]
+async fn a_failed_master_release_leaves_provisioning_retryable() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let repository = Store::open(directory.path().join("signer.db")).expect("store");
+    let first_release = AtomicBool::new(true);
+    let releaser: provision::EnvelopeReleaser = Arc::new(move |env, ciphertext, purpose| {
+        if purpose == provision::EnvelopePurpose::MasterKey
+            && first_release.swap(false, Ordering::SeqCst)
+        {
+            return Err("temporary KMS release failure".to_string());
+        }
+        enclave_releaser()(env, ciphertext, purpose)
+    });
+    let state = ApiState::attested_pending_with_releaser(
+        repository,
+        directory.path().to_path_buf(),
+        enclave_profile(),
+        releaser,
+    );
+    let app = router(state.clone());
+    for expected in [StatusCode::SERVICE_UNAVAILABLE, StatusCode::OK] {
+        let reply = send_raw(
+            app.clone(),
+            root_request(
+                Method::POST,
+                "/provision",
+                Some(ENCLAVE_TOKEN),
+                Some(enclave_provision_body()),
+            ),
+        )
+        .await;
+        assert_eq!(reply.status, expected, "{reply:?}");
+        assert_eq!(
+            state.service_snapshot().is_some(),
+            expected == StatusCode::OK
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_panicking_provision_stays_sealed_and_cannot_release_another_key() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let repository = Store::open(directory.path().join("signer.db")).expect("store");
+    let releases = Arc::new(AtomicUsize::new(0));
+    let releaser: provision::EnvelopeReleaser = {
+        let releases = Arc::clone(&releases);
+        Arc::new(move |env, ciphertext, purpose| {
+            if purpose == provision::EnvelopePurpose::MasterKey {
+                releases.fetch_add(1, Ordering::SeqCst);
+                panic!("injected provisioning panic");
+            }
+            enclave_releaser()(env, ciphertext, purpose)
+        })
+    };
+    let state = ApiState::attested_pending_with_releaser(
+        repository,
+        directory.path().to_path_buf(),
+        enclave_profile(),
+        releaser,
+    );
+    let app = router(state.clone());
+    for expected in [
+        StatusCode::INTERNAL_SERVER_ERROR,
+        StatusCode::SERVICE_UNAVAILABLE,
+    ] {
+        let reply = send_raw(
+            app.clone(),
+            root_request(
+                Method::POST,
+                "/provision",
+                Some(ENCLAVE_TOKEN),
+                Some(enclave_provision_body()),
+            ),
+        )
+        .await;
+        assert_eq!(reply.status, expected, "{reply:?}");
+        assert!(state.service_snapshot().is_none());
+    }
+    assert_eq!(releases.load(Ordering::SeqCst), 1);
+    let sign = send_raw(
+        app,
+        root_request(
+            Method::POST,
+            &format!("{API_PREFIX}/sign/transaction"),
+            Some(ENCLAVE_TOKEN),
+            Some(json!({"key_id": "k", "unsigned_hex": "00"})),
+        ),
+    )
+    .await;
+    assert_eq!(sign.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(sign.code(), NOT_PROVISIONED);
+}
+
+#[tokio::test]
+async fn invalid_envelope_purposes_or_missing_master_leave_the_vault_sealed() {
+    for (case, expected_status) in [
+        ("missing-master", StatusCode::BAD_REQUEST),
+        ("same-ciphertext", StatusCode::BAD_REQUEST),
+        ("swapped-purposes", StatusCode::SERVICE_UNAVAILABLE),
+    ] {
+        let (router, dir) = sealed_router();
+        let mut body = enclave_provision_body();
+        let env = body["env"].as_object_mut().expect("env object");
+        match case {
+            "missing-master" => {
+                env.remove(provision::MASTER_KEY_CIPHERTEXT_ENV);
+            }
+            "same-ciphertext" => {
+                env.insert(
+                    provision::MASTER_KEY_CIPHERTEXT_ENV.to_string(),
+                    json!("token-cipher"),
+                );
+            }
+            "swapped-purposes" => {
+                env.insert(
+                    provision::TOKEN_CIPHERTEXT_ENV.to_string(),
+                    json!("master-cipher"),
+                );
+                env.insert(
+                    provision::MASTER_KEY_CIPHERTEXT_ENV.to_string(),
+                    json!("token-cipher"),
+                );
+            }
+            _ => unreachable!(),
+        }
+        let result = send_raw(
+            router.clone(),
+            root_request(Method::POST, "/provision", Some(ENCLAVE_TOKEN), Some(body)),
+        )
+        .await;
+        assert_eq!(result.status, expected_status, "{case}: {result:?}");
+        let health = send_raw(router, root_request(Method::GET, "/health", None, None)).await;
+        assert_eq!(health.json()["status"], "unprovisioned", "{case}");
+        assert!(!dir.path().join(crate::vault::MASTER_KEY_FILE).exists());
+    }
 }
 
 #[tokio::test]

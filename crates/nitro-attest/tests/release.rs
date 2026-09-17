@@ -15,8 +15,8 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use nitro_attest::asn1::{oid_aes256_cbc, oid_data, oid_enveloped_data, oid_rsaes_oaep};
 use nitro_attest::kms::{Credentials, SignedRequest};
 use nitro_attest::release::{
-    release_bytes, release_master_key, AttestationSource, KmsTransport, NsmAttestation,
-    ReleaseParams,
+    release_bytes, release_bytes_with_context, release_bytes_with_context_and_key,
+    release_master_key, AttestationSource, KmsTransport, NsmAttestation, ReleaseParams,
 };
 use rsa::{Oaep, RsaPublicKey};
 use serde_json::{json, Value};
@@ -243,6 +243,134 @@ fn releases_the_key_end_to_end() {
     assert!(body["Recipient"]["AttestationDocument"]
         .as_str()
         .is_some_and(|document| !document.is_empty()));
+}
+
+#[test]
+fn encrypted_purpose_reaches_kms_and_a_mismatch_is_not_retried_without_context() {
+    struct ContextBoundKms(MockKms);
+    impl KmsTransport for ContextBoundKms {
+        fn post_json(
+            &self,
+            url: &str,
+            headers: &[(String, String)],
+            body: &str,
+        ) -> nitro_attest::AttestResult<(u16, String)> {
+            let parsed: Value = serde_json::from_str(body).unwrap();
+            assert!(
+                parsed.get("EncryptionContext").is_some(),
+                "context must not be downgraded"
+            );
+            if parsed["EncryptionContext"]["neoos:purpose"] != "master-key/v1" {
+                return Ok((
+                    400,
+                    json!({"__type":"InvalidCiphertextException"}).to_string(),
+                ));
+            }
+            self.0.post_json(url, headers, body)
+        }
+    }
+    let captured = Arc::new(Mutex::new(None));
+    let source = RecordingSource {
+        captured_public_key: captured.clone(),
+    };
+    let kms = ContextBoundKms(MockKms {
+        captured_public_key: captured,
+        reply: KmsReply::Release(DATA_KEY.to_vec()),
+        seen: Mutex::new(Vec::new()),
+    });
+    let credentials = credentials();
+    let params = params(&credentials, "20260831T000000Z");
+    assert_eq!(
+        release_bytes_with_context(
+            &source,
+            &kms,
+            &params,
+            &[("neoos:purpose", "master-key/v1")]
+        )
+        .unwrap(),
+        DATA_KEY
+    );
+    assert!(release_bytes_with_context(
+        &source,
+        &kms,
+        &params,
+        &[("neoos:purpose", "transport-token/v1")]
+    )
+    .is_err());
+    assert_eq!(kms.0.seen.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn pinned_key_is_sent_to_kms_and_a_different_response_key_releases_nothing() {
+    const KEY_ARN: &str =
+        "arn:aws:kms:us-east-1:736326664265:key/11111111-2222-3333-4444-555555555555";
+
+    struct KeyReportingKms {
+        inner: MockKms,
+        response_key_id: &'static str,
+    }
+    impl KmsTransport for KeyReportingKms {
+        fn post_json(
+            &self,
+            url: &str,
+            headers: &[(String, String)],
+            body: &str,
+        ) -> nitro_attest::AttestResult<(u16, String)> {
+            let request: Value = serde_json::from_str(body).unwrap();
+            assert_eq!(
+                request["KeyId"], KEY_ARN,
+                "the request must pin the key ARN"
+            );
+            let (status, response) = self.inner.post_json(url, headers, body)?;
+            let mut response: Value = serde_json::from_str(&response).unwrap();
+            response["KeyId"] = Value::String(self.response_key_id.to_string());
+            Ok((status, response.to_string()))
+        }
+    }
+
+    let captured = Arc::new(Mutex::new(None));
+    let source = RecordingSource {
+        captured_public_key: captured.clone(),
+    };
+    let kms = KeyReportingKms {
+        inner: MockKms {
+            captured_public_key: captured,
+            reply: KmsReply::Release(DATA_KEY.to_vec()),
+            seen: Mutex::new(Vec::new()),
+        },
+        response_key_id: KEY_ARN,
+    };
+    let credentials = credentials();
+    let release_params = params(&credentials, "20260831T000000Z");
+    assert_eq!(
+        release_bytes_with_context_and_key(
+            &source,
+            &kms,
+            &release_params,
+            &[("neoos:vault-id", "testnet-primary")],
+            Some(KEY_ARN),
+        )
+        .unwrap(),
+        DATA_KEY
+    );
+
+    let wrong_key_kms = KeyReportingKms {
+        inner: kms.inner,
+        response_key_id:
+            "arn:aws:kms:us-east-1:736326664265:key/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    };
+    assert_eq!(
+        release_bytes_with_context_and_key(
+            &source,
+            &wrong_key_kms,
+            &release_params,
+            &[("neoos:vault-id", "testnet-primary")],
+            Some(KEY_ARN),
+        )
+        .unwrap_err(),
+        "kms decrypt: response key id did not match the pinned key"
+    );
+    assert_eq!(wrong_key_kms.inner.seen.lock().unwrap().len(), 2);
 }
 
 #[test]

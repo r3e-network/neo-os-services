@@ -38,13 +38,16 @@ mod audit;
 mod callers;
 mod consensus;
 mod keys;
+mod management;
 mod policies;
 mod requests;
 mod rows;
 mod schema;
+mod snapshot;
 mod value_events;
 mod workload_nonces;
 
+pub(crate) use management::ManagementChange;
 use rows::*;
 
 #[derive(Debug, Clone)]

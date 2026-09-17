@@ -1,13 +1,14 @@
 # PRODUCTION RUST RELAYER. The measured Nitro host and custody signer remain
 # systemd-managed EIFs on host loopback. The image must be an immutable
-# `neo-os-services-relayer:sha-...` publication; config:validate is the
-# container health and startup preflight.
+# `neo-os-services-relayer:sha-...` publication. Config validation is preflight;
+# health checks the running worker's persisted progress and failure state.
 services:
   neo-os-relayer:
     image: '${MORPHEUS_RUST_RELAYER_IMAGE:?pin-immutable-rust-relayer-image}'
     command: ['loop']
     network_mode: host
     restart: unless-stopped
+    stop_grace_period: 120s
     env_file:
       - ${MORPHEUS_RUST_RELAYER_ENV_FILE:-./neo-os-relayer.env}
     environment:
@@ -21,7 +22,7 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ['CMD', '/app/bin/neo-os-relayer', 'config:validate']
+      test: ['CMD', '/app/bin/neo-os-relayer', 'health']
       interval: 30s
       timeout: 5s
       retries: 3

@@ -1,0 +1,13 @@
+[Unit]
+Description=Run Morpheus Node feed pusher (Neo N3 testnet, COMPATIBILITY ONLY)
+ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_FEED_PUSHER_COMPAT
+Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
+Before=morpheus-relayer.service morpheus-relayer-nitro.service
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=15s
+
+# Deliberately no [Install] section. Production feed authority belongs to the
+# Rust relayer on every network; an operator may start this timer only for an
+# explicit rollback after ENABLE_NODE_FEED_PUSHER_COMPAT exists.

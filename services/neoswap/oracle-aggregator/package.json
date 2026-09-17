@@ -8,11 +8,11 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
-    "test": "vitest run --coverage",
+    "test": "vitest run",
     "test:watch": "vitest watch"
   },
   "dependencies": {
-    "@neosphere/sdk": "^1.0.0",
+    "redis": "^4.6.0",
     "ioredis": "^5.3.0",
     "pg": "^8.11.0",
     "ws": "^8.14.0",

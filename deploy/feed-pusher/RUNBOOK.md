@@ -12,9 +12,30 @@ This standalone writer historically replaced the dead Phala compute worker for
 the **price feed only**. The details below document the compatibility path and
 live-box recovery history; they are not the current production installation path.
 
+It does NOT need the compute worker. Runs on the Nitro oracle host
+(`i-0c52851f134db20ee`) as a systemd timer. The Hetzner Fura/MCP box
+(`95.216.148.60`) is a different host and has no feed units, timers, or
+`/opt/neoos/services/deploy/feed-pusher` install.
+
 ## Architecture
 
-- On-chain contract: **MorpheusDataFeed** mainnet `0x03013f49c42a14546c8bbe58f9d434c3517fccab`.
+- On-chain contract: **MorpheusDataFeed** mainnet `0x03013f49c42a14546c8bbe58f9d434c3517fccab`
+  (default). `FEED_NETWORK=testnet` selects `0x9bea75cf702f6afc09125aa6d22f082bfd2ee064`.
+  That testnet deployment exposes `updateFeed` (singular) and **not** `updateFeeds`.
+  After magic-pinned `FEED_NETWORK=testnet` and a proven ABI, the host serializes
+  individual `updateFeed` calls through the same enclave `/feed/sign` interface.
+  Mainnet keeps batch `updateFeeds` and will not silently downgrade. After
+  broadcast the host persists the signed identity and requires application-log
+  `HALT` before `ok` / `confirmed` — mempool `sendrawtransaction` accept is
+  `submitted` only. Deploy the
+  TestNet writer on a **distinct** Nitro-capable instance with a
+  testnet-pinned EIF (`morpheus-nitro-signer-testnet`, host `:8789`) — do
+  not add a second enclave to `i-0c52851f134db20ee`, rebuild the live
+  mainnet EIF, or enable both paths in one enclave. Local
+  implementation does not make TestNet healthy until that isolated writer is
+  deployed onto a funded signer/writer host. See
+  [`../../docs/TESTNET-FEED-WRITER.md`](../../docs/TESTNET-FEED-WRITER.md)
+  and [`../../docs/FEED-HEALTH-AUDIT.md`](../../docs/FEED-HEALTH-AUDIT.md).
   `UpdateFeeds(...)` only requires the tx be witnessed by the contract **updater** —
   there is NO on-chain attestation/signature check beyond the witness.
 - On-chain updater = **NN8tbpgAx8zm5BNJZEqvi71Rj2Z8LX2RHh** (`0x9fb28bdacfaa7fcc0a4d660d0dc990b0e7d46118`),
@@ -30,25 +51,40 @@ live-box recovery history; they are not the current production installation path
 
 ## Files
 
-> **Path warning (verified on the live box 2026-08-20).** The table below is the
-> _intended_ layout. `i-0c52851f134db20ee` actually uses
-> `/opt/morpheus/neo-morpheus-oracle` as its repo root — every installed unit has
-> `WorkingDirectory=/opt/morpheus/neo-morpheus-oracle`, with `feed-pusher.mjs`
-> symlinked to `deploy/feed-pusher/feed-pusher.mjs` and `feed-monitor.mjs` /
-> `feed-topup.mjs` / `db-prune.mjs` at that root. Copying this repo's
-> `*.service` files onto that box verbatim points them at a directory that does
-> not exist and takes the feed down. Reconcile the path, or add behaviour with
-> `/etc/systemd/system/<unit>.service.d/` drop-ins — see
-> [`FEED-OUTAGE-RUNBOOK.md`](./FEED-OUTAGE-RUNBOOK.md) §0.
+Units ship with `WorkingDirectory=/opt/neoos/services/deploy/feed-pusher`.
+That directory is the install target. Copy the writer, monitor, topup, prune
+scripts, `lib-feed-network.mjs`, and `lib-feed-writer-metrics.mjs` into it in one step (atomic install).
+Do not copy a single script.
+
+If a host still has a checkout only at `/opt/morpheus/neo-morpheus-oracle`
+(the 2026-08 live-box layout), do **not** edit `WorkingDirectory=` in the
+unit file. Either migrate the checkout to `/opt/neoos/services` (`npm run
+install:code-path-compat`) or install a drop-in that points at the directory
+where the scripts **and** library were atomically installed:
+
+```
+# /etc/systemd/system/morpheus-feed-pusher.service.d/10-workingdirectory.conf
+[Service]
+WorkingDirectory=/opt/morpheus/neo-morpheus-oracle/deploy/feed-pusher
+```
+
+Repeat the drop-in for each feed unit you enable. See
+[`FEED-OUTAGE-RUNBOOK.md`](./FEED-OUTAGE-RUNBOOK.md) §0.
 
 | repo file                               | box path                                                                      |
 | --------------------------------------- | ----------------------------------------------------------------------------- |
 | `feed-pusher.mjs`                       | `/opt/neoos/services/deploy/feed-pusher/feed-pusher.mjs`                      |
 | `feed-monitor.mjs`                      | `/opt/neoos/services/deploy/feed-pusher/feed-monitor.mjs`                     |
+| `feed-topup.mjs`                        | `/opt/neoos/services/deploy/feed-pusher/feed-topup.mjs`                       |
+| `lib-feed-network.mjs`                  | `/opt/neoos/services/deploy/feed-pusher/lib-feed-network.mjs` (required sibling) |
+| `lib-feed-writer-metrics.mjs`           | `/opt/neoos/services/deploy/feed-pusher/lib-feed-writer-metrics.mjs` (required sibling) |
 | `db-prune.mjs`                          | `/opt/neoos/services/deploy/feed-pusher/db-prune.mjs`                         |
-| `morpheus-feed-pusher.{service,timer}`  | `/etc/systemd/system/` (every 5 min)                                          |
-| `morpheus-feed-monitor.{service,timer}` | `/etc/systemd/system/` (every 15 min; fails visibly if feed stale or GAS low) |
-| `morpheus-db-prune.{service,timer}`     | `/etc/systemd/system/` (daily 03:30 UTC; retain 30d)                          |
+| `morpheus-feed-pusher.service` + `.timer` | `/etc/systemd/system/` (every 5 min; exec-time pin `FEED_NETWORK=mainnet`) |
+| `morpheus-feed-monitor.service` + `.timer` | `/etc/systemd/system/` (every 15 min; exec-time pin `FEED_NETWORK=mainnet`) |
+| `morpheus-feed-pusher-neox.service` + `.timer` | `/etc/systemd/system/` (distinct `PUSH_*` / `MISSING_STATE` from N3) |
+| `morpheus-feed-pusher-testnet.service` + `.timer` | `/etc/systemd/system/` (compatibility artifact: no `[Install]`; requires `ENABLE_NODE_FEED_PUSHER_COMPAT`; `Conflicts=` / `Before=` both Rust relayers; distinct `PUSH_*` / `MISSING_STATE` / `SIGNER_URL=:8789`; `Requires=` TestNet signer). Never enable. |
+| `morpheus-feed-monitor-testnet.service` + `.timer` | `/etc/systemd/system/` (distinct `MONITOR_*` paths/labels)         |
+| `morpheus-db-prune.service` + `.timer`  | `/etc/systemd/system/` (daily 03:30 UTC; retain 30d)                          |
 | `feed-pusher.env.example`               | template for `/opt/morpheus/nitro/feed-pusher.env` (chmod 600)                |
 
 ## Emergency compatibility rollback
@@ -59,7 +95,26 @@ must follow `deploy/nitro/README.md` and restore the Rust relayer instead.
 
 1. Provision the host; install Node 20+ and the `neo-os-services` repo at `/opt/neoos/services` (provides `node_modules/@cityofzion/neon-js`).
 2. Restore the Nitro enclave signer (serves `127.0.0.1:8787`) — see `deploy/nitro/`.
-3. Keep the scripts in `/opt/neoos/services/deploy/feed-pusher/`; copy the `*.service/*.timer` files to `/etc/systemd/system/`.
+3. Atomically install `feed-pusher.mjs`, `feed-monitor.mjs`, `feed-topup.mjs`,
+   `db-prune.mjs`, `lib-feed-network.mjs`, and `lib-feed-writer-metrics.mjs` into
+   `/opt/neoos/services/deploy/feed-pusher/` (the unit `WorkingDirectory`).
+   Install named unit files only — do not glob-copy `*.service`. A copy of a
+   single script without the library will fail to start. If the host checkout
+   is still only at `/opt/morpheus/neo-morpheus-oracle`, install a
+   `WorkingDirectory=` drop-in (see Files) and place the same six files in
+   that drop-in directory in one step. Units pin network and state/log/prom
+   paths at exec time (`ExecStart=/usr/bin/env KEY=value … /usr/bin/node …`)
+   because systemd `EnvironmentFile=` overrides `Environment=` regardless of
+   unit-file order. Mainnet N3 pins `FEED_NETWORK=mainnet` plus
+   `feed-pusher.log` / `feed-pusher-status.json` / `feed-pusher-missing.json`.
+   Neo X pins the same network but distinct `feed-pusher-neox.*` state files
+   so concurrent timers cannot overwrite N3. Testnet pins `FEED_NETWORK=testnet`
+   and distinct `PUSH_LOG`, `PUSH_STATUS`, `MISSING_STATE`, `PUSH_PROM_TEXTFILE`,
+   `MONITOR_STATUS`,
+   `MONITOR_LOG`, `MONITOR_PROM_TEXTFILE`, and `MONITOR_NETWORK`. Do not put
+   those reserved keys in `feed-pusher.env`. `N3_FEED` / `FEED_MAGIC` in the
+   env file must match the selected `FEED_NETWORK` defaults or the process
+   fails closed; `FEED_RPCS` may rotate URLs and is isolated by `getversion`.
 4. Create `/opt/morpheus/nitro/feed-pusher.env` from `feed-pusher.env.example` (chmod 600):
    `TD_KEY` (TwelveData), `RUNTIME_TOKEN` = `MORPHEUS_RUNTIME_TOKEN` from `morpheus-relayer.env`.
 5. Stop the Rust authority, create the explicit compatibility marker, reload
@@ -104,9 +159,49 @@ must follow `deploy/nitro/README.md` and restore the Rust relayer instead.
   `feed-status.json` carries a `pairs[]` array (per-pair `age_min`) alongside the back-compat `feed_age_min`.
   TradFi pairs (forex/commodities in `TRADFI_PAIRS`) get a widened staleness window
   (`TRADFI_WEEKEND_AGE_SEC`) over weekends/holidays so a closed market doesn't false-alarm.
-  Set `MONITOR_PROM_TEXTFILE` to a node_exporter textfile-collector path to export
-  `feed_age_seconds{pair,network}` + `feed_updater_gas{network}` (off by default).
-- **Health checks:** `tail /opt/morpheus/nitro/feed-pusher.log`, `journalctl -u morpheus-feed-pusher`.
+  Mainnet `MONITOR_PROM_TEXTFILE` is pinned empty at exec time so a leftover
+  testnet path cannot collide; enable it with a systemd drop-in that changes
+  the `ExecStart` pin, not with `feed-pusher.env`. Testnet units pin
+  `/opt/morpheus/nitro/feed-monitor-testnet.prom`.
+- **Health checks:** `AWS_PROFILE=morpheus npm run audit:feeds:health` (read-only,
+  6-hour SLO; the audit retries documented profile `morpheus` when the default
+  chain has no credentials). A funded writable contract with every active pair
+  stale is `live_writer_not_advancing` — confirm whether the box is down or
+  still cycling with an expired TwelveData key before restarting anything.
+  `tail /opt/morpheus/nitro/feed-pusher.log`,
+  `cat /opt/morpheus/nitro/feed-pusher-status.json`, `journalctl -u morpheus-feed-pusher`.
+  Neo X writes `/opt/morpheus/nitro/feed-pusher-neox-status.json` and
+  `feed-pusher-neox.log` so it cannot overwrite the N3 cycle.
+  A cycle that cannot fetch TwelveData, cannot push, sees only mempool accept
+  without application-log `HALT`, stays pending/timeout/FAULT/rejected, or
+  hits a contract without `updateFeeds` now exits `1` so `OnFailure=` fires —
+  including Neo X. Status JSON distinguishes `submitted`, `pending`,
+  `confirmed`, `skipped`, and `failed` in both batch and per-pair modes
+  (`confirmation_status`, `pairs_*`, `submitted_identity`); `write_attempts`
+  and `pairs_faulted` retain timeout / FAULT / rejection detail. Mainnet batch
+  also writes the complete signed replay material, mode `0600`, to
+  `feed-pusher-status.json.pending-batch.json` before broadcast. Do not delete
+  that sidecar while its identity is unexpired: a later oneshot must reconcile
+  or replay that exact raw transaction instead of signing a duplicate. This
+  checkout's HALT-closed batch path is local until deployed; live mainnet
+  recovery still needs a valid TwelveData subscription/key.
+  Monitor Prometheus remains on-chain pair age and updater GAS
+  (`MONITOR_PROM_TEXTFILE`). Writer confirmation states are a **separate**
+  scrape surface (`PUSH_PROM_TEXTFILE`, documented in
+  [`../../docs/FEED-WRITER-METRICS.md`](../../docs/FEED-WRITER-METRICS.md)):
+  last attempt / submitted / confirmed timestamps and `validUntilBlock`
+  heights, one-hot `confirmation_state` (`skipped` = no planned writes,
+  `submitted`/`pending` = unconfirmed, `fault` = application-log FAULT,
+  `failed` = other write failure), pair **counts** (never pair ids), source
+  missing/skip counts, confirmation latency, `failed_cycles_total`, and
+  outstanding replay-sidecar presence. Mainnet and Neo X pin
+  `PUSH_PROM_TEXTFILE` empty; TestNet pins
+  `/opt/morpheus/nitro/feed-pusher-testnet.prom`. Enable mainnet with a
+  drop-in that changes the exec pin — do not put that key in
+  `feed-pusher.env`. These series are scrape/guidance only; this checkout
+  does not configure Prometheus or alert delivery. The independent monitor
+  still does not consume `feed-pusher-status.json`, so the pusher unit's
+  own `OnFailure=` is the immediate failure signal.
 - **DB:** `morpheus-db-prune` keeps the relayer's Supabase tables bounded (the original 402 outage cause).
 
 ## Known limitations

@@ -9,6 +9,11 @@
     "oracle_attestation_explorer_url": "",
     "datafeed_cvm_id": "ac5b6886a2832df36e479294206611652400178f",
     "datafeed_cvm_name": "datafeed-morpheus-neo-r3e",
+    "datafeed_providers": [
+      "TWELVEDATA",
+      "COINGECKO",
+      "COINPAPRIKA"
+    ],
     "datafeed_attestation_explorer_url": ""
   },
   "neo_n3": {
@@ -26,6 +31,8 @@
       "http://seed5.neo.org:20332"
     ],
     "network_magic": 894710606,
+    "genesis_hash": "0x9d3276785e7306daf59a3f3b9e31912c095598bbfb8a4476b821b0e59be4c57a",
+    "genesis_source": "neo-go/6d7bd0c7d612c1e9eeaf08efbb8788efef5a449b/config/protocol.testnet.yml#CreateGenesisBlock",
     "domains": {
       "morpheus_oracle": "",
       "morpheus_datafeed": "",
@@ -40,7 +47,8 @@
       "morpheus_datafeed": "0x9bea75cf702f6afc09125aa6d22f082bfd2ee064",
       "abstract_account": "0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2",
       "aa_address_market": "0x6b979cdd246cc6491a20000a2a822e497c92c23b",
-      "morpheus_neodid": ""
+      "morpheus_neodid": "",
+      "matrix_nameservice": "0x994c3cbe0d8641b9c911452c37191de8dd9f5f4e"
     },
     "aa_runtime": {
       "display_name": "UnifiedSmartWalletV3",
@@ -68,11 +76,22 @@
     },
     "aa_verifiers": {
       "web3auth": "0x1111f5b6b046a964c75d208998c13945ce172e85",
-      "social_recovery": ""
+      "social_recovery": "0xfb3f605fc6bcd59d265d7c18230093d7dc24ac26",
+      "session_key": "0x63d6a10d388dd4885bc42ba69593734476f47151"
     },
     "examples": {
       "oracle_callback_consumer": "0x0ac1fa9cdcb66c1672f0642f62d767902f460f2b",
       "feed_reader": "0xae9c17da3d8d1cc45b2a95f77ddce391b9bdcad4"
+    },
+    "name_services": {
+      "matrix": {
+        "contract_hash": "0x994c3cbe0d8641b9c911452c37191de8dd9f5f4e",
+        "root": "matrix",
+        "managed_root": "neoos.matrix",
+        "deploy_tx": "0x4064946af04e1b2694a325e8000315ed7586fb072bbfdf8e0d08fe2e5dba8833",
+        "nef_sha256": "ab331e71b569be405a83e7a6a395a860358c4efa7287b7ff09f762091745d9d4",
+        "binding_tx": "0x73b7b2da5c91f16fa265d5661a9c698e40482b1d2f6c520cd8ecf09f316ebc9f"
+      }
     }
   }
 }

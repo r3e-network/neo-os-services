@@ -10,7 +10,15 @@ namespace MorpheusOracle.Contracts.Tests
             string code = ContractSourceAssertions.ReadSource(
                 "contracts",
                 "NeoDIDRegistry",
-                "NeoDIDRegistry.cs");
+                "NeoDIDRegistry.cs") + "\n" +
+                ContractSourceAssertions.ReadSource(
+                    "contracts",
+                    "NeoDIDRegistry",
+                    "NeoDIDRegistry.Verifier.cs") + "\n" +
+                ContractSourceAssertions.ReadSource(
+                    "contracts",
+                    "NeoDIDRegistry",
+                    "NeoDIDRegistry.Commitments.cs");
 
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "UInt160", "Admin");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "ECPoint", "Verifier");
@@ -22,7 +30,14 @@ namespace MorpheusOracle.Contracts.Tests
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "ScheduleUpdate");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "CancelUpdate");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "SetVerifier");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "ProposeVerifier");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "ExecuteVerifierChange");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "CancelVerifierChange");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "ECPoint", "PendingVerifier");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "BigInteger", "PendingVerifierChangeTime");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "RegisterBinding");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "RegisterBindingCommitment");
+            ContractSourceAssertions.AssertHasPublicStaticMethod(code, "ByteString", "GetClaimCommitment");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "void", "RevokeBinding");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "BindingRecord", "GetBinding");
             ContractSourceAssertions.AssertHasPublicStaticMethod(code, "bool", "IsMasterNullifierUsed");
@@ -36,12 +51,23 @@ namespace MorpheusOracle.Contracts.Tests
             string code = ContractSourceAssertions.ReadSource(
                 "contracts",
                 "NeoDIDRegistry",
-                "NeoDIDRegistry.cs");
+                "NeoDIDRegistry.cs") + "\n" +
+                ContractSourceAssertions.ReadSource(
+                    "contracts",
+                    "NeoDIDRegistry",
+                    "NeoDIDRegistry.Verifier.cs") + "\n" +
+                ContractSourceAssertions.ReadSource(
+                    "contracts",
+                    "NeoDIDRegistry",
+                    "NeoDIDRegistry.Commitments.cs");
 
             ContractSourceAssertions.AssertHasPublicStruct(code, "BindingRecord");
             Assert.Contains("BindingRegistered", code);
             Assert.Contains("BindingRevoked", code);
             Assert.Contains("ActionTicketUsed", code);
+            Assert.Contains("VerifierTimelockProposed", code);
+            Assert.Contains("BindingCommitmentRegistered", code);
+            Assert.Contains("plaintext claim disabled", code);
             Assert.Contains("ComputeBindingDigest", code);
             Assert.Contains("ComputeActionDigest", code);
             Assert.Contains("EncodeCanonicalHash160", code);

@@ -1,7 +1,11 @@
+//! Retired archive. Not a production crate.
+compile_error!(
+    "workers/morpheus-relater-rs/crates/tee-attestation is a retired archive; use nitro-attest"
+);
+
 //! TEE Attestation Verification Library
-//! 
-//! This module provides placeholders for TEE attestation integration.
-//! TODO: Integrate with Nitro attestation service for production use.
+//!
+//! Historical placeholder retained for provenance.
 
 use anyhow::{Context, Result};
 

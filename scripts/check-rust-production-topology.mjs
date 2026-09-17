@@ -2,6 +2,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { auditCargoLockProvenance } from './check-cargo-lock-provenance.mjs';
+import { checkFormatWorkflows } from './lib-rust-format.mjs';
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function requirePattern(problems, source, pattern, message) {
@@ -10,6 +13,122 @@ function requirePattern(problems, source, pattern, message) {
 
 function rejectPattern(problems, source, pattern, message) {
   if (pattern.test(source)) problems.push(message);
+}
+
+export const RUST_FEED_AUTHORITY_UNITS = Object.freeze([
+  'deploy/systemd/morpheus-relayer.service',
+  'deploy/systemd/morpheus-relayer-nitro.service',
+]);
+
+export const RUST_FEED_AUTHORITY_BASENAMES = Object.freeze([
+  'morpheus-relayer.service',
+  'morpheus-relayer-nitro.service',
+]);
+
+export const NODE_FEED_WRITER_UNIT_PATTERN =
+  /^(morpheus-feed-pusher|morpheus-feed-topup|morpheus-neox-fulfiller)(?:-[^.]+)?\.(service|timer)$/;
+
+export const HISTORICAL_MAINNET_FEED_WRITER_ALLOWLIST = Object.freeze([
+  'morpheus-feed-pusher.service',
+  'morpheus-feed-pusher.timer',
+  'morpheus-feed-pusher-neox.service',
+  'morpheus-feed-pusher-neox.timer',
+  'morpheus-feed-topup.service',
+  'morpheus-feed-topup.timer',
+  'morpheus-neox-fulfiller.service',
+]);
+
+export function isNodeFeedWriterUnitName(fileName) {
+  return NODE_FEED_WRITER_UNIT_PATTERN.test(path.basename(String(fileName || '')));
+}
+
+export function compatibilityMarkerForFeedWriter(fileName) {
+  const name = path.basename(String(fileName || ''));
+  if (name.startsWith('morpheus-feed-topup')) return 'ENABLE_NODE_FEE_TOPUP_COMPAT';
+  if (name.startsWith('morpheus-neox-fulfiller')) return 'ENABLE_NODE_NEOX_FULFILLER_COMPAT';
+  return 'ENABLE_NODE_FEED_PUSHER_COMPAT';
+}
+
+function writerStem(fileName) {
+  return path.basename(String(fileName || '')).replace(/\.(service|timer)$/, '');
+}
+
+async function walkDeployFiles(root, { predicate } = {}) {
+  const deployRoot = path.join(root, 'deploy');
+  const found = [];
+  async function visit(directory) {
+    let entries;
+    try {
+      entries = await fs.readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (error && error.code === 'ENOENT') return;
+      throw error;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.git') continue;
+        await visit(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (predicate && !predicate(entry.name, fullPath)) continue;
+      found.push({
+        fileName: entry.name,
+        relativePath: path.relative(root, fullPath).split(path.sep).join('/'),
+      });
+    }
+  }
+  await visit(deployRoot);
+  found.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  return found;
+}
+
+export async function discoverNodeFeedWriterUnits(root = repoRoot) {
+  return walkDeployFiles(root, {
+    predicate: (fileName) => isNodeFeedWriterUnitName(fileName),
+  });
+}
+
+export async function discoverOperatorMarkdown(root) {
+  const found = [];
+  for (const directory of ['docs', 'deploy']) {
+    const start = path.join(root, directory);
+    async function visit(current) {
+      let entries;
+      try {
+        entries = await fs.readdir(current, { withFileTypes: true });
+      } catch (error) {
+        if (error && error.code === 'ENOENT') return;
+        throw error;
+      }
+      for (const entry of entries) {
+        const fullPath = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules' || entry.name === '.git') continue;
+          await visit(fullPath);
+          continue;
+        }
+        if (entry.isFile() && entry.name.endsWith('.md')) {
+          found.push(path.relative(root, fullPath).split(path.sep).join('/'));
+        }
+      }
+    }
+    await visit(start);
+  }
+  found.sort();
+  return found;
+}
+
+export function checkWriterEnablePostureInDocs(name, source, writerStems) {
+  const problems = [];
+  for (const stem of writerStems) {
+    const escaped = String(stem).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`systemctl\\s+enable\\s+--now\\s+[^\\n]*\\b${escaped}\\b`).test(source)) {
+      problems.push(`${name} still enables Node chain writer ${stem} by default`);
+    }
+  }
+  return problems;
 }
 
 export function checkPublishWorkflow(source) {
@@ -139,17 +258,16 @@ export function checkAuthorityUnit(name, source) {
   return problems;
 }
 
-export function checkRustFeedAuthorityUnit(name, source) {
+export function checkRustFeedAuthorityUnit(name, source, writerUnitNames = []) {
   const problems = [];
-  for (const conflict of [
-    'morpheus-feed-pusher.service',
-    'morpheus-feed-pusher.timer',
-    'morpheus-feed-pusher-neox.service',
-    'morpheus-feed-pusher-neox.timer',
-    'morpheus-feed-topup.service',
-    'morpheus-feed-topup.timer',
-    'morpheus-neox-fulfiller.service',
-  ]) {
+  const writers = [
+    ...new Set(writerUnitNames.map((unit) => path.basename(String(unit || '')))),
+  ].filter(Boolean);
+  if (writers.length === 0) {
+    problems.push(`${name} has no discovered Node feed writers to conflict with`);
+    return problems;
+  }
+  for (const conflict of writers) {
     requirePattern(
       problems,
       source,
@@ -174,12 +292,18 @@ export function checkNodeFeedCompatUnit(name, source, marker = 'ENABLE_NODE_FEED
     new RegExp(`^ConditionPathExists=/opt/morpheus/nitro/${marker}$`, 'm'),
     `${name} lacks the explicit Node chain-writer compatibility marker ${marker}`
   );
-  for (const conflict of ['morpheus-relayer.service', 'morpheus-relayer-nitro.service']) {
+  for (const rustUnit of RUST_FEED_AUTHORITY_BASENAMES) {
     requirePattern(
       problems,
       source,
-      new RegExp(`^Conflicts=.*\\b${conflict.replaceAll('.', '\\.')}(?:\\s|$)`, 'm'),
-      `${name} does not conflict with Rust authority ${conflict}`
+      new RegExp(`^Conflicts=.*\\b${rustUnit.replaceAll('.', '\\.')}(?:\\s|$)`, 'm'),
+      `${name} does not conflict with Rust authority ${rustUnit}`
+    );
+    requirePattern(
+      problems,
+      source,
+      new RegExp(`^Before=.*\\b${rustUnit.replaceAll('.', '\\.')}(?:\\s|$)`, 'm'),
+      `${name} does not start before Rust authority ${rustUnit}`
     );
   }
   rejectPattern(
@@ -189,6 +313,44 @@ export function checkNodeFeedCompatUnit(name, source, marker = 'ENABLE_NODE_FEED
     `${name} can still be enabled as a default boot chain authority`
   );
   return problems;
+}
+
+export async function auditNodeFeedWriterTopology(root) {
+  const problems = [];
+  const read = (relativePath) => fs.readFile(path.join(root, relativePath), 'utf8');
+  const writers = await discoverNodeFeedWriterUnits(root);
+  if (writers.length === 0) {
+    problems.push('no Node feed writer units discovered under deploy/');
+    return { problems, writers };
+  }
+  const writerBasenames = writers.map((unit) => unit.fileName);
+  const writerStems = [...new Set(writerBasenames.map(writerStem))];
+
+  for (const unit of RUST_FEED_AUTHORITY_UNITS) {
+    try {
+      await fs.access(path.join(root, unit));
+    } catch {
+      problems.push(`missing Rust feed authority unit ${unit}`);
+      continue;
+    }
+    problems.push(...checkRustFeedAuthorityUnit(unit, await read(unit), writerBasenames));
+  }
+
+  for (const writer of writers) {
+    problems.push(
+      ...checkNodeFeedCompatUnit(
+        writer.relativePath,
+        await read(writer.relativePath),
+        compatibilityMarkerForFeedWriter(writer.fileName)
+      )
+    );
+  }
+
+  for (const doc of await discoverOperatorMarkdown(root)) {
+    problems.push(...checkWriterEnablePostureInDocs(doc, await read(doc), writerStems));
+  }
+
+  return { problems, writers };
 }
 
 export function checkSignerDockerfile(source) {
@@ -332,6 +494,8 @@ export async function auditProductionTopology(root = repoRoot) {
   const read = (relativePath) => fs.readFile(path.join(root, relativePath), 'utf8');
 
   problems.push(...checkPublishWorkflow(await read('.github/workflows/publish-images.yml')));
+  problems.push(...checkFormatWorkflows(root));
+  problems.push(...auditCargoLockProvenance(root));
 
   const dockerfiles = {
     'deploy/nitro/Dockerfile.enclave': await read('deploy/nitro/Dockerfile.enclave'),
@@ -400,24 +564,8 @@ export async function auditProductionTopology(root = repoRoot) {
   ]) {
     problems.push(...checkAuthorityUnit(unit, await read(unit)));
   }
-  for (const unit of [
-    'deploy/systemd/morpheus-relayer.service',
-    'deploy/systemd/morpheus-relayer-nitro.service',
-  ]) {
-    problems.push(...checkRustFeedAuthorityUnit(unit, await read(unit)));
-  }
-
-  for (const [compatFeedUnit, marker] of [
-    ['deploy/feed-pusher/morpheus-feed-pusher.service', 'ENABLE_NODE_FEED_PUSHER_COMPAT'],
-    ['deploy/feed-pusher/morpheus-feed-pusher.timer', 'ENABLE_NODE_FEED_PUSHER_COMPAT'],
-    ['deploy/feed-pusher/morpheus-feed-pusher-neox.service', 'ENABLE_NODE_FEED_PUSHER_COMPAT'],
-    ['deploy/feed-pusher/morpheus-feed-pusher-neox.timer', 'ENABLE_NODE_FEED_PUSHER_COMPAT'],
-    ['deploy/feed-pusher/morpheus-feed-topup.service', 'ENABLE_NODE_FEE_TOPUP_COMPAT'],
-    ['deploy/feed-pusher/morpheus-feed-topup.timer', 'ENABLE_NODE_FEE_TOPUP_COMPAT'],
-    ['deploy/evm/morpheus-neox-fulfiller.service', 'ENABLE_NODE_NEOX_FULFILLER_COMPAT'],
-  ]) {
-    problems.push(...checkNodeFeedCompatUnit(compatFeedUnit, await read(compatFeedUnit), marker));
-  }
+  const feedWriterAudit = await auditNodeFeedWriterTopology(root);
+  problems.push(...feedWriterAudit.problems);
 
   const feedCompatRunbook = await read('deploy/feed-pusher/RUNBOOK.md');
   requirePattern(
@@ -549,9 +697,7 @@ export async function auditProductionTopology(root = repoRoot) {
   ]) {
     problems.push(...checkNodeFreeScript(script, await read(script)));
   }
-  problems.push(
-    ...checkCustodyBuildScript(await read('deploy/nitro/build-custody-eif.sh'))
-  );
+  problems.push(...checkCustodyBuildScript(await read('deploy/nitro/build-custody-eif.sh')));
   problems.push(...checkSignerStartScript(await read('deploy/nitro/start-nitro-signer.sh')));
 
   const buildScript = await read('deploy/nitro/build-enclave-eif.sh');

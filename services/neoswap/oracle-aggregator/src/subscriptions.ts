@@ -5,11 +5,11 @@
 
 import { createClient } from 'redis';
 import type { RedisClientType } from 'redis';
-import { PriceTick, PriceSource, HealthStatus } from '../types';
+import { PriceTick, PriceSource, HealthStatus, TWAPSample } from './types';
 
 export class PriceSubscriptionsManager {
   private redis: RedisClientType;
-  private subscriptions: Map<string, Set<() => void>> = new Map();
+  private subscriptions: Map<string, Set<(msg: string) => void>> = new Map();
   private sources: Map<string, PriceSource> = new Map();
 
   constructor(redisUrl: string) {
@@ -23,25 +23,25 @@ export class PriceSubscriptionsManager {
       {
         id: 'stealex',
         name: 'StealthEX',
-        wsUrl: 'wss://api.stealex.com/v1/quotes',
+        url: 'wss://api.stealex.com/v1/quotes',
         latencyMs: 500,
       },
       {
         id: 'uniswap-v3',
         name: 'Uniswap V3',
-        wsUrl: 'wss://live-uniswap-api.herokuapp.com',
+        url: 'wss://live-uniswap-api.herokuapp.com',
         latencyMs: 200,
       },
       {
         id: 'curve',
         name: 'Curve Finance',
-        wsUrl: 'wss://api.curve.finance/api/ws',
+        url: 'wss://api.curve.finance/api/ws',
         latencyMs: 300,
       },
       {
         id: 'balancer',
         name: 'Balancer',
-        wsUrl: 'wss://gateway.baolancer.fi/subscriptions',
+        url: 'wss://gateway.balancer.fi/subscriptions',
         latencyMs: 250,
       },
     ];
@@ -49,8 +49,8 @@ export class PriceSubscriptionsManager {
     for (const config of sourceConfigs) {
       this.sources.set(config.id, {
         ...config,
-        isHealthy: true,
-        lastUpdate: Date.now(),
+        isHealthy: false,
+        lastUpdate: 0,
       });
     }
   }
@@ -62,34 +62,15 @@ export class PriceSubscriptionsManager {
 
     const source = this.sources.get(sourceId)!;
     
-    try {
-      // Connect to WebSocket
-      // This would be implemented with actual WebSocket clients
-      
-      // Simulate receiving price data
-      setInterval(async () => {
-        await this.emitPriceUpdate({
-          tokenPairId: 'NEO/USDT',
-          price: (Math.random() * 10 + 20).toFixed(6),
-          volume: (Math.random() * 10000).toFixed(2),
-          timestamp: Date.now(),
-          sourceId,
-        });
-      }, source.latencyMs * 5);
-
-      console.log(`Started subscription to ${source.name}`);
-
-    } catch (error) {
-      console.error(`Failed to subscribe to ${source.name}:`, error);
-      this.updateSourceHealth(sourceId, false);
-    }
+    this.updateSourceHealth(sourceId, false);
+    throw new Error(`Price source transport is not configured for ${source.name}`);
   }
 
   async emitPriceUpdate(tick: PriceTick): Promise<void> {
     const key = `${tick.tokenPairId}:${tick.sourceId}`;
     
     // Store in Redis with TTL
-    await this.redis.setex(
+    await this.redis.setEx(
       `price:${key}`,
       60, // 1 minute TTL
       JSON.stringify(tick)
@@ -129,21 +110,30 @@ export class PriceSubscriptionsManager {
     };
   }
 
-  getTWAPValues(tokenPairId: string, windowSizeSeconds: number): Promise<TWAPSample[]> {
-    // Query historical price data
+  async getTWAPValues(tokenPairId: string, windowSizeSeconds: number): Promise<TWAPSample[]> {
     const startTime = Date.now() - windowSizeSeconds * 1000;
-    const samples: TWAPSample[] = [];
+    const endTime = Date.now();
+    const keys = await this.redis.keys(`price:${tokenPairId}:*`);
+    const values = await Promise.all(keys.map(key => this.redis.get(key)));
 
-    // In production, this would query TimescaleDB or Timescale-compatible storage
-    // For now, return mock sample
-    samples.push({
-      averagePrice: '25.5',
-      windowStart: startTime,
-      windowEnd: Date.now(),
-      sampleCount: 60,
+    return values.flatMap(value => {
+      if (!value) return [];
+      try {
+        const tick = JSON.parse(value) as PriceTick;
+        const price = Number(tick.price);
+        if (tick.timestamp < startTime || tick.timestamp > endTime || !Number.isFinite(price) || price < 0) {
+          return [];
+        }
+        return [{
+          averagePrice: tick.price,
+          windowStart: tick.timestamp,
+          windowEnd: tick.timestamp,
+          sampleCount: 1,
+        }];
+      } catch {
+        return [];
+      }
     });
-
-    return Promise.resolve(samples);
   }
 
   private updateSourceHealth(sourceId: string, healthy: boolean): void {

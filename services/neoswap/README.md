@@ -1,11 +1,11 @@
-# NeoSwap v2 Microservices Architecture Documentation
+# NeoSwap v2 Service Components
 
 ## Overview
 
-NeoSwap v2 是一个完整的去中心化交易所后端生态系统，包含 6 个核心微服务：
+这些是 NeoSwap v2 的可选服务组件。生产 NeoSwap 小程序的第三方 provider 兑换链路不依赖这里的本地订单簿或模拟流动性。
 
-1. **Routing Engine (Rust)** - 最优路径计算与 MEV 防护
-2. **Order Matcher (Node.js + WASM)** - 订单簿撮合引擎
+1. **Routing Engine (Node.js)** - 基于真实池快照的路径计算与风险扫描
+2. **Order Matcher (Node.js)** - 订单簿撮合引擎；没有有效 WASM 工件时使用可审计的确定性实现
 3. **TWAP Oracle Aggregator (Node.js)** - 多源价格聚合器
 4. **API Gateway (Next.js 14)** - API 聚合网关
 5. **Price Feed Service** - WebSocket 价格推送服务器
@@ -29,7 +29,7 @@ docker-compose down
 ### 1. Routing Engine (Port: 3002)
 
 **功能**: 
-- Floyd-Warshall 算法多跳路由计算
+- 基于池快照的多跳路径计算
 - MEV 风险扫描和前端保护
 - 流动性深度分析
 
@@ -41,7 +41,7 @@ docker-compose down
 
 **功能**:
 - SQLite 订单簿持久化
-- WASM 沙箱撮合逻辑
+- 确定性撮合逻辑；WASM 工件接入前不会宣称已执行 WASM
 - 双签名验证机制
 
 **API**:
@@ -52,7 +52,8 @@ docker-compose down
 ### 3. TWAP Oracle Aggregator (Port: 8080/8081)
 
 **功能**:
-- 订阅 StealthEX, Uniswap V3, Curve 等多源价格
+- 多源价格接入接口与真实 tick 存储
+- 未配置 provider 时 fail-closed，不生成随机价格
 - TimescaleDB 存储历史数据
 - WebSocket 实时推送
 
@@ -102,13 +103,13 @@ docker-compose down
 
 ## Performance Metrics
 
-| Service | Target P99 Latency | QPS Capacity | Current Status |
+| Service | Target P99 Latency | QPS Capacity | Evidence |
 |---------|-------------------|--------------|----------------|
-| Routing Engine | 25ms | 1,000+ | ✅ Achieved |
-| Order Matcher | 5ms | 5,000+ | ✅ Achieved |
-| API Gateway | 10ms | 10,000+ | ✅ Achieved |
-| Price Feed | 2ms | 50,000+ msg/s | ✅ Achieved |
-| Analytics API | 50ms | 500+ | ✅ Achieved |
+| Routing Engine | 25ms | 1,000+ | 仅有单元测试，需压测 |
+| Order Matcher | 5ms | 5,000+ | 仅有单元测试，需压测 |
+| API Gateway | 10ms | 10,000+ | 需部署验证 |
+| Price Feed | 2ms | 50,000+ msg/s | 仅有单元测试，需压测 |
+| Analytics API | 50ms | 500+ | 需数据库验证 |
 
 ## Monitoring Stack
 
@@ -122,7 +123,7 @@ docker-compose down
 - `neoswap_pool_liquidity_usd` - 池子流动性
 
 ### Grafana (Port: 3006)
-默认凭证：admin/admin123
+凭证必须通过部署环境的 secret manager 注入，仓库不提供默认凭证。
 
 预配置仪表板：
 - **NeoSwap Overview** - 整体系统监控
@@ -140,13 +141,7 @@ cd services/neoswap/<service-name>
 npm test
 ```
 
-当前覆盖率统计：
-- Routing Engine: 87% ✅
-- Order Matcher: 91% ✅
-- Oracle Aggregator: 89% ✅
-- API Gateway: 85% ✅
-- Price Feed: 88% ✅
-- Analytics API: 86% ✅
+覆盖率必须在当前构建中生成并记录；通过单元测试不代表已完成生产压测、链上验证或 provider 可用性验证。
 
 ## Architecture Patterns
 

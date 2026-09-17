@@ -63,6 +63,7 @@ pub enum Target {
     SessionStart,
     SessionStep,
     SessionFinalize,
+    SessionSettle,
     AutomationExecute,
     OracleFeed,
     NotFound,
@@ -124,6 +125,9 @@ pub fn classify(method: &str, path: &str) -> Target {
         }
         if matches_route(path, "/session/finalize") {
             return Target::SessionFinalize;
+        }
+        if matches_route(path, "/session/settle") {
+            return Target::SessionSettle;
         }
         if matches_route(path, "/automation/execute") {
             return Target::AutomationExecute;

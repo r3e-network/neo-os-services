@@ -71,8 +71,8 @@ releases the plaintext only if the document's PCR0 matches the key policy.
    policy template uses them. The authoritative PCR0 pin lives here — not in
    the image, because baking the pin into the image would change the PCR0 it
    pins (see `docs/SIGNER_SERVICE.md` §5.2).
-2. Seal the two envelopes with that key (plain `aws kms encrypt`, this runs on
-   the operator machine):
+2. Seal the two envelopes with that key using distinct, mandatory encryption
+   contexts (`aws kms encrypt` runs on the operator machine):
    - `MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64` — the transport token, a
      printable-ASCII string, 8-512 characters. The enclave validates the
      Bearer token presented at `/provision` against this envelope.
@@ -91,6 +91,44 @@ ceremony under a different principal. Otherwise a compromised parent could
 encrypt attacker-known plaintext and ask an admitted enclave to install it,
 which would defeat the recipient-attestation boundary without breaking KMS.
 
+Use these exact context values when encrypting each envelope. The plaintext
+files below must already exist in the operator's protected directory; the
+master-key file contains exactly 32 binary bytes, not hexadecimal text.
+
+```sh
+aws kms encrypt --key-id "$CUSTODY_KMS_KEY_ARN" \
+  --plaintext fileb://transport-token.bin \
+  --encryption-context "neoos:component=custody,neoos:purpose=transport-token/v1,neoos:vault-id=${CUSTODY_VAULT_ID:?},neoos:profile-sha256=${CUSTODY_PROFILE_SHA256:?},neoos:network-set-sha256=${CUSTODY_NETWORK_SET_SHA256:?},neoos:root-key-version=${CUSTODY_ROOT_KEY_VERSION:?}" \
+  --query CiphertextBlob --output text
+
+aws kms encrypt --key-id "$CUSTODY_KMS_KEY_ARN" \
+  --plaintext fileb://master-key.bin \
+  --encryption-context "neoos:component=custody,neoos:purpose=master-key/v1,neoos:vault-id=${CUSTODY_VAULT_ID:?},neoos:profile-sha256=${CUSTODY_PROFILE_SHA256:?},neoos:network-set-sha256=${CUSTODY_NETWORK_SET_SHA256:?},neoos:root-key-version=${CUSTODY_ROOT_KEY_VERSION:?}" \
+  --query CiphertextBlob --output text
+```
+
+All four `CUSTODY_*` identity values above must come from the validated, measured
+vault profile, not from parent-provided overrides. The profile SHA-256 and network
+set SHA-256 are the signer's canonical profile digests, not an arbitrary JSON file
+hash. Configure the operator CLI with `AWS_PROFILE=morpheus` and
+`AWS_DEFAULT_REGION=us-east-1` for the current TestNet environment. Do not grant
+encryption rights to the parent to perform this ceremony.
+
+The enclave chooses the purpose from a compiled enum and the remaining context
+from its validated immutable profile. `/provision`
+cannot override them. A transport-token envelope cannot be used as a master-key
+envelope even when the known token is exactly 32 bytes or an attacker supplies
+a second encryption of the same token. Identical ciphertext fields are refused
+before KMS, and different ciphertexts with the wrong context fail at KMS.
+
+Legacy envelopes created without an encryption context are rejected by this
+release; there is no retry without context. Before updating the enclave, the
+release operator must re-encrypt the existing master key and token with the
+contexts above, then install both new ciphertexts. Preserve the existing master
+key bytes when migrating an existing vault. The host role must remain unable to
+encrypt or re-encrypt envelopes. A missing master ciphertext returns an error
+and never generates or reads an enclave-local master key.
+
 ## Preparing the provisioning env file
 
 `/opt/morpheus/nitro/morpheus-custody-signer.env` (override with
@@ -100,7 +138,7 @@ which would defeat the recipient-attestation boundary without breaking KMS.
 # The transport token, presented as Bearer by /provision and validated
 # against its envelope. Printable ASCII, 8-512 chars.
 MORPHEUS_RUNTIME_TOKEN=<token>
-# The two KMS ciphertexts, base64, sealed under the custody key.
+# Both KMS ciphertexts are required and bound to their distinct custody contexts.
 MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64=<base64>
 SIGNER_SERVICE_MASTER_KEY_KMS_CIPHERTEXT=<base64>
 # Region, when not derivable from AWS_REGION.
@@ -115,6 +153,45 @@ projected into the provision body; everything else in the file stays on the
 host (the enclave would refuse unknown keys with 400 anyway).
 
 ## Build the EIF and pin the measurements
+
+The durable custody build now requires the public, deployment-specific
+`deploy/nitro/custody-vault-profile.json`. There is deliberately no example
+profile that can accidentally be admitted as production configuration. Obtain
+the actual authority origin, snapshot bucket, receipt public key, custody KMS
+key, network identity, and preserved root commitment through the state-security
+deployment ceremony, then validate them with the signer's canonical parser.
+Do not insert a private key, WIF, bearer token, or ciphertext envelope in this
+file. `/provision` cannot supply or override the profile.
+
+```sh
+cargo run --locked -p neo-signer --bin signer_service -- \
+  validate-vault-profile deploy/nitro/custody-vault-profile.json testnet
+```
+
+This command has no NSM, KMS, database, or network side effects. Its JSON output
+distinguishes the raw `file_sha256` from canonical `profile_sha256` and
+`network_set_sha256`. Use the latter two for KMS context. The current durable
+coordinator build is TestNet-only; MainNet is refused before Docker invocation.
+
+Both independent Docker builds receive the same raw file digest and verify it
+inside the builder. The runtime image contains the validated profile as a
+root-owned 0444 file, with its path baked into
+`SIGNER_SERVICE_VAULT_PROFILE_FILE`. The release manifest includes the identity
+read back by the actual built binary in a network-disabled container.
+
+The build also emits `<release>.egress.yaml` beside the measurement manifest.
+It derives exact authority, regional KMS, regional S3, and bucket-specific S3
+destinations from the validated profile. Review and install it for the dedicated
+custody egress service using `ENCLAVE_EGRESS_ALLOWLIST`; do not replace a shared
+runtime allowlist blindly or allow `*.amazonaws.com`. The generated file does
+not deploy or authorize any destination by itself. Verify real TLS routing and
+the host's direct-access denials before accepting the release.
+
+Bootstrap ordering is still a release gate: an inert independent authority must
+exist before its public outputs can enter the measured profile, and its exact
+scope/PCR admission must be activated only after both EIF measurements agree.
+Do not use zero PCRs, wildcard admission, or a mutable parent-supplied profile to
+break this dependency. Retained S3 Object Lock drill objects are not disposable.
 
 On the Nitro host (node present — it runs the host-side services):
 
@@ -265,10 +342,12 @@ survives only as its KMS ciphertext. Consequences:
   re-create. This is the known limitation the consumer migration (§7 step 3)
   plans to close; until then treat enclave restarts as maintenance windows.
 - Key secrets at rest are sealed under the master key and caller tokens are
-  stored as digests only, so a vault directory prepared on a host is safe to
-  carry — the portability that the eventual state-restore flow builds on.
-- The enclave-born fallback (booting without
-  `SIGNER_SERVICE_MASTER_KEY_KMS_CIPHERTEXT` and letting the vault generate a
-  master key into its data dir) is even more volatile: the key dies with the
-  enclave, so every key it ever sealed is lost. It exists for experiments; do
-  not use it for a deployment with consumers.
+  stored as digests only. This does not authenticate the database's policies,
+  grants, audit, spend or replay records. A host-supplied vault directory is not
+  a trusted restore source without whole-state authentication and rollback
+  protection; that restore flow is still outstanding.
+- The attested provision path requires
+  `SIGNER_SERVICE_MASTER_KEY_KMS_CIPHERTEXT`; it has no enclave-born fallback.
+  Purpose-bound KMS envelopes protect key installation, but do not restore the
+  SQLite database, protect it from rollback, or make Nitro state durable. The
+  restart limitations above remain until the state-persistence work is complete.

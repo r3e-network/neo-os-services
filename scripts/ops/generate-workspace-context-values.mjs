@@ -185,7 +185,7 @@ function main() {
   const oracleRoot = process.cwd();
   const siblingRoot = path.resolve(oracleRoot, '..');
 
-  const aaRoot = path.join(siblingRoot, 'neo-abstract-account');
+  const aaRoot = path.join(siblingRoot, 'neo-os-aa');
   const platformRoot = path.join(siblingRoot, 'neo-os-web');
 
   const oracleExtra = [
@@ -212,7 +212,7 @@ function main() {
   );
   if (fs.existsSync(aaRoot)) {
     sections.push(
-      collectRepoSections({ title: 'neo-abstract-account', repoRoot: aaRoot, extraFiles: aaExtra })
+      collectRepoSections({ title: 'neo-os-aa', repoRoot: aaRoot, extraFiles: aaExtra })
     );
   }
   if (fs.existsSync(platformRoot)) {

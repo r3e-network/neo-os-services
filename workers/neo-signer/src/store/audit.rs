@@ -1,7 +1,10 @@
 use super::*;
 
 /// Insert one audit row through an existing connection or transaction.
-fn insert_signer_audit(connection: &Connection, record: &SignerAuditRecord) -> Result<i64> {
+pub(super) fn insert_signer_audit(
+    connection: &Connection,
+    record: &SignerAuditRecord,
+) -> Result<i64> {
     connection.execute(
         "INSERT INTO signer_audit (
             recorded_at_unix, action, outcome, caller_id, key_id, tx_id, reason, detail, origin

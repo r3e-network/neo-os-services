@@ -1,4 +1,4 @@
-# Mainnet Node feed compatibility outage — incident runbook
+# Price feed outage — restore runbook
 
 > This document records recovery for the frozen Node compatibility writer.
 > Production feed recovery must restore the Rust `neo-os-relayer`. Before any
@@ -8,6 +8,111 @@
 > `/opt/morpheus/nitro/ENABLE_NODE_FEE_TOPUP_COMPAT` marker. Remove the markers
 > before returning authority to Rust. The systemd units enforce this mutual
 > exclusion so Node and Rust cannot write chain state concurrently.
+
+**Recheck 2026-08-31T21:06Z (read-only SSM + public RPC). No writes, no
+restart, no secret print, no chain tx.**
+
+**Mainnet `0x03013f49…` — TwelveData subscription expired, not a dead host.**
+Readable `getAllFeedRecords` HALT, 36/36 stale, **active_stale=32/32**,
+newest `NEO-USD` still 2026-08-29T09:39:01Z. ABI has `updateFeeds` and
+`updateFeed`. Updater `0x9fb28bda…` holds **40.892 GAS**. Class: **live
+writer cycling with no usable upstream quotes**.
+
+Documented writer `i-0c52851f134db20ee` (`AWS_PROFILE=morpheus`): running
+`m6i.xlarge`, Nitro enclaves enabled, system/instance reachability **ok**,
+SSM **Online**, last boot 2026-06-02 (matches `LaunchTime`).
+`morpheus-feed-pusher.timer` is **enabled/active** and last fired this
+minute. Enclave `morpheus-oracle-exec-10` is **RUNNING**; `127.0.0.1:8787/health`
+returns `ready` + `signer:true`. Last successful N3 write on the box log:
+`2026-08-29T09:39:08Z` `(enclave) pushed 4 pairs … txid 0x86618971…`. Next
+N3 cycle `09:44:12Z` logged `no updates (skipped 0, missing 32)` and has
+done so every cycle since. A redacted TwelveData `quote` probe with the
+box `TD_KEY` returned **HTTP 401** `status=error` message class
+`Your subscription has expired, please, pay last invoice…`. The Aug-20
+box `td()` has no `assertTwelveDataResponse`, so a 401 JSON is treated as
+every symbol missing and the oneshot **exits 0** (`OnFailure=` never
+fires). Do **not** restart the instance, timer, or enclave — they are
+healthy. Minimum remaining action: renew the TwelveData subscription (or
+install a paid `TD_KEY`) and wait for the next 5-minute timer, or
+`systemctl start morpheus-feed-pusher.service` after billing works. This
+checkout must not pay the invoice, rotate the key, or deploy.
+
+**Testnet `0x9bea75cf…` — writer exists in this checkout, not on the host.**
+Readable, **active_stale=34/34** (retired_stale=2: FLM, COPPER), newest
+`NEO-USD` still 2026-08-22T22:00:07Z (**214.3 h**). ABI has `updateFeed`
+and **not** `updateFeeds`. Updater `0xe421999c…` holds **9026.448 GAS**.
+Default `FEED_NETWORK` is still mainnet. This checkout now has a fail-closed
+testnet-only per-pair `updateFeed` writer (enclave `/feed/sign`, no host-key
+path). **Local implementation does not make TestNet healthy** until an
+operator deploys the files onto a funded signer/writer host **and** a
+**separate** TestNet-pinned EIF / isolated enclave. Do not rebuild or
+retarget the live mainnet EIF, and do not enable both write paths in one
+enclave. See [`../../docs/TESTNET-FEED-WRITER.md`](../../docs/TESTNET-FEED-WRITER.md).
+Do not close this incident from timestamps that are still stale.
+
+**Hetzner Fura/MCP `95.216.148.60` (`ubuntu-32gb-hel1-1`) is not the feed
+host.** Read-only SSH: every `morpheus-feed-*` unit/timer is `not-found`,
+journals empty, and `/opt/neoos/services/deploy/feed-pusher`,
+`/opt/morpheus/neo-morpheus-oracle/deploy/feed-pusher`, and
+`/opt/morpheus/nitro` are absent. Do not treat that box as a substitute
+for `i-0c52851f134db20ee`. Canonical install path remains
+`/opt/neoos/services/deploy/feed-pusher`.
+
+`--skip-aws` still skips the box. The default AWS chain on this laptop has
+no credentials; documented profile `morpheus` does. The health audit now
+retries that profile when `AWS_PROFILE` is unset. Re-run
+`npm run audit:feeds:health -- --network mainnet` after TwelveData billing
+works; close the incident only when active pairs are inside the 6-hour SLO.
+
+### Least-risk mainnet recovery (operator — do not run from this checkout)
+
+Do **not** reboot `i-0c52851f134db20ee`, restart `morpheus-nitro-signer`,
+or `systemctl enable` timers that are already enabled. Those are healthy.
+
+1. Renew the TwelveData Grow subscription (pay the last invoice) **or**
+   replace `TD_KEY` in `/opt/morpheus/nitro/feed-pusher.env` (chmod 600)
+   with a paid key. Paying the invoice is a financial action; rotating
+   the key is a secret write. This checkout must do neither.
+2. After billing or the new key is in place, force one N3 cycle (or wait
+   ≤5 minutes for `morpheus-feed-pusher.timer`):
+
+   ```bash
+   systemctl start morpheus-feed-pusher.service
+   journalctl -u morpheus-feed-pusher -n 50 --no-pager
+   ```
+
+   Expect `(enclave) batch updateFeeds … confirmed` and a txid only after
+   application-log `HALT`. Mempool `sendrawtransaction` accept is
+   `submitted`/`pending` and the oneshot exits `1` until confirmed. A
+   transport-ambiguous batch is retained at
+   `/opt/morpheus/nitro/feed-pusher-status.json.pending-batch.json` and the
+   next oneshot must reconcile/replay that exact raw transaction; do not delete
+   the sidecar or force another writer while it is unexpired. A
+   repeat of `no updates (skipped 0, missing 32)` means TwelveData still
+   returns no prices (401/empty). This checkout's HALT-closed batch path
+   is local until deployed; live recovery still needs a valid TwelveData
+   subscription/key. Do not restart the enclave for a quote outage.
+3. Prove recovery with all three checks in §2.4 (on-chain `getLatest`,
+   `systemctl start morpheus-feed-monitor.service`, public
+   `/api/feeds/status`). Also
+   `npm run audit:feeds:health -- --network mainnet` must exit 0.
+
+**Rollback:** if the only change was paying the invoice, there is nothing
+to roll back on the box. If `TD_KEY` was rotated, restore
+`/opt/morpheus/nitro/feed-pusher.env.bak.20260820-registry` (or the
+newest `feed-pusher.env.bak.*`) and rerun step 2. Do not roll back the
+enclave EIF or unit files for this incident.
+
+**Do not automate next:** invoice payment and key rotation are
+human/billing steps. After TwelveData answers again, the existing
+5-minute timer self-heals. Automating `systemctl restart
+morpheus-nitro-signer` or an instance reboot would add risk without
+restoring quotes. Deploying the checkout's `assertTwelveDataResponse`
+(401 → exit 1 → `OnFailure=`) is a later, separate change so a repeat
+expiry pages instead of exiting 0.
+
+---
+
 
 **RESOLVED 2026-08-20T13:12:31Z after 22.5 days. Kept as the incident record and
 the procedure for the next time.** What actually happened, verified on the box
@@ -52,16 +157,25 @@ recurs.
 
 ### Box layout — read before copying any unit file
 
-The live host `i-0c52851f134db20ee` does **not** use `/opt/neoos/services`. Its
-repo root is `/opt/morpheus/neo-morpheus-oracle`, with `feed-pusher.mjs`
-symlinked to `deploy/feed-pusher/feed-pusher.mjs` and `feed-monitor.mjs`,
-`feed-topup.mjs`, `db-prune.mjs` sitting at that root. Every installed unit uses
-`WorkingDirectory=/opt/morpheus/neo-morpheus-oracle`.
+Repo units use `WorkingDirectory=/opt/neoos/services/deploy/feed-pusher`.
+Install `feed-pusher.mjs`, `feed-monitor.mjs`, `feed-topup.mjs`, `db-prune.mjs`,
+`lib-feed-network.mjs`, **and** `lib-feed-writer-metrics.mjs` into that
+directory in one step. Do not copy a single script.
 
-The `*.service` files in this repo carry `/opt/neoos/services/...`. **Copying
-them onto this box verbatim would point every feed unit at a directory that does
-not exist and take the feed down.** Reconcile the path first, or add behaviour
-with drop-ins as below.
+Historical (2026-08-20): `i-0c52851f134db20ee` had its checkout only at
+`/opt/morpheus/neo-morpheus-oracle`, with scripts at that root. If a host still
+looks like that, do **not** edit `WorkingDirectory=` in the unit. Install a
+drop-in that points at the directory where the scripts **and** library were
+atomically installed, for example:
+
+```
+# /etc/systemd/system/morpheus-feed-pusher.service.d/10-workingdirectory.conf
+[Service]
+WorkingDirectory=/opt/morpheus/neo-morpheus-oracle/deploy/feed-pusher
+```
+
+Or migrate the checkout to `/opt/neoos/services` (`npm run install:code-path-compat`)
+so the shipped units work without a drop-in.
 
 ### Alert path — installed 2026-08-20, drill-verified
 
@@ -131,16 +245,21 @@ step, and it needs a human with the alerting endpoint.
   file. Fixed by making it a symlink too, matching the pattern the box already
   used for the pusher, so future updates propagate and this cannot recur:
 
+  Historical repair on that box (do not treat this as the current install):
+
   ```bash
   cd /opt/morpheus/neo-morpheus-oracle
   cp -a feed-monitor.mjs /opt/morpheus/nitro/feed-monitor.mjs.bak-$(date -u +%Y%m%dT%H%M%SZ)
   ln -sfn /opt/morpheus/neo-morpheus-oracle/deploy/feed-pusher/feed-monitor.mjs feed-monitor.mjs
+  ln -sfn /opt/morpheus/neo-morpheus-oracle/deploy/feed-pusher/lib-feed-network.mjs lib-feed-network.mjs
   ```
 
-  Revert = `rm` the symlink and restore the backup under
-  `/opt/morpheus/nitro/feed-monitor.mjs.bak-*`. The unit file was **not**
-  touched: the repo unit's `WorkingDirectory=/opt/neoos/services/deploy/feed-pusher`
-  does not exist on this box, and copying it verbatim would take the feed down.
+  Current install: atomically place the scripts, `lib-feed-network.mjs`,
+  and `lib-feed-writer-metrics.mjs`
+  in the unit `WorkingDirectory=/opt/neoos/services/deploy/feed-pusher`, or
+  keep the legacy checkout and add a `WorkingDirectory=` drop-in that points
+  at `…/deploy/feed-pusher` after the same atomic copy. Do not copy
+  `feed-monitor.mjs` alone.
 
   Detection was then proven against live data with a temporary
   `MAX_AGE_SEC` drop-in: at `MAX_AGE_SEC=1` all **36/36** pairs were flagged
@@ -356,7 +475,22 @@ install -m 600 /dev/null /opt/morpheus/nitro/alert-notify.env
 # populate ALERT_WEBHOOK_URL (see deploy/systemd/alert-notify.env.example)
 cp deploy/systemd/morpheus-alert@.service /etc/systemd/system/
 cp deploy/systemd/alert-notify.mjs /opt/neoos/services/deploy/systemd/
-cp deploy/feed-pusher/morpheus-feed-{monitor,pusher,topup}.service /etc/systemd/system/
+# Units require WorkingDirectory=/opt/neoos/services/deploy/feed-pusher.
+# Atomically install scripts + lib-feed-network.mjs + lib-feed-writer-metrics.mjs there (or add a drop-in).
+install -d /opt/neoos/services/deploy/feed-pusher
+cp deploy/feed-pusher/feed-pusher.mjs \
+   deploy/feed-pusher/feed-monitor.mjs \
+   deploy/feed-pusher/feed-topup.mjs \
+   deploy/feed-pusher/db-prune.mjs \
+   deploy/feed-pusher/lib-feed-network.mjs \
+   deploy/feed-pusher/lib-feed-writer-metrics.mjs \
+   /opt/neoos/services/deploy/feed-pusher/
+# Named unit files only.
+cp deploy/feed-pusher/morpheus-feed-monitor.service /etc/systemd/system/
+cp deploy/feed-pusher/morpheus-feed-pusher.service /etc/systemd/system/
+cp deploy/feed-pusher/morpheus-feed-pusher-neox.service /etc/systemd/system/
+cp deploy/feed-pusher/morpheus-feed-topup.service /etc/systemd/system/
+# Testnet (optional): also copy the -testnet units; they use distinct log/status paths.
 systemctl daemon-reload
 ```
 
@@ -372,10 +506,17 @@ With no webhook configured the notifier still journals the alert line and exits
 **78** (`EX_CONFIG`), so `systemctl --failed` shows the alert path itself as
 broken rather than silently discarding alerts.
 
-Also set `MONITOR_PROM_TEXTFILE` in `/opt/morpheus/nitro/feed-pusher.env` to a
-node_exporter textfile-collector path — that file is now actually loaded by
-`morpheus-feed-monitor.service` (it previously declared no `EnvironmentFile=`,
-so every documented monitor knob was inert).
+`MONITOR_PROM_TEXTFILE` and `PUSH_PROM_TEXTFILE` are reserved exec-time pins.
+A leftover value in `/opt/morpheus/nitro/feed-pusher.env` cannot retarget the
+mainnet or testnet textfile path. Monitor series remain pair age and updater
+GAS. Writer confirmation states (`neoos_feed_writer_*`) are a separate
+surface — see `docs/FEED-WRITER-METRICS.md`. `skipped` is no planned writes;
+`submitted`/`pending` are unconfirmed; `fault` is application-log FAULT.
+Those series do not configure alert delivery. To scrape mainnet monitor or
+writer textfiles, add a systemd drop-in that changes the matching
+`ExecStart=/usr/bin/env …` pin — do not put those keys in the env file.
+`TRADFI_*` / `MAX_AGE_SEC` still come from
+`EnvironmentFile=-/opt/morpheus/nitro/feed-pusher.env`.
 
 ---
 

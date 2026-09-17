@@ -30,7 +30,7 @@ export function getServiceProblemDetail(body: unknown): string | null {
     return readString(body.reason) || 'service reported degraded: true';
   }
   const status = (readString(body.status) || '').toLowerCase();
-  if (['error', 'failed', 'down', 'unhealthy'].includes(status)) {
+  if (['degraded', 'error', 'failed', 'down', 'unhealthy'].includes(status)) {
     return `service status: ${status}`;
   }
   return null;

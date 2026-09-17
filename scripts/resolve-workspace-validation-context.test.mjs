@@ -99,7 +99,7 @@ test('workspace validation defaults resolve rebranded sibling worktrees while re
     '.worktrees',
     'cross-repo-hardening'
   );
-  const aaCanonicalRoot = path.join(workspaceRoot, 'neo-abstract-account');
+  const aaCanonicalRoot = path.join(workspaceRoot, 'neo-os-aa');
   const aaWorktreeRoot = path.join(aaCanonicalRoot, '.worktrees', 'cross-repo-hardening');
   const oracleNetworkConfigDir = path.join(oracleWorktreeRoot, 'config', 'networks');
   const sourceNetworkConfig = path.join(repoRoot, 'config', 'networks', 'testnet.json');

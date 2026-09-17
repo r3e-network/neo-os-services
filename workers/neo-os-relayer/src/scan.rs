@@ -24,6 +24,65 @@ use crate::transport::RelayerHttpTransport;
 /// changing its value. Larger cursor values cross the wire as decimal strings.
 const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
 
+fn discovered_event(
+    config: &RelayerConfig,
+    state: &mut JsObject,
+    chain: &str,
+    event: &JsValue,
+    now_ms: f64,
+    transport: &RelayerHttpTransport,
+) -> ProcessEventResult {
+    if crate::durable_v2::enabled(config) {
+        let result = crate::durable_v2::enqueue(config, chain, event, transport);
+        return ProcessEventResult {
+            key: build_event_key(event),
+            status: if result.is_ok() {
+                "durably_queued"
+            } else {
+                "enqueue_failed"
+            }
+            .into(),
+            reason: None,
+            duration_ms: None,
+            error: result.err(),
+        };
+    }
+    process_event_with(
+        config,
+        state,
+        chain,
+        event,
+        now_ms,
+        &DeliveryRuntime {
+            transport,
+            nonce_source: &neo_os_chain_n3::tx::OsNonce,
+            waiter: &neo_os_chain_n3::tx::SystemWaiter,
+        },
+    )
+}
+fn storage_failed(
+    state: &mut JsObject,
+    chain: &str,
+    error: String,
+    events: Vec<ProcessEventResult>,
+) -> ChainProcessResult {
+    tracing::warn!(
+        chain,
+        error,
+        "discovery persistence failed; cursor retained"
+    );
+    increment_metric(state, "discovery_failures_total", 1.0);
+    ChainProcessResult {
+        chain: chain.into(),
+        skipped: false,
+        discovery_healthy: false,
+        scanned_blocks: None,
+        scanned_requests: None,
+        events,
+        retries: vec![],
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScannedRange {
     #[serde(
@@ -296,7 +355,10 @@ pub fn process_chain_neo_n3(
         .get("metrics")
         .and_then(JsValue::as_object)
         .and_then(|m| m.get("discovery_failures_total"))
-        .and_then(|v| match v { JsValue::Number(n) => Some(*n), _ => None })
+        .and_then(|v| match v {
+            JsValue::Number(n) => Some(*n),
+            _ => None,
+        })
         .unwrap_or(0.0);
     let oracle_contract = n3_cfg
         .get("oracleContract")
@@ -459,8 +521,11 @@ pub fn process_chain_neo_n3(
                                         "events_scanned_total",
                                         js_events.len() as f64,
                                     );
-                                    let (filtered, dups) =
-                                        filter_new_events(state, "neo_n3", &js_events);
+                                    let (filtered, dups) = if crate::durable_v2::enabled(config) {
+                                        (js_events.clone(), 0)
+                                    } else {
+                                        filter_new_events(state, "neo_n3", &js_events)
+                                    };
                                     increment_metric(
                                         state,
                                         "duplicates_skipped_total",
@@ -468,19 +533,34 @@ pub fn process_chain_neo_n3(
                                     );
 
                                     for ev in &filtered {
-                                        let res = process_event_with(
-                                            config,
-                                            state,
-                                            "neo_n3",
-                                            ev,
-                                            now_ms,
-                                            &DeliveryRuntime {
-                                                transport,
-                                                nonce_source: &neo_os_chain_n3::tx::OsNonce,
-                                                waiter: &neo_os_chain_n3::tx::SystemWaiter,
-                                            },
+                                        let res = discovered_event(
+                                            config, state, "neo_n3", ev, now_ms, transport,
                                         );
+                                        if res.status == "enqueue_failed" {
+                                            return storage_failed(
+                                                state,
+                                                "neo_n3",
+                                                res.error.unwrap_or_default(),
+                                                event_results,
+                                            );
+                                        }
                                         event_results.push(res);
+                                    }
+
+                                    if crate::durable_v2::enabled(config) {
+                                        if let Err(error) = crate::durable_v2::checkpoint(
+                                            config,
+                                            "neo_n3",
+                                            Some(&(to_block as u64).to_string()),
+                                            transport,
+                                        ) {
+                                            return storage_failed(
+                                                state,
+                                                "neo_n3",
+                                                error,
+                                                event_results,
+                                            );
+                                        }
                                     }
 
                                     if let Some(cs) =
@@ -520,7 +600,11 @@ pub fn process_chain_neo_n3(
     }
 
     // Drain due retries
-    let due_retries = get_due_retry_items(state, "neo_n3", now_ms);
+    let due_retries = if crate::durable_v2::enabled(config) {
+        vec![]
+    } else {
+        get_due_retry_items(state, "neo_n3", now_ms)
+    };
     let mut retry_results = Vec::new();
 
     for retry_item in due_retries {
@@ -548,7 +632,10 @@ pub fn process_chain_neo_n3(
             .get("metrics")
             .and_then(JsValue::as_object)
             .and_then(|m| m.get("discovery_failures_total"))
-            .and_then(|v| match v { JsValue::Number(n) => Some(*n), _ => None })
+            .and_then(|v| match v {
+                JsValue::Number(n) => Some(*n),
+                _ => None,
+            })
             .unwrap_or(discovery_failures_before)
             <= discovery_failures_before,
         scanned_blocks,
@@ -569,7 +656,10 @@ pub fn process_chain_neox(
         .get("metrics")
         .and_then(JsValue::as_object)
         .and_then(|m| m.get("discovery_failures_total"))
-        .and_then(|v| match v { JsValue::Number(n) => Some(*n), _ => None })
+        .and_then(|v| match v {
+            JsValue::Number(n) => Some(*n),
+            _ => None,
+        })
         .unwrap_or(0.0);
     let oracle_contract = neox_cfg
         .get("oracleContract")
@@ -648,23 +738,36 @@ pub fn process_chain_neox(
                                 .collect();
 
                             increment_metric(state, "events_scanned_total", js_events.len() as f64);
-                            let (filtered, dups) = filter_new_events(state, "neox", &js_events);
+                            let (filtered, dups) = if crate::durable_v2::enabled(config) {
+                                (js_events.clone(), 0)
+                            } else {
+                                filter_new_events(state, "neox", &js_events)
+                            };
                             increment_metric(state, "duplicates_skipped_total", dups as f64);
 
                             for ev in &filtered {
-                                let res = process_event_with(
-                                    config,
-                                    state,
-                                    "neox",
-                                    ev,
-                                    now_ms,
-                                    &DeliveryRuntime {
-                                        transport,
-                                        nonce_source: &neo_os_chain_n3::tx::OsNonce,
-                                        waiter: &neo_os_chain_n3::tx::SystemWaiter,
-                                    },
-                                );
+                                let res =
+                                    discovered_event(config, state, "neox", ev, now_ms, transport);
+                                if res.status == "enqueue_failed" {
+                                    return storage_failed(
+                                        state,
+                                        "neox",
+                                        res.error.unwrap_or_default(),
+                                        event_results,
+                                    );
+                                }
                                 event_results.push(res);
+                            }
+
+                            if crate::durable_v2::enabled(config) {
+                                if let Err(error) = crate::durable_v2::checkpoint(
+                                    config,
+                                    "neox",
+                                    Some(&to_id.to_string()),
+                                    transport,
+                                ) {
+                                    return storage_failed(state, "neox", error, event_results);
+                                }
                             }
 
                             if let Some(cs) = state.get_mut("neox").and_then(|v| v.as_object_mut())
@@ -694,7 +797,11 @@ pub fn process_chain_neox(
     }
 
     // Drain due retries
-    let due_retries = get_due_retry_items(state, "neox", now_ms);
+    let due_retries = if crate::durable_v2::enabled(config) {
+        vec![]
+    } else {
+        get_due_retry_items(state, "neox", now_ms)
+    };
     let mut retry_results = Vec::new();
 
     for retry_item in due_retries {
@@ -722,7 +829,10 @@ pub fn process_chain_neox(
             .get("metrics")
             .and_then(JsValue::as_object)
             .and_then(|m| m.get("discovery_failures_total"))
-            .and_then(|v| match v { JsValue::Number(n) => Some(*n), _ => None })
+            .and_then(|v| match v {
+                JsValue::Number(n) => Some(*n),
+                _ => None,
+            })
             .unwrap_or(discovery_failures_before)
             <= discovery_failures_before,
         scanned_blocks: None,

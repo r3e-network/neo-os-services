@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "@neoswap/routing-engine": "file:../routing-engine",
-    "@neosphere/sdk": "^1.0.0",
     "redis": "^4.6.0",
     "ioredis": "^5.3.0",
     "express-rate-limit": "^7.1.0",

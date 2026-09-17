@@ -6,14 +6,13 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc && tsc-alias",
+    "build": "tsc",
     "dev": "tsx watch src/index.ts",
-    "test": "vitest run --coverage",
+    "test": "vitest run",
     "test:watch": "vitest watch",
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {
-    "@neosphere/sdk": "^1.0.0",
     "redis": "^4.6.0",
     "prom-client": "^15.1.0",
     "zod": "^3.22.0",

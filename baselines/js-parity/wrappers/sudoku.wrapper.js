@@ -74,12 +74,20 @@ export function replay(problemSecret, opLog, difficulty = 0) {
 }
 
 export function score(state, _difficulty, { answer } = {}) {
-  const submitted = typeof answer === 'string' ? answer.trim() : '';
-  if (!/^[1-9]{81}$/.test(submitted)) {
-    throw new ScoreRejection('answer must be an 81-char string of digits 1-9', 400);
+  // The authenticated op-log is the settlement input. Reconstruct the board
+  // from clues plus the last accepted placement for every open cell; an
+  // optional client answer is only a consistency assertion and is never the
+  // source of truth for the payout.
+  const board = state.puzzle.split('');
+  for (const placement of state.placements) {
+    board[placement.cell] = String(placement.digit);
   }
-  if (submitted !== state.solution) {
+  const derived = board.join('');
+  if (typeof answer === 'string' && answer.trim() !== derived) {
+    throw new ScoreRejection('answer does not match the recorded placements', 403);
+  }
+  if (derived !== state.solution) {
     throw new ScoreRejection('incorrect solution', 403);
   }
-  return { answerHash: answerHashOf(submitted), score: 1 };
+  return { answerHash: answerHashOf(derived), score: 1 };
 }

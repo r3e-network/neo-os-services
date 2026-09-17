@@ -83,8 +83,8 @@ AA browser checks are now scaffolded via:
 
 Current target:
 
-- `https://neo-abstract-account.vercel.app/`
-- `https://neo-abstract-account.vercel.app/identity`
+- `https://aa.neoos.network/`
+- `https://aa.neoos.network/identity`
 
 Current seeded browser checks:
 

@@ -101,7 +101,7 @@ fn a_degraded_signer_degrades_health_and_names_the_issues() {
 }
 
 #[test]
-fn one_missing_neox_role_degrades_the_whole_measured_host() {
+fn one_missing_neox_role_does_not_degrade_a_neo_n3_host() {
     let harness = test_state(
         &healthy_overlay(),
         FakeAttest::with_document(b"doc"),
@@ -114,15 +114,15 @@ fn one_missing_neox_role_degrades_the_whole_measured_host() {
         FakeKms::default(),
     );
     let body = handle_health(&harness.state);
-    assert_eq!(body["status"], "degraded");
-    assert_eq!(body["ready"], false);
+    assert_eq!(body["status"], "ok");
+    assert_eq!(body["ready"], true);
     assert_eq!(body["checks"]["neox_verifier_ready"], false);
     assert_eq!(body["checks"]["oracle_verifier_ready"], true);
-    assert_eq!(body["signer_error"], "neox_verifier: key missing");
+    assert!(body.get("signer_error").is_none());
 }
 
 #[test]
-fn shared_neox_updater_and_verifier_identity_fails_readiness() {
+fn shared_neox_updater_and_verifier_identity_does_not_fail_neo_n3_readiness() {
     let harness = test_state(
         &healthy_overlay(),
         FakeAttest::with_document(b"doc"),
@@ -134,13 +134,10 @@ fn shared_neox_updater_and_verifier_identity_fails_readiness() {
         FakeKms::default(),
     );
     let body = handle_health(&harness.state);
-    assert_eq!(body["ready"], false);
+    assert_eq!(body["ready"], true);
     assert_eq!(body["checks"]["neox_updater_ready"], false);
     assert_eq!(body["checks"]["neox_verifier_ready"], false);
-    assert!(body["signer_error"]
-        .as_str()
-        .expect("signer error")
-        .contains("same custody identity"));
+    assert!(body.get("signer_error").is_none());
 }
 
 #[test]

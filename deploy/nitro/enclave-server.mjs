@@ -76,6 +76,11 @@ if (process.env.FEED_PUSHER_SKIP_MAIN === undefined) {
   process.env.FEED_PUSHER_SKIP_MAIN = '1';
 }
 const { planFeedUpdate, toTwelveDataSymbol } = await import('../feed-pusher/feed-pusher.mjs');
+const {
+  assertProvisionEnclaveNetworkIdentity,
+  bindEnclaveNetworkIdentity,
+  __resetBoundEnclaveNetworkIdentityForTests,
+} = await import('../feed-pusher/lib-feed-network.mjs');
 
 const DEFAULT_PORT = 8787;
 
@@ -103,8 +108,15 @@ const EXECUTION_PLANE_PASSTHROUGH = [
 // ── Neo N3 feed contract constants — MIRRORED EXACTLY from feed-pusher.mjs ──────
 // These MUST stay identical to feed-pusher.mjs (pushNeoN3) or the signed
 // updateFeeds message diverges from what the deployed MorpheusDataFeed verifies.
-const FEED_N3_MAGIC = Number(process.env.FEED_MAGIC || 860833102);
-const FEED_N3_CONTRACT = '03013f49c42a14546c8bbe58f9d434c3517fccab';
+function feedNetworkPins() {
+  try {
+    return bindEnclaveNetworkIdentity(process.env);
+  } catch (error) {
+    const summary = error instanceof Error ? error.message : String(error);
+    throw httpError(400, summary);
+  }
+}
+
 const FEED_N3_PAIR_PREFIX = 'TWELVEDATA:';
 const FEED_PRICE_SCALE = 1e6; // px = Math.round(price * 1e6)  (feed-pusher.mjs:278/290)
 const FEED_VALID_UNTIL_OFFSET = 500; // count + 500  (feed-pusher.mjs:315)
@@ -174,34 +186,14 @@ const RUNTIME_TOKEN_KMS_CIPHERTEXT_ENV = 'MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_
 const RUNTIME_TOKEN_KMS_PURPOSE = 'neoos/nitro-runtime-auth/v1';
 let runtimeTokenKmsVersion = 0;
 
-// Plaintext signing-key env vars a host could otherwise inject via /provision to
-// bypass the KMS-attested path (the materialize*FromKms() helpers no-op when one
-// of these is already set, so a provisioned plaintext key would still be labelled
-// 'enclave-attested'). The signer keys are KMS-sealed in-TEE, so plaintext
-// provisioning is no longer needed; /provision always rejects these. The
-// *_KMS_CIPHERTEXT_BASE64 variants are accepted because the host only ever holds
-// ciphertext that KMS releases to an enclave with the pinned measurement.
+// SECURITY (S5): No plaintext signing keys ever leave KMS or appear in any runtime
+// environment. All Neo N3 and NeoX signing uses the custody enclave via SIGNER_ROLE_*_KEY_ID
+// - private key material exists ONLY inside the TEE as sealed artifacts under the signer
+// service's vault, never as env vars on any process. This list is now empty because no
+// plaintext signing keys are acceptable on any runtime process.
+// SECURITY (S5): No plaintext signing key env vars are acceptable on any runtime
+// process. All signing uses the custody enclave via SIGNER_ROLE_*_KEY_ID.
 const PLAINTEXT_KEY_ENV_KEYS = [
-  // Neo N3 (secp256r1) WIFs / raw keys.
-  'MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET',
-  'MORPHEUS_ORACLE_VERIFIER_WIF_TESTNET',
-  'MORPHEUS_ORACLE_VERIFIER_WIF',
-  'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_MAINNET',
-  'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_TESTNET',
-  'MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET',
-  'MORPHEUS_UPDATER_NEO_N3_WIF_TESTNET',
-  'MORPHEUS_UPDATER_NEO_N3_WIF',
-  'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET',
-  'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_TESTNET',
-  // Neo X (EVM, secp256k1) keys.
-  'MORPHEUS_NEOX_VERIFIER_PRIVATE_KEY',
-  'MORPHEUS_NEOX_VERIFIER_KEY',
-  'NEOX_VERIFIER_PK',
-  'MORPHEUS_NEOX_UPDATER_PRIVATE_KEY',
-  'NEOX_UPDATER_PK',
-  'MORPHEUS_NEOX_FEED_PRIVATE_KEY',
-  'NEOX_FEED_PK',
-  'NEOX_FEED_PRIVATE_KEY',
   // X25519 oracle confidential-decrypt key material.
   'MORPHEUS_ORACLE_KEY_MATERIAL_JSON',
   'MORPHEUS_ORACLE_KEY_MATERIAL_BASE64',
@@ -377,6 +369,10 @@ export function __resetRuntimeProvisionStateForTests() {
   runtimeTokenKmsVersion = 0;
 }
 
+export function __resetEnclaveNetworkIdentityForTests() {
+  __resetBoundEnclaveNetworkIdentityForTests();
+}
+
 function normalizeSignerRole(value) {
   const role = trimString(value).toLowerCase();
   if (role === 'oracle_verifier' || role === 'verifier') return 'oracle_verifier';
@@ -469,6 +465,13 @@ function handleProvision(payload, bootstrapRuntimeToken = null) {
   if (nextRuntimeToken && nextRuntimeToken.version <= runtimeTokenKmsVersion) {
     throw httpError(409, 'runtime authorization KMS envelope version must increase monotonically');
   }
+  let provisionedIdentity = null;
+  try {
+    provisionedIdentity = assertProvisionEnclaveNetworkIdentity(process.env, env);
+  } catch (error) {
+    const summary = error instanceof Error ? error.message : String(error);
+    throw httpError(/immutable/.test(summary) ? 409 : 400, summary);
+  }
   const applied = [];
   for (const [key, value] of Object.entries(env)) {
     if (!/^[A-Z0-9_]{1,96}$/.test(key)) continue;
@@ -485,6 +488,9 @@ function handleProvision(payload, bootstrapRuntimeToken = null) {
   // Provisioning may have rotated a signer env var — drop the materialized-signer cache so
   // the next sign call re-resolves against the new key material. (Round-2 R2-2.1.)
   if (applied.length > 0) clearResolvedSignerCache();
+  if (provisionedIdentity) {
+    bindEnclaveNetworkIdentity(process.env);
+  }
   // If a KMS-attested oracle-key ciphertext was provisioned, recover the key
   // material in-TEE now (before any decrypt request needs it) so the host never
   // injects plaintext. No-op when not configured or already materialized.
@@ -1040,8 +1046,9 @@ export function buildUpdateFeedsTxMessage(planned, txParams, updaterPublicKey) {
   if (!Number.isInteger(txParams.nonce)) {
     throw httpError(500, 'updateFeeds tx nonce must be an integer (reproducibility invariant)');
   }
+  const pins = feedNetworkPins();
   const script = sc.createScript({
-    scriptHash: FEED_N3_CONTRACT,
+    scriptHash: pins.feed,
     operation: 'updateFeeds',
     args: [
       sc.ContractParam.array(...P.map((x) => sc.ContractParam.string(x))),
@@ -1061,7 +1068,57 @@ export function buildUpdateFeedsTxMessage(planned, txParams, updaterPublicKey) {
   });
   txn.systemFee = u.BigInteger.fromNumber(txParams.systemFee);
   txn.networkFee = u.BigInteger.fromNumber(txParams.networkFee);
-  return { txn, script, message: txn.getMessageForSigning(FEED_N3_MAGIC) };
+  return { txn, script, message: txn.getMessageForSigning(pins.magic) };
+}
+
+export function buildUpdateFeedTxMessage(planned, txParams, updaterPublicKey) {
+  const { P, R, PX, TS, AH, SS } = planned;
+  if (!Number.isInteger(txParams.nonce)) {
+    throw httpError(500, 'updateFeed tx nonce must be an integer (reproducibility invariant)');
+  }
+  if (!Array.isArray(P) || P.length !== 1) {
+    throw httpError(400, 'updateFeed requires exactly one planned pair');
+  }
+  const pins = feedNetworkPins();
+  const script = sc.createScript({
+    scriptHash: pins.feed,
+    operation: 'updateFeed',
+    args: [
+      sc.ContractParam.string(P[0]),
+      sc.ContractParam.integer(R[0]),
+      sc.ContractParam.integer(PX[0]),
+      sc.ContractParam.integer(TS[0]),
+      sc.ContractParam.byteArray(AH[0]),
+      sc.ContractParam.integer(SS[0]),
+    ],
+  });
+  const updaterScriptHash = neoWallet.getScriptHashFromPublicKey(updaterPublicKey);
+  const txn = new tx.Transaction({
+    nonce: txParams.nonce,
+    signers: [{ account: updaterScriptHash, scopes: tx.WitnessScope.CalledByEntry }],
+    validUntilBlock: txParams.blockCount + FEED_VALID_UNTIL_OFFSET,
+    script,
+  });
+  txn.systemFee = u.BigInteger.fromNumber(txParams.systemFee);
+  txn.networkFee = u.BigInteger.fromNumber(txParams.networkFee);
+  return { txn, script, message: txn.getMessageForSigning(pins.magic) };
+}
+
+function resolveEnclaveFeedWriteMode(requestBody, network) {
+  const raw = String(requestBody?.write_mode || requestBody?.operation || 'updateFeeds')
+    .trim()
+    .toLowerCase();
+  if (raw === 'updatefeeds' || raw === 'batch_update_feeds') return 'updateFeeds';
+  if (raw === 'updatefeed' || raw === 'per_pair_update_feed') {
+    if (network !== 'testnet') {
+      throw httpError(
+        400,
+        'updateFeed write_mode is testnet-only; refusing mainnet/unknown downgrade'
+      );
+    }
+    return 'updateFeed';
+  }
+  throw httpError(400, `unsupported feed write_mode ${raw}`);
 }
 
 function validateFeedN3TxParams(value) {
@@ -1089,9 +1146,18 @@ function validateFeedN3TxParams(value) {
 // Uses the cached account (resolvePinnedSigner) for the same per-process memoization as
 // signNeoN3OracleVerifier.
 function resolveUpdaterIdentity() {
-  const resolved = resolvePinnedSigner(resolveNetwork(), 'updater');
+  const identity = feedNetworkPins();
+  const resolved = resolvePinnedSigner(identity.network, 'updater');
   if (!resolved) {
     throw httpError(503, 'updater signer is not configured or does not match pinned identity');
+  }
+  if (trimString(process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS) !== '1') {
+    const scriptHash = String(resolved.account.scriptHash || '')
+      .replace(/^0x/i, '')
+      .toLowerCase();
+    if (scriptHash !== identity.updaterSh) {
+      throw httpError(403, 'updater key does not match bound network identity');
+    }
   }
   return { account: resolved.account };
 }
@@ -1286,6 +1352,7 @@ export async function handleFeedSign(requestBody) {
     ? requestBody.symbols.map((s) => trimString(s)).filter(Boolean)
     : [];
   if (!symbols.length) throw httpError(400, 'symbols[] is required');
+  const writeMode = resolveEnclaveFeedWriteMode(requestBody, feedNetworkPins().network);
 
   const onchainState = normalizeOnchainState(
     requestBody?.onchain_state || requestBody?.onchainState
@@ -1348,6 +1415,8 @@ export async function handleFeedSign(requestBody) {
     return {
       status: 'no-update',
       chain: 'neo_n3',
+      write_mode: writeMode,
+      operation: writeMode,
       pairs: [],
       rounds: [],
       prices_scaled: [],
@@ -1400,13 +1469,22 @@ export async function handleFeedSign(requestBody) {
   }
   const fullTxParams = { ...txParams, nonce: txNonce };
 
-  // (4) BUILD the EXACT updateFeeds tx + SIGN its message with the updater key.
-  const { message } = buildUpdateFeedsTxMessage(planned, fullTxParams, updaterPublicKey);
+  if (writeMode === 'updateFeed' && planned.P.length !== 1) {
+    throw httpError(400, 'updateFeed write_mode requires exactly one planned pair');
+  }
+
+  // (4) BUILD the EXACT updateFeeds or testnet-only updateFeed tx + SIGN it.
+  const { message } =
+    writeMode === 'updateFeed'
+      ? buildUpdateFeedTxMessage(planned, fullTxParams, updaterPublicKey)
+      : buildUpdateFeedsTxMessage(planned, fullTxParams, updaterPublicKey);
   const signed = signUpdaterMessage(message);
 
   return {
     status: 'ok',
     chain: 'neo_n3',
+    write_mode: writeMode,
+    operation: writeMode,
     pairs,
     rounds,
     prices_scaled: pricesScaled,
@@ -1700,39 +1778,9 @@ export function materializeNeoXFeedKeyFromKms() {
   });
 }
 
-// Neo N3 (secp256r1) signer keys — the oracle_verifier (signs fulfillments) and the
-// updater (signs feed-update + on-chain admin txs). Same attestation-gated path as the
-// EVM keys: when the KMS ciphertext is provisioned the host holds only the ciphertext,
-// the plaintext WIF exists only inside the enclave on the env var the Neo N3 signer reads
-// (`lib-neo-signers.mjs` resolves `MORPHEUS_*_WIF_MAINNET`). No-op until the ciphertext is
-// provisioned or a plaintext WIF is already set (transition-safe).
-export function materializeNeoN3OracleVerifierKeyFromKms() {
-  materializeTextSecretFromKms({
-    ciphertextEnvVar: 'MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64',
-    alreadySetEnvVars: [
-      'MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET',
-      'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_MAINNET',
-      'MORPHEUS_ORACLE_VERIFIER_WIF',
-    ],
-    targetEnvVar: 'MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET',
-    jsonFields: ['wif', 'oracle_verifier_wif', 'private_key'],
-    event: 'kms_n3_oracle_verifier_key_materialize',
-  });
-}
-
-export function materializeNeoN3UpdaterKeyFromKms() {
-  materializeTextSecretFromKms({
-    ciphertextEnvVar: 'MORPHEUS_UPDATER_NEO_N3_KMS_CIPHERTEXT_BASE64',
-    alreadySetEnvVars: [
-      'MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET',
-      'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET',
-      'MORPHEUS_UPDATER_NEO_N3_WIF',
-    ],
-    targetEnvVar: 'MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET',
-    jsonFields: ['wif', 'updater_wif', 'private_key'],
-    event: 'kms_n3_updater_key_materialize',
-  });
-}
+// SECURITY (S5): These key materialization functions are DEPRECATED. All signing
+// uses the custody enclave via SIGNER_ROLE_*_KEY_ID - private key material never
+// appears in env vars on any runtime process.
 
 // NeoDID nullifier salt. The host provisions only a KMS CiphertextBlob; the
 // salt is released into the measured enclave and never crosses the parent-host

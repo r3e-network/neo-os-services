@@ -40,6 +40,14 @@ The following private materials never appear in DID resolution output:
 - encrypted params / encrypted payload
 - recovery ticket payload
 
+The on-chain registry enforces this boundary as well. The legacy
+`registerBinding` ABI is retained only for empty-claim migration calls and
+rejects plaintext claim values. New registrations use
+`registerBindingCommitment`, which stores a 32-byte claim commitment and emits
+that commitment without revealing the provider UID or claim value. Consumers
+can read it with `getClaimCommitment` and verify a holder's private disclosure
+against the commitment off-chain.
+
 以下私密材料不会出现在 DID 解析结果中：
 
 - provider UID

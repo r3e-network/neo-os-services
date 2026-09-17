@@ -63,6 +63,7 @@ jobs:
       - run: npm run lint
       - run: npm run check:rust-migration
       - run: npm run check:production-topology
+      - run: npm run check:cargo-lock-provenance
       # Asserts that deploy-web.yml and publish-images.yml still block on a test
       # job. Runs here as well as inside those workflows so a workflow edit is
       # caught on the pull request, not at the moment it deploys.
@@ -96,9 +97,20 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
-      - run: cargo fmt --all --check
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/check-rust-format.mjs
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --all-targets --locked
+      - name: Durable delivery PostgreSQL commit and lease acceptance
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+          for candidate in /usr/lib/postgresql/*/bin; do
+            if test -x "$candidate/initdb"; then export PATH="$candidate:$PATH"; fi
+          done
+          bash scripts/test-relayer-delivery-v2.sh
       - name: Guard against Cargo.lock drift
         run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Checkout NeoNexus contract consumer
@@ -147,7 +159,7 @@ jobs:
         if: matrix.suite == 'morpheus-relayer'
       - run: npm run test:ops
         if: matrix.suite == 'ops'
-      - run: npm run test:control-plane
+      - run: npm run test:cloudflare
         if: matrix.suite == 'control-plane'
       - run: npm --prefix apps/web run test:run
         if: matrix.suite == 'web-test'

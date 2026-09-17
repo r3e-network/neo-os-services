@@ -409,6 +409,33 @@ fn relay_request_id_and_event_gate_smoke() {
 }
 
 #[test]
+fn broadcast_refuses_node_rejection() {
+    let custody_transport = ScriptedTransport::new(&[(200, WITNESS_REPLY), (200, WITNESS_REPLY)]);
+    let rpc_transport = ScriptedTransport::new(&[
+        (200, r#"{"jsonrpc":"2.0","id":1,"result":1234}"#),
+        (
+            200,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"state":"HALT","gasconsumed":"100000000"}}"#,
+        ),
+        (
+            200,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"networkfee":"1234567"}}"#,
+        ),
+        (200, r#"{"jsonrpc":"2.0","id":1,"result":false}"#),
+    ]);
+    let error = build_sign_and_broadcast(
+        &rpc_client(&rpc_transport),
+        &custody_client(&custody_transport),
+        &signer(),
+        &FixedNonce(1),
+        &[0x01],
+        &BroadcastOptions::default(),
+    )
+    .expect_err("node rejection must not look like a broadcast success");
+    assert!(error.contains("rejected"));
+}
+
+#[test]
 fn assert_halt_shapes_fault_errors_exactly() {
     let execution = json!({"vmstate": "FAULT", "exception": "already fulfilled"});
     let error = assert_halt_execution("77", "0xabc", &execution, "fulfillRequest")

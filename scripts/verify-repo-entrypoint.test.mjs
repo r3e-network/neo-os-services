@@ -20,6 +20,7 @@ test('repo verification script runs the canonical local validation stack', () =>
   assert.match(script, /check:audit:root/);
   assert.match(script, /check:rust-migration/);
   assert.match(script, /check:production-topology/);
+  assert.match(script, /check:cargo-lock-provenance/);
   assert.match(script, /format:rust:check/);
   assert.match(script, /check:rust/);
   assert.match(script, /test:rust/);

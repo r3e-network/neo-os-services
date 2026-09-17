@@ -85,8 +85,19 @@ COPY crates/neo-os-chain-evm ./crates/neo-os-chain-evm
 COPY crates/nitro-attest ./crates/nitro-attest
 COPY crates/nitro-init ./crates/nitro-init
 COPY crates/neo-os-service-runtime ./crates/neo-os-service-runtime
+# neo-os-core embeds the authoritative registry at compile time.
+COPY config/networks/mainnet.json config/networks/mainnet.json
+COPY config/networks/testnet.json config/networks/testnet.json
 RUN cargo build --locked --release \
       --bin signer_service --bin nsm-attest-rs --bin nitro_init
+
+# This public identity is part of the measured rootfs, never host provisioning.
+COPY deploy/nitro/custody-vault-profile.json /build/custody-vault-profile.json
+ARG CUSTODY_PROFILE_FILE_SHA256
+RUN test -n "$CUSTODY_PROFILE_FILE_SHA256" \
+  && printf '%s  %s\n' "$CUSTODY_PROFILE_FILE_SHA256" /build/custody-vault-profile.json | sha256sum -c - \
+  && /build/target/release/signer_service validate-vault-profile /build/custody-vault-profile.json testnet \
+       > /build/custody-profile-identity.json
 
 # Stage 2: the custody runtime. Everything above it — cargo, rustup and the C
 # toolchain that compiles rusqlite's bundled SQLite — is build-only and never
@@ -159,6 +170,9 @@ RUN apt-get update \
 COPY --from=custodybuild /build/target/release/signer_service /app/bin/signer_service
 COPY --from=custodybuild /build/target/release/nsm-attest-rs /app/bin/nsm-attest-rs
 COPY --from=custodybuild /build/target/release/nitro_init /app/bin/nitro_init
+COPY --from=custodybuild /build/custody-vault-profile.json /app/config/custody-vault-profile.json
+COPY --from=custodybuild /build/custody-profile-identity.json /app/config/custody-profile-identity.json
+RUN chmod 0444 /app/config/custody-vault-profile.json /app/config/custody-profile-identity.json
 RUN chmod +x /app/bin/signer_service /app/bin/nsm-attest-rs /app/bin/nitro_init
 
 # --- Reproducibility: strip build-time timestamps across the WHOLE rootfs. ---
@@ -176,6 +190,7 @@ ENV SOURCE_DATE_EPOCH=1749859200
 RUN find / -xdev -exec touch --no-dereference --date=@1749859200 {} + 2>/dev/null || true
 
 ENV SIGNER_SERVICE_DATA_DIR=/var/lib/morpheus-signer
+ENV SIGNER_SERVICE_VAULT_PROFILE_FILE=/app/config/custody-vault-profile.json
 # Loopback, always: the enclave's only ingress is the vsock bridge that
 # forwards to this address. There is no other interface to reach it on.
 ENV SIGNER_SERVICE_HOST=127.0.0.1

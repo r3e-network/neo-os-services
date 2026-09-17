@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { DualSignatureVerifier } from './sigs-verifier';
-import nacl from 'tweetnacl';
 
 describe('DualSignatureVerifier', () => {
   let verifier: DualSignatureVerifier;
@@ -12,21 +11,22 @@ describe('DualSignatureVerifier', () => {
   describe('verifyDualSignature', () => {
     it('should verify valid dual signatures', async () => {
       const userId = 'user-123';
-      
-      // Generate keypair
+      const secondUserId = 'user-456';
       const keypair = verifier.generateKeypair();
+      const secondKeypair = verifier.generateKeypair();
       verifier.registerUserPublicKey(userId, keypair.publicKey);
+      verifier.registerUserPublicKey(secondUserId, secondKeypair.publicKey);
 
       const message = Buffer.from('test-message-for-dual-signature');
       const sig1 = verifier.signMessage(message, keypair.privateKey);
-      
-      // For single-user case, require same signature twice
+      const sig2 = verifier.signMessage(message, secondKeypair.privateKey);
+
       const isValid = verifier.verifyDualSignature(
         message,
         sig1,
-        sig1,
+        sig2,
         userId,
-        [userId]
+        [userId, secondUserId]
       );
 
       expect(isValid).toBe(true);
@@ -57,14 +57,15 @@ describe('DualSignatureVerifier', () => {
       const user2 = 'bob';
       const user3 = 'charlie';
 
-      verifier.registerUserPublicKey(user1, Buffer.alloc(32));
-      verifier.registerUserPublicKey(user2, Buffer.alloc(32));
+      const alice = verifier.generateKeypair();
+      const bob = verifier.generateKeypair();
+      verifier.registerUserPublicKey(user1, alice.publicKey);
+      verifier.registerUserPublicKey(user2, bob.publicKey);
       verifier.registerUserPublicKey(user3, Buffer.alloc(32));
 
       const message = Buffer.from('multi-party-message');
-      const validSigAlice = Buffer.alloc(64, 0x01);
-      const validSigBob = Buffer.alloc(64, 0x02);
-      const invalidSigCharlie = Buffer.alloc(64, 0xff);
+      const validSigAlice = verifier.signMessage(message, alice.privateKey);
+      const validSigBob = verifier.signMessage(message, bob.privateKey);
 
       // Only Alice and Bob have valid keys, Charlie doesn't
       const isValid = verifier.verifyDualSignature(
@@ -75,7 +76,6 @@ describe('DualSignatureVerifier', () => {
         [user1, user2, user3]
       );
 
-      // Should require both to be valid
       expect(isValid).toBe(true);
     });
   });

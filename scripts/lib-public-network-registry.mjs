@@ -77,6 +77,7 @@ function buildContracts(network, rawRegistry, supplementalHashes) {
     oracleCallbackConsumer: trimString(contracts.oracle_callback_consumer),
     morpheusDatafeed: trimString(contracts.morpheus_datafeed),
     morpheusNeoDid: trimString(contracts.morpheus_neodid),
+    matrixNameService: trimString(contracts.matrix_nameservice),
   });
 }
 
@@ -120,6 +121,11 @@ function buildMorpheusRuntime(network, rawRegistry) {
     oracleAttestationExplorerUrl: trimString(nitro.oracle_attestation_explorer_url),
     datafeedCvmId: trimString(nitro.datafeed_cvm_id),
     datafeedCvmName: trimString(nitro.datafeed_cvm_name),
+    datafeedProviders: Array.isArray(nitro.datafeed_providers)
+      ? nitro.datafeed_providers
+          .map((provider) => trimString(provider).toUpperCase())
+          .filter(Boolean)
+      : [],
     datafeedAttestationExplorerUrl: trimString(nitro.datafeed_attestation_explorer_url),
     neoDidServiceDid: 'did:morpheus:neo_n3:service:neodid',
   };

@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { generateCSVExport, generatePDFExport } from './export';
-import { TransactionRecord } from '../types';
+import { TransactionRecord } from './types';
 
 describe('Export Functions', () => {
   const mockTransactions: TransactionRecord[] = [
@@ -60,8 +60,9 @@ describe('Export Functions', () => {
       const lines = csvString.split('\n');
       
       // First line should be header or date field
-      const hasDateField = lines.some(line => 
-        line.includes('timestamp') || new Date().toISOString().substring(0, 10) in line
+      const today = new Date().toISOString().substring(0, 10);
+      const hasDateField = lines.some((line) =>
+        line.includes('timestamp') || line.includes(today),
       );
       
       expect(hasDateField).toBe(true);

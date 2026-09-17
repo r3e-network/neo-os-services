@@ -1,3 +1,5 @@
+import type { MEVScanResult, SwapRoute } from './types';
+
 /**
  * MEV (Maximal Extractable Value) Risk Scanner
  * Detects potential front-running, sandwich attacks, and other MEV patterns
@@ -27,7 +29,7 @@ export class MEVRiskScanner {
     }
 
     // Pattern 3: Gas bidding anomalies
-    if (txContext?.gasPrice && txContext.gasPrice > 2 * txContext.baseGasPrice) {
+    if (txContext?.gasPrice && txContext.baseGasPrice !== undefined && txContext.gasPrice > 2 * txContext.baseGasPrice) {
       patterns.push('PRIORITY_FEE_ANOMALY');
       riskScore += 25;
     }
@@ -46,7 +48,7 @@ export class MEVRiskScanner {
     }
 
     // Pattern 6: Known bot address detection
-    if (txContext?.sender && this.knownBots.has(txContext.sender)) {
+    if (txContext?.sender && this.knownBots.has(txContext.sender.toLowerCase())) {
       patterns.push('KNOWN_BOT_ACTIVITY');
       riskScore += 40;
     }
@@ -84,29 +86,14 @@ export class MEVRiskScanner {
   }> {
     const reasons: string[] = [];
     
-    // Simulate swap size vs liquidity ratio
-    const swapRatio = this.estimateSwapLiquidityRatio(route);
-    
-    if (swapRatio > 0.1) { // >10% of pool liquidity
-      reasons.push('LOW_LIQUIDITY_POOL');
-    }
-    
-    if (swapRatio > 0.05) { // >5% of pool liquidity
-      reasons.push('MODERATE_LIQUIDITY_RISK');
+    // A route does not carry the reserve snapshot, so a fabricated TVL must
+    // never be used to claim that depth was checked. Price impact is the
+    // conservative signal available at this layer.
+    if (!Number.isFinite(route.priceImpact) || route.priceImpact >= 10) {
+      reasons.push('INSUFFICIENT_LIQUIDITY_EVIDENCE');
     }
 
-    return {
-      sufficient: swapRatio < 0.1,
-      reasons,
-    };
-  }
-
-  private estimateSwapLiquidityRatio(route: SwapRoute): number {
-    // Simplified estimation - in production, this would query actual pool state
-    const totalTvl = 10000000; // $10M TVL placeholder
-    const swapAmount = parseFloat(route.inAmount);
-    
-    return swapAmount / totalTvl;
+    return { sufficient: reasons.length === 0, reasons };
   }
 
   registerKnownBot(address: string): void {

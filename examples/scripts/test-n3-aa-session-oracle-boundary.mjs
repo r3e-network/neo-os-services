@@ -20,7 +20,7 @@ import {
 
 const aaRepoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  '../../../neo-abstract-account'
+  '../../../neo-os-aa'
 );
 const AA_BUILD_DIR = path.resolve(aaRepoRoot, 'contracts/bin/v3');
 

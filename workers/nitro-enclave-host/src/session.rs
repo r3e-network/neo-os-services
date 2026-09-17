@@ -6,10 +6,11 @@
 //! and the custody worker signature over the successful finalize payload.
 
 use std::sync::{Mutex, OnceLock};
+use rand::RngCore;
 
 use neo_os_core::js_value::JsValue;
 use neo_os_core::stable_stringify::stable_stringify;
-use neo_os_games::session::{validate_identity_and_engine, SessionReply, SessionStore};
+use neo_os_games::session::{validate_identity_and_engine, FinalizeLane, SessionReply, SessionStore};
 use serde_json::Value as Json;
 
 use crate::compute_execute::{
@@ -43,8 +44,11 @@ pub fn handle_session_start(
         None => return Ok(protocol_error(503, "game key material unavailable")),
     };
     let now_ms = state.oracle_io.now_ms() as f64;
-    let reply =
-        session_store()?.start(payload, &material.secret_root, &material.public_key, now_ms);
+    let mut fresh_token = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut fresh_token);
+    let reply = session_store()?.start(
+        payload, &material.secret_root, &material.public_key, now_ms, &fresh_token,
+    );
     Ok(reply.into())
 }
 
@@ -69,6 +73,26 @@ pub fn handle_session_finalize(
     state: &AppState,
     payload: &Json,
 ) -> Result<DispatchOutcome, RuntimeError> {
+    finalize_session(state, payload, FinalizeLane::Direct)
+}
+
+pub(crate) fn handle_session_finalize_kernel(
+    state: &AppState,
+    payload: &Json,
+) -> Result<DispatchOutcome, RuntimeError> {
+    if payload.get("kind").and_then(Json::as_str)
+        != Some("miniapp.game.session.finalize.v2")
+    {
+        return Ok(protocol_error(400, "SEALED_KIND_UNSUPPORTED"));
+    }
+    finalize_session(state, payload, FinalizeLane::Kernel)
+}
+
+fn finalize_session(
+    state: &AppState,
+    payload: &Json,
+    lane: FinalizeLane,
+) -> Result<DispatchOutcome, RuntimeError> {
     let identity = match validate_identity_and_engine(payload) {
         Ok(identity) => identity,
         Err(message) => return Ok(protocol_error(400, message)),
@@ -78,8 +102,8 @@ pub fn handle_session_finalize(
         None => return Ok(protocol_error(503, "game key material unavailable")),
     };
     let now_ms = state.oracle_io.now_ms() as f64;
-    let reply = session_store()?.finalize(payload, &material.secret_root, now_ms);
-    if reply.status != 200 {
+    let reply = session_store()?.finalize(payload, &material.secret_root, now_ms, lane);
+    if reply.status != 200 || lane == FinalizeLane::Direct {
         return Ok(reply.into());
     }
 

@@ -440,11 +440,9 @@ impl SignerPlane for CustodySigner {
                 ..RoleReport::not_configured()
             };
         }
-        let expected_magic = match network {
-            "mainnet" => 860_833_102,
-            "testnet" => 894_710_606,
-            _ => 0,
-        };
+        let expected_magic = neo_os_core::network_identity::known_neo_n3_identity(network)
+            .map(|identity| identity.magic)
+            .unwrap_or(0);
         let expected_chain_id = match network {
             "mainnet" => 47_763,
             "testnet" => 12_227_332,

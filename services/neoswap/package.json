@@ -1,0 +1,23 @@
+{
+  "name": "@neoswap/services",
+  "private": true,
+  "description": "NeoOS provider and market-data services",
+  "workspaces": [
+    "analytics-api",
+    "api-gateway",
+    "oracle-aggregator",
+    "order-matcher",
+    "price-feed",
+    "routing-engine"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:all": "vitest run",
+    "build:all": "npm run build --prefix analytics-api && npm run build --prefix oracle-aggregator && npm run build --prefix order-matcher && npm run build --prefix price-feed && npm run build --prefix routing-engine",
+    "check": "npm run test:all && npm run build:all"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.4",
+    "vitest": "^4.1.4"
+  }
+}

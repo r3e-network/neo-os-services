@@ -184,7 +184,9 @@ impl<T: HttpTransport> NeoRpcClient<T> {
     /// `sendrawtransaction {base64}` — true when the node accepted it.
     pub fn send_raw_transaction(&self, signed_base64: &str) -> Result<bool, NeoRpcError> {
         let value = self.call("sendrawtransaction", json!([signed_base64]))?;
-        Ok(value.as_bool().unwrap_or(false))
+        value
+            .as_bool()
+            .ok_or_else(|| NeoRpcError("sendrawtransaction returned a non-boolean result".into()))
     }
 
     /// `calculatenetworkfee {base64}` — returns the raw `networkfee` field.

@@ -4,6 +4,7 @@ After=network-online.target morpheus-nitro-worker.service
 Wants=network-online.target
 ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_NEOX_FULFILLER_COMPAT
 Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
+Before=morpheus-relayer.service morpheus-relayer-nitro.service
 
 [Service]
 Type=simple

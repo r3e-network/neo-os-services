@@ -48,6 +48,11 @@ const SERVICE_CHECKS: Array<{ name: string; description: string; endpoint: strin
     endpoint: '/api/onchain/state?limit=1',
   },
   {
+    name: 'Feed Freshness',
+    description: 'Configured on-chain feed freshness and staleness alerts',
+    endpoint: '/api/feeds/status',
+  },
+  {
     name: 'Feed Catalog',
     description: 'Available price pair index',
     endpoint: '/api/feeds/catalog',

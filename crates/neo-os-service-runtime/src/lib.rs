@@ -33,7 +33,7 @@ pub async fn shutdown_signal() -> ShutdownReason {
             Ok(signal) => signal,
             Err(_) => return ShutdownReason::SignalHandlerUnavailable,
         };
-        return tokio::select! {
+        tokio::select! {
             result = tokio::signal::ctrl_c() => {
                 if result.is_ok() {
                     ShutdownReason::Interrupt
@@ -42,7 +42,7 @@ pub async fn shutdown_signal() -> ShutdownReason {
                 }
             }
             _ = terminate.recv() => ShutdownReason::Terminate,
-        };
+        }
     }
 
     #[cfg(not(unix))]

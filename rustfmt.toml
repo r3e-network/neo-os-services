@@ -1,0 +1,4 @@
+edition = "2021"
+# Generated proto lives in OUT_DIR and is identity-checked by
+# scripts/check-rust-format.mjs, not rustfmt. cargo fmt --all only
+# formats Cargo workspace members.

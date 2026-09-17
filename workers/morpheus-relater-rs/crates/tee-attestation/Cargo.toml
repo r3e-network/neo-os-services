@@ -1,11 +1,6 @@
-[package]
-name = "tee-attestation"
-version = "0.1.0"
-edition = "2021"
-description = "TEE attestation verification (placeholder - will integrate with Nitro)"
-authors = ["NeoOS Team"]
-
-[dependencies]
-anyhow = "1.0"
-serde = { version = "1.0", features = ["derive"] }
-sha2 = "0.10"
+# Retired archive. This directory is not a Cargo package.
+# Historical manifest: Cargo.toml.retired
+# See ../../RETIRED.md
+#
+# Intentionally has no [package] table so a direct
+# `--manifest-path` metadata/build of this nested crate fails closed.

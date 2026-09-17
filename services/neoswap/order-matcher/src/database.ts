@@ -1,11 +1,10 @@
 import Database from 'better-sqlite3';
+import type { LimitOrder, FillEvent } from './types';
 
 export class OrderBookDatabase {
-  private db: Database;
-  private static DB_PATH = process.env.ORDER_BOOK_DB_PATH || ':memory:';
-
-  constructor() {
-    this.db = new Database(OrderBookDatabase.DB_PATH);
+  private db: Database.Database;
+  constructor(dbPath = process.env.ORDER_BOOK_DB_PATH || ':memory:') {
+    this.db = new Database(dbPath);
     this.initializeSchema();
   }
 
@@ -48,7 +47,7 @@ export class OrderBookDatabase {
     `);
   }
 
-  insertOrder(order: Order): boolean {
+  insertOrder(order: LimitOrder): boolean {
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO orders 
       (id, user_id, token_id, order_type, amount, price, remaining_amount, status, created_at, expires_at)

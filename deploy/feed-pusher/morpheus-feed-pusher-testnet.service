@@ -1,0 +1,19 @@
+[Unit]
+Description=Morpheus Node DataFeed pusher - Neo N3 testnet (COMPATIBILITY ONLY)
+After=network-online.target morpheus-nitro-signer-testnet.service
+Requires=morpheus-nitro-signer-testnet.service
+Wants=network-online.target
+ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_FEED_PUSHER_COMPAT
+Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
+Before=morpheus-relayer.service morpheus-relayer-nitro.service
+OnFailure=morpheus-alert@%n.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/opt/morpheus/nitro/feed-pusher-testnet.env
+# WorkingDirectory must contain feed-pusher.mjs, lib-feed-network.mjs, and
+# lib-feed-writer-metrics.mjs.
+WorkingDirectory=/opt/neoos/services/deploy/feed-pusher
+# Exec-time pins: a copy-pasted mainnet env file cannot retarget this writer,
+# collide with mainnet PUSH_* paths, or send /feed/sign to the live 8787 bridge.
+ExecStart=/usr/bin/env FEED_NETWORK=testnet FEED_CHAINS=neo-n3 SIGNER_URL=http://127.0.0.1:8789 PUSH_LOG=/opt/morpheus/nitro/feed-pusher-testnet.log PUSH_STATUS=/opt/morpheus/nitro/feed-pusher-testnet-status.json MISSING_STATE=/opt/morpheus/nitro/feed-pusher-testnet-missing.json PUSH_PROM_TEXTFILE=/opt/morpheus/nitro/feed-pusher-testnet.prom /usr/bin/node feed-pusher.mjs

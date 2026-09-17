@@ -4,6 +4,7 @@ After=network-online.target morpheus-nitro-signer.service
 Wants=network-online.target
 ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_FEED_PUSHER_COMPAT
 Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
+Before=morpheus-relayer.service morpheus-relayer-nitro.service
 # A pusher that stops writing is the outage; route its exit code to a human.
 OnFailure=morpheus-alert@%n.service
 
@@ -13,5 +14,12 @@ EnvironmentFile=/opt/morpheus/nitro/feed-pusher.env
 Environment=NODE_ENV=production
 # Neo N3 lane only - Neo X runs on its own faster timer (feed-pusher-neox).
 Environment=FEED_CHAINS=neo-n3
+# WorkingDirectory must contain feed-pusher.mjs, lib-feed-network.mjs, and
+# lib-feed-writer-metrics.mjs.
 WorkingDirectory=/opt/neoos/services/deploy/feed-pusher
-ExecStart=/usr/bin/node feed-pusher.mjs
+# systemd EnvironmentFile= overrides Environment= regardless of unit-file order.
+# Reserved network/state pins are applied at execve so leftover/copy-pasted env
+# values cannot retarget this writer or collide with testnet paths.
+# PUSH_PROM_TEXTFILE is pinned empty so a leftover testnet path cannot collide;
+# enable with a systemd drop-in that changes this ExecStart pin.
+ExecStart=/usr/bin/env FEED_NETWORK=mainnet FEED_CHAINS=neo-n3 PUSH_LOG=/opt/morpheus/nitro/feed-pusher.log PUSH_STATUS=/opt/morpheus/nitro/feed-pusher-status.json MISSING_STATE=/opt/morpheus/nitro/feed-pusher-missing.json PUSH_PROM_TEXTFILE= /usr/bin/node feed-pusher.mjs

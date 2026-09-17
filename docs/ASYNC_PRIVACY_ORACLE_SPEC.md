@@ -28,7 +28,7 @@ Current Neo N3 anchors:
 | `MorpheusDataFeed` module     | `0x03013f49c42a14546c8bbe58f9d434c3517fccab` via `pricefeed.morpheus.neo`              | `0x9bea75cf702f6afc09125aa6d22f082bfd2ee064`           |
 | `AbstractAccount`             | `0x0268a387913b250166ddec032b03332690a1ef78` via `smartwallet.neo` / `aa.morpheus.neo` | `0xdbf38e7b2117186bf7a5e17ead702322c0c5b6f2`           |
 | `AA Web3AuthVerifier`         | `0xf5c452cd4ba29dcdc47026383568c0d8b38d9272`                                           | `0x1111f5b6b046a964c75d208998c13945ce172e85`           |
-| `AA RecoveryVerifier`         | `0x198b3a9cec9bccc2110d19bd929b10374a9d034d`                                           | `recovery.smartwallet.neo`                             |
+| `AA RecoveryVerifier v2`      | `0xfb3f605fc6bcd59d265d7c18230093d7dc24ac26`                                           | `recovery.smartwallet.neo`                             |
 | `NeoDIDRegistry`              | `0xb81f31ea81e279793b30411b82c2e82078b63105` via `neodid.morpheus.neo`                 | unpublished in the shared registry                     |
 
 Interpretation rules:
@@ -100,7 +100,7 @@ For `neodid_recovery_ticket`, a typical on-chain payload is:
   "provider": "github",
   "network": "neo_n3",
   "aa_contract": "0x0268a387913b250166ddec032b03332690a1ef78",
-  "verifier_contract": "0x198b3a9cec9bccc2110d19bd929b10374a9d034d",
+  "verifier_contract": "0xfb3f605fc6bcd59d265d7c18230093d7dc24ac26",
   "account_id": "<aa-account-id>",
   "new_owner": "0x89b05cac00804648c666b47ecb1c57bc185821b7",
   "recovery_nonce": "7",

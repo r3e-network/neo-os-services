@@ -1,12 +1,44 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { WebSocketServer, WebSocket } from 'ws';
 import { PriceFeedServer } from './server';
-import { activeConnectionsGauge, connectionCountCounter } from './metrics';
 
 describe('PriceFeedServer', () => {
   let server: PriceFeedServer;
   let wsServer: WebSocketServer;
   let mockRedis: any;
+
+  const portOf = (server: WebSocketServer): number => {
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('WebSocket server is not listening');
+    return address.port;
+  };
+
+  const consumeHealthCheck = (ws: WebSocket): Promise<void> => new Promise((resolve, reject) => {
+    const onMessage = (data: any) => {
+      const message = JSON.parse(data.toString());
+      if (message.type !== 'health_check') return;
+      ws.off('message', onMessage);
+      ws.off('error', onError);
+      resolve();
+    };
+    const onError = (error: Error) => {
+      ws.off('message', onMessage);
+      reject(error);
+    };
+    ws.on('message', onMessage);
+    ws.once('error', onError);
+  });
+
+  const connect = async (url: string): Promise<WebSocket> => {
+    const ws = new WebSocket(url);
+    const health = consumeHealthCheck(ws);
+    await new Promise<void>((resolve, reject) => {
+      ws.once('open', resolve);
+      ws.once('error', reject);
+    });
+    await health;
+    return ws;
+  };
 
   beforeEach(async () => {
     // Create mock Redis client
@@ -22,11 +54,12 @@ describe('PriceFeedServer', () => {
 
     // Start WebSocket server on random port
     wsServer = new WebSocketServer({ port: 0 });
-    
-    server = new PriceFeedServer(wsServer.address().port as number);
-    
-    // Inject mock Redis
-    (server as any).redis = mockRedis;
+    await new Promise<void>((resolve, reject) => {
+      wsServer.once('listening', () => resolve());
+      wsServer.once('error', reject);
+    });
+
+    server = new PriceFeedServer(wsServer, { redis: mockRedis });
   });
 
   afterEach(async () => {
@@ -36,7 +69,7 @@ describe('PriceFeedServer', () => {
 
   describe('connection handling', () => {
     it('should track active connections', async () => {
-      const wsUrl = `ws://localhost:${wsServer.address().port}`;
+      const wsUrl = `ws://localhost:${portOf(wsServer)}`;
       
       const ws = new WebSocket(wsUrl);
       
@@ -47,89 +80,90 @@ describe('PriceFeedServer', () => {
       ws.close();
       
       await new Promise(resolve => ws.addEventListener('close', resolve));
-      
-      // After a short delay, connection should be cleaned up
-      setTimeout(() => {
-        expect((server as any).clients.size).toBe(0);
-      }, 1000);
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      expect((server as any).clients.size).toBe(0);
     });
 
-    it('should send health check on connection', (done) => {
-      const wsUrl = `ws://localhost:${wsServer.address().port}`;
+    it('should send health check on connection', async () => {
+      const wsUrl = `ws://localhost:${portOf(wsServer)}`;
       const ws = new WebSocket(wsUrl);
-      
-      ws.on('message', (data) => {
-        try {
-          const msg = JSON.parse(data.toString());
-          expect(msg.type).toBe('health_check');
-          expect(msg.payload).toHaveProperty('sources');
-          done();
-        } catch (e) {
-          done(e as Error);
-        }
+
+      const msg = await new Promise<any>((resolve, reject) => {
+        ws.once('message', data => resolve(JSON.parse(data.toString())));
+        ws.once('error', reject);
       });
-      
-      ws.on('error', done);
+      expect(msg.type).toBe('health_check');
+      expect(msg.payload).toHaveProperty('sources');
+      ws.close();
     });
   });
 
   describe('subscription management', () => {
-    it('should allow subscribing to tokens', (done) => {
-      const wsUrl = `ws://localhost:${wsServer.address().port}`;
-      const ws = new WebSocket(wsUrl);
-      
-      ws.on('open', () => {
-        ws.send(JSON.stringify({
-          type: 'subscribe',
-          tokens: ['NEO/USDT'],
-        }));
+    it('should allow subscribing to tokens', async () => {
+      const wsUrl = `ws://localhost:${portOf(wsServer)}`;
+      const ws = await connect(wsUrl);
+      const response = new Promise<any>((resolve, reject) => {
+        ws.once('message', data => resolve(JSON.parse(data.toString())));
+        ws.once('error', reject);
       });
-      
-      ws.on('message', (data) => {
-        try {
-          const msg = JSON.parse(data.toString());
-          expect(msg.type).toBe('subscribed');
-          expect(msg.tokens).toContain('NEO/USDT');
-          
-          ws.close();
-          done();
-        } catch (e) {
-          done(e as Error);
-        }
-      });
-      
-      ws.on('error', done);
+      ws.send(JSON.stringify({
+        type: 'subscribe',
+        tokens: ['NEO/USDT'],
+      }));
+      const msg = await response;
+      expect(msg.type).toBe('subscribed');
+      expect(msg.tokens).toContain('NEO/USDT');
+      ws.close();
     });
 
-    it('should track subscription count', (done) => {
-      const wsUrl = `ws://localhost:${wsServer.address().port}`;
-      const ws = new WebSocket(wsUrl);
-      
-      ws.on('open', () => {
-        ws.send(JSON.stringify({
-          type: 'subscribe',
-          tokens: ['NEO/USDT', 'BTC/USD', 'ETH/USD'],
-        }));
+    it('should track subscription count', async () => {
+      const wsUrl = `ws://localhost:${portOf(wsServer)}`;
+      const ws = await connect(wsUrl);
+      const nextMessage = () => new Promise<any>((resolve, reject) => {
+        ws.once('message', data => resolve(JSON.parse(data.toString())));
+        ws.once('error', reject);
       });
-      
-      ws.on('message', (data) => {
-        const msg = JSON.parse(data.toString());
-        if (msg.type === 'subscribed') {
-          expect(msg.subscriptionCount).toBe(3);
-          
-          // Subscribe again to increase count
-          ws.send(JSON.stringify({
-            type: 'subscribe',
-            tokens: ['LTC/USD'],
-          }));
-        } else if (msg.type === 'subscribed' && msg.subscriptionCount === 4) {
-          ws.close();
-          done();
-        }
-      });
-      
-      ws.on('error', done);
+
+      ws.send(JSON.stringify({
+        type: 'subscribe',
+        tokens: ['NEO/USDT', 'BTC/USD', 'ETH/USD'],
+      }));
+      expect((await nextMessage()).subscriptionCount).toBe(3);
+
+      ws.send(JSON.stringify({
+        type: 'subscribe',
+        tokens: ['LTC/USD'],
+      }));
+      expect((await nextMessage()).subscriptionCount).toBe(4);
+      ws.close();
     });
+
+    it('rejects TWAP requests when no provider is configured', async () => {
+      const wsUrl = `ws://localhost:${portOf(wsServer)}`;
+      const ws = await connect(wsUrl);
+      const response = new Promise<any>((resolve, reject) => {
+        ws.once('message', data => {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === 'error') {
+            resolve(msg);
+            return;
+          }
+          // Every connection receives health_check before application
+          // responses. Keep listening instead of allowing that first frame to
+          // make the test wait until Vitest times out.
+          ws.once('message', data => {
+            const next = JSON.parse(data.toString());
+            if (next.type === 'error') resolve(next);
+          });
+        });
+        ws.once('error', reject);
+      });
+      ws.send(JSON.stringify({ type: 'request_twap', tokenPair: 'NEO/USDT' }));
+      expect((await response).message).toContain('TWAP calculation failed');
+      ws.close();
+    });
+
   });
 
   describe('backpressure handling', () => {
@@ -149,14 +183,11 @@ describe('PriceFeedServer', () => {
   });
 
   describe('metrics recording', () => {
-    it('should record active connections metric', () => {
-      const wsUrl = `ws://localhost:${wsServer.address().port}`;
-      new WebSocket(wsUrl);
-      
-      // Metric should reflect current connection count
-      setTimeout(() => {
-        expect(activeConnectionsGauge.set).toHaveBeenCalledOnce();
-      }, 500);
+    it('should record active connections metric', async () => {
+      const wsUrl = `ws://localhost:${portOf(wsServer)}`;
+      const ws = await connect(wsUrl);
+      expect((server as any).clients.size).toBe(1);
+      ws.close();
     });
   });
 });

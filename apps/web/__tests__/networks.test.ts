@@ -30,12 +30,12 @@ describe('network selection', () => {
     expect(() => getSelectedNetworkKey()).toThrow(/Invalid MORPHEUS_NETWORK/);
   });
 
-  it('defaults to mainnet when no network env is configured', async () => {
+  it('fails closed when no network env is configured', async () => {
     vi.stubEnv('NEXT_PUBLIC_MORPHEUS_NETWORK', '');
     vi.stubEnv('MORPHEUS_NETWORK', '');
     const { getSelectedNetworkKey } = await import('../lib/networks');
 
-    expect(getSelectedNetworkKey()).toBe('mainnet');
+    expect(() => getSelectedNetworkKey()).toThrow(/MORPHEUS_NETWORK/);
   });
 
   it('validates network query params via isKnownNetworkKey', async () => {

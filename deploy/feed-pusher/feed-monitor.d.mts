@@ -7,9 +7,18 @@
 // (apps/web/__tests__/feed-freshness.test.ts). Keep it in sync with the
 // module's `export function` list.
 
-export type FeedMonitorRow = { pair: string; ts: number; age: number };
+export type FeedMonitorRow = { pair: string; ts: number; age: number; clock_skew: boolean };
 
-export function parseAllRecords(result: unknown, now: number): FeedMonitorRow[] | null;
+export type FeedMonitorDecode = {
+  ok: boolean;
+  reason: string | null;
+  rows: FeedMonitorRow[];
+  record_count: number;
+  decoded_count: number;
+  undecodable_count: number;
+};
+
+export function parseAllRecords(result: unknown, now: number): FeedMonitorDecode;
 
 export function isMarketClosed(date: Date, options?: { tradfiHolidays?: Set<string> }): boolean;
 

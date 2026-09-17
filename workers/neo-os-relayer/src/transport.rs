@@ -3,11 +3,16 @@
 //! - `neo_os_chain_evm::HttpTransport`
 //! - `neo_os_relayer_store::HttpTransport`
 
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct RelayerHttpTransport {
     client: reqwest::blocking::Client,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl RelayerHttpTransport {
@@ -20,7 +25,22 @@ impl RelayerHttpTransport {
             .timeout(Duration::from_millis(timeout_ms))
             .build()
             .expect("Reqwest blocking client must build");
-        RelayerHttpTransport { client }
+        RelayerHttpTransport {
+            client,
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+    pub fn with_cancellation(timeout_ms: u64, cancelled: Arc<AtomicBool>) -> Self {
+        let mut transport = Self::with_timeout_ms(timeout_ms);
+        transport.cancelled = cancelled;
+        transport
+    }
+    fn check_cancelled(&self) -> Result<(), String> {
+        if self.cancelled.load(Ordering::Acquire) {
+            Err("relayer shutdown: no new HTTP work".into())
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -33,6 +53,7 @@ impl Default for RelayerHttpTransport {
 // Implement neo_os_chain_n3::HttpTransport
 impl neo_os_chain_n3::HttpTransport for RelayerHttpTransport {
     fn post(&self, url: &str, body: &str) -> Result<(u16, String), String> {
+        self.check_cancelled()?;
         let response = self
             .client
             .post(url)
@@ -46,6 +67,7 @@ impl neo_os_chain_n3::HttpTransport for RelayerHttpTransport {
     }
 
     fn get(&self, url: &str) -> Result<(u16, String), String> {
+        self.check_cancelled()?;
         let response = self
             .client
             .get(url)
@@ -64,6 +86,7 @@ impl neo_os_chain_n3::HttpTransport for RelayerHttpTransport {
         timeout_ms: u64,
         body: &str,
     ) -> Result<(u16, String), String> {
+        self.check_cancelled()?;
         let response = self
             .client
             .post(url)
@@ -85,6 +108,7 @@ impl neo_os_chain_n3::HttpTransport for RelayerHttpTransport {
         token: &str,
         timeout_ms: u64,
     ) -> Result<(u16, String), String> {
+        self.check_cancelled()?;
         let response = self
             .client
             .get(url)
@@ -102,6 +126,7 @@ impl neo_os_chain_n3::HttpTransport for RelayerHttpTransport {
 // Implement neo_os_chain_evm::HttpTransport
 impl neo_os_chain_evm::HttpTransport for RelayerHttpTransport {
     fn post(&self, url: &str, body: &str) -> Result<(u16, String), String> {
+        self.check_cancelled()?;
         let response = self
             .client
             .post(url)
@@ -115,6 +140,7 @@ impl neo_os_chain_evm::HttpTransport for RelayerHttpTransport {
     }
 
     fn get(&self, url: &str) -> Result<(u16, String), String> {
+        self.check_cancelled()?;
         let response = self
             .client
             .get(url)
@@ -159,6 +185,7 @@ impl neo_os_relayer_store::HttpTransport for RelayerHttpTransport {
     ) -> Result<(u16, String), String> {
         let method = reqwest::Method::from_bytes(method.as_bytes())
             .map_err(|error| format!("invalid HTTP method {method:?}: {error}"))?;
+        self.check_cancelled()?;
         let mut req = self.client.request(method, url);
         for &(k, v) in headers {
             req = req.header(k, v);

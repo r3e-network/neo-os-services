@@ -52,6 +52,7 @@ process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_TESTNET = ORACLE_VERIFIER_ACCOU
 // Test-only updater key (the feed signer). Unpinned (allowed via the flag above).
 const UPDATER_ACCOUNT = new neoWallet.Account(neoWallet.generatePrivateKey());
 process.env.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_TESTNET = UPDATER_ACCOUNT.privateKey;
+process.env.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET = UPDATER_ACCOUNT.privateKey;
 
 // Pin the N3 magic the feed tx is signed under so the server + the independent
 // test recompute use the SAME magic (default 860833102; explicit for clarity).
@@ -102,7 +103,32 @@ const {
   materializeNeoXFeedKeyFromKms,
   materializeNeoDidSaltFromKms,
   __resetRuntimeProvisionStateForTests,
+  __resetEnclaveNetworkIdentityForTests,
 } = enclave;
+
+import { FEED_NETWORK_DEFAULTS } from '../feed-pusher/lib-feed-network.mjs';
+
+const DEFAULT_FEED_ENV = Object.freeze({
+  FEED_NETWORK: process.env.FEED_NETWORK,
+  MORPHEUS_NETWORK: process.env.MORPHEUS_NETWORK,
+  FEED_MAGIC: process.env.FEED_MAGIC,
+});
+
+function restoreDefaultFeedEnv() {
+  for (const [key, value] of Object.entries(DEFAULT_FEED_ENV)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  __resetEnclaveNetworkIdentityForTests();
+}
+
+function alignEnclaveFeedIdentity(network) {
+  const defaults = FEED_NETWORK_DEFAULTS[network];
+  process.env.FEED_NETWORK = network;
+  process.env.MORPHEUS_NETWORK = network;
+  process.env.FEED_MAGIC = String(defaults.magic);
+  __resetEnclaveNetworkIdentityForTests();
+}
 
 // Import planFeedUpdate from the feed-pusher INDEPENDENTLY (the SAME decision the
 // server imports) so the /feed/sign golden vector recomputes the planned arrays
@@ -181,6 +207,7 @@ before(() => {
 
 beforeEach(() => {
   installDeterministicWorker();
+  restoreDefaultFeedEnv();
 });
 
 // Recompute the workerResponse the stub produced for a given route, so the test
@@ -535,6 +562,7 @@ function feedPusherTxMessage(planned, txParams, updaterPublicKey) {
 }
 
 test('feed/sign: updateFeeds tx message byte-identical to feed-pusher + signature verifies', async () => {
+  alignEnclaveFeedIdentity('mainnet');
   // Deterministic price set (the stubbed in-enclave fetch), fixed clock, and the
   // on-chain state the relayer/feed-pusher would read on the host.
   const FIXED_NOW = 1_780_000_000;
@@ -651,7 +679,140 @@ test('feed/sign: updateFeeds tx message byte-identical to feed-pusher + signatur
   __resetPriceFetcherForTests();
 });
 
+test('feed/sign: updateFeed write_mode is refused on mainnet (no silent downgrade)', async () => {
+  alignEnclaveFeedIdentity('mainnet');
+  const { status, body } = await dispatch(
+    'POST',
+    '/feed/sign',
+    AUTH,
+    JSON.stringify({
+      chain: 'neo_n3',
+      write_mode: 'updateFeed',
+      symbols: ['NEO-USD'],
+      now: 1_780_000_000,
+      tx_params: { block_count: 1, system_fee: 1, network_fee: 1, nonce: 1 },
+    })
+  );
+  assert.equal(status, 400);
+  assert.match(String(body.error || body.message || JSON.stringify(body)), /testnet-only|refusing/);
+});
+
+test('feed/sign: TestNet updateFeed is accepted only with matching FEED_NETWORK/magic/MORPHEUS_NETWORK', async () => {
+  alignEnclaveFeedIdentity('testnet');
+  const FIXED_NOW = 1_780_000_000;
+  __setPriceFetcherForTests(async () => ({ 'NEO-USD': 5.25 }));
+  try {
+    const { status, body } = await dispatch(
+      'POST',
+      '/feed/sign',
+      AUTH,
+      JSON.stringify({
+        chain: 'neo_n3',
+        write_mode: 'updateFeed',
+        symbols: ['NEO-USD'],
+        onchain_state: {
+          'NEO-USD': { round: FIXED_NOW - 3600, price: 5.0, timestamp: FIXED_NOW - 3600 },
+        },
+        now: FIXED_NOW,
+        tx_params: { block_count: 100, system_fee: 1, network_fee: 1, nonce: 9 },
+      })
+    );
+    assert.equal(status, 200, `dispatch failed: ${JSON.stringify(body)}`);
+    assert.equal(body.status, 'ok');
+    assert.equal(body.write_mode, 'updateFeed');
+    assert.equal(body.operation, 'updateFeed');
+    assert.deepEqual(body.pairs, ['TWELVEDATA:NEO-USD']);
+    assert.equal(body.tx_nonce, 9);
+    assert.equal(neoWallet.verify(body.tx_message_hex, body.signature, body.public_key), true);
+    const { buildUpdateFeedTxMessage } = await import('./enclave-server.mjs');
+    const rebuilt = buildUpdateFeedTxMessage(
+      {
+        P: body.pairs,
+        R: body.rounds,
+        PX: body.prices_scaled,
+        TS: body.timestamps,
+        AH: body.attestation_hashes,
+        SS: body.source_set_ids,
+      },
+      {
+        nonce: body.tx_nonce,
+        blockCount: 100,
+        systemFee: 1,
+        networkFee: 1,
+      },
+      UPDATER_ACCOUNT.publicKey
+    );
+    assert.equal(body.tx_message_hex, rebuilt.message);
+  } finally {
+    __resetPriceFetcherForTests();
+  }
+});
+
+test('feed/sign: mismatched FEED_MAGIC / MORPHEUS_NETWORK refuse before signing', async () => {
+  process.env.FEED_NETWORK = 'testnet';
+  process.env.MORPHEUS_NETWORK = 'testnet';
+  process.env.FEED_MAGIC = '860833102';
+  __resetEnclaveNetworkIdentityForTests();
+  __setPriceFetcherForTests(async () => ({ 'NEO-USD': 5.25 }));
+  try {
+    const magic = await dispatch(
+      'POST',
+      '/feed/sign',
+      AUTH,
+      JSON.stringify({
+        chain: 'neo_n3',
+        write_mode: 'updateFeed',
+        symbols: ['NEO-USD'],
+        now: 1_780_000_000,
+        tx_params: { block_count: 1, system_fee: 1, network_fee: 1, nonce: 1 },
+      })
+    );
+    assert.equal(magic.status, 400);
+    assert.match(String(magic.body.error || ''), /FEED_MAGIC|split-brain|does not match/);
+
+    process.env.FEED_MAGIC = String(FEED_NETWORK_DEFAULTS.testnet.magic);
+    process.env.MORPHEUS_NETWORK = 'mainnet';
+    __resetEnclaveNetworkIdentityForTests();
+    const split = await dispatch(
+      'POST',
+      '/feed/sign',
+      AUTH,
+      JSON.stringify({
+        chain: 'neo_n3',
+        write_mode: 'updateFeed',
+        symbols: ['NEO-USD'],
+        now: 1_780_000_000,
+        tx_params: { block_count: 1, system_fee: 1, network_fee: 1, nonce: 1 },
+      })
+    );
+    assert.equal(split.status, 400);
+    assert.match(String(split.body.error || ''), /split-brain|FEED_NETWORK|MORPHEUS_NETWORK/);
+  } finally {
+    __resetPriceFetcherForTests();
+  }
+});
+
+test('buildUpdateFeedTxMessage has no pinOverride escape and follows the bound identity', async () => {
+  const { buildUpdateFeedTxMessage } = await import('./enclave-server.mjs');
+  assert.equal(buildUpdateFeedTxMessage.length, 3);
+  const planned = {
+    P: ['TWELVEDATA:NEO-USD'],
+    R: [7],
+    PX: [5_250_000],
+    TS: [1_780_000_000],
+    AH: ['aa'],
+    SS: [0],
+  };
+  const txParams = { nonce: 9, blockCount: 100, systemFee: 1, networkFee: 1 };
+  alignEnclaveFeedIdentity('testnet');
+  const testnet = buildUpdateFeedTxMessage(planned, txParams, UPDATER_ACCOUNT.publicKey);
+  alignEnclaveFeedIdentity('mainnet');
+  const mainnet = buildUpdateFeedTxMessage(planned, txParams, UPDATER_ACCOUNT.publicKey);
+  assert.notEqual(testnet.message, mainnet.message);
+});
+
 test('feed/sign: no symbol clears the push decision → no-update (no signature)', async () => {
+  alignEnclaveFeedIdentity('mainnet');
   const FIXED_NOW = 1_780_000_000;
   __setPriceFetcherForTests(async () => ({ 'NEO-USD': 5.0 }));
   const req = {
@@ -671,6 +832,7 @@ test('feed/sign: no symbol clears the push decision → no-update (no signature)
 });
 
 test('feed/sign: tx params come from the provider seam when not supplied in the request', async () => {
+  alignEnclaveFeedIdentity('mainnet');
   const FIXED_NOW = 1_780_000_000;
   __setPriceFetcherForTests(async () => ({ 'NEO-USD': 7.0 }));
   // No tx_params in the request → the server pulls them from the provider seam
@@ -730,6 +892,7 @@ test('feed/sign: tx params come from the provider seam when not supplied in the 
 });
 
 test('feed/sign: missing tx params (no request params, default provider) surfaces 503', async () => {
+  alignEnclaveFeedIdentity('mainnet');
   const FIXED_NOW = 1_780_000_000;
   // 5.0 -> 5.5 is a 10% move: past the bps threshold, well under the 50%
   // deviation ceiling, so the symbol pushes and the provider IS reached.
@@ -748,6 +911,7 @@ test('feed/sign: missing tx params (no request params, default provider) surface
 });
 
 test('feed/sign: rejects host-supplied N3 fees above enclave safety ceilings', async () => {
+  alignEnclaveFeedIdentity('mainnet');
   const FIXED_NOW = 1_780_000_000;
   __setPriceFetcherForTests(async () => ({ 'NEO-USD': 5.5 }));
   try {
@@ -774,6 +938,7 @@ test('feed/sign: rejects host-supplied N3 fees above enclave safety ceilings', a
 });
 
 test('feed/sign: a symbol missing from the price fetch is reported, not signed', async () => {
+  alignEnclaveFeedIdentity('mainnet');
   const FIXED_NOW = 1_780_000_000;
   __setPriceFetcherForTests(async () => ({ 'NEO-USD': 6.0 })); // GAS-USD missing
   const req = {
@@ -795,6 +960,7 @@ test('feed/sign: a symbol missing from the price fetch is reported, not signed',
 });
 
 test('feed/sign: validation — symbols required; neox needs pinned tx_params', async () => {
+  alignEnclaveFeedIdentity('mainnet');
   const noSymbols = await dispatch(
     'POST',
     '/feed/sign',
@@ -1289,7 +1455,14 @@ test('provision applies env keys at runtime and reports role health', async () =
     'POST',
     '/provision',
     AUTH,
-    JSON.stringify({ env: { MORPHEUS_NETWORK: 'testnet', TD_KEY: 'provisioned-td-key' } })
+    JSON.stringify({
+      env: {
+        MORPHEUS_NETWORK: 'testnet',
+        FEED_NETWORK: 'testnet',
+        FEED_MAGIC: String(FEED_NETWORK_DEFAULTS.testnet.magic),
+        TD_KEY: 'provisioned-td-key',
+      },
+    })
   );
   assert.equal(status, 200);
   assert.equal(body.provisioned, true);
@@ -1298,6 +1471,25 @@ test('provision applies env keys at runtime and reports role health', async () =
   assert.equal(process.env.TD_KEY, 'provisioned-td-key');
   const verifier = body.roles.find((r) => r.role === 'oracle_verifier');
   assert.equal(verifier.ok, true);
+});
+
+test('provision refuses a FEED_NETWORK / MORPHEUS_NETWORK mismatch before applying', async () => {
+  const rejected = await dispatch(
+    'POST',
+    '/provision',
+    AUTH,
+    JSON.stringify({
+      env: {
+        FEED_NETWORK: 'testnet',
+        MORPHEUS_NETWORK: 'mainnet',
+        FEED_MAGIC: String(FEED_NETWORK_DEFAULTS.testnet.magic),
+        TD_KEY: 'must-not-apply-split',
+      },
+    })
+  );
+  assert.equal(rejected.status, 400);
+  assert.match(String(rejected.body.error || ''), /split-brain|FEED_NETWORK|MORPHEUS_NETWORK/);
+  assert.notEqual(process.env.TD_KEY, 'must-not-apply-split');
 });
 
 test('provision permanently rejects plaintext keys and the former runtime opt-in flag', async () => {
@@ -1426,6 +1618,8 @@ test('first provision and rotation require versioned attestation-gated KMS runti
     const payloadV1 = {
       env: {
         MORPHEUS_NETWORK: 'testnet',
+        FEED_NETWORK: 'testnet',
+        FEED_MAGIC: String(FEED_NETWORK_DEFAULTS.testnet.magic),
         MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64: 'sealed-v1',
         AWS_ACCESS_KEY_ID: 'bootstrap-access-key',
         AWS_SECRET_ACCESS_KEY: 'bootstrap-secret-key',

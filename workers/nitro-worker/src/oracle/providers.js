@@ -106,6 +106,24 @@ export const BUILTIN_PROVIDER_CATALOG = [
     kernel_supports: ['oracle.fetch', 'feed.publish'],
     auth: 'none',
   },
+  {
+    id: 'coingecko',
+    category: 'market-data',
+    description:
+      'CoinGecko simple-price market data source for supported crypto assets. No API key is sent by the worker.',
+    supports: ['oracle', 'datafeed'],
+    kernel_supports: ['oracle.fetch', 'feed.publish'],
+    auth: 'none',
+  },
+  {
+    id: 'coinpaprika',
+    category: 'market-data',
+    description:
+      'CoinPaprika ticker market data source for supported crypto assets. No API key is sent by the worker.',
+    supports: ['oracle', 'datafeed'],
+    kernel_supports: ['oracle.fetch', 'feed.publish'],
+    auth: 'none',
+  },
 ];
 
 export function listBuiltinProviders() {
@@ -120,6 +138,8 @@ const FEED_PROVIDER_PREFIXES = {
   'TWELVEDATA:': 'twelvedata',
   'BINANCE-SPOT:': 'binance-spot',
   'COINBASE-SPOT:': 'coinbase-spot',
+  'COINGECKO:': 'coingecko',
+  'COINPAPRIKA:': 'coinpaprika',
 };
 
 export function inferProviderIdFromPairSymbol(value) {
@@ -521,6 +541,55 @@ function buildCoinbaseSpotRequest(payload, provider) {
   };
 }
 
+function buildCoinGeckoRequest(payload, provider) {
+  const params = coerceProviderParams(payload.provider_params);
+  const pair =
+    stripProviderPrefixFromPairSymbol(
+      trimString(payload.symbol || params.pair || 'NEO-USD') || 'NEO-USD'
+    ) || 'NEO-USD';
+  const ids = {
+    'NEO-USD': 'neo',
+    'GAS-USD': 'gas',
+  };
+  const id = trimString(params.id || payload.provider_symbol || ids[pair] || '');
+  if (!id) throw new Error(`coingecko does not support ${pair}`);
+  const url = new URL('https://api.coingecko.com/api/v3/simple/price');
+  url.searchParams.set('ids', id);
+  url.searchParams.set('vs_currencies', 'usd');
+  return {
+    provider,
+    pair: pair.replace(/_/g, '-').toUpperCase(),
+    method: 'GET',
+    url: url.toString(),
+    headers: {},
+    body: undefined,
+    auth_mode: 'none',
+  };
+}
+
+function buildCoinPaprikaRequest(payload, provider) {
+  const params = coerceProviderParams(payload.provider_params);
+  const pair =
+    stripProviderPrefixFromPairSymbol(
+      trimString(payload.symbol || params.pair || 'NEO-USD') || 'NEO-USD'
+    ) || 'NEO-USD';
+  const ids = {
+    'NEO-USD': 'neo-neo',
+    'GAS-USD': 'gas-gas',
+  };
+  const id = trimString(params.id || payload.provider_symbol || ids[pair] || '');
+  if (!id) throw new Error(`coinpaprika does not support ${pair}`);
+  return {
+    provider,
+    pair: pair.replace(/_/g, '-').toUpperCase(),
+    method: 'GET',
+    url: `https://api.coinpaprika.com/v1/tickers/${encodeURIComponent(id)}`,
+    headers: {},
+    body: undefined,
+    auth_mode: 'none',
+  };
+}
+
 export function buildProviderRequest(payload) {
   const symbolCandidate = trimString(
     payload.symbol ||
@@ -543,6 +612,10 @@ export function buildProviderRequest(payload) {
       return buildBinanceSpotRequest(payload, provider);
     case 'coinbase-spot':
       return buildCoinbaseSpotRequest(payload, provider);
+    case 'coingecko':
+      return buildCoinGeckoRequest(payload, provider);
+    case 'coinpaprika':
+      return buildCoinPaprikaRequest(payload, provider);
     default:
       throw new Error(`unknown builtin provider: ${provider}`);
   }

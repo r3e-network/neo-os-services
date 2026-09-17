@@ -114,11 +114,20 @@ impl<T: HttpTransport> EvmRpcClient<T> {
                     continue;
                 }
             };
-            let parsed: Value = serde_json::from_str(&raw).map_err(|error| {
-                NeoXCallError::Deterministic(DeterministicError(format!(
-                    "non-JSON response: {error}"
-                )))
-            })?;
+            // An unhealthy proxy frequently returns HTML. Classify HTTP before
+            // JSON so this cannot be mistaken for a deterministic contract error.
+            if status != 200 {
+                last_transport_error = Some(TransportError(format!("rpc answered {status}")));
+                continue;
+            }
+            let parsed: Value = match serde_json::from_str(&raw) {
+                Ok(value) => value,
+                Err(error) => {
+                    last_transport_error =
+                        Some(TransportError(format!("non-JSON response: {error}")));
+                    continue;
+                }
+            };
             if let Some(error) = parsed.get("error") {
                 let code = error.get("code").and_then(Value::as_i64).unwrap_or(0);
                 let message = error
@@ -126,18 +135,24 @@ impl<T: HttpTransport> EvmRpcClient<T> {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string();
-                // eth protocol errors (code -32000 range from the node) are
-                // deterministic for the called method.
+                let lower = message.to_ascii_lowercase();
+                if matches!(code, -32603 | -32002 | -32005)
+                    || lower.contains("rate limit")
+                    || lower.contains("temporarily unavailable")
+                    || lower.contains("timeout")
+                    || lower.contains("timed out")
+                {
+                    last_transport_error = Some(TransportError(format!("code {code}: {message}")));
+                    continue;
+                }
                 return Err(NeoXCallError::Deterministic(DeterministicError(format!(
                     "code {code}: {message}"
                 ))));
             }
-            if status != 200 {
-                // HTTP-level failure: transport-class (502/503/504 shapes).
-                last_transport_error = Some(TransportError(format!("rpc answered {status}")));
-                continue;
+            if let Some(result) = parsed.get("result") {
+                return Ok(result.clone());
             }
-            return Ok(parsed.get("result").cloned().unwrap_or(Value::Null));
+            last_transport_error = Some(TransportError("RPC omitted result and error".into()));
         }
         Err(NeoXCallError::Transport(
             last_transport_error.unwrap_or_else(|| {
@@ -283,13 +298,28 @@ impl<T: HttpTransport> EvmRpcClient<T> {
                 "eth_call returned a non-string".into(),
             ))
         })?;
-        Ok(hex_to_bytes(hex))
+        hex_to_bytes(hex).map_err(|error| NeoXCallError::Deterministic(DeterministicError(error)))
     }
 
     /// `eth_sendRawTransaction` — returns the tx hash.
     pub fn send_raw_transaction(&self, signed_hex: &str) -> Result<String, NeoXCallError> {
         let value = self.call("eth_sendRawTransaction", json!([signed_hex]))?;
-        Ok(value.as_str().unwrap_or_default().to_string())
+        let tx_hash = value.as_str().ok_or_else(|| {
+            NeoXCallError::Deterministic(DeterministicError(
+                "eth_sendRawTransaction returned a non-string hash".into(),
+            ))
+        })?;
+        let raw = tx_hash.strip_prefix("0x").ok_or_else(|| {
+            NeoXCallError::Deterministic(DeterministicError(
+                "eth_sendRawTransaction returned a hash without 0x prefix".into(),
+            ))
+        })?;
+        if raw.len() != 64 || !raw.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(NeoXCallError::Deterministic(DeterministicError(
+                "eth_sendRawTransaction returned an invalid transaction hash".into(),
+            )));
+        }
+        Ok(tx_hash.to_string())
     }
 
     /// `totalRequests` on the oracle contract.
@@ -300,6 +330,11 @@ impl<T: HttpTransport> EvmRpcClient<T> {
         if bytes.len() < 32 {
             return Err(NeoXCallError::Deterministic(DeterministicError(
                 "totalRequests returned fewer than 32 bytes".into(),
+            )));
+        }
+        if bytes[..24].iter().any(|byte| *byte != 0) {
+            return Err(NeoXCallError::Deterministic(DeterministicError(
+                "totalRequests exceeds supported u64 range".into(),
             )));
         }
         let word: [u8; 8] = bytes[24..32].try_into().unwrap();
@@ -320,7 +355,11 @@ impl<T: HttpTransport> EvmRpcClient<T> {
         calldata_bytes.extend_from_slice(&id_word);
         let calldata = format!("0x{}", neo_os_core::hex_encode(&calldata_bytes));
         let res = self.eth_call(oracle_contract, &calldata)?;
-        Ok(decode_get_request_tuple(&res))
+        decode_get_request_tuple(&res).map(Some).ok_or_else(|| {
+            NeoXCallError::Deterministic(DeterministicError(format!(
+                "getRequest({request_id}) returned an unresolved ABI response"
+            )))
+        })
     }
 
     /// Scan requests sequentially in [from_id, to_id].
@@ -335,11 +374,10 @@ impl<T: HttpTransport> EvmRpcClient<T> {
         }
         let mut results = Vec::new();
         for id in from_id..=to_id {
-            match self.get_request(oracle_contract, id) {
-                Ok(Some(record)) => results.push(record),
-                Ok(None) => {}
-                Err(NeoXCallError::Deterministic(_)) => {} // call exception is skipped
-                Err(e) => return Err(e),                   // transport failure aborts tick
+            // No error proves absence. Abort the contiguous range so the
+            // caller cannot advance its cursor past an unresolved request.
+            if let Some(record) = self.get_request(oracle_contract, id)? {
+                results.push(record);
             }
         }
         Ok(results)
@@ -347,7 +385,32 @@ impl<T: HttpTransport> EvmRpcClient<T> {
 }
 
 fn decode_get_request_tuple(bytes: &[u8]) -> Option<Value> {
+    // getRequest returns one dynamic struct. ABI return values are themselves
+    // a tuple, so the first word is the struct's offset, not its request id.
+    // Both the historical 13-field and current fee-extended 15-field Request
+    // share the fields read below; each dynamic offset is relative to the
+    // struct body after this outer head.
+    if bytes.len() < 32 || bytes[..31].iter().any(|byte| *byte != 0) || bytes[31] != 32 {
+        return None;
+    }
+    let bytes = bytes.get(32..)?;
     if bytes.len() < 416 {
+        return None;
+    }
+    if bytes[..24].iter().any(|byte| *byte != 0) {
+        return None;
+    }
+    if [256usize, 288]
+        .iter()
+        .any(|start| bytes[*start..*start + 24].iter().any(|byte| *byte != 0))
+        || [160usize, 192]
+            .iter()
+            .any(|start| bytes[*start..*start + 12].iter().any(|byte| *byte != 0))
+        || bytes[224..255].iter().any(|byte| *byte != 0)
+        || bytes[255] > 3
+        || bytes[320..351].iter().any(|byte| *byte != 0)
+        || bytes[351] > 1
+    {
         return None;
     }
     let u64_at = |start: usize| -> u64 {
@@ -362,19 +425,33 @@ fn decode_get_request_tuple(bytes: &[u8]) -> Option<Value> {
         )
     };
     let dynamic_bytes = |word_start: usize| -> Option<Vec<u8>> {
-        let offset = u64_at(word_start) as usize;
-        if bytes.len() < offset + 32 {
+        if bytes[word_start..word_start + 24]
+            .iter()
+            .any(|byte| *byte != 0)
+        {
             return None;
         }
-        let len = u64_at(offset) as usize;
-        if bytes.len() < offset + 32 + len {
+        let offset = usize::try_from(u64_at(word_start)).ok()?;
+        if offset < 416 || !offset.is_multiple_of(32) {
             return None;
         }
-        Some(bytes[offset + 32..offset + 32 + len].to_vec())
+        let start = offset.checked_add(32)?;
+        if bytes.len() < start {
+            return None;
+        }
+        if bytes[offset..offset + 24].iter().any(|byte| *byte != 0) {
+            return None;
+        }
+        let len = usize::try_from(u64_at(offset)).ok()?;
+        let end = start.checked_add(len)?;
+        if bytes.len() < end {
+            return None;
+        }
+        Some(bytes[start..end].to_vec())
     };
     let dynamic_string = |word_start: usize| -> Option<String> {
         let raw = dynamic_bytes(word_start)?;
-        Some(String::from_utf8_lossy(&raw).to_string())
+        String::from_utf8(raw).ok()
     };
 
     let id = u64_at(0);
@@ -426,10 +503,18 @@ pub fn parse_hex_quantity_u128(value: &Value) -> Option<u128> {
     u128::from_str_radix(raw, 16).ok()
 }
 
-fn hex_to_bytes(text: &str) -> Vec<u8> {
-    let raw = text.strip_prefix("0x").unwrap_or(text);
+fn hex_to_bytes(text: &str) -> Result<Vec<u8>, String> {
+    let raw = text
+        .strip_prefix("0x")
+        .ok_or("RPC bytes omitted 0x prefix")?;
+    if !raw.len().is_multiple_of(2) || !raw.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("RPC returned malformed hex bytes".into());
+    }
     (0..raw.len())
         .step_by(2)
-        .map(|i| u8::from_str_radix(&raw[i..i + 2], 16).unwrap_or(0))
+        .map(|i| {
+            u8::from_str_radix(&raw[i..i + 2], 16)
+                .map_err(|_| "RPC returned malformed hex bytes".into())
+        })
         .collect()
 }

@@ -74,19 +74,22 @@ pub fn resolve_engine(app_id: &str) -> Result<&'static EngineHandle, String> {
         .ok_or_else(|| format!("no engine registered for app_id {app_id}"))
 }
 
-/// `resolveEngineByHash`: an empty/absent hash accepts the registered engine;
-/// otherwise it must match exactly (trimmed + lowercased) or the session is
-/// rejected — a stale client pinning a superseded engine is an error.
+/// `resolveEngineByHash`: the caller MUST pin the engine behaviour version it
+/// was reviewed against. An absent/empty hash is rejected (audit: the pin used
+/// to be optional, so omitting it always passed and the documented "worker
+/// rejects a mismatching hash" property was decorative); a supplied hash must
+/// match exactly (trimmed + lowercased) or the session is rejected — a stale
+/// client pinning a superseded engine is an error.
 pub fn resolve_engine_by_hash(
     engine: &'static EngineHandle,
     supplied_hash: Option<&str>,
 ) -> Result<(), String> {
-    let Some(supplied) = supplied_hash else {
-        return Ok(());
-    };
-    let supplied = supplied.trim().to_lowercase();
+    let supplied = supplied_hash.unwrap_or("").trim().to_lowercase();
     if supplied.is_empty() {
-        return Ok(());
+        return Err(format!(
+            "engine_hash is required (pin {} for {})",
+            engine.engine_hash, engine.app_id
+        ));
     }
     if supplied == engine.engine_hash {
         Ok(())

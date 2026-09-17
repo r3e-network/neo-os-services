@@ -2471,10 +2471,10 @@ describe('verifyEnclaveSignatureAgainstPinnedVerifier (digest-sig)', () => {
     const account = new neon.wallet.Account(neon.wallet.generatePrivateKey());
     const saved = {
       allow: process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS,
-      key: process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_TESTNET,
+      key: process.env.MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_TESTNET,
     };
     process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = '1';
-    process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_TESTNET = account.privateKey;
+    process.env.MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_TESTNET = account.publicKey;
     try {
       const goodSig = neon.wallet.sign(DIGEST, account.privateKey);
       const ok = verifyEnclaveSignatureAgainstPinnedVerifier(
@@ -2512,8 +2512,8 @@ describe('verifyEnclaveSignatureAgainstPinnedVerifier (digest-sig)', () => {
     } finally {
       if (saved.allow === undefined) delete process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS;
       else process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = saved.allow;
-      if (saved.key === undefined) delete process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_TESTNET;
-      else process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_TESTNET = saved.key;
+      if (saved.key === undefined) delete process.env.MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_TESTNET;
+      else process.env.MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_TESTNET = saved.key;
     }
   });
 });

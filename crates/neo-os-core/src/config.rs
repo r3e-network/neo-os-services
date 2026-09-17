@@ -449,9 +449,10 @@ pub fn resolve_neo_n3_rpc_urls(
     unique_ranked_rpc_urls(all)
 }
 
-/// Port of config.js `resolveNeoN3NetworkMagic`: scoped magic, registry
-/// value, generic magic (only when allowed), then the per-network default —
-/// coerced with Number() over the truthiness chain.
+/// Port of config.js `resolveNeoN3NetworkMagic`: the reviewed registry value is
+/// authoritative. Environment values are consistency assertions only; a
+/// mismatch returns NaN so startup validation fails closed instead of signing
+/// with a caller supplied network magic.
 pub fn resolve_neo_n3_network_magic(network: &str, source: &EnvSource, registry: &JsValue) -> f64 {
     let scoped = if network == "mainnet" {
         source.env(&["NEO_MAINNET_MAGIC", "MAINNET_NETWORK_MAGIC"])
@@ -471,20 +472,29 @@ pub fn resolve_neo_n3_network_magic(network: &str, source: &EnvSource, registry:
         .and_then(|n3| n3.get("network_magic"))
         .cloned()
         .unwrap_or(JsValue::Undefined);
-    let default = if network == "mainnet" {
-        860833102.0
+    let default_network = if network == "mainnet" {
+        "mainnet"
     } else {
-        894710606.0
+        "testnet"
     };
+    let default = crate::network_identity::known_neo_n3_identity(default_network)
+        .expect("built-in network identity")
+        .magic as f64;
 
-    // JS: Number(scopedMagic || registry.neo_n3?.network_magic || genericMagic
-    //          || default) — a truthiness chain, so registry 0 falls through.
-    let candidate: JsValue = if !scoped.is_empty() {
-        JsValue::Str(scoped)
-    } else if registry_magic.truthy() {
-        registry_magic
-    } else if !generic.is_empty() {
-        JsValue::Str(generic)
+    let configured = if !scoped.is_empty() { scoped } else { generic };
+    if let JsValue::Number(registry_number) = registry_magic {
+        if registry_number.is_finite() && registry_number > 0.0 {
+            if !configured.is_empty() {
+                let configured_number = parse_js_number(&configured);
+                if configured_number != registry_number {
+                    return f64::NAN;
+                }
+            }
+            return registry_number;
+        }
+    }
+    let candidate: JsValue = if !configured.is_empty() {
+        JsValue::Str(configured)
     } else {
         JsValue::Number(default)
     };

@@ -310,6 +310,7 @@ where
                 vm_state: "RECONCILED".to_string(),
                 target_chain: chain.to_string(),
                 exception: Some(trim_onchain_error_message(&error, 240)),
+                onchain_state: None,
             };
             record_delivery_success(config, state, chain, event, now_ms, &receipt);
             ProcessEventResult {

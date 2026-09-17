@@ -15,6 +15,11 @@ gates pass.
 | `nitro-worker`       | Frozen compatibility and parity evidence only                                                                                   | Measured-image or production execution authority                                                      | Node compatibility image                                        | Non-authoritative compatibility     |
 | `morpheus-relayer`   | Frozen compatibility and parity evidence only                                                                                   | New consensus, custody logic, or production delivery authority                                        | Node compatibility service                                      | Non-authoritative compatibility     |
 
+`workers/morpheus-relater-rs` is not a process in this matrix. It is a
+retired heartbeat skeleton (`morpheus-relayer-rs` package), excluded from
+the Cargo workspace and from measured Docker contexts. Do not treat it as
+`neo-os-relayer`, as Node `morpheus-relayer`, or as a production authority.
+
 Signer is therefore part of one service architecture, but not one process.
 Keeping the custody process and measurement separate is the security boundary:
 the relayer, host, and NeoNexus receive public identity and signatures, never
@@ -77,7 +82,7 @@ the following evidence exists:
    canary delivery remains clean through the documented observation window.
 5. Rust images, systemd/compose assets, health checks, rollback instructions,
    and PCR/KMS measurement pins are updated together.
-6. `cargo fmt`, workspace clippy with `-D warnings`, workspace tests, migration
+6. `npm run format:rust:check`, workspace clippy with `-D warnings`, workspace tests, migration
    structural checks, JavaScript compatibility suites, and NeoNexus signer
    contract tests all pass.
 

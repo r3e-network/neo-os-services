@@ -2,8 +2,15 @@
 //! core in `game/engines/sudoku.js` (GENERATED from the minigames TS twin; the
 //! mask tables and BASE_GRID below are byte-identical to that core).
 //!
-//! No correctness feedback by design — the TEE only records placements; the
-//! finalize answer (the solved board) travels in `score`'s extra arg.
+//! No correctness feedback by design — the TEE only records placements. The
+//! finalize board is DERIVED from the session's own recorded placements
+//! (clues + the last accepted digit per open cell, undos already popped), so
+//! the sealed op-log fully determines the outcome. `score`'s extra `answer`
+//! is accepted only as an optional client assertion: when present it must
+//! equal the derived board, it never replaces it (audit: the old contract
+//! required an out-of-band answer the sealed payload never carried, so the
+//! kernel lane could not settle, and the recorded moves had no bearing on
+//! the result).
 
 use serde_json::Value as Json;
 
@@ -30,7 +37,7 @@ pub const DESCRIPTOR: super::registry::EngineDescriptor = super::registry::Engin
 
 pub static ENGINE: super::registry::EngineHandle = super::registry::EngineHandle {
     app_id: APP_ID,
-    engine_hash: "679aea4220667dec0e921eb364392f7983dae440a3aa9e43a215a4d054ab58c8",
+    engine_hash: "8d9ed338a95211be2cf2b92e09fe9e6b4cf8085295eb272359fe8dac8a5bb8a6",
     descriptor: DESCRIPTOR,
     deal,
     apply_op,
@@ -326,32 +333,51 @@ pub fn replay(problem_secret: &[u8; 32], op_log: &[Json], difficulty: u8) -> Res
     Ok(state)
 }
 
+/// The board the recorded placements produce: clues stay fixed, each open
+/// cell takes its LAST accepted placement (undos have already been popped
+/// from `placements`), untouched open cells stay `0`.
+pub fn derived_board(state: &Json) -> String {
+    let puzzle = state
+        .get("puzzle")
+        .and_then(Json::as_str)
+        .expect("sudoku state carries the puzzle string");
+    let mut board: Vec<u8> = puzzle.as_bytes().to_vec();
+    board.resize(81, b'0');
+    if let Some(placements) = state.get("placements").and_then(Json::as_array) {
+        for placement in placements {
+            let cell = number_field(placement.get("cell"));
+            let digit = number_field(placement.get("digit"));
+            if !(0.0..=80.0).contains(&cell) || !(1.0..=9.0).contains(&digit) {
+                continue;
+            }
+            board[cell as usize] = b'0' + digit as u8;
+        }
+    }
+    String::from_utf8(board).expect("digits are ASCII")
+}
+
 pub fn score(
     state: &Json,
     _difficulty: u8,
     extra: &ScoreExtra,
 ) -> Result<super::abi::ScoreOutcome, ScoreRejection> {
-    let submitted = match &extra.answer {
-        Some(Json::String(answer)) => answer.trim().to_string(),
-        _ => String::new(),
-    };
-    let is_answer =
-        submitted.len() == 81 && submitted.bytes().all(|b| b.is_ascii_digit() && b != b'0');
-    if !is_answer {
-        return Err(ScoreRejection::with_status(
-            "answer must be an 81-char string of digits 1-9",
-            400,
-        ));
-    }
+    let derived = derived_board(state);
     let solution = state
         .get("solution")
         .and_then(Json::as_str)
         .expect("sudoku state carries the solution");
-    if submitted != solution {
+    // The authenticated op-log is authoritative. An optional client answer
+    // can only assert the replayed board and can never decide settlement.
+    if let Some(Json::String(answer)) = &extra.answer {
+        if answer.trim() != derived {
+            return Err(ScoreRejection::new("answer does not match the recorded placements"));
+        }
+    }
+    if derived != solution {
         return Err(ScoreRejection::new("incorrect solution"));
     }
     Ok(super::abi::ScoreOutcome {
-        answer_hash: answer_hash_of(&submitted),
+        answer_hash: answer_hash_of(&derived),
         score: 1,
         score_field: None,
     })

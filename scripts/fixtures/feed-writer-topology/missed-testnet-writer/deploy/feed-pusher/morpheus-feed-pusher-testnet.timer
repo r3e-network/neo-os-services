@@ -1,0 +1,7 @@
+[Unit]
+Description=Run Morpheus feed pusher (Neo N3 testnet) every 5 minutes
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+[Install]
+WantedBy=timers.target

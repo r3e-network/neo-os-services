@@ -6,7 +6,7 @@
 import { RedisClientType } from 'redis';
 import { createClient } from 'redis';
 import BigNumber from 'bignumber.js';
-import { TWAPSample } from '../types';
+import { TWAPSample } from './types';
 
 export class TWAPCalculator {
   private redis: RedisClientType;
@@ -99,7 +99,7 @@ export class TWAPCalculator {
    */
   async cacheTWAPResult(sample: TWAPSample, ttlSeconds: number = 300): Promise<void> {
     const key = `twap:${sample.windowStart}:${sample.windowEnd}`;
-    await this.redis.setex(key, ttlSeconds, JSON.stringify(sample));
+    await this.redis.setEx(key, ttlSeconds, JSON.stringify(sample));
   }
 
   /**

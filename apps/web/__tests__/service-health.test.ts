@@ -32,6 +32,7 @@ describe('getServiceProblemDetail', () => {
   });
 
   it('flags explicit failure status strings', () => {
+    expect(getServiceProblemDetail({ status: 'degraded' })).toBe('service status: degraded');
     expect(getServiceProblemDetail({ status: 'error' })).toBe('service status: error');
     expect(getServiceProblemDetail({ status: 'unhealthy' })).toBe('service status: unhealthy');
   });

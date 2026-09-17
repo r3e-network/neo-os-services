@@ -158,11 +158,34 @@ const report = {
 // A WIF-free env file is the only healthy state. The pin report remains useful
 // for public identity diagnostics, while forbidden_settings rejects any
 // leftover private material even when it happens to match the registry.
+const signerMaterialByRole = {
+  updater: [
+    'MORPHEUS_UPDATER_NEO_N3_WIF',
+    'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY',
+    `MORPHEUS_UPDATER_NEO_N3_WIF_${network.toUpperCase()}`,
+    `MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_${network.toUpperCase()}`,
+  ],
+  oracle_verifier: [
+    'MORPHEUS_ORACLE_VERIFIER_WIF',
+    'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY',
+    `MORPHEUS_ORACLE_VERIFIER_WIF_${network.toUpperCase()}`,
+    `MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_${network.toUpperCase()}`,
+  ],
+};
+
 report.neo_n3_signers = ['updater', 'oracle_verifier'].map((role) => {
   const entry = reportPinnedNeoN3Roles(network, [role], {
     env: { ...runtimeConfig, ...env },
     allowMissing: true,
   })[0];
+  const localMaterial = signerMaterialByRole[role]
+    .filter((key) => getValue(env, runtimeConfig, key));
+  const issues = [...entry.issues];
+  if (localMaterial.length > 0) {
+    issues.push(
+      `${localMaterial.join(', ')} do not match pinned custody boundary; use SIGNER_ROLE_${role.toUpperCase()}_KEY_ID`
+    );
+  }
   return {
     network: entry.network,
     role: entry.role,
@@ -171,8 +194,8 @@ report.neo_n3_signers = ['updater', 'oracle_verifier'].map((role) => {
     selected_identity: entry.selected_identity,
     public_key: entry.public_key,
     derived_key_mode: useDerivedKeys && role !== 'oracle_verifier',
-    issues: entry.issues,
-    ok: entry.ok,
+    issues,
+    ok: entry.ok && issues.length === 0,
   };
 });
 

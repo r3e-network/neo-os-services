@@ -19,6 +19,11 @@ boundaries plus one explicitly temporary compatibility runtime:
 - `workers/nitro-worker` remains a compatibility runtime for container/CVM
   deployments and the JavaScript parity oracle while migration gates still
   consume its vectors. It is not packaged into the measured Rust EIF.
+- `workers/morpheus-relater-rs` is a retired heartbeat skeleton. It is
+  excluded from the Cargo workspace and from every measured Docker build
+  context. Its live `Cargo.toml` is an archive stub so a direct metadata or
+  build fails. Production relaying is `workers/neo-os-relayer`; do not
+  restore the skeleton as a workspace member or describe it as a relayer.
 
 The migration is not complete merely because an image contains no Node binary.
 Every route reachable in that image must execute in-process or fail closed with
@@ -45,9 +50,11 @@ The concise process/route ownership and cutover status is maintained in
   state machine. Neo N3 and NeoX request/feed lanes are authoritative in
   `requests_only`, `feed_only`, and `combined`: they call the measured host,
   sign through custody, broadcast, require HALT or receipt status 1, and record
-  durable success before cursor advancement. Automation remains a separate
-  unavailable commit protocol; startup and configuration validation reject it
-  when enabled.
+  durable success before cursor advancement. The measured host can execute one
+  already-claimed `/automation/execute`; that is not a durable scheduler. The
+  relayer's claim/queue/persist loop remains unimplemented
+  (`rust_automation_execution_not_implemented`) and production configuration
+  keeps that lane disabled.
 - `nitro-enclave-host` owns HTTP authentication, route classification,
   one-shot allowlisted provisioning, Nitro Recipient KMS materialization,
   custody calls, egress adapters, response rendering, and lifecycle.
@@ -72,12 +79,18 @@ handlers:
 - `/neodid/bind`, `/neodid/action-ticket`, and
   `/neodid/recovery-ticket`;
 - `/neodid/zklogin-ticket`, `/vrf/random`, and
-  `/paymaster/authorize`.
+  `/paymaster/authorize`;
+- `/session/start`, `/session/step`, and `/session/finalize`
+  (process-scoped confidential session adapters through `neo-os-games`);
+- `/automation/execute` (one-shot adapter for an already-claimed upkeep);
+- `/oracle/feed` (observation, aggregation, and policy adapter; it does
+  not submit an on-chain transaction).
 
-The remaining `/session/*`, `/automation/execute`, and `/oracle/feed` routes
-produce `rust-compute-lane-unavailable` until their Rust host adapters land.
-That transient `503` is returned before digest construction or custody signing,
-so the request remains retryable; no network or child process is consulted.
+`/automation/execute` on the measured host is not a durable scheduler. The
+relayer does not claim, queue, or persist automation runs. Unknown
+fulfillment request types still receive a retryable
+`rust-compute-lane-unavailable` before digest construction or custody
+signing; no network or child process is consulted.
 
 Every route that returns a signed result requires a healthy custody role for
 the selected network. Missing, disabled, mismatched, unreachable, or incomplete
@@ -231,7 +244,7 @@ fixture. A comment calling a file “legacy” is not a retirement gate.
 
 The minimum acceptance suite is:
 
-- `cargo fmt --all --check`;
+- `npm run format:rust:check` (handwritten rustfmt plus generated identity);
 - `cargo clippy --workspace --all-targets --locked -- -D warnings`;
 - `cargo test --workspace --all-targets --locked`;
 - signer/NeoNexus real-process contract tests;

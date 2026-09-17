@@ -63,6 +63,13 @@ function startTopupStack({ updaterBalanceRaw, funderBalanceRaw }) {
         }
         const body = JSON.parse(raw || '{}');
         requests.push(body);
+        if (body.method === 'getversion') {
+          return respond(200, {
+            jsonrpc: '2.0',
+            id: body.id,
+            result: { protocol: { network: 860833102 } },
+          });
+        }
         if (body.method === 'invokefunction') {
           const sh = String(body.params?.[2]?.[0]?.value || '');
           const balanceRaw = sh === UPDATER_HASH ? updaterBalanceRaw : funderBalanceRaw;
@@ -107,13 +114,14 @@ function startTopupStack({ updaterBalanceRaw, funderBalanceRaw }) {
   });
 }
 
-function runTopup(envFile, rpcUrl) {
+function runTopup(envFile, rpcUrl, extraEnv = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [TOPUP], {
       env: {
         ...process.env,
         FEED_TOPUP_ENV_FILE: envFile,
         FEED_RPCS: rpcUrl,
+        ...extraEnv,
       },
       encoding: 'utf8',
     });
@@ -159,6 +167,29 @@ test('topup accepts a quoted custody token and exits 0 when the updater balance 
       `expected success, got ${result.code}: ${result.stdout}${result.stderr}`
     );
     assert.match(result.stdout, /no topup needed/);
+  } finally {
+    server.close();
+  }
+});
+
+test('topup refuses to read balances when getversion magic does not match', async () => {
+  const { server } = await startTopupStack({
+    updaterBalanceRaw: 10_000_000_000n,
+    funderBalanceRaw: 0n,
+  });
+  const { port } = server.address();
+  try {
+    const result = await runTopup(
+      writeEnvFile(
+        `SIGNER_SERVICE_URL=http://127.0.0.1:${port}\n` +
+          'SIGNER_SERVICE_TOKEN=custody-token\n' +
+          'SIGNER_ROLE_FEE_FUNDER_KEY_ID=fee-funder-2024\n'
+      ),
+      `http://127.0.0.1:${port}`,
+      { FEED_NETWORK: 'testnet' }
+    );
+    assert.equal(result.code, 2);
+    assert.match(result.stdout, /no RPC matched magic|topup error/i);
   } finally {
     server.close();
   }

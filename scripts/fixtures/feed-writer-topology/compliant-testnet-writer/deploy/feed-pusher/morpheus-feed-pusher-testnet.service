@@ -1,0 +1,5 @@
+[Unit]
+Description=Morpheus Node DataFeed pusher - Neo N3 testnet (COMPATIBILITY ONLY)
+ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_FEED_PUSHER_COMPAT
+Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
+Before=morpheus-relayer.service morpheus-relayer-nitro.service

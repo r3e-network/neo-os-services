@@ -1,0 +1,9 @@
+name = "neoos-service-gateway"
+main = "worker.mjs"
+compatibility_date = "2026-03-19"
+account_id = "bf0d7e814f69945157f30505e9fba9fe"
+workers_dev = true
+
+[[routes]]
+pattern = "services.neoos.network"
+custom_domain = true

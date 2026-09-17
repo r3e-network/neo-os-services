@@ -37,11 +37,15 @@ pub struct ConfigSetting {
 }
 
 /// Direct-control env keys consumed outside env() alias chains
-/// (port of config-schema.js DIRECT_CONTROL_ENV_KEYS).
+/// (JS direct controls plus Rust-only controls owned by this generator).
 pub static DIRECT_CONTROL_ENV_KEYS: &[&str] = &[
     "MORPHEUS_RUNTIME_CONFIG_JSON",
     "MORPHEUS_NETWORK",
     "NEXT_PUBLIC_MORPHEUS_NETWORK",
+    "MORPHEUS_ALLOW_UNAVAILABLE_AUTOMATION",
+    "MORPHEUS_DELIVERY_PROTOCOL",
+    "MORPHEUS_N3_RECONCILIATION_ARCHIVE_RPC_URLS",
+    "MORPHEUS_ALLOW_LEGACY_LOCAL",
 ];
 
 /// Declarative manifest of every env var createRelayerConfig() reads
@@ -952,7 +956,6 @@ pub static CONFIG_SCHEMA: &[ConfigSetting] = &[
         description: "JSON object of packed env values; consulted by env() as a fallback after process.env. Treated as secret (may contain keys/tokens).",
     },
 ];
-
 /// Every env alias the schema knows about (deduped, first-occurrence order —
 /// JS `Set` iteration order), used by the typo-detector to decide whether a
 /// MORPHEUS_*/NITRO_* var is unknown (port of `knownEnvAliases`).
@@ -1023,17 +1026,47 @@ mod tests {
     #[test]
     fn known_env_aliases_covers_all_schema_entries() {
         let known = known_env_aliases();
-        assert_eq!(known.len(), 157);
+        let unique: HashSet<_> = known.iter().copied().collect();
+        assert_eq!(known.len(), unique.len(), "known aliases must be unique");
+        let expected: HashSet<_> = DIRECT_CONTROL_ENV_KEYS
+            .iter()
+            .copied()
+            .chain(
+                CONFIG_SCHEMA
+                    .iter()
+                    .flat_map(|setting| setting.aliases.iter().copied()),
+            )
+            .collect();
+        assert_eq!(
+            unique, expected,
+            "known aliases must contain exactly the schema and direct-control union"
+        );
+        let direct: HashSet<_> = DIRECT_CONTROL_ENV_KEYS.iter().copied().collect();
+        assert_eq!(
+            direct.len(),
+            DIRECT_CONTROL_ENV_KEYS.len(),
+            "direct-control aliases must not repeat"
+        );
         for setting in CONFIG_SCHEMA {
             for alias in setting.aliases {
                 assert!(known.contains(alias), "missing alias {alias}");
             }
         }
-        // The three direct-control keys are all covered by schema aliases
-        // (MORPHEUS_NETWORK / NEXT_PUBLIC_MORPHEUS_NETWORK / the runtime JSON
-        // packing var), so known == unique schema aliases.
+        // Direct controls may overlap schema aliases, but may not disappear
+        // from typo detection as new runtime configuration is introduced.
         for key in DIRECT_CONTROL_ENV_KEYS {
             assert!(known.contains(key), "missing direct key {key}");
+        }
+        for key in [
+            "MORPHEUS_ALLOW_UNAVAILABLE_AUTOMATION",
+            "MORPHEUS_DELIVERY_PROTOCOL",
+            "MORPHEUS_N3_RECONCILIATION_ARCHIVE_RPC_URLS",
+            "MORPHEUS_ALLOW_LEGACY_LOCAL",
+        ] {
+            assert!(
+                direct.contains(key),
+                "runtime control missing from authority: {key}"
+            );
         }
     }
 

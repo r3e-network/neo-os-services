@@ -229,14 +229,21 @@ function resolveRequestedProviders(symbol, options = {}) {
   return available.length > 0 ? available : ['twelvedata'];
 }
 
-function extractQuotePrice(response) {
-  return (
+function extractQuotePrice(response, provider) {
+  const direct =
     response.data?.price ??
     response.data?.value ??
     response.data?.close ??
-    response.data?.data?.amount ??
-    null
-  );
+    response.data?.data?.amount;
+  if (direct !== undefined && direct !== null) return direct;
+  if (provider === 'coingecko') {
+    const first = response.data && typeof response.data === 'object'
+      ? Object.values(response.data)[0]
+      : null;
+    return first && typeof first === 'object' ? first.usd ?? null : null;
+  }
+  if (provider === 'coinpaprika') return response.data?.quotes?.USD?.price ?? null;
+  return null;
 }
 
 /**
@@ -266,6 +273,11 @@ function extractUpstreamTimestamp(response) {
     if (Number.isFinite(ts) && ts > 0) {
       return new Date(ts < 4_102_444_800 ? ts * 1000 : ts).toISOString();
     }
+  }
+  // CoinPaprika: { "last_updated": "..." } is the provider observation time.
+  if (response.data?.last_updated) {
+    const parsed = Date.parse(response.data.last_updated);
+    if (Number.isFinite(parsed)) return new Date(parsed).toISOString();
   }
   // Coinbase: { "data": { "currency": "NEO", "amount": "12.34" } } - no timestamp field;
   // fall back to response Date header if present
@@ -376,7 +388,7 @@ async function resolveQuoteForProvider(symbol, options, provider) {
   }
   const pair = providerRequest.pair || normalizePairSymbol(symbol);
   const storagePair = getFeedStoragePair(provider, pair);
-  const rawPrice = extractQuotePrice(response);
+  const rawPrice = extractQuotePrice(response, provider);
   if (rawPrice === null || rawPrice === undefined || rawPrice === '')
     throw new Error(`${provider} response missing price`);
   const displaySymbol = getFeedDisplaySymbol(storagePair);

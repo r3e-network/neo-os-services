@@ -32,11 +32,11 @@ use neo_signer::{
     attestation::BootGuard,
     auth::WorkloadAuthPolicy,
     model::CallerCapability,
-    provision,
     service::{provision_admin_caller, SignerService},
     signclient::{self, SignClientBridge},
     store::Store,
     vault::{MASTER_KEY_ENV, MASTER_KEY_FILE},
+    vault_profile::VaultProfile,
 };
 use nitro_attest::release::NsmAttestation;
 use tokio::{
@@ -74,6 +74,9 @@ const SIGNCLIENT_CALLER_TOKEN_ENV: &str = "SIGNER_SERVICE_SIGNCLIENT_CALLER_TOKE
 const DATABASE_FILE: &str = "signer.db";
 /// Advisory OS lock held for the whole process lifetime.
 const PROCESS_LOCK_FILE: &str = "signer.lock";
+/// Measured, immutable profile embedded in the enclave image. The host may not
+/// supply profile fields through `/provision`.
+const VAULT_PROFILE_FILE_ENV: &str = "SIGNER_SERVICE_VAULT_PROFILE_FILE";
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 8081;
@@ -82,6 +85,15 @@ const DEFAULT_PORT: u16 = 8081;
 async fn main() -> Result<()> {
     let arguments: Vec<String> = env::args().skip(1).collect();
     match arguments.first().map(String::as_str) {
+        Some("validate-vault-profile") => {
+            anyhow::ensure!(
+                arguments.len() == 3,
+                "usage: validate-vault-profile <file> testnet"
+            );
+            let identity = validate_vault_profile(Path::new(&arguments[1]), &arguments[2])?;
+            println!("{}", serde_json::to_string(&identity)?);
+            Ok(())
+        }
         Some("provision-admin") => {
             let label = arguments
                 .get(1)
@@ -112,12 +124,61 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Mint the first admin credential against a data directory.
-///
-/// The argv form of the library call that §5.1 keeps unreachable over HTTP. It
-/// opens the database and nothing else: no master key, no listener, and no
-/// second one once an `admin` caller exists — `provision_admin_caller` refuses
-/// that, so a rerun is a visible error rather than a second superuser.
+/// Validate public build input without touching the custody runtime.
+fn validate_vault_profile(path: &Path, expected_network: &str) -> Result<serde_json::Value> {
+    use sha2::{Digest, Sha256};
+    anyhow::ensure!(
+        expected_network == "testnet",
+        "durable coordinator release is TestNet-only"
+    );
+    anyhow::ensure!(
+        std::fs::metadata(path)?.len() <= 65_536,
+        "vault profile exceeds size limit"
+    );
+    let bytes = std::fs::read(path).context("failed to read public vault profile")?;
+    anyhow::ensure!(bytes.len() <= 65_536, "vault profile exceeds size limit");
+    let profile = VaultProfile::from_json(&bytes)?;
+    anyhow::ensure!(
+        profile.environment().to_string() == expected_network,
+        "vault profile environment mismatch"
+    );
+    let coordinator = &profile.document().coordinator;
+    let origin = url::Url::parse(&coordinator.origin)?;
+    let Some(url::Host::Domain(authority_host)) = origin.host() else {
+        bail!("custody egress requires a DNS authority hostname");
+    };
+    let mut destinations = std::collections::BTreeSet::new();
+    destinations.insert((
+        authority_host.to_string(),
+        origin.port_or_known_default().unwrap_or(443),
+    ));
+    destinations.insert((format!("kms.{}.amazonaws.com", coordinator.aws_region), 443));
+    destinations.insert((format!("s3.{}.amazonaws.com", coordinator.aws_region), 443));
+    destinations.insert((
+        format!(
+            "{}.s3.{}.amazonaws.com",
+            coordinator.snapshot_bucket, coordinator.aws_region
+        ),
+        443,
+    ));
+    let required_egress: Vec<_> = destinations
+        .into_iter()
+        .map(|(address, port)| serde_json::json!({ "address": address, "port": port }))
+        .collect();
+    Ok(serde_json::json!({
+        "schema": "neoos/custody-profile-build-identity/v1",
+        "environment": expected_network,
+        "file_sha256": hex::encode(Sha256::digest(&bytes)),
+        "profile_sha256": hex::encode(profile.profile_hash()),
+        "network_set_sha256": hex::encode(profile.network_set_hash()),
+        "vault_id": profile.document().vault_id,
+        "root_key_version": profile.document().root_key_version,
+        "root_key_commitment": profile.document().root_key_commitment,
+        "required_egress": required_egress,
+    }))
+}
+
+/// Mint the first admin credential; no master key or listener is opened.
 fn provision_admin(label: &str) -> Result<()> {
     let config = Config::from_env()?;
     let _lease = VaultProcessLease::acquire(&config.data_dir)?;
@@ -151,8 +212,6 @@ async fn serve() -> Result<()> {
     let config = Config::from_env()?;
     let _lease = VaultProcessLease::acquire(&config.data_dir)?;
     let guard = BootGuard::from_env().context("invalid attested-boot configuration")?;
-    let repository = Store::open(config.database_path())
-        .with_context(|| "failed to open the signer database")?;
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("failed to bind {}", config.bind))?;
@@ -160,9 +219,19 @@ async fn serve() -> Result<()> {
         .local_addr()
         .context("the bound address could not be read back")?;
     let workload_auth = config.workload_auth(bound)?;
-    let state = match &guard {
+    let (state, repository) = match &guard {
         Some(guard) => {
             refuse_plaintext_master_key_at_boot()?;
+            let profile_path = config.vault_profile_file.as_deref().with_context(|| {
+                format!("{VAULT_PROFILE_FILE_ENV} is required for attested boot")
+            })?;
+            let profile_bytes = std::fs::read(profile_path).with_context(|| {
+                format!("failed to read vault profile {}", profile_path.display())
+            })?;
+            let profile = std::sync::Arc::new(
+                VaultProfile::from_json(&profile_bytes)
+                    .with_context(|| format!("invalid vault profile {}", profile_path.display()))?,
+            );
             let measured_pcr0 = guard
                 .verify(&NsmAttestation)
                 .map_err(|error| anyhow::anyhow!("attested boot refused: {error}"))?;
@@ -170,22 +239,30 @@ async fn serve() -> Result<()> {
                 "signer service: attested boot verified; measured PCR0 {measured_pcr0} \
                  — pin this in the KMS key policy and the measurements manifest"
             );
-            ApiState::attested_pending(
-                repository.clone(),
-                config.data_dir.clone(),
-                std::sync::Arc::new(provision::release_envelope),
-            )
-            .with_workload_auth(workload_auth.clone())
-            .with_body_limit(config.max_body_bytes)
-            .with_max_in_flight_requests(config.max_in_flight_requests)
-        }
-        None => {
-            let service = SignerService::open(repository.clone(), &config.data_dir)
-                .context("failed to open the vault for this data directory")?;
-            ApiState::new(service)
+            (
+                ApiState::attested_pending(
+                    config.database_path(),
+                    config.data_dir.clone(),
+                    profile,
+                )
                 .with_workload_auth(workload_auth.clone())
                 .with_body_limit(config.max_body_bytes)
-                .with_max_in_flight_requests(config.max_in_flight_requests)
+                .with_max_in_flight_requests(config.max_in_flight_requests),
+                None,
+            )
+        }
+        None => {
+            let repository = Store::open(config.database_path())
+                .with_context(|| "failed to open the signer database")?;
+            let service = SignerService::open(repository.clone(), &config.data_dir)
+                .context("failed to open the vault for this data directory")?;
+            (
+                ApiState::new(service)
+                    .with_workload_auth(workload_auth.clone())
+                    .with_body_limit(config.max_body_bytes)
+                    .with_max_in_flight_requests(config.max_in_flight_requests),
+                Some(repository),
+            )
         }
     };
 
@@ -208,7 +285,7 @@ async fn serve() -> Result<()> {
                 .context("the SignClient caller/key binding failed startup validation")?;
         }
     }
-    report(&repository, &state, &config, &workload_auth, bound)?;
+    report(repository.as_ref(), &state, &config, &workload_auth, bound)?;
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let signal_task = tokio::spawn(async move {
         shutdown_signal().await;
@@ -310,39 +387,39 @@ fn refuse_plaintext_master_key_at_boot() -> Result<()> {
 /// line already went to stderr in `serve`, so nothing about the guard repeats
 /// here.
 fn report(
-    repository: &Store,
+    repository: Option<&Store>,
     state: &ApiState,
     config: &Config,
     workload_auth: &WorkloadAuthPolicy,
     bound: SocketAddr,
 ) -> Result<()> {
-    let keys = repository
-        .list_signer_keys()
-        .context("failed to read the custody keys at startup")?;
-    let callers = repository
-        .list_signer_callers()
-        .context("failed to read the caller table at startup")?;
-    let admins = callers
-        .iter()
-        .filter(|caller| caller.has_capability(CallerCapability::Admin))
-        .count();
     eprintln!("signer service: listening on {bound}");
-    match state.service_snapshot() {
-        Some(service) => eprintln!(
+    let admins = if let (Some(service), Some(repository)) = (state.service_snapshot(), repository) {
+        let keys = repository
+            .list_signer_keys()
+            .context("failed to read the custody keys at startup")?;
+        let callers = repository
+            .list_signer_callers()
+            .context("failed to read the caller table at startup")?;
+        eprintln!(
             "signer service: vault {} keys={} callers={} database={}",
             service.vault_fingerprint(),
             keys.len(),
             callers.len(),
             config.database_path().display()
-        ),
-        None => eprintln!(
-            "signer service: vault SEALED keys={} callers={} database={} — waiting for \
-             /provision; every custody route answers signer-not-provisioned until it succeeds",
-            keys.len(),
-            callers.len(),
+        );
+        callers
+            .iter()
+            .filter(|caller| caller.has_capability(CallerCapability::Admin))
+            .count()
+    } else {
+        eprintln!(
+            "signer service: vault SEALED database={} — waiting for remote HEAD verification, \
+             fenced takeover and /provision recovery; local state has not been opened",
             config.database_path().display()
-        ),
-    }
+        );
+        usize::MAX
+    };
     if admins == 0 {
         eprintln!(
             "signer service: no admin caller exists, so the management API has nothing to \
@@ -387,6 +464,7 @@ async fn shutdown_signal() {
 /// The deployment configuration resolved before the listener is opened.
 struct Config {
     data_dir: PathBuf,
+    vault_profile_file: Option<PathBuf>,
     bind: SocketAddr,
     workload_audience: Option<String>,
     allow_legacy_workload_v1: bool,
@@ -438,8 +516,12 @@ impl Config {
             &DEFAULT_MAX_IN_FLIGHT_REQUESTS.to_string(),
         ))?;
         let signclient = parse_signclient_config(bind)?;
+        let vault_profile_file = env::var_os(VAULT_PROFILE_FILE_ENV)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
         Ok(Config {
             data_dir,
+            vault_profile_file,
             bind,
             workload_audience,
             allow_legacy_workload_v1: allow_legacy_v1,
@@ -606,6 +688,9 @@ Usage:
                                         no HTTP route for this and there must never be
                                         one.
   signer_service help                   this text
+  signer_service validate-vault-profile <file> testnet
+                                        validate public build configuration only;
+                                        no NSM, KMS, database or listener access
 
 Environment:
   {DATA_DIR_ENV:<31}required: holds {DATABASE_FILE}, {PROCESS_LOCK_FILE}
@@ -615,6 +700,7 @@ Environment:
   {BODY_LIMIT_ENV:<31}request body ceiling, default {DEFAULT_BODY_LIMIT}
   {MAX_IN_FLIGHT_ENV:<31}custody request concurrency, default {DEFAULT_MAX_IN_FLIGHT_REQUESTS};
                                  excess requests receive 503 + Retry-After
+  {VAULT_PROFILE_FILE_ENV:<31}required for attested boot: measured immutable vault profile
   {WORKLOAD_AUDIENCE_ENV:<31}canonical public signer origin committed to by
                                  neoos-workload-v2; defaults to the concrete bind origin
   {ALLOW_LEGACY_WORKLOAD_V1_ENV:<31}exactly true or false, default false; temporary
@@ -652,6 +738,7 @@ mod tests {
             PORT_ENV,
             BODY_LIMIT_ENV,
             MAX_IN_FLIGHT_ENV,
+            VAULT_PROFILE_FILE_ENV,
             WORKLOAD_AUDIENCE_ENV,
             ALLOW_LEGACY_WORKLOAD_V1_ENV,
             SIGNCLIENT_HOST_ENV,

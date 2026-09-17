@@ -3,6 +3,13 @@ use super::*;
 impl Store {
     pub fn create_signer_caller(&self, caller: &SignerCaller) -> Result<()> {
         let connection = self.connection()?;
+        Self::create_signer_caller_on(&connection, caller)
+    }
+
+    pub(super) fn create_signer_caller_on(
+        connection: &Connection,
+        caller: &SignerCaller,
+    ) -> Result<()> {
         connection.execute(
             "INSERT INTO signer_callers (
                 id, label, token_digest, key_grant_mode, key_grants, allowed_origins,
@@ -41,6 +48,10 @@ impl Store {
     /// integrations, not a user table.
     pub fn list_signer_callers(&self) -> Result<Vec<SignerCaller>> {
         let connection = self.connection()?;
+        Self::list_signer_callers_on(&connection)
+    }
+
+    pub(super) fn list_signer_callers_on(connection: &Connection) -> Result<Vec<SignerCaller>> {
         let mut statement = connection.prepare(
             "SELECT id, label, token_digest, key_grant_mode, key_grants, allowed_origins,
                     created_at_unix, disabled, capabilities, workload_public_key,
@@ -85,6 +96,14 @@ impl Store {
     /// once.
     pub fn set_signer_caller_digest(&self, id: &str, token_digest: &[u8; 32]) -> Result<()> {
         let connection = self.connection()?;
+        Self::set_signer_caller_digest_on(&connection, id, token_digest)
+    }
+
+    pub(super) fn set_signer_caller_digest_on(
+        connection: &Connection,
+        id: &str,
+        token_digest: &[u8; 32],
+    ) -> Result<()> {
         let changed = connection.execute(
             "UPDATE signer_callers SET token_digest = ?1 WHERE id = ?2",
             params![token_digest.to_vec(), id],
@@ -95,6 +114,14 @@ impl Store {
 
     pub fn set_signer_caller_disabled(&self, id: &str, disabled: bool) -> Result<()> {
         let connection = self.connection()?;
+        Self::set_signer_caller_disabled_on(&connection, id, disabled)
+    }
+
+    pub(super) fn set_signer_caller_disabled_on(
+        connection: &Connection,
+        id: &str,
+        disabled: bool,
+    ) -> Result<()> {
         let changed = connection.execute(
             "UPDATE signer_callers SET disabled = ?1 WHERE id = ?2",
             params![disabled, id],
@@ -105,6 +132,10 @@ impl Store {
 
     pub fn delete_signer_caller(&self, id: &str) -> Result<()> {
         let connection = self.connection()?;
+        Self::delete_signer_caller_on(&connection, id)
+    }
+
+    pub(super) fn delete_signer_caller_on(connection: &Connection, id: &str) -> Result<()> {
         let deleted =
             connection.execute("DELETE FROM signer_callers WHERE id = ?1", params![id])?;
         ensure_affected_rows(deleted, "signer caller", id)?;

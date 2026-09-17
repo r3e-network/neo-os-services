@@ -59,4 +59,5 @@ separate signer-service boundary.
 `cargo test --workspace --all-targets` runs parity vectors, capability routing,
 SSRF policy, sandbox limits, compute behavior, game parity, and enclave-host
 integration. `cargo clippy --workspace --all-targets -- -D warnings` and
-`cargo fmt --all -- --check` are required quality gates.
+`npm run format:rust:check` (handwritten rustfmt plus generated identity)
+are required quality gates.

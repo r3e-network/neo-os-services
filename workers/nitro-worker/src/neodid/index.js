@@ -24,6 +24,11 @@ import {
 import { deriveKeyBytes, getDstackInfo } from '../platform/nitro-signer.js';
 
 const NEODID_BINDING_DOMAIN = Buffer.from('neodid-binding-v1', 'utf8');
+// Keep the private claim commitment domain separate from the on-chain binding
+// digest domain. A secret commitment and a custody authorization must never
+// become interchangeable merely because both are 32-byte hashes.
+const NEODID_CLAIM_COMMITMENT_DOMAIN = Buffer.from('neodid-claim-secret-v1', 'utf8');
+const NEODID_BINDING_COMMITMENT_DOMAIN = Buffer.from('neodid-claim-commitment-v1', 'utf8');
 const NEODID_ACTION_DOMAIN = Buffer.from('neodid-action-v1', 'utf8');
 const NEODID_RECOVERY_DOMAIN = Buffer.from('neodid-recovery-v1', 'utf8');
 const NEODID_ZKLOGIN_DOMAIN = Buffer.from('neodid-zklogin-v1', 'utf8');
@@ -358,6 +363,17 @@ function computeMasterNullifier(provider, providerUid, saltBytes) {
     .digest('hex');
 }
 
+function computeClaimCommitment(provider, providerUid, claimType, claimValue, saltBytes) {
+  return createHash('sha256')
+    .update(NEODID_CLAIM_COMMITMENT_DOMAIN)
+    .update(encodeLengthPrefixedAscii(provider))
+    .update(encodeLengthPrefixedAscii(providerUid))
+    .update(encodeLengthPrefixedAscii(claimType))
+    .update(encodeLengthPrefixedAscii(claimValue || ''))
+    .update(saltBytes)
+    .digest('hex');
+}
+
 function computeActionNullifier(provider, providerUid, actionId, saltBytes) {
   return createHash('sha256')
     .update(Buffer.from(String(provider || ''), 'utf8'))
@@ -401,6 +417,23 @@ function buildBindingDigestBytes(ticket) {
         encodeLengthPrefixedAscii(ticket.provider),
         encodeLengthPrefixedAscii(ticket.claim_type),
         encodeLengthPrefixedAscii(ticket.claim_value || ''),
+        Buffer.from(ticket.master_nullifier, 'hex'),
+        Buffer.from(ticket.metadata_hash, 'hex'),
+        neoN3NetworkMagicLe4(ticket.network),
+      ])
+    )
+    .digest();
+}
+
+function buildBindingCommitmentDigestBytes(ticket) {
+  return createHash('sha256')
+    .update(
+      Buffer.concat([
+        NEODID_BINDING_COMMITMENT_DOMAIN,
+        Buffer.from(ticket.vault_account.replace(/^0x/i, ''), 'hex'),
+        encodeLengthPrefixedAscii(ticket.provider),
+        encodeLengthPrefixedAscii(ticket.claim_type),
+        Buffer.from(ticket.claim_commitment, 'hex'),
         Buffer.from(ticket.master_nullifier, 'hex'),
         Buffer.from(ticket.metadata_hash, 'hex'),
         neoN3NetworkMagicLe4(ticket.network),
@@ -648,16 +681,30 @@ export async function handleNeoDidBind(payload = {}) {
     network: resolvePayloadNetwork(resolvedPayload, 'testnet'),
   };
   ticket.master_nullifier = computeMasterNullifier(ticket.provider, ticket.provider_uid, saltBytes);
+  ticket.claim_commitment = computeClaimCommitment(
+    ticket.provider,
+    ticket.provider_uid,
+    ticket.claim_type,
+    ticket.claim_value,
+    saltBytes
+  );
   const digestBytes = buildBindingDigestBytes(ticket);
   const signer = await signDigestBytes(digestBytes, resolvedPayload);
+  const commitmentDigestBytes = buildBindingCommitmentDigestBytes(ticket);
+  const commitmentSigner = await signDigestBytes(commitmentDigestBytes, resolvedPayload);
   const result = {
+    binding_mode: 'commitment-v1',
     vault_account: ticket.vault_account,
     provider: ticket.provider,
     claim_type: ticket.claim_type,
     claim_value: ticket.claim_value,
+    claim_commitment: `0x${ticket.claim_commitment}`,
     master_nullifier: `0x${ticket.master_nullifier}`,
     metadata_hash: `0x${ticket.metadata_hash}`,
     digest: `0x${Buffer.from(digestBytes).toString('hex')}`,
+    commitment_digest: `0x${Buffer.from(commitmentDigestBytes).toString('hex')}`,
+    commitment_signature: commitmentSigner.signature,
+    commitment_public_key: commitmentSigner.public_key,
     ...signer,
   };
   return buildNeoDidResponse('neodid_bind', result, resolvedPayload);

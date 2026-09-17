@@ -74,6 +74,7 @@ pub mod js_value;
 pub mod kernel;
 pub mod n3_tx;
 pub mod neo_encoding;
+pub mod network_identity;
 pub mod retry;
 pub mod secret_redaction;
 pub mod stable_stringify;

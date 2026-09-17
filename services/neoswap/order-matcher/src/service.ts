@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { OrderBookDatabase, LimitOrder, FillEvent } from './database';
+import { OrderBookDatabase } from './database';
 import { DualSignatureVerifier } from './sigs-verifier';
 import { WASMSandbox } from './wasm-sandbox';
 import type { MatchRequest, MatchResult, LimitOrder as TypeLimitOrder, FillEvent as TypeFillEvent } from './types';
@@ -10,18 +10,11 @@ export class OrderMatcherService {
   private wasmSandbox: WASMSandbox;
   private orderTimestamps: Map<string, number> = new Map();
 
-  constructor(config: { dbPath?: string }) {
-    this.db = new OrderBookDatabase();
+  constructor(_config: { dbPath?: string }) {
+    this.db = new OrderBookDatabase(_config.dbPath);
     this.sigVerifier = new DualSignatureVerifier();
     this.wasmSandbox = new WASMSandbox('./pkg/order_matcher.wasm');
     
-    // Initialize with some test data if needed
-    this.initializeTestData();
-  }
-
-  private initializeTestData(): void {
-    // In production, remove this - kept for demo purposes
-    console.log('Order Matcher initialized');
   }
 
   /**
@@ -157,7 +150,7 @@ export class OrderMatcherService {
 
     this.db.insertFill(fillEvent);
     
-    console.log(`Fill executed: ${fill.fillId} - Amount: ${fill.filledAmount}, Price: ${fill.filledPrice}`);
+    console.log(`Fill executed: ${fillEvent.fillId} - Amount: ${fillEvent.filledAmount}, Price: ${fillEvent.filledPrice}`);
   }
 
   /**

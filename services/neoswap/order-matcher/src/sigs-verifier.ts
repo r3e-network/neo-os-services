@@ -28,15 +28,16 @@ export class DualSignatureVerifier {
     const userIdLower = userId.toLowerCase();
     
     // Check if user is in required signers
-    if (!requiredSigners.includes(userIdLower)) {
-      throw new Error('User not authorized to initiate transaction');
+    const signerIds = [...new Set(requiredSigners.map((id) => id.toLowerCase()))];
+    if (signerIds.length < 2 || !signerIds.includes(userIdLower)) {
+      return false;
     }
 
     // Get public keys for all required signers
     const signaturesVerified: Set<string> = new Set();
     let signerCount = 0;
 
-    for (const signerId of requiredSigners) {
+    for (const signerId of signerIds) {
       const publicKey = this.verifierKeys.get(signerId);
       
       if (!publicKey) {
@@ -45,7 +46,7 @@ export class DualSignatureVerifier {
       }
 
       // Check if any signature matches this signer
-      const sigToVerify = signerId === userId ? sig1 : sig2;
+      const sigToVerify = signerId === userIdLower ? sig1 : sig2;
       
       try {
         const valid = nacl.sign.detached.verify(message, sigToVerify, publicKey);
@@ -77,7 +78,7 @@ export class DualSignatureVerifier {
    * Generate key pair for a new user
    */
   generateKeypair(): { privateKey: Buffer; publicKey: Buffer } {
-    const keypair = nacl.box.keyPair();
+    const keypair = nacl.sign.keyPair();
     
     return {
       privateKey: Buffer.from(keypair.secretKey),
@@ -89,6 +90,9 @@ export class DualSignatureVerifier {
    * Sign message with user's private key
    */
   signMessage(message: Buffer, privateKey: Buffer): Buffer {
+    if (privateKey.length !== nacl.sign.secretKeyLength) {
+      throw new Error('Invalid Ed25519 secret key length');
+    }
     return Buffer.from(nacl.sign.detached(message, privateKey));
   }
 

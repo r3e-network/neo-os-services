@@ -15,6 +15,7 @@
 //!   tamper-evidence signature and verification.
 //! - [`state_file`] — crash-safe atomic state file persistence (`tmp + rename`).
 
+pub mod delivery;
 pub mod jobs;
 pub mod queue;
 pub mod state_file;

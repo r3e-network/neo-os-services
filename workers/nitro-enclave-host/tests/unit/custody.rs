@@ -355,6 +355,34 @@ fn a_healthy_key_resolves_the_role_identity() {
 }
 
 #[test]
+fn network_identity_guard_uses_registry_without_defaulting_unknown_labels() {
+    for (requested, key_network, magic, expected_ok) in [
+        ("mainnet", "mainnet", 860_833_102_u32, true),
+        ("testnet", "testnet", 894_710_606_u32, true),
+        ("mainnet", "mainnet", 894_710_606_u32, false),
+        ("testnet", "testnet", 860_833_102_u32, false),
+        ("mainnet", "testnet", 860_833_102_u32, false),
+        ("private-A", "private-A", 0, false),
+        ("private-A", "private-A", 894_710_606_u32, false),
+    ] {
+        let mut body = key_body(key_network);
+        body["network_magic"] = serde_json::json!(magic);
+        let transport =
+            FakeTransport::answering(crate::custody::CustodyReply { status: 200, body });
+        let plane = signer(&configured_overlay(), transport.clone());
+        let report = plane.role_report(requested, "updater");
+        assert_eq!(
+            report.ok, expected_ok,
+            "{requested}/{key_network}/{magic}: {report:?}"
+        );
+        assert!(
+            transport.calls().iter().all(|call| call.method == "GET"),
+            "identity checks must not sign"
+        );
+    }
+}
+
+#[test]
 fn a_neox_role_report_binds_family_and_chain_without_requiring_an_n3_script() {
     let transport = FakeTransport::answering(crate::custody::CustodyReply {
         status: 200,

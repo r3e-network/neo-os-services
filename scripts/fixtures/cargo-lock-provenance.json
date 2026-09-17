@@ -1,0 +1,17 @@
+{
+  "retiredLockPackages": [
+    "async-retry",
+    "async-sleep",
+    "backoff",
+    "dotenvy",
+    "metrics",
+    "metrics-exporter-prometheus",
+    "metrics-util",
+    "morpheus-relayer-rs",
+    "retry-backoff",
+    "retry-policy",
+    "retry-predicate",
+    "tee-attestation"
+  ],
+  "leftoverUpgrades": []
+}

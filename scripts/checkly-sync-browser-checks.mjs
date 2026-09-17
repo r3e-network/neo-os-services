@@ -14,7 +14,7 @@ if (!apiKey || !accountId) {
   process.exit(1);
 }
 
-const AA_BASE_URL = 'https://neo-abstract-account.vercel.app';
+const AA_BASE_URL = 'https://aa.neoos.network';
 const ORACLE_BASE_URL = trimString(
   process.env.MORPHEUS_ORACLE_WEB_URL || 'https://neo-morpheus-oracle.vercel.app'
 );
@@ -65,13 +65,13 @@ const desiredChecks = [
   {
     name: 'aa-home-browser',
     url: `${AA_BASE_URL}/`,
-    sslCheckDomain: 'neo-abstract-account.vercel.app',
+    sslCheckDomain: 'aa.neoos.network',
     script: buildBrowserScript(`${AA_BASE_URL}/`, '/Smart Wallets That Never Lock You Out/i'),
   },
   {
     name: 'aa-identity-browser',
     url: `${AA_BASE_URL}/identity`,
-    sslCheckDomain: 'neo-abstract-account.vercel.app',
+    sslCheckDomain: 'aa.neoos.network',
     script: buildBrowserScript(`${AA_BASE_URL}/identity`, '/Web3Auth \\/ NeoDID Workspace/i'),
   },
   {

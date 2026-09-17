@@ -28,14 +28,16 @@ if [[ ! -r "$eif" ]]; then
   exit 1
 fi
 
-# The standalone signer image has no attestation-gated KMS materialization path.
-# Refuse the historical host-held plaintext WIF workflow before starting an
-# enclave. Operators must use Dockerfile.enclave + the merged server and provide
-# only *_KMS_CIPHERTEXT_BASE64 values.
+# The standalone signer image has no custody signer integration and cannot be
+# used in production. All signing MUST use the custody enclave via SIGNER_ROLE_*_KEY_ID.
+# Refuse any attempt to provision host-held plaintext key material before starting an
+# enclave. Operators must deploy Dockerfile.signer + the merged KMS-attested custody
+# service and provide only *_KMS_CIPHERTEXT_BASE64 values (which will be rejected).
 if [[ -r "$signer_env" ]]; then
   plaintext_key_pattern='^(MORPHEUS_ORACLE_VERIFIER_(WIF|PRIVATE_KEY)(_(MAINNET|TESTNET))?|MORPHEUS_UPDATER_NEO_N3_(WIF|PRIVATE_KEY)(_(MAINNET|TESTNET))?)=.+$'
   if grep -Eq "$plaintext_key_pattern" "$signer_env"; then
-    echo "legacy Nitro signer refuses host-held plaintext keys; deploy the merged KMS-attested enclave" >&2
+    echo "ERROR: No plaintext WIF/private keys allowed on any runtime process (S5)" >&2
+    echo "All signing uses custody enclave via SIGNER_ROLE_*_KEY_ID" >&2
     exit 1
   fi
   if grep -Eq '^MORPHEUS_ALLOW_PLAINTEXT_KEY_PROVISION=.+$' "$signer_env"; then
@@ -44,6 +46,11 @@ if [[ -r "$signer_env" ]]; then
   fi
 fi
 if nitro-cli describe-enclaves | jq -e ".[] | select(.EnclaveCID == ${cid})" >/dev/null; then
+  existing_name="$(nitro-cli describe-enclaves | jq -r ".[] | select(.EnclaveCID == ${cid}) | .EnclaveName" | head -1)"
+  if [[ "${MORPHEUS_NETWORK:-}" == "testnet" && "${existing_name}" != *testnet* ]]; then
+    echo "testnet signer refuses to terminate foreign enclave ${existing_name} on CID ${cid}" >&2
+    exit 1
+  fi
   enclave_id="$(nitro-cli describe-enclaves | jq -r ".[] | select(.EnclaveCID == ${cid}) | .EnclaveID" | head -1)"
   nitro-cli terminate-enclave --enclave-id "$enclave_id" >/dev/null || true
 fi

@@ -59,7 +59,6 @@ use std::{
     convert::Infallible,
     str::FromStr,
     sync::{Arc, RwLock},
-    time::SystemTime,
 };
 
 use anyhow::Result;
@@ -80,7 +79,7 @@ use zeroize::Zeroize;
 
 use crate::{
     attested_identity::{self, KeyBoundary},
-    audit::{self, bounded, Refusal},
+    audit::{self, Refusal},
     auth::{CallerCredentials, WorkloadAuthPolicy, WorkloadRequestHeaders},
     model::{
         AssetLimit, CallerCapability, ContractMethod, KeyGrant, ScriptHash, SignatureRateLimit,
@@ -175,11 +174,6 @@ const ROUTE_UNKNOWN: &str = "signer-route-unknown";
 /// audit trail lives in is not open yet.
 const NOT_PROVISIONED: &str = "signer-not-provisioned";
 
-/// A `/provision` arrived when the vault is already open. `409`, because
-/// provisioning is once per boot — a second attempt cannot mean anything an
-/// operator would want honored.
-const ALREADY_PROVISIONED: &str = "signer-provision-already-done";
-
 /// The `network` a body may name, spelled out because the accepted set is
 /// [`Network`]'s and a message that drifts from it is a lie about the contract.
 const NETWORK_PROBLEM: &str = "network must be mainnet, testnet or private";
@@ -210,9 +204,12 @@ struct Inner {
 enum Vault {
     /// Open and serving. This is the only state host mode ever has.
     Ready(SignerService),
-    /// Sealed: the database is open, the master key is not released. The gate
-    /// is what `/provision` walks through, once.
+    /// Sealed: neither the database nor the master key is open. The gate is
+    /// what `/provision` walks through, once.
     Pending(Arc<ProvisionGate>),
+    /// One blocking task owns initialization through final state publication.
+    /// Readers remain sealed, and no second task may enter the release path.
+    Provisioning,
 }
 
 impl ApiState {
@@ -233,16 +230,58 @@ impl ApiState {
 
     /// Attested boot: start sealed and let `/provision` release the key.
     pub fn attested_pending(
+        database_path: std::path::PathBuf,
+        data_dir: std::path::PathBuf,
+        profile: Arc<crate::vault_profile::ValidatedVaultProfile>,
+    ) -> Self {
+        let releaser = provision::profile_bound_releaser(Arc::clone(&profile));
+        Self::attested_pending_with_components(
+            database_path,
+            data_dir,
+            profile,
+            releaser,
+            provision::coordinator_recoverer(),
+        )
+    }
+
+    #[cfg(test)]
+    fn attested_pending_with_releaser(
         repository: crate::store::Store,
         data_dir: std::path::PathBuf,
+        profile: Arc<crate::vault_profile::ValidatedVaultProfile>,
         releaser: provision::EnvelopeReleaser,
+    ) -> Self {
+        let database_path = repository.db_path().to_path_buf();
+        let recoverer: provision::VaultRecoverer =
+            Arc::new(|_profile, _credentials, master_key, database_path| {
+                let repository =
+                    crate::store::Store::open(database_path).map_err(|error| error.to_string())?;
+                Ok(SignerService::new(repository, master_key))
+            });
+        Self::attested_pending_with_components(
+            database_path,
+            data_dir,
+            profile,
+            releaser,
+            recoverer,
+        )
+    }
+
+    fn attested_pending_with_components(
+        database_path: std::path::PathBuf,
+        data_dir: std::path::PathBuf,
+        profile: Arc<crate::vault_profile::ValidatedVaultProfile>,
+        releaser: provision::EnvelopeReleaser,
+        recoverer: provision::VaultRecoverer,
     ) -> Self {
         ApiState {
             inner: Arc::new(Inner {
                 vault: RwLock::new(Vault::Pending(Arc::new(ProvisionGate {
-                    repository,
+                    database_path,
                     data_dir,
+                    profile,
                     releaser,
+                    recoverer,
                     mutex: std::sync::Mutex::new(()),
                 }))),
                 attested_boot: true,
@@ -303,15 +342,7 @@ impl ApiState {
     pub fn service_snapshot(&self) -> Option<SignerService> {
         match self.vault_read() {
             Vault::Ready(service) => Some(service.clone()),
-            Vault::Pending(_) => None,
-        }
-    }
-
-    /// The provisioning gate, while it still applies.
-    fn pending_gate(&self) -> Option<Arc<ProvisionGate>> {
-        match self.vault_read() {
-            Vault::Ready(_) => None,
-            Vault::Pending(gate) => Some(gate),
+            Vault::Pending(_) | Vault::Provisioning => None,
         }
     }
 
@@ -323,20 +354,41 @@ impl ApiState {
             .clone()
     }
 
-    /// Move the vault to open. `Err(())` means another provision already won.
-    fn provisioned(&self, service: SignerService) -> Result<(), ()> {
+    /// Claim initialization and publish its result in the same blocking task.
+    /// The state claim spans KMS and publication without holding the read lock
+    /// across I/O. A panic leaves the vault sealed until the process restarts.
+    fn provision(
+        &self,
+        env: &ProvisionEnv,
+        presented: Option<&str>,
+    ) -> Result<SignerService, provision::ProvisionError> {
+        let gate = {
+            let mut vault = self
+                .inner
+                .vault
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            match &*vault {
+                Vault::Ready(_) => return Err(provision::ProvisionError::AlreadyProvisioned),
+                Vault::Provisioning => return Err(provision::ProvisionError::InProgress),
+                Vault::Pending(gate) => {
+                    let gate = Arc::clone(gate);
+                    *vault = Vault::Provisioning;
+                    gate
+                }
+            }
+        };
+        let result = provision::run(&gate, env, presented);
         let mut vault = self
             .inner
             .vault
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match &*vault {
-            Vault::Ready(_) => Err(()),
-            Vault::Pending(_) => {
-                *vault = Vault::Ready(service);
-                Ok(())
-            }
-        }
+        *vault = match &result {
+            Ok(service) => Vault::Ready(service.clone()),
+            Err(_) => Vault::Pending(gate),
+        };
+        result
     }
 
     /// Whether this state is an attested-boot deployment at all.
@@ -450,11 +502,15 @@ where
     let Some(blocking_slot) = state.try_blocking_slot() else {
         return service_busy();
     };
+    let operation_key_id = key_id.clone();
     // The task only stops reporting if the process is already unhealthy, but the
     // answer still has to be a refusal rather than a hung connection.
     let outcome = tokio::task::spawn_blocking(move || {
         let _blocking_slot = blocking_slot;
-        call(service)
+        let called_service = service.clone();
+        service.execute_observable(action, operation_key_id.as_deref(), move || {
+            call(called_service)
+        })
     })
     .await;
     match outcome {
@@ -527,45 +583,16 @@ fn status_for(refusal: &Refusal) -> StatusCode {
     }
 }
 
-/// The transport's own failure answer: `500`, a fixed message, and one audit row
-/// carrying what actually broke.
-///
-/// This is the only audit row this module writes, and it writes it because
-/// nothing else can. Every other refusal is recorded by the service that decided
-/// it; an `Err` from the service means the sequence aborted somewhere a
-/// `Failed` outcome describes — a sealed key that would not open, a ledger write
-/// that failed — and if that row cannot be written either, the attempt is dropped
-/// with the error. A custody service that turned a broken database into a panic
-/// in its error handler would trade an unreadable log for an unreadable process.
+/// The transport's fixed `500` answer. `execute_observable` already wrote any
+/// possible failure audit and passed it through the same durable barrier; this
+/// function must not create state after that barrier or after a fence.
 fn failed(
-    state: &ApiState,
+    _state: &ApiState,
     action: SignerAuditAction,
     key_id: Option<&str>,
     detail: &str,
 ) -> Response {
-    let recorded_at_unix = unix_now().unwrap_or_default();
-    let record = SignerAuditRecord {
-        id: 0,
-        recorded_at_unix,
-        action,
-        outcome: SignerAuditOutcome::Failed,
-        caller_id: None,
-        key_id: key_id.map(str::to_owned),
-        tx_id: None,
-        reason: Some(SERVICE_FAILED.to_string()),
-        // Bounded here as it is everywhere else: a driver error can quote a
-        // whole SQL statement, and an audit table a request can fill is an
-        // audit table that stops being writable.
-        detail: Some(bounded(detail)),
-        origin: None,
-    };
-    // `decide` only reaches here with the vault open, and it cannot close again
-    // — `Ready` is terminal — so the snapshot is the same service the call ran
-    // against. Written through it rather than a separate handle so the row
-    // lands in the database the vault is serving from.
-    if let Some(service) = state.service_snapshot() {
-        let _ = service.repository().record_signer_audit(&record);
-    }
+    let _ = (action, key_id, detail);
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(RefusalReply {
@@ -575,13 +602,6 @@ fn failed(
         }),
     )
         .into_response()
-}
-
-fn unix_now() -> Result<u64> {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .map_err(anyhow::Error::from)
 }
 
 /// A `400` for a body the transport could not use. `problem` names the caller's
@@ -1537,12 +1557,32 @@ async fn route_unknown() -> Response {
 
 /// `GET /health` — is the process up, and is the vault open.
 async fn health_route(State(state): State<ApiState>) -> Response {
-    let status = if state.service_snapshot().is_some() {
-        "ok"
-    } else {
-        "unprovisioned"
+    let Some(service) = state.service_snapshot() else {
+        return (StatusCode::OK, Json(json!({ "status": "unprovisioned" }))).into_response();
     };
-    (StatusCode::OK, Json(json!({ "status": status }))).into_response()
+    if service.durable_status().is_none() {
+        return (StatusCode::OK, Json(json!({ "status": "ok" }))).into_response();
+    }
+    let verified = tokio::task::spawn_blocking(move || service.verify_durable_lease()).await;
+    match verified {
+        Ok(Ok(Some(head))) => (
+            StatusCode::OK,
+            Json(json!({
+                "status": "ok",
+                "durable": true,
+                "generation": head.generation,
+                "epoch": head.epoch,
+                "lease_expires_at_ms": head.lease_expires_at_ms,
+            })),
+        )
+            .into_response(),
+        Ok(Ok(None)) => (StatusCode::OK, Json(json!({ "status": "ok" }))).into_response(),
+        Ok(Err(_)) | Err(_) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "status": "fenced", "durable": true })),
+        )
+            .into_response(),
+    }
 }
 
 /// `GET /metrics` — Prometheus metrics scrape endpoint.
@@ -1594,44 +1634,26 @@ async fn provision_route(
             return refusal_owned(code, message, status);
         }
     };
-    let Some(gate) = state.pending_gate() else {
-        return refusal(
-            ALREADY_PROVISIONED,
-            "the vault is already provisioned; provisioning happens once per boot",
-            StatusCode::CONFLICT,
-        );
-    };
     let presented = credentials.token().map(str::to_owned);
     let Some(blocking_slot) = state.try_blocking_slot() else {
         return service_busy();
     };
+    let provision_state = state.clone();
     let attempted = tokio::task::spawn_blocking(move || {
         let _blocking_slot = blocking_slot;
-        provision::run(&gate, &env, presented.as_deref())
+        provision_state.provision(&env, presented.as_deref())
     })
     .await;
     match attempted {
-        Ok(Ok(service)) => {
-            // Two provisions can both pass `pending_gate` and run; the gate's
-            // mutex serializes them, and this flip decides the winner. The
-            // loser has released a key into a vault nobody will serve, which
-            // is wasted work, not a hole.
-            if state.provisioned(service.clone()).is_err() {
-                return refusal(
-                    ALREADY_PROVISIONED,
-                    "the vault is already provisioned; provisioning happens once per boot",
-                    StatusCode::CONFLICT,
-                );
-            }
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "status": "ok",
-                    "vault_fingerprint": service.vault_fingerprint(),
-                })),
-            )
-                .into_response()
-        }
+        Ok(Ok(service)) => (
+            StatusCode::OK,
+            Json(json!({
+                "status": "ok",
+                "vault_fingerprint": service.vault_fingerprint(),
+            })),
+        )
+            .into_response(),
+        Ok(Err(provision::ProvisionError::InProgress)) => service_busy(),
         Ok(Err(error)) => {
             let (code, status, message) = error.answer();
             let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_REQUEST);

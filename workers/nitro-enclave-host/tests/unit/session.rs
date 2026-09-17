@@ -4,6 +4,8 @@
 
 use super::*;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use p256::ecdsa::signature::hazmat::PrehashSigner;
+use p256::ecdsa::SigningKey;
 use serde_json::{json, Value as Json};
 
 #[path = "support.rs"]
@@ -11,15 +13,45 @@ use serde_json::{json, Value as Json};
 mod support;
 use support::*;
 
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn identity(app_id: &str, game_id: usize) -> Json {
-    json!({
+    let engine_hash = neo_os_games::registry::resolve_engine(app_id)
+        .map(|engine| engine.engine_hash)
+        .unwrap_or("");
+    let mut scalar = [1u8; 32];
+    scalar[0] = 0x11;
+    let signing_key = SigningKey::from_slice(&scalar).expect("valid test scalar");
+    let public_key = signing_key.verifying_key().to_encoded_point(true);
+    let public_key_hex = hex_encode(public_key.as_bytes());
+    let script_hash = neo_os_core::n3_tx::script_hash_from_public_key(public_key.as_bytes())
+        .expect("test public key script hash");
+    let player = format!("0x{}", hex_encode(&script_hash));
+    let mut payload = json!({
         "app_id": app_id,
         "network": "testnet",
         "contract_hash": "0xaabbccddeeff0011223344556677889900aabbcc",
-        "player": "0x00112233445566778899aabbccddeeff00112233",
+        "player": player,
         "game_id": game_id.to_string(),
         "difficulty": 0,
-    })
+        "engine_hash": engine_hash,
+    });
+    let identity = neo_os_games::session::parse_identity(&payload).expect("valid identity");
+    let digest = neo_os_games::session::witness_digest(
+        "",
+        &neo_os_games::session::witness_message_for(&identity.canonical),
+    );
+    let signature: p256::ecdsa::Signature = signing_key
+        .sign_prehash(&digest)
+        .expect("test witness signature");
+    payload["player_witness"] = json!({
+        "public_key": public_key_hex,
+        "signature": hex_encode(&signature.to_bytes()),
+        "salt": "",
+    });
+    payload
 }
 
 fn post(harness: &TestState, route: &str, payload: &Json) -> DispatchOutcome {
@@ -107,15 +139,42 @@ fn rust_session_routes_cover_every_engine_and_sign_the_fixed_codec() {
     let (state, _) = (engine.deal)(&secret, 0);
     let solution = state["solution"].as_str().expect("solution").to_string();
 
+    let clues = start.body["view"]["clues"].as_str().expect("Sudoku clues");
+    let mut sequence = 0u64;
+    for (cell, clue) in clues.bytes().enumerate() {
+        if clue != b'0' {
+            continue;
+        }
+        let mut step = final_identity.clone();
+        step["session_token"] = start.body["session_token"].clone();
+        step["seq"] = Json::from(sequence);
+        step["op"] = json!({
+            "type": "place",
+            "cell": cell,
+            "digit": solution.as_bytes()[cell] - b'0',
+        });
+        harness
+            .oracle_io
+            .set_now_ms(2_001_000 + sequence * 2_250);
+        let accepted = post(&harness, "/session/step", &step);
+        assert_eq!(accepted.status, 200, "{}", accepted.body);
+        sequence += 1;
+    }
+
+    // The server replays the accepted operation log. A client-provided answer
+    // is optional and only acts as a consistency assertion when present.
     let mut finalize = final_identity;
     finalize["session_token"] = start.body["session_token"].clone();
-    finalize["answer"] = Json::String(solution);
+    finalize["kind"] = Json::String("miniapp.game.session.finalize.v2".into());
     harness.oracle_io.set_now_ms(2_090_000);
-    let result = post(&harness, "/session/finalize", &finalize);
+    let result = post(&harness, "/session/settle", &finalize);
     assert_eq!(result.status, 200, "{}", result.body);
     assert_eq!(result.body["callback_encoding"], "game_result_v1");
-    assert_eq!(result.body["elapsed_ms"], 90_000);
-    assert_eq!(result.body["score"], 1);
+    assert_eq!(
+        result.body["elapsed_ms"],
+        1_000 + (sequence - 1) * 2_250
+    );
+    assert_eq!(result.body["score"], 1, "{}", result.body);
     assert_eq!(
         BASE64
             .decode(

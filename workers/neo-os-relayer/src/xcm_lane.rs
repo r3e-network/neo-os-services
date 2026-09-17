@@ -52,7 +52,10 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::config::RelayerConfig;
-use crate::delivery::{decode_evm_address, decode_hash160, string_array};
+use crate::delivery::{
+    decode_evm_address, decode_hash160, resume_signed, string_array, DeliveryJournal,
+    DeliveryReceipt,
+};
 use crate::xcm::CrossChainMessage;
 
 // ---------------------------------------------------------------------------
@@ -234,6 +237,32 @@ pub fn enqueue_xcm_message<T: StoreHttpTransport>(
     Ok(event_key)
 }
 
+pub fn enqueue_xcm_message_v2<T: StoreHttpTransport>(
+    client: &SupabaseClient<T>,
+    config: &RelayerConfig,
+    msg: &CrossChainMessage,
+    now_ms: u64,
+) -> Result<String, String> {
+    msg.validate()?;
+    let contract = config
+        .raw
+        .get("xcm")
+        .and_then(|v| v.get(&msg.dest_chain))
+        .and_then(|v| v.get("contract"))
+        .and_then(Value::as_str)
+        .ok_or("XCM destination contract missing")?;
+    let commitment = msg.commitment();
+    let event = json!({"kind":"xcm","chain":msg.dest_chain,"requestId":format!("0x{commitment}"),"source_chain":msg.source_chain,"dest_chain":msg.dest_chain,"nonce":msg.nonce,"payload_hex":hex::encode(&msg.payload),"payload":hex::encode(&msg.payload),"commitment":commitment,"max_attempts":crate::durable_v2::retry_budget(config)});
+    let job = neo_os_relayer_store::delivery::DeliveryStore { client }.enqueue(
+        &msg.dest_chain,
+        contract,
+        "oracle-updater",
+        &event,
+        now_ms,
+    )?;
+    Ok(job.job_key)
+}
+
 // ---------------------------------------------------------------------------
 // Drain: fetch, claim, relay, patch
 // ---------------------------------------------------------------------------
@@ -323,7 +352,13 @@ where
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!(event_key, error = %e, "XCM job rejected before relay; dead-lettering");
-                dead_letter_xcm_job(client, event_key, &format!("xcm decode: {e}"), now_iso, now_ms);
+                dead_letter_xcm_job(
+                    client,
+                    event_key,
+                    &format!("xcm decode: {e}"),
+                    now_iso,
+                    now_ms,
+                );
                 outcomes.push(XcmDrainOutcome::Unavailable);
                 continue;
             }
@@ -517,7 +552,10 @@ fn fetch_xcm_jobs<T: StoreHttpTransport>(
 /// stored `event.commitment` AND the `xcm:{commitment}` suffix of the event_key.
 /// An adversarial control-plane edit of the event JSON (changing the payload
 /// while keeping the event_key) is detected and rejected here.
-fn decode_xcm_event(event: &Value, event_key: &str) -> Result<CrossChainMessage, String> {
+pub(crate) fn decode_xcm_event(
+    event: &Value,
+    event_key: &str,
+) -> Result<CrossChainMessage, String> {
     let source_chain = event
         .get("source_chain")
         .and_then(Value::as_str)
@@ -587,6 +625,34 @@ where
     N: NonceSource,
     W: Waiter,
 {
+    relay_xcm_to_neo_n3_with_journal(
+        config,
+        msg,
+        existing_tx_hash,
+        persist_tx_hash,
+        transport,
+        nonce_source,
+        waiter,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn relay_xcm_to_neo_n3_with_journal<T, N, W>(
+    config: &RelayerConfig,
+    msg: &CrossChainMessage,
+    existing_tx_hash: Option<&str>,
+    persist_tx_hash: PersistTxHash<'_>,
+    transport: &T,
+    nonce_source: &N,
+    waiter: &W,
+    journal: Option<&dyn DeliveryJournal>,
+) -> Result<XcmDeliveryReceipt, String>
+where
+    T: N3HttpTransport + EvmHttpTransport,
+    N: NonceSource,
+    W: Waiter,
+{
     let xcm_cfg = config
         .raw
         .get("xcm")
@@ -640,7 +706,11 @@ where
         .get("timeoutMs")
         .and_then(Value::as_u64)
         .filter(|v| *v > 0);
-    let connection = CustodyConnection::new(custody_url.to_string(), custody_token.to_string(), custody_timeout)?;
+    let connection = CustodyConnection::new(
+        custody_url.to_string(),
+        custody_token.to_string(),
+        custody_timeout,
+    )?;
 
     // Custody key: prefer XCM-specific key, fall back to oracle updater key
     let updater_key_id = n3_xcm
@@ -717,12 +787,32 @@ where
             format!(
                 "Neo N3 XCM deliverMessage test invoke faulted for commitment {}: {}",
                 commitment_for_error,
-                if exception.trim().is_empty() { "unknown error" } else { exception }
+                if exception.trim().is_empty() {
+                    "unknown error"
+                } else {
+                    exception
+                }
             )
         })),
         ensure_fee_balance: None,
     };
-    let broadcast = build_sign_and_broadcast(&rpc, &custody, &signer, nonce_source, &script, &options)?;
+    if let Some(journal) = journal {
+        journal.ensure_lease()?;
+        let signed = neo_os_chain_n3::tx::build_and_sign(
+            &rpc,
+            &custody,
+            &signer,
+            nonce_source,
+            &script,
+            &options,
+        )?;
+        let stage = json!({"chain":"neo_n3","request_id":commitment,"tx_hash":signed.tx_hash,"raw":signed.signed_base64,"valid_until_block":signed.valid_until_block});
+        journal.persist("prepared", json!({"message":msg,"signed_delivery":stage}))?;
+        return crate::delivery::persist_and_publish(config, "neo_n3", transport, journal, &stage)
+            .map(|r| xcm_receipt(&commitment, r));
+    }
+    let broadcast =
+        build_sign_and_broadcast(&rpc, &custody, &signer, nonce_source, &script, &options)?;
 
     // Fix #1: persist the tx_hash into the job row immediately after a
     // successful broadcast and BEFORE awaiting confirmation, so a crash or
@@ -771,6 +861,30 @@ where
     T: N3HttpTransport + EvmHttpTransport,
     W: Waiter,
 {
+    relay_xcm_to_neox_with_journal(
+        config,
+        msg,
+        existing_tx_hash,
+        persist_tx_hash,
+        transport,
+        waiter,
+        None,
+    )
+}
+
+fn relay_xcm_to_neox_with_journal<T, W>(
+    config: &RelayerConfig,
+    msg: &CrossChainMessage,
+    existing_tx_hash: Option<&str>,
+    persist_tx_hash: PersistTxHash<'_>,
+    transport: &T,
+    waiter: &W,
+    journal: Option<&dyn DeliveryJournal>,
+) -> Result<XcmDeliveryReceipt, String>
+where
+    T: N3HttpTransport + EvmHttpTransport,
+    W: Waiter,
+{
     let xcm_cfg = config
         .raw
         .get("xcm")
@@ -806,7 +920,12 @@ where
     let chain_id = neox_base
         .get("chainId")
         .and_then(|v| {
-            v.as_u64().or_else(|| v.as_f64().filter(|f| f.is_finite() && *f >= 0.0).map(|f| f as u64))
+            v.as_u64()
+                .or_else(|| {
+                    v.as_f64()
+                        .filter(|f| f.is_finite() && *f >= 0.0)
+                        .map(|f| f as u64)
+                })
                 .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         })
         .filter(|v| *v > 0)
@@ -859,7 +978,10 @@ where
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| "custody signer service token is not configured".to_string())?;
-    let custody_timeout = nitro.get("timeoutMs").and_then(Value::as_u64).filter(|v| *v > 0);
+    let custody_timeout = nitro
+        .get("timeoutMs")
+        .and_then(Value::as_u64)
+        .filter(|v| *v > 0);
 
     let updater_key_id = neox_xcm
         .get("custodyKeyId")
@@ -886,8 +1008,9 @@ where
     // decoded transaction's `from` can be verified against it, matching the
     // oracle lane's deliver_neox. This closes an identity-spoofing gap where
     // custody reports a matching address/digest but signs with a different key.
-    let updater_address = decode_evm_address(&updater.address)
-        .ok_or_else(|| "NeoX XCM updater custody identity returned an invalid address".to_string())?;
+    let updater_address = decode_evm_address(&updater.address).ok_or_else(|| {
+        "NeoX XCM updater custody identity returned an invalid address".to_string()
+    })?;
     if updater.chain_id != chain_id {
         return Err("NeoX XCM custody updater key chain id mismatch".to_string());
     }
@@ -933,7 +1056,9 @@ where
     let expected_signing_hash = format!("0x{}", hex::encode(unsigned.signing_hash()));
     let signing_request_id = format!(
         "relayer:xcm:neox:{}:{}:{}",
-        commitment, tx_nonce, &expected_signing_hash[2..18]
+        commitment,
+        tx_nonce,
+        &expected_signing_hash[2..18]
     );
     let signed = custody.sign_transaction(
         updater_key_id,
@@ -958,12 +1083,20 @@ where
         || decoded.signing_hash != unsigned.signing_hash()
         || decoded.from != updater_address
     {
-        return Err("custody-signed NeoX XCM transaction differs from the approved plan".to_string());
+        return Err(
+            "custody-signed NeoX XCM transaction differs from the approved plan".to_string(),
+        );
     }
     if !signed.digest.eq_ignore_ascii_case(&decoded.tx_hash) {
         return Err("NeoX XCM custody response changed the signed transaction hash".to_string());
     }
 
+    if let Some(journal) = journal {
+        let stage = json!({"chain":"neox","request_id":commitment,"tx_hash":decoded.tx_hash,"raw":signed.signed_transaction});
+        journal.persist("prepared", json!({"message":msg,"signed_delivery":stage}))?;
+        return crate::delivery::persist_and_publish(config, "neox", transport, journal, &stage)
+            .map(|r| xcm_receipt(&commitment, r));
+    }
     // Broadcast and confirm
     let node_hash = rpc
         .send_raw_transaction(&signed.signed_transaction)
@@ -1004,8 +1137,8 @@ fn build_xcm_calldata(commitment_hex: &str, msg: &CrossChainMessage) -> Result<V
     let selector = &selector_hash[..4];
 
     // ABI-encode arguments
-    let commitment_bytes = hex::decode(commitment_hex)
-        .map_err(|e| format!("commitment hex decode failed: {e}"))?;
+    let commitment_bytes =
+        hex::decode(commitment_hex).map_err(|e| format!("commitment hex decode failed: {e}"))?;
     let mut commitment_word = [0u8; 32];
     if commitment_bytes.len() == 32 {
         commitment_word.copy_from_slice(&commitment_bytes);
@@ -1063,7 +1196,14 @@ where
             nonce_source,
             waiter,
         ),
-        "neox" => relay_xcm_to_neox(config, msg, existing_tx_hash, persist_tx_hash, transport, waiter),
+        "neox" => relay_xcm_to_neox(
+            config,
+            msg,
+            existing_tx_hash,
+            persist_tx_hash,
+            transport,
+            waiter,
+        ),
         other => Err(format!("unsupported XCM destination chain: {other}")),
     }
 }
@@ -1072,6 +1212,79 @@ where
 // Waiter bridge (n3 Waiter -> EVM Waiter)
 // ---------------------------------------------------------------------------
 
+fn xcm_receipt(commitment: &str, receipt: DeliveryReceipt) -> XcmDeliveryReceipt {
+    XcmDeliveryReceipt {
+        commitment: commitment.into(),
+        tx_hash: receipt.tx_hash,
+        vm_state: receipt.vm_state,
+        target_chain: receipt.target_chain,
+    }
+}
+
+pub fn relay_xcm_journaled<T, N, W>(
+    config: &RelayerConfig,
+    event: &Value,
+    transport: &T,
+    nonce: &N,
+    waiter: &W,
+    journal: &dyn DeliveryJournal,
+) -> Result<DeliveryReceipt, String>
+where
+    T: N3HttpTransport + EvmHttpTransport,
+    N: NonceSource,
+    W: Waiter,
+{
+    let commitment = event
+        .get("commitment")
+        .and_then(Value::as_str)
+        .ok_or("terminal: XCM commitment missing")?;
+    let message = decode_xcm_event(event, &format!("xcm:{commitment}"))
+        .map_err(|e| format!("terminal: {e}"))?;
+    journal.ensure_lease()?;
+    if journal.get("signed").is_none() {
+        if let Some(stage) = journal
+            .get("prepared")
+            .and_then(|p| p.get("signed_delivery").cloned())
+        {
+            journal.persist("signed", stage)?;
+        }
+    }
+    if let Some(stage) = journal.get("signed") {
+        return resume_signed(config, &message.dest_chain, transport, journal, &stage);
+    }
+    let no_legacy_patch = |_: &str| Err("v2 must persist signed bytes before broadcast".into());
+    let receipt = match message.dest_chain.as_str() {
+        "neo_n3" => relay_xcm_to_neo_n3_with_journal(
+            config,
+            &message,
+            None,
+            &no_legacy_patch,
+            transport,
+            nonce,
+            waiter,
+            Some(journal),
+        ),
+        "neox" => relay_xcm_to_neox_with_journal(
+            config,
+            &message,
+            None,
+            &no_legacy_patch,
+            transport,
+            waiter,
+            Some(journal),
+        ),
+        _ => Err("terminal: unsupported XCM destination".into()),
+    }?;
+    Ok(DeliveryReceipt {
+        request_id: receipt.commitment,
+        tx_hash: receipt.tx_hash,
+        vm_state: receipt.vm_state,
+        target_chain: receipt.target_chain,
+        exception: None,
+        onchain_state: None,
+    })
+}
+
 struct XcmEvmWaiterBridge<'a, W>(&'a W);
 
 impl<W: Waiter> EvmWaiter for XcmEvmWaiterBridge<'_, W> {
@@ -1079,7 +1292,8 @@ impl<W: Waiter> EvmWaiter for XcmEvmWaiterBridge<'_, W> {
         self.0.now_ms()
     }
     fn sleep(&self, duration: std::time::Duration) {
-        self.0.sleep(duration.as_millis().try_into().unwrap_or(u64::MAX));
+        self.0
+            .sleep(duration.as_millis().try_into().unwrap_or(u64::MAX));
     }
 }
 
@@ -1103,7 +1317,10 @@ mod tests {
         fn new(replies: Vec<(u16, Value)>) -> Self {
             Self {
                 replies: Mutex::new(
-                    replies.into_iter().map(|(s, b)| (s, b.to_string())).collect(),
+                    replies
+                        .into_iter()
+                        .map(|(s, b)| (s, b.to_string()))
+                        .collect(),
                 ),
                 calls: Mutex::new(Vec::new()),
             }
@@ -1133,7 +1350,13 @@ mod tests {
 
     struct PanicTransport;
     impl StoreHttpTransport for PanicTransport {
-        fn request(&self, _: &str, _: &str, _: &[(&str, &str)], _: Option<&str>) -> Result<(u16, String), String> {
+        fn request(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[(&str, &str)],
+            _: Option<&str>,
+        ) -> Result<(u16, String), String> {
             panic!("disabled XCM lane must not access the store");
         }
     }
@@ -1252,9 +1475,15 @@ mod tests {
             // 1. fetch_xcm_jobs select
             (200, json!([job_row])),
             // 2. claim_durable_job_for_processing PATCH (granted)
-            (200, json!([{"event_key": event_key, "status": "processing"}])),
+            (
+                200,
+                json!([{"event_key": event_key, "status": "processing"}]),
+            ),
             // 3. patch_relayer_job completed
-            (200, json!([{"event_key": event_key, "status": "completed"}])),
+            (
+                200,
+                json!([{"event_key": event_key, "status": "completed"}]),
+            ),
         ]);
         let client = SupabaseClient::new(
             transport,
@@ -1320,8 +1549,14 @@ mod tests {
 
         let transport = MockStoreTransport::new(vec![
             (200, json!([job_row])),
-            (200, json!([{"event_key": event_key, "status": "processing"}])),
-            (200, json!([{"event_key": event_key, "status": "retry_scheduled"}])),
+            (
+                200,
+                json!([{"event_key": event_key, "status": "processing"}]),
+            ),
+            (
+                200,
+                json!([{"event_key": event_key, "status": "retry_scheduled"}]),
+            ),
         ]);
         let client = SupabaseClient::new(
             transport,
@@ -1384,19 +1619,45 @@ mod tests {
         };
         struct NoTransport;
         impl N3HttpTransport for NoTransport {
-            fn post(&self, _: &str, _: &str) -> Result<(u16, String), String> { panic!() }
-            fn get(&self, _: &str) -> Result<(u16, String), String> { panic!() }
+            fn post(&self, _: &str, _: &str) -> Result<(u16, String), String> {
+                panic!()
+            }
+            fn get(&self, _: &str) -> Result<(u16, String), String> {
+                panic!()
+            }
         }
         impl EvmHttpTransport for NoTransport {
-            fn post(&self, _: &str, _: &str) -> Result<(u16, String), String> { panic!() }
-            fn get(&self, _: &str) -> Result<(u16, String), String> { panic!() }
+            fn post(&self, _: &str, _: &str) -> Result<(u16, String), String> {
+                panic!()
+            }
+            fn get(&self, _: &str) -> Result<(u16, String), String> {
+                panic!()
+            }
         }
         struct NoNonce;
-        impl NonceSource for NoNonce { fn nonce(&self) -> u32 { 0 } }
+        impl NonceSource for NoNonce {
+            fn nonce(&self) -> u32 {
+                0
+            }
+        }
         struct NoWait;
-        impl Waiter for NoWait { fn now_ms(&self) -> u64 { 0 } fn sleep(&self, _: u64) {} }
+        impl Waiter for NoWait {
+            fn now_ms(&self) -> u64 {
+                0
+            }
+            fn sleep(&self, _: u64) {}
+        }
 
-        let err = relay_xcm_message(&config, &msg, None, &|_: &str| Ok(()), &NoTransport, &NoNonce, &NoWait).unwrap_err();
+        let err = relay_xcm_message(
+            &config,
+            &msg,
+            None,
+            &|_: &str| Ok(()),
+            &NoTransport,
+            &NoNonce,
+            &NoWait,
+        )
+        .unwrap_err();
         assert!(err.contains("unsupported XCM destination chain"));
     }
 }

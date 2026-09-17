@@ -1,6 +1,7 @@
 [Unit]
 Description=Morpheus feed freshness + updater GAS monitor (fails visibly on stale/low)
-# The monitor exits 1 on a stale feed or low updater GAS and 2 on RPC failure.
+# The monitor exits 1 on a stale feed or low updater GAS and 2 on RPC failure
+# or an active pair more than 120s ahead of chain header time (clock_skew).
 # Until 2026-08 nothing was subscribed to that exit code: RUNBOOK.md named a
 # human running `systemctl is-failed` as the detection mechanism, which is how a
 # 19-day mainnet feed outage (2026-07-29 -> 2026-08-17) went unnoticed. OnFailure
@@ -10,12 +11,10 @@ OnFailure=morpheus-alert@%n.service
 
 [Service]
 Type=oneshot
-# Without this the monitor could not see MAX_AGE_SEC, MONITOR_PROM_TEXTFILE,
-# TRADFI_* or MONITOR_NETWORK at all — they are documented in
-# feed-pusher.env.example but only the pusher unit loaded that file, so every
-# documented monitor knob was silently inert. `-` keeps the unit startable on a
-# box that has not created the file yet.
+# TRADFI_* / MAX_AGE_SEC still come from this file. Reserved MONITOR_* / FEED_NETWORK
+# pins are applied at execve — EnvironmentFile= would otherwise override them.
 EnvironmentFile=-/opt/morpheus/nitro/feed-pusher.env
 Environment=NODE_ENV=production
+# WorkingDirectory must contain feed-monitor.mjs AND lib-feed-network.mjs.
 WorkingDirectory=/opt/neoos/services/deploy/feed-pusher
-ExecStart=/usr/bin/node feed-monitor.mjs
+ExecStart=/usr/bin/env FEED_NETWORK=mainnet MONITOR_NETWORK=neo-n3 MONITOR_LOG=/opt/morpheus/nitro/feed-monitor.log MONITOR_STATUS=/opt/morpheus/nitro/feed-status.json MONITOR_PROM_TEXTFILE= /usr/bin/node feed-monitor.mjs

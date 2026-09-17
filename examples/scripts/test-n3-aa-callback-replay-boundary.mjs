@@ -22,7 +22,7 @@ import {
 
 const GAS_HASH = '0xd2a4cff31913016155e38e474a2c06d08be276cf';
 const CONTRACT_BUILD_DIR = path.resolve(repoRoot, 'contracts/build');
-const AA_BUILD_DIR = path.resolve(repoRoot, '../neo-abstract-account/contracts/bin/v3');
+const AA_BUILD_DIR = path.resolve(repoRoot, '../neo-os-aa/contracts/bin/v3');
 const SOURCE_CALLBACK_REPORT = path.resolve(
   repoRoot,
   'examples/deployments/n3-privacy-validation.testnet.latest.json'

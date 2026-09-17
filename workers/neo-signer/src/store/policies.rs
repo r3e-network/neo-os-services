@@ -14,7 +14,16 @@ impl Store {
         updated_at_unix: u64,
     ) -> Result<()> {
         let connection = self.connection()?;
-        ensure_signer_key_exists(&connection, key_id)?;
+        Self::save_signer_policy_on(&connection, key_id, policy, updated_at_unix)
+    }
+
+    pub(super) fn save_signer_policy_on(
+        connection: &Connection,
+        key_id: &str,
+        policy: &SignerPolicy,
+        updated_at_unix: u64,
+    ) -> Result<()> {
+        ensure_signer_key_exists(connection, key_id)?;
         let policy = policy.clone().normalized();
         let (window_seconds, window_max_amount) = match policy.window_limit {
             Some(limit) => (

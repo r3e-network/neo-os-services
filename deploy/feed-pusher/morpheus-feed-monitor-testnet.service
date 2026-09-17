@@ -1,0 +1,11 @@
+[Unit]
+Description=Morpheus testnet feed freshness + updater GAS monitor
+OnFailure=morpheus-alert@%n.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/opt/morpheus/nitro/feed-pusher-testnet.env
+# WorkingDirectory must contain feed-monitor.mjs AND lib-feed-network.mjs.
+WorkingDirectory=/opt/neoos/services/deploy/feed-pusher
+# Exec-time pins: leftover mainnet MONITOR_* values cannot collide.
+ExecStart=/usr/bin/env FEED_NETWORK=testnet MONITOR_NETWORK=neo-n3-testnet MONITOR_LOG=/opt/morpheus/nitro/feed-monitor-testnet.log MONITOR_STATUS=/opt/morpheus/nitro/feed-status-testnet.json MONITOR_PROM_TEXTFILE=/opt/morpheus/nitro/feed-monitor-testnet.prom /usr/bin/node feed-monitor.mjs

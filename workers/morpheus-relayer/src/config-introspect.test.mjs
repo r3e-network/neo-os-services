@@ -11,8 +11,25 @@ import {
   validateRelayerConfig,
 } from './config-introspect.js';
 import { CONFIG_SCHEMA, knownEnvAliases } from './config-schema.js';
+import { resolveNeoN3NetworkMagic } from './config.js';
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+
+test('network magic is registry-authoritative and rejects env drift', () => {
+  const registry = { neo_n3: { network_magic: 860833102 } };
+  assert.equal(resolveNeoN3NetworkMagic('mainnet', registry), 860833102);
+  const saved = process.env.NEO_MAINNET_MAGIC;
+  process.env.NEO_MAINNET_MAGIC = '894710606';
+  try {
+    assert.throws(
+      () => resolveNeoN3NetworkMagic('mainnet', registry),
+      /network magic conflicts/,
+    );
+  } finally {
+    if (saved === undefined) delete process.env.NEO_MAINNET_MAGIC;
+    else process.env.NEO_MAINNET_MAGIC = saved;
+  }
+});
 
 // A minimal env that, combined with a feed_only mode, builds a valid config
 // (no signer / oracle contract needed) so validateRelayerConfig does not crash

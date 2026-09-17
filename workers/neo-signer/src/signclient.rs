@@ -6,6 +6,11 @@
 //! configuration only permits it on loopback.  Every operation still enters
 //! [`SignerService`]: caller grants, key state, policy, audit, idempotency and
 //! durable anti-equivocation remain the authority.
+//!
+//! `tonic::Status` is the SignClient wire error. Boxing it would change the
+//! generated gRPC trait; clippy `result_large_err` is allowed on this module.
+
+#![allow(clippy::result_large_err)]
 
 use std::{future::Future, net::SocketAddr};
 
@@ -18,7 +23,7 @@ use crate::{
     audit::{self, Refusal},
     auth::CallerCredentials,
     crypto,
-    model::SignerAuditOutcome,
+    model::{SignerAuditAction, SignerAuditOutcome},
     neo_block::{NeoBlock, NeoBlockHeader},
     network::ChainFamily,
     service::{KeyPublicInfo, Outcome, SignedWitness, SignerService},
@@ -26,10 +31,12 @@ use crate::{
 
 pub mod proto {
     pub mod signpb {
+        #![allow(clippy::result_large_err)]
         tonic::include_proto!("signpb");
     }
 
     pub mod servicepb {
+        #![allow(clippy::result_large_err)]
         tonic::include_proto!("servicepb");
     }
 }
@@ -69,7 +76,7 @@ impl SignClientBridge {
         }
     }
 
-    async fn run<T, F>(&self, call: F) -> Result<T, Status>
+    async fn run<T, F>(&self, action: SignerAuditAction, call: F) -> Result<T, Status>
     where
         T: Send + 'static,
         F: FnOnce(SignerService, CallerCredentials, String) -> anyhow::Result<Outcome<T>>
@@ -88,7 +95,11 @@ impl SignClientBridge {
         let key_id = self.key_id.clone();
         let outcome = tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            call(service, credentials, key_id)
+            let called_service = service.clone();
+            let operation_key_id = key_id.clone();
+            service.execute_observable(action, Some(&operation_key_id), move || {
+                call(called_service, credentials, key_id)
+            })
         })
         .await
         .map_err(|_| Status::internal("the signer operation did not complete"))?
@@ -99,13 +110,62 @@ impl SignClientBridge {
         }
     }
 
+    /// Execute metadata lookup and signing under one observable durability
+    /// barrier. `key_info` still records its audit row, but no intermediate
+    /// remote commit can split one SignClient RPC into two durable operations.
+    async fn run_with_info<T, F>(&self, action: SignerAuditAction, call: F) -> Result<T, Status>
+    where
+        T: Send + 'static,
+        F: FnOnce(
+                SignerService,
+                CallerCredentials,
+                String,
+                KeyPublicInfo,
+            ) -> anyhow::Result<Outcome<Result<T, Status>>>
+            + Send
+            + 'static,
+    {
+        let service = self
+            .state
+            .service_snapshot()
+            .ok_or_else(|| Status::unavailable("the signer vault is not provisioned"))?;
+        let permit = self
+            .state
+            .try_blocking_slot()
+            .ok_or_else(|| Status::resource_exhausted("the signer is busy"))?;
+        let credentials = self.credentials.clone();
+        let key_id = self.key_id.clone();
+        let outcome =
+            tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                let called_service = service.clone();
+                let operation_key_id = key_id.clone();
+                service.execute_observable(action, Some(&operation_key_id), move || {
+                    match called_service.key_info(&credentials, &key_id)? {
+                        Outcome::Allowed(info) => call(called_service, credentials, key_id, info),
+                        Outcome::Refused(refusal) => Ok(Outcome::Refused(refusal)),
+                    }
+                })
+            })
+            .await
+            .map_err(|_| Status::internal("the signer operation did not complete"))?
+            .map_err(|_| Status::internal("the signer could not complete the operation"))?;
+        match outcome {
+            Outcome::Allowed(result) => result,
+            Outcome::Refused(refusal) => Err(refusal_status(refusal)),
+        }
+    }
+
     fn admit(&self) -> Option<OwnedSemaphorePermit> {
         self.state.try_request_slot()
     }
 
     async fn key_info(&self) -> Result<KeyPublicInfo, Status> {
-        self.run(|service, credentials, key_id| service.key_info(&credentials, &key_id))
-            .await
+        self.run(
+            SignerAuditAction::KeyViewed,
+            |service, credentials, key_id| service.key_info(&credentials, &key_id),
+        )
+        .await
     }
 
     /// Fail a host-mode boot early when the configured token, key grant, or
@@ -133,54 +193,66 @@ impl SecureSign for SignClientBridge {
         let unsigned = extensible_unsigned(&payload).map_err(Status::invalid_argument)?;
         let script_hashes = fixed_hashes::<20>(&request.script_hashes, "script hash")
             .map_err(Status::invalid_argument)?;
-        let info = self.key_info().await?;
-        require_neo_key(&info).map_err(Status::failed_precondition)?;
-        if request.network != info.network_magic {
-            return Err(Status::failed_precondition(
-                "the requested network does not match the configured custody key",
-            ));
-        }
-
-        let account = info.script_hash.as_bytes();
-        let has_matching_account = script_hashes.contains(&account);
-        if !has_matching_account || !info.signing_enabled {
-            let signs = script_hashes
-                .iter()
-                .map(|hash| unavailable_account(*hash == account, info.signing_enabled))
-                .collect();
-            return Ok(Response::new(SignExtensiblePayloadResponse { signs }));
-        }
-
-        let request_id = deterministic_request_id(
-            "extensible-v1",
-            request.network,
-            &info.public_key,
-            &unsigned,
-        );
         let network = request.network;
-        let witness = self
-            .run(move |service, credentials, key_id| {
-                service.sign_consensus_for_network_with_request_id(
-                    &credentials,
-                    &key_id,
-                    &unsigned,
-                    network,
-                    Some(&request_id),
-                )
-            })
+        let response = self
+            .run_with_info(
+                SignerAuditAction::ConsensusSigned,
+                move |service, credentials, key_id, info| {
+                    if let Err(message) = require_neo_key(&info) {
+                        return Ok(Outcome::Allowed(Err(Status::failed_precondition(message))));
+                    }
+                    if network != info.network_magic {
+                        return Ok(Outcome::Allowed(Err(Status::failed_precondition(
+                            "the requested network does not match the configured custody key",
+                        ))));
+                    }
+                    let account = info.script_hash.as_bytes();
+                    if !script_hashes.contains(&account) || !info.signing_enabled {
+                        let signs = script_hashes
+                            .iter()
+                            .map(|hash| unavailable_account(*hash == account, info.signing_enabled))
+                            .collect();
+                        return Ok(Outcome::Allowed(Ok(SignExtensiblePayloadResponse {
+                            signs,
+                        })));
+                    }
+                    let request_id = deterministic_request_id(
+                        "extensible-v1",
+                        network,
+                        &info.public_key,
+                        &unsigned,
+                    );
+                    service
+                        .sign_consensus_for_network_with_request_id(
+                            &credentials,
+                            &key_id,
+                            &unsigned,
+                            network,
+                            Some(&request_id),
+                        )
+                        .map(|outcome| {
+                            outcome.map(|witness| {
+                                witness_signature(&witness)
+                                    .map(|signature| {
+                                        let signs = script_hashes
+                                            .iter()
+                                            .map(|hash| {
+                                                if *hash == account {
+                                                    available_account(&info, &signature)
+                                                } else {
+                                                    unavailable_account(false, true)
+                                                }
+                                            })
+                                            .collect();
+                                        SignExtensiblePayloadResponse { signs }
+                                    })
+                                    .map_err(Status::internal)
+                            })
+                        })
+                },
+            )
             .await?;
-        let signature = witness_signature(&witness).map_err(Status::internal)?;
-        let signs = script_hashes
-            .iter()
-            .map(|hash| {
-                if *hash == account {
-                    available_account(&info, &signature)
-                } else {
-                    unavailable_account(false, true)
-                }
-            })
-            .collect();
-        Ok(Response::new(SignExtensiblePayloadResponse { signs }))
+        Ok(Response::new(response))
     }
 
     async fn sign_block(
@@ -199,41 +271,55 @@ impl SecureSign for SignClientBridge {
                 .ok_or_else(|| Status::invalid_argument("block is required"))?,
         )
         .map_err(Status::invalid_argument)?;
-        let info = self.key_info().await?;
-        require_neo_key(&info).map_err(Status::failed_precondition)?;
-        if public_key != info.public_key {
-            return Err(Status::not_found(
-                "the requested public key is not the configured account",
-            ));
-        }
-        if request.network != info.network_magic {
-            return Err(Status::failed_precondition(
-                "the requested network does not match the configured custody key",
-            ));
-        }
-        if !info.signing_enabled {
-            return Err(Status::failed_precondition(
-                "the configured account is locked",
-            ));
-        }
-        let request_id =
-            deterministic_request_id("block-v1", request.network, &public_key, block.unsigned());
         let network = request.network;
-        let witness = self
-            .run(move |service, credentials, key_id| {
-                service.sign_block_with_request_id(
-                    &credentials,
-                    &key_id,
-                    &block,
-                    network,
-                    public_key,
-                    Some(&request_id),
-                )
-            })
+        let response = self
+            .run_with_info(
+                SignerAuditAction::ConsensusSigned,
+                move |service, credentials, key_id, info| {
+                    if let Err(message) = require_neo_key(&info) {
+                        return Ok(Outcome::Allowed(Err(Status::failed_precondition(message))));
+                    }
+                    if public_key != info.public_key {
+                        return Ok(Outcome::Allowed(Err(Status::not_found(
+                            "the requested public key is not the configured account",
+                        ))));
+                    }
+                    if network != info.network_magic {
+                        return Ok(Outcome::Allowed(Err(Status::failed_precondition(
+                            "the requested network does not match the configured custody key",
+                        ))));
+                    }
+                    if !info.signing_enabled {
+                        return Ok(Outcome::Allowed(Err(Status::failed_precondition(
+                            "the configured account is locked",
+                        ))));
+                    }
+                    let request_id = deterministic_request_id(
+                        "block-v1",
+                        network,
+                        &public_key,
+                        block.unsigned(),
+                    );
+                    service
+                        .sign_block_with_request_id(
+                            &credentials,
+                            &key_id,
+                            &block,
+                            network,
+                            public_key,
+                            Some(&request_id),
+                        )
+                        .map(|outcome| {
+                            outcome.map(|witness| {
+                                witness_signature(&witness)
+                                    .map(|signature| SignBlockResponse { signature })
+                                    .map_err(Status::internal)
+                            })
+                        })
+                },
+            )
             .await?;
-        Ok(Response::new(SignBlockResponse {
-            signature: witness_signature(&witness).map_err(Status::internal)?,
-        }))
+        Ok(Response::new(response))
     }
 
     async fn get_account_status(

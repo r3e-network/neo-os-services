@@ -8,10 +8,13 @@
 # /provision's KMS state machine, /oracle/fulfill, Neo N3/NeoX /feed/sign, /sign/payload,
 # /keys/derived, /compute/execute, /vrf/random, /paymaster/authorize,
 # /neodid/{bind,action-ticket,recovery-ticket,zklogin-ticket},
-# and the four oracle read lanes (/oracle/query, /oracle/smart-fetch,
-# /oracle/decrypt, /oracle/message-reveal). Fulfillment request types whose
-# Rust fold has not landed receive an explicit no-IO refusal; there is no
-# execution fallback. No passthrough route manifest exists. This image
+# /session/{start,step,finalize}, /automation/execute (already-claimed
+# one-shot adapter, not a durable scheduler), /oracle/feed (observation
+# adapter; no on-chain submit), and the four oracle read lanes
+# (/oracle/query, /oracle/smart-fetch, /oracle/decrypt,
+# /oracle/message-reveal). Fulfillment request types whose Rust fold has
+# not landed receive an explicit no-IO refusal; there is no execution
+# fallback. No passthrough route manifest exists. This image
 # therefore carries no Node runtime, no npm payload, no Go nsm helper
 # (NsmAttestation talks to /dev/nsm directly), no /bin/sh entrypoint, and no
 # copy of the pre-split merged server.
@@ -106,7 +109,11 @@ COPY crates/neo-os-games/src crates/neo-os-games/src
 COPY crates/neo-os-chain-evm/src crates/neo-os-chain-evm/src
 COPY crates/neo-os-service-runtime/src crates/neo-os-service-runtime/src
 COPY workers/neo-signer/src workers/neo-signer/src
+COPY workers/neo-signer/build.rs workers/neo-signer/build.rs
+COPY workers/neo-signer/proto workers/neo-signer/proto
 COPY workers/nitro-enclave-host/src workers/nitro-enclave-host/src
+COPY config/networks/mainnet.json config/networks/mainnet.json
+COPY config/networks/testnet.json config/networks/testnet.json
 # Release build of the two binaries this image runs: the frontier and its PID 1
 # supervisor. --locked fails if Cargo.lock is out of sync (no implicit lockfile
 # mutation of the pinned graph). The binaries are deterministic for identical

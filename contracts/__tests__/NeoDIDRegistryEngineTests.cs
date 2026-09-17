@@ -28,7 +28,7 @@ namespace MorpheusOracle.Contracts.Tests
     {
         private const string Provider = "github";
         private const string ClaimType = "account";
-        private const string ClaimValue = "octocat";
+        private const string ClaimValue = "";
 
         // BindingRecord field indices in the serialized struct returned by GetBinding.
         private const int ClaimValueIndex = 3;
@@ -134,6 +134,60 @@ namespace MorpheusOracle.Contracts.Tests
                 vault, Provider, ClaimType, ClaimValue, nullifier, metadataHash, signature);
         }
 
+        private static void AdvancePastTimelock(TestEngine engine)
+        {
+            object persistingBlock = engine.PersistingBlock;
+            Neo.Network.P2P.Payloads.Block block = (Neo.Network.P2P.Payloads.Block)persistingBlock.GetType()
+                .GetField("UnderlyingBlock", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                .GetValue(persistingBlock)!;
+            block.Header.Timestamp = (ulong)engine.PersistingBlock.Timestamp.TotalMilliseconds + 86_400_000 + 1_000;
+        }
+
+        [Fact]
+        public void VerificationKeyRotation_RequiresTimelock()
+        {
+            Harness h = Deploy();
+            byte[] nextPrivateKey = new byte[32];
+            nextPrivateKey[31] = 17;
+            KeyPair nextVerifier = new KeyPair(nextPrivateKey);
+
+            h.Engine.SetTransactionSigners(h.Admin);
+            h.Contract.SetVerifier(nextVerifier.PublicKey);
+
+            Assert.Equal(h.Verifier.PublicKey, h.Contract.Verifier);
+            Assert.Equal(nextVerifier.PublicKey, h.Contract.PendingVerifier);
+            Assert.True(h.Contract.PendingVerifierChangeTime > 0);
+            AssertReverts(() => h.Contract.ExecuteVerifierChange(), "timelock active");
+            Assert.Equal(h.Verifier.PublicKey, h.Contract.Verifier);
+
+            AdvancePastTimelock(h.Engine);
+            h.Contract.ExecuteVerifierChange();
+            Assert.Equal(nextVerifier.PublicKey, h.Contract.Verifier);
+            Assert.Null(h.Contract.PendingVerifier);
+            Assert.Equal(BigInteger.Zero, h.Contract.PendingVerifierChangeTime);
+            AssertReverts(() => h.Contract.ExecuteVerifierChange(), "no pending verifier");
+        }
+
+        [Fact]
+        public void VerificationKeyRotation_CanBeCanceledByAdminOnly()
+        {
+            Harness h = Deploy();
+            byte[] nextPrivateKey = new byte[32];
+            nextPrivateKey[31] = 18;
+            KeyPair nextVerifier = new KeyPair(nextPrivateKey);
+
+            h.Engine.SetTransactionSigners(h.Admin);
+            h.Contract.ProposeVerifier(nextVerifier.PublicKey);
+            h.Engine.SetTransactionSigners(TestEngine.GetNewSigner().Account);
+            AssertReverts(() => h.Contract.CancelVerifierChange(), "unauthorized");
+
+            h.Engine.SetTransactionSigners(h.Admin);
+            h.Contract.CancelVerifierChange();
+            Assert.Null(h.Contract.PendingVerifier);
+            AssertReverts(() => h.Contract.ExecuteVerifierChange(), "no pending verifier");
+            Assert.Equal(h.Verifier.PublicKey, h.Contract.Verifier);
+        }
+
         [Fact]
         public void RegisterBinding_WithReplicatedDigest_RecordsBindingAndNullifier()
         {
@@ -173,6 +227,42 @@ namespace MorpheusOracle.Contracts.Tests
             AssertReverts(
                 () => Register(h, vault, nullifier, metadataHash, Sign(h, digest)),
                 "invalid verification signature");
+            Assert.False(h.Contract.IsMasterNullifierUsed(nullifier));
+        }
+
+        [Fact]
+        public void RegisterBindingCommitment_StoresNoPlaintextClaim()
+        {
+            Harness h = Deploy();
+            UInt160 vault = TestEngine.GetNewSigner().Account;
+            byte[] commitment = FixedHash(0x31);
+            byte[] nullifier = FixedHash(0x32);
+            byte[] metadataHash = FixedHash(0x33);
+            byte[] digest = ComputeBindingCommitmentDigest(
+                vault, Provider, ClaimType, commitment, nullifier, metadataHash,
+                ProtocolSettings.Default.Network);
+
+            h.Engine.SetTransactionSigners(vault);
+            h.Contract.RegisterBindingCommitment(
+                vault, Provider, ClaimType, commitment, nullifier, metadataHash, Sign(h, digest));
+
+            Assert.Equal(commitment, AsBytes(h.Contract.GetClaimCommitment(vault, Provider, ClaimType)));
+            Assert.Equal("", AsUtf8(Field(h.Contract, vault, ClaimValueIndex)));
+            Assert.True(AsBool(Field(h.Contract, vault, ActiveIndex)));
+        }
+
+        [Fact]
+        public void RegisterBinding_RejectsPlaintextClaims()
+        {
+            Harness h = Deploy();
+            UInt160 vault = TestEngine.GetNewSigner().Account;
+            byte[] nullifier = FixedHash(0x41);
+            byte[] metadataHash = FixedHash(0x42);
+            byte[] digest = ComputeBindingDigest(
+                vault, Provider, ClaimType, "private-user-id", nullifier, metadataHash,
+                ProtocolSettings.Default.Network);
+
+            Assert.ThrowsAny<Exception>(() => Register(h, vault, nullifier, metadataHash, Sign(h, digest)));
             Assert.False(h.Contract.IsMasterNullifierUsed(nullifier));
         }
 
@@ -364,6 +454,22 @@ namespace MorpheusOracle.Contracts.Tests
             payload.AddRange(CanonicalHash160(disposableAccount));
             payload.AddRange(EncodeSegment(actionId));
             payload.AddRange(actionNullifier);
+            payload.AddRange(NetworkMagicLe4(network));
+            return Sha256(payload.ToArray());
+        }
+
+        private static byte[] ComputeBindingCommitmentDigest(
+            UInt160 vaultAccount, string provider, string claimType, byte[] claimCommitment,
+            byte[] masterNullifier, byte[] metadataHash, uint network)
+        {
+            var payload = new List<byte>();
+            payload.AddRange(System.Text.Encoding.ASCII.GetBytes("neodid-claim-commitment-v1"));
+            payload.AddRange(CanonicalHash160(vaultAccount));
+            payload.AddRange(EncodeSegment(provider));
+            payload.AddRange(EncodeSegment(claimType));
+            payload.AddRange(claimCommitment);
+            payload.AddRange(masterNullifier);
+            payload.AddRange(metadataHash);
             payload.AddRange(NetworkMagicLe4(network));
             return Sha256(payload.ToArray());
         }

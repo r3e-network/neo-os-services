@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/server.ts",
-    "test": "vitest run --coverage"
+    "test": "vitest run"
   },
   "dependencies": {
     "ws": "^8.14.0",

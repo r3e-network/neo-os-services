@@ -84,6 +84,7 @@ impl KmsTransport for HttpKmsTransport {
         body: &str,
     ) -> AttestResult<(u16, String)> {
         let client = reqwest::blocking::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
             .build()
@@ -122,6 +123,29 @@ pub fn release_bytes(
     transport: &dyn KmsTransport,
     params: &ReleaseParams<'_>,
 ) -> AttestResult<Vec<u8>> {
+    release_bytes_with_context(source, transport, params, &[])
+}
+
+/// Release only ciphertext encrypted for the caller's fixed purpose/domain.
+/// KMS rejects missing or substituted context before releasing any plaintext.
+pub fn release_bytes_with_context(
+    source: &dyn AttestationSource,
+    transport: &dyn KmsTransport,
+    params: &ReleaseParams<'_>,
+    encryption_context: &[(&str, &str)],
+) -> AttestResult<Vec<u8>> {
+    release_bytes_with_context_and_key(source, transport, params, encryption_context, None)
+}
+
+/// Release through one exact KMS key and reject a response that names any
+/// other key. `expected_key_id` must be a complete ARN pinned by trusted code.
+pub fn release_bytes_with_context_and_key(
+    source: &dyn AttestationSource,
+    transport: &dyn KmsTransport,
+    params: &ReleaseParams<'_>,
+    encryption_context: &[(&str, &str)],
+    expected_key_id: Option<&str>,
+) -> AttestResult<Vec<u8>> {
     let mut rng = rsa::rand_core::OsRng;
     let priv_key =
         RsaPrivateKey::new(&mut rng, 2048).map_err(|error| format!("generate RSA key: {error}"))?;
@@ -130,15 +154,17 @@ pub fn release_bytes(
         .to_public_key_der()
         .map_err(|error| format!("marshal public key: {error}"))?;
     let document = source.attest(None, None, Some(spki.as_bytes()))?;
-    let signed = kms::build_kms_decrypt_request(
+    let signed = kms::build_kms_decrypt_request_with_context_and_key(
         params.region,
         params.credentials,
         params.amz_date,
         params.ciphertext_b64,
         &document,
+        encryption_context,
+        expected_key_id,
     )?;
     let (status, body) = transport.post_json(&signed.url, &signed.headers, &signed.body)?;
-    let ctb_b64 = kms::parse_kms_decrypt_response(status, &body)?;
+    let ctb_b64 = kms::parse_kms_decrypt_response_for_key(status, &body, expected_key_id)?;
     let cms_der = BASE64
         .decode(ctb_b64.as_bytes())
         .map_err(|error| format!("kms decrypt: decode CiphertextForRecipient: {error}"))?;

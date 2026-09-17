@@ -2,7 +2,7 @@
 Description=NeoOS Rust Relayer (Neo N3 and NeoX request/feed authority)
 After=network-online.target
 Wants=network-online.target
-Conflicts=morpheus-relayer-nitro.service morpheus-feed-pusher.service morpheus-feed-pusher.timer morpheus-feed-pusher-neox.service morpheus-feed-pusher-neox.timer morpheus-feed-topup.service morpheus-feed-topup.timer morpheus-neox-fulfiller.service
+Conflicts=morpheus-relayer-nitro.service morpheus-feed-pusher.service morpheus-feed-pusher.timer morpheus-feed-pusher-neox.service morpheus-feed-pusher-neox.timer morpheus-feed-pusher-testnet.service morpheus-feed-pusher-testnet.timer morpheus-feed-topup.service morpheus-feed-topup.timer morpheus-neox-fulfiller.service
 
 [Service]
 Type=simple
@@ -14,6 +14,7 @@ ExecStartPre=/opt/neoos/services/bin/neo-os-relayer config:validate
 ExecStart=/opt/neoos/services/bin/neo-os-relayer loop
 Restart=always
 RestartSec=5
+TimeoutStopSec=120
 User=morpheus
 Group=morpheus
 NoNewPrivileges=true

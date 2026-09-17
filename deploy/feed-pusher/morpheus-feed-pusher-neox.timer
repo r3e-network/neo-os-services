@@ -2,6 +2,7 @@
 Description=Run Morpheus Node feed pusher (Neo X, COMPATIBILITY ONLY)
 ConditionPathExists=/opt/morpheus/nitro/ENABLE_NODE_FEED_PUSHER_COMPAT
 Conflicts=morpheus-relayer.service morpheus-relayer-nitro.service
+Before=morpheus-relayer.service morpheus-relayer-nitro.service
 [Timer]
 OnBootSec=2min
 OnUnitActiveSec=2min

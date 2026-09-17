@@ -215,7 +215,10 @@ describe('getPinnedNeoN3Role', () => {
 // resolvePinnedNeoN3Role (strict mode)
 // ===================================================================
 
-describe('resolvePinnedNeoN3Role', () => {
+// Legacy WIF-resolution cases are retained as documentation only. Runtime
+// role groups are intentionally empty after custody migration; signing must
+// come from SIGNER_ROLE_*_KEY_ID and these cases are not executable contracts.
+describe.skip('resolvePinnedNeoN3Role (legacy WIF)', () => {
   it('throws on unsupported role', () => {
     withCleanSignerEnv(() => {
       process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = 'true';
@@ -298,7 +301,7 @@ describe('resolvePinnedNeoN3Role', () => {
 // resolvePinnedNeoN3RolePreferMatch (prefer-match mode)
 // ===================================================================
 
-describe('resolvePinnedNeoN3RolePreferMatch', () => {
+describe.skip('resolvePinnedNeoN3RolePreferMatch (legacy WIF)', () => {
   it('returns a report without throwing even if keys mismatch', () => {
     withCleanSignerEnv(() => {
       process.env.MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET = ACCOUNT_B.WIF;
@@ -325,7 +328,7 @@ describe('resolvePinnedNeoN3RolePreferMatch', () => {
 // reportPinnedNeoN3Role / reportPinnedNeoN3Roles (report mode)
 // ===================================================================
 
-describe('reportPinnedNeoN3Role', () => {
+describe.skip('reportPinnedNeoN3Role (legacy WIF)', () => {
   it('returns report without throwing even with issues', () => {
     withCleanSignerEnv(() => {
       // Set a key that does NOT match the pinned identity -- produces issues
@@ -381,7 +384,7 @@ describe('reportPinnedNeoN3Roles', () => {
 // resolvePinnedNeoN3UpdaterHash
 // ===================================================================
 
-describe('resolvePinnedNeoN3UpdaterHash', () => {
+describe.skip('resolvePinnedNeoN3UpdaterHash (legacy WIF)', () => {
   it('returns 0x-prefixed script hash of the resolved updater', () => {
     withCleanSignerEnv(() => {
       process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = 'true';
@@ -407,7 +410,7 @@ describe('resolvePinnedNeoN3UpdaterHash', () => {
 // resolvePinnedNeoN3VerifierPublicKey
 // ===================================================================
 
-describe('resolvePinnedNeoN3VerifierPublicKey', () => {
+describe.skip('resolvePinnedNeoN3VerifierPublicKey (legacy WIF)', () => {
   it('returns the pinned verifier public key when env has matching key', () => {
     withCleanSignerEnv(() => {
       process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = 'true';
@@ -434,7 +437,7 @@ describe('resolvePinnedNeoN3VerifierPublicKey', () => {
 // env snapshot: function-based env accessor
 // ===================================================================
 
-describe('env as function accessor', () => {
+describe.skip('env as function accessor (legacy WIF)', () => {
   it('resolves signer when env is provided as a getter function', () => {
     withCleanSignerEnv(() => {
       process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = 'true';
@@ -454,7 +457,7 @@ describe('env as function accessor', () => {
 // Error handling for malformed keys
 // ===================================================================
 
-describe('malformed key handling', () => {
+describe.skip('malformed key handling (legacy WIF)', () => {
   it('records an issue when an env var contains an invalid key', () => {
     withCleanSignerEnv(() => {
       process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = 'true';
@@ -486,7 +489,7 @@ describe('malformed key handling', () => {
 // Pinned identity matching
 // ===================================================================
 
-describe('pinned identity matching', () => {
+describe.skip('pinned identity matching (legacy WIF)', () => {
   it('detects drift when primary key does not match pinned identity', () => {
     withCleanSignerEnv(() => {
       // Do NOT set MORPHEUS_ALLOW_UNPINNED_SIGNERS -- enforce pinned
@@ -535,11 +538,24 @@ describe('NEO_N3_SIGNER_ENV_KEYS', () => {
   });
 });
 
+describe('custody migration boundary', () => {
+  it('fails closed when a legacy WIF is supplied after custody migration', () => {
+    withCleanSignerEnv(() => {
+      process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = 'true';
+      process.env.MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET = ACCOUNT_A.WIF;
+      assert.throws(
+        () => resolvePinnedNeoN3Role('testnet', 'relayer'),
+        (err) => err.message.includes('no usable relayer signer configured'),
+      );
+    });
+  });
+});
+
 // ===================================================================
 // worker role: MORPHEUS_WORKER_* primary with generic NEO_N3 fallback
 // ===================================================================
 
-describe('worker signer resolution', () => {
+describe.skip('worker signer resolution (legacy WIF)', () => {
   it('prefers the network-scoped MORPHEUS_WORKER WIF as primary source', () => {
     withCleanSignerEnv(() => {
       process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = 'true';
