@@ -6,8 +6,10 @@ import test from 'node:test';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const script = fileURLToPath(new URL('./check-network-config.mjs', import.meta.url));
-const networks = ['mainnet', 'testnet'].map(name =>
-  JSON.parse(readFileSync(new URL(`../config/networks/${name}.json`, import.meta.url), 'utf8')).network
+const networks = ['mainnet', 'testnet'].map(
+  (name) =>
+    JSON.parse(readFileSync(new URL(`../config/networks/${name}.json`, import.meta.url), 'utf8'))
+      .network
 );
 
 function run(args = [], env = {}) {
@@ -38,7 +40,7 @@ for (const network of networks) {
       const matched = run(args, { MORPHEUS_NETWORK: network });
       assert.equal(matched.status, 0, matched.stdout + matched.stderr);
       assert.match(matched.stdout, /as expected/);
-      const mismatch = run(args, { MORPHEUS_NETWORK: networks.find(value => value !== network) });
+      const mismatch = run(args, { MORPHEUS_NETWORK: networks.find((value) => value !== network) });
       assert.equal(mismatch.status, 1, mismatch.stdout + mismatch.stderr);
       assert.match(mismatch.stdout, /Network mismatch/);
     });
@@ -59,7 +61,10 @@ test('public fallback, runtime precedence and normalized labels retain their beh
   for (const env of [
     { NEXT_PUBLIC_MORPHEUS_NETWORK: networks[0] },
     { MORPHEUS_NETWORK: ' ', NEXT_PUBLIC_MORPHEUS_NETWORK: networks[0] },
-    { MORPHEUS_NETWORK: ` ${networks[0].toUpperCase()} `, NEXT_PUBLIC_MORPHEUS_NETWORK: networks[1] },
+    {
+      MORPHEUS_NETWORK: ` ${networks[0].toUpperCase()} `,
+      NEXT_PUBLIC_MORPHEUS_NETWORK: networks[1],
+    },
   ]) {
     const result = run(['--expected', networks[0], '--fail-on-missing'], env);
     assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -68,9 +73,13 @@ test('public fallback, runtime precedence and normalized labels retain their beh
 
 test('malformed expected arguments cannot silently disable the gate', () => {
   for (const args of [
-    ['--expected'], ['--expected='], ['--expected', ''],
-    ['--expected', '--fail-on-missing'], ['--expected=invalid'],
-    ['--expected=mainnet=ignored'], ['--unknown'],
+    ['--expected'],
+    ['--expected='],
+    ['--expected', ''],
+    ['--expected', '--fail-on-missing'],
+    ['--expected=invalid'],
+    ['--expected=mainnet=ignored'],
+    ['--unknown'],
   ]) {
     const result = run(args, { MORPHEUS_NETWORK: networks[0] });
     assert.equal(result.status, 1, JSON.stringify(args) + result.stdout + result.stderr);

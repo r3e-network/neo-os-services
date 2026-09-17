@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
  * @fileoverview Network Configuration Validator
- * 
+ *
  * Validates that MORPHEUS_NETWORK is properly configured before deployment.
  * This is a focused check that runs independently of other environment checks.
- * 
+ *
  * Usage:
  *   npm run check:network-config
  *   node scripts/check-network-config.mjs --fail-on-missing
@@ -59,7 +59,7 @@ try {
 
 /**
  * Validate Morpheus network configuration
- * 
+ *
  * @returns {{ ok: boolean, errors: string[], warnings: string[], envValue?: string }}
  */
 function validateMorpheusNetworkConfig() {
@@ -72,7 +72,7 @@ function validateMorpheusNetworkConfig() {
   // Check both environment variable names
   const rawRuntime = process.env.MORPHEUS_NETWORK;
   const rawPublic = process.env.NEXT_PUBLIC_MORPHEUS_NETWORK;
-  
+
   const selectedEnv = trimString(rawRuntime) || trimString(rawPublic);
 
   // CRITICAL CHECK: Must have at least one network variable set
@@ -96,7 +96,7 @@ function validateMorpheusNetworkConfig() {
 
   // Normalize and validate the value
   const normalized = selectedEnv.toLowerCase();
-  
+
   if (normalized !== 'testnet' && normalized !== 'mainnet') {
     result.ok = false;
     result.errors.push(
@@ -104,22 +104,24 @@ function validateMorpheusNetworkConfig() {
       '',
       `Expected one of: "testnet" or "mainnet"`
     );
-    
+
     // Common typos
     const typoMap = {
-      'mianet': 'mainnet',
-      'tests': 'testnet',
-      'production': 'mainnet',
-      'staging': 'testnet',
-      'dev': 'testnet',
+      mianet: 'mainnet',
+      tests: 'testnet',
+      production: 'mainnet',
+      staging: 'testnet',
+      dev: 'testnet',
     };
-    
+
     for (const [typo, correct] of Object.entries(typoMap)) {
       if (normalized.includes(typo)) {
-        result.warnings.push(`Possible typo detected: "${selectedEnv}" → did you mean "${correct}"?`);
+        result.warnings.push(
+          `Possible typo detected: "${selectedEnv}" → did you mean "${correct}"?`
+        );
       }
     }
-    
+
     return result;
   }
 
@@ -142,8 +144,10 @@ function validateMorpheusNetworkConfig() {
   if (rawRuntime && rawPublic && trimString(rawRuntime) !== trimString(rawPublic)) {
     result.warnings.push(
       '⚠ WARNING: MORPHEUS_NETWORK and NEXT_PUBLIC_MORPHEUS_NETWORK differ.',
-      '  Runtime:  ', rawRuntime,
-      '  Public:   ', rawPublic,
+      '  Runtime:  ',
+      rawRuntime,
+      '  Public:   ',
+      rawPublic,
       '',
       'This may cause confusion between server-side and client-side network selection.'
     );
@@ -157,7 +161,7 @@ function validateMorpheusNetworkConfig() {
       ['SIGNER_ROLE_UPDATER_KEY_ID', 'Custody signer configured'],
       ['MORPHEUS_RELAYER_MODE', 'Relayer mode configured'],
     ];
-    
+
     console.log('📋 Mainnet deployment checklist:');
     for (const [envVar, description] of productionChecks) {
       if (process.env[envVar]) {
@@ -172,7 +176,7 @@ function validateMorpheusNetworkConfig() {
       ['MORPHEUS_PAYMASTER_TESTNET_ENABLED', 'Paymaster configuration'],
       ['MORPHEUS_RELAYER_NEO_N3_SCAN_MODE', 'Block scan mode'],
     ];
-    
+
     console.log('📋 Testnet deployment checklist:');
     for (const [envVar, description] of testnetChecks) {
       if (process.env[envVar]) {
@@ -193,13 +197,13 @@ function printReport(result, exitCode) {
   console.log('\n========================================');
   console.log('Morpheus Network Configuration Validator');
   console.log('========================================\n');
-  
+
   if (result.ok) {
     console.log('✅ VALIDATION PASSED\n');
   } else {
     console.log('❌ VALIDATION FAILED\n');
   }
-  
+
   if (result.warnings.length > 0) {
     console.log('Warnings / Recommendations:');
     console.log('─'.repeat(56));
@@ -208,7 +212,7 @@ function printReport(result, exitCode) {
     }
     console.log('');
   }
-  
+
   if (result.errors.length > 0) {
     console.log('Errors:');
     console.log('─'.repeat(56));
@@ -217,13 +221,13 @@ function printReport(result, exitCode) {
     }
     console.log('');
   }
-  
+
   if (result.envValue) {
     console.log(`Detected MORPHEUS_NETWORK: ${result.envValue}`);
   }
-  
+
   console.log('========================================');
-  
+
   if (exitCode) {
     process.exitCode = exitCode;
   }
