@@ -13,6 +13,39 @@ Think of the variables in four layers:
 3. Nitro and Supabase access / Nitro 与 Supabase 访问
 4. Runtime policy knobs / 运行策略参数
 
+## Local network configuration gate
+
+Before deployment, run `npm run check:network-config` with `MORPHEUS_NETWORK`
+(or the fallback `NEXT_PUBLIC_MORPHEUS_NETWORK`) set to `mainnet` or `testnet`.
+The runtime variable takes precedence; surrounding whitespace and case are normalized.
+This local gate checks environment labels only: it does not load credentials, contact
+RPC endpoints, verify chain identity, or change configuration files.
+
+- Valid configuration exits **0**, including with `--fail-on-missing`. That flag is
+  retained for compatibility; missing configuration already fails without it.
+- Missing or invalid configuration, invalid arguments, and expected-network
+  mismatches exit **1** with a diagnostic.
+- Both `--expected mainnet` and `--expected=mainnet` enforce the same check.
+  An empty, missing, or unsupported expected network fails rather than disabling it.
+- Optional deployment-setting warnings do not change the exit status.
+
+Examples (run from the services repository; no network access):
+
+```sh
+MORPHEUS_NETWORK=mainnet npm run check:network-config
+# VALIDATION PASSED; exit 0
+MORPHEUS_NETWORK=testnet node scripts/check-network-config.mjs --expected mainnet
+# Network mismatch; exit 1
+MORPHEUS_NETWORK=testnet node scripts/check-network-config.mjs --expected=testnet
+# VALIDATION PASSED; exit 0
+```
+
+The regression suite runs bounded subprocesses against the real CLI, using network
+names from the checked-in registries and isolated environments. It is included by
+`npm run test:scripts` (`scripts/*.test.mjs`). No deployment or data migration is
+required; existing callers using `--fail-on-missing` now receive the correct success
+status instead of an unconditional failure.
+
 ## Must Know / 你必须关心的变量
 
 These are the variables that matter for day-to-day operation.

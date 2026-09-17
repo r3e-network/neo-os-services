@@ -11,13 +11,42 @@
  *   node scripts/check-network-config.mjs --expected mainnet
  */
 
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-
-// Parse command-line arguments
+// Parse command-line arguments. Both `--expected X` and `--expected=X` are
+// accepted; malformed usage fails the run instead of silently disabling the
+// expected-network check. `--fail-on-missing` is consumed for compatibility;
+// missing configuration already fails on its own.
 const args = process.argv.slice(2);
-const failOnMissing = args.includes('--fail-on-missing');
-const expectedNetwork = args.find(arg => arg.startsWith('--expected='))?.split('=')[1] || null;
+
+let argError = null;
+let expectedNetwork = null;
+{
+  const VALID_NETWORKS = new Set(['mainnet', 'testnet']);
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--fail-on-missing') continue;
+    if (arg === '--expected' || arg.startsWith('--expected=')) {
+      const value = arg === '--expected' ? args[i + 1] : arg.slice('--expected='.length);
+      if (arg === '--expected') i++;
+      const normalized = (value ?? '').trim().toLowerCase();
+      if (!normalized || normalized.startsWith('--')) {
+        argError = 'missing value for --expected (usage: --expected mainnet | --expected=mainnet)';
+        break;
+      }
+      if (!VALID_NETWORKS.has(normalized)) {
+        argError = `unsupported --expected value "${value}" (expected one of: mainnet, testnet)`;
+        break;
+      }
+      if (expectedNetwork && expectedNetwork !== normalized) {
+        argError = `conflicting --expected values "${expectedNetwork}" and "${normalized}"`;
+        break;
+      }
+      expectedNetwork = normalized;
+      continue;
+    }
+    argError = `unknown argument "${arg}" (supported: --fail-on-missing, --expected mainnet, --expected=mainnet)`;
+    break;
+  }
+}
 
 // Import trimString utility if available, otherwise define simple fallback
 let trimString;
@@ -203,17 +232,25 @@ function printReport(result, exitCode) {
 // Main execution
 console.log('🔍 Validating Morpheus network configuration...\n');
 
-const result = validateMorpheusNetworkConfig();
-const shouldFail = failOnMissing || !result.ok;
-
-printReport(result, shouldFail ? 1 : 0);
-
-if (shouldFail) {
-  console.log('\n💡 Next steps:');
-  console.log('   1. Set MORPHEUS_NETWORK environment variable');
-  console.log('   2. Re-run this validation script');
-  console.log('   3. Review DEPLOYMENT_CHECKLIST.md for full requirements');
+if (argError) {
+  console.error(`Argument error: ${argError}`);
   process.exitCode = 1;
 } else {
-  console.log('\n✅ Environment ready for deployment!');
+  const result = validateMorpheusNetworkConfig();
+  // A valid configuration must pass even when --fail-on-missing is supplied:
+  // that flag only requires a nonzero status when configuration is absent or
+  // invalid, never an unconditional failure.
+  const shouldFail = !result.ok;
+
+  printReport(result, shouldFail ? 1 : 0);
+
+  if (shouldFail) {
+    console.log('\n💡 Next steps:');
+    console.log('   1. Set MORPHEUS_NETWORK environment variable');
+    console.log('   2. Re-run this validation script');
+    console.log('   3. Review DEPLOYMENT_CHECKLIST.md for full requirements');
+    process.exitCode = 1;
+  } else {
+    console.log('\n✅ Environment ready for deployment!');
+  }
 }
