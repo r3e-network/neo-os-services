@@ -27,6 +27,13 @@ paths = [
 regexes = ['''"(?:web3auth|session_key)"[[:space:]]*:''']
 
 [[allowlists]]
+description = "Golden vectors embed config/networks/*.json verbatim, including the public aa_verifiers contract script hashes allowlisted above."
+condition = "AND"
+regexTarget = "line"
+paths = ['''(^|/)crates/neo-os-core/tests/vectors/[^/]+\.json$''']
+regexes = ['''"(?:web3auth|session_key|social_recovery)"[[:space:]]*:''']
+
+[[allowlists]]
 description = "Published runtime verifier fields are public on-chain contract script hashes."
 condition = "AND"
 regexTarget = "line"

@@ -47,3 +47,26 @@ fn config_resolution_matches_js_oracle() {
         }
     }
 }
+
+/// The fallback RPC tables are duplicated between this crate and
+/// `workers/morpheus-relayer/src/config.js`, and the golden vectors only catch
+/// drift in one direction: regenerating them from the JS oracle flags a JS-side
+/// edit, but nothing replays the Rust constant itself, so a cleartext endpoint
+/// added HERE was invisible to both `export-rust-vectors.mjs --check` and
+/// `cargo test` (verified by mutation on 2026-09-18).
+///
+/// This pins the invariant the constant's own doc comment states: the table is
+/// HTTPS only. `unique_ranked_rpc_urls` merely demotes `http://` to last place,
+/// so one cleartext entry stays reachable exactly when every TLS node is down.
+#[test]
+fn default_rpc_tables_are_https_only() {
+    for (network, urls) in neo_os_core::config::DEFAULT_NEO_N3_RPC_URLS {
+        assert!(!urls.is_empty(), "{network}: fallback table must not be empty");
+        for url in *urls {
+            assert!(
+                url.starts_with("https://"),
+                "{network}: cleartext fallback RPC endpoint {url:?} - the table is HTTPS only",
+            );
+        }
+    }
+}
