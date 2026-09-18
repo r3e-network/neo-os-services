@@ -19,28 +19,24 @@ const MAX_RETRY_MAX_DELAY_MS = 600_000;
 // its rpc_urls list is empty (the registry is the SSOT — loadNetworkRegistry reads it, and
 // resolveNeoN3RpcUrls prefers registry.neo_n3.rpc_urls ahead of this fallback). Kept as a
 // defense-in-depth net so a missing registry file does not leave the relayer with no nodes.
-// Mirrored from config/networks/*.json on 2026-06-25 (Round-2 R2-3.5).
-const DEFAULT_NEO_N3_RPC_URLS = {
+// Mirrored from config/networks/*.json.
+//
+// HTTPS ONLY — never add an http:// endpoint here or to config/networks/*.json. A cleartext
+// wallet RPC hop leaks every address and balance query to anyone on the path, and lets an
+// on-path attacker rewrite the response a signing decision is made from. uniqueRankedRpcUrls
+// only demotes http:// to last place, so a single cleartext entry anywhere in the merge order
+// becomes reachable the moment every https:// node is down — exactly when an attacker who can
+// drop traffic wants it. A short list that fails closed is the intended outcome; the C# SDK
+// (neo-os-sdk RpcNodeSelector) and secure-sign's HttpsRequired already refuse cleartext.
+// Enforced by workers/morpheus-relayer/src/rpc-url-ranking.test.mjs, which also pins this
+// table byte-identical to the Rust port in crates/neo-os-core/src/config.rs.
+export const DEFAULT_NEO_N3_RPC_URLS = {
   mainnet: [
     'https://api.n3index.dev/mainnet',
     'https://mainnet1.neo.coz.io:443',
     'https://mainnet2.neo.coz.io:443',
-    'http://seed1.neo.org:10332',
-    'http://seed2.neo.org:10332',
-    'http://seed3.neo.org:10332',
   ],
-  testnet: [
-    'https://api.n3index.dev/testnet',
-    'https://testnet1.neo.coz.io:443',
-    'http://seed1t5.neo.org:20332',
-    'http://seed2t5.neo.org:20332',
-    'http://seed3t5.neo.org:20332',
-    'http://seed4t5.neo.org:20332',
-    'http://seed5t5.neo.org:20332',
-    'http://seed3.neo.org:20332',
-    'http://seed4.neo.org:20332',
-    'http://seed5.neo.org:20332',
-  ],
+  testnet: ['https://api.n3index.dev/testnet', 'https://testnet1.neo.coz.io:443'],
 };
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(moduleDir, '../../..');

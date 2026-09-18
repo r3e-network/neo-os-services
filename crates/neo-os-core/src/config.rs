@@ -27,7 +27,20 @@ pub const SUPPORTED_CHAINS: &[&str] = &["neo_n3", "neox"];
 
 /// Last-resort fallback RPC URLs used ONLY when the network registry is
 /// absent or its rpc_urls list is empty (port of DEFAULT_NEO_N3_RPC_URLS,
-/// mirrored from config/networks/*.json on 2026-06-25).
+/// mirrored from config/networks/*.json).
+///
+/// HTTPS ONLY — never add an `http://` endpoint here or to the JS table this
+/// ports. A cleartext wallet RPC hop leaks every address and balance query to
+/// anyone on the path, and lets an on-path attacker rewrite the response a
+/// signing decision is made from. `unique_ranked_rpc_urls` only demotes
+/// `http://` to last place, so a single cleartext entry anywhere in the merge
+/// order becomes reachable the moment every `https://` node is down — exactly
+/// when an attacker who can drop traffic wants it. A short list that fails
+/// closed is the intended outcome; the C# SDK (neo-os-sdk `RpcNodeSelector`)
+/// and secure-sign's `HttpsRequired` already refuse cleartext.
+///
+/// `workers/morpheus-relayer/src/rpc-url-ranking.test.mjs` parses this literal
+/// and asserts it is https-only and identical to the JS table.
 pub static DEFAULT_NEO_N3_RPC_URLS: &[(&str, &[&str])] = &[
     (
         "mainnet",
@@ -35,9 +48,6 @@ pub static DEFAULT_NEO_N3_RPC_URLS: &[(&str, &[&str])] = &[
             "https://api.n3index.dev/mainnet",
             "https://mainnet1.neo.coz.io:443",
             "https://mainnet2.neo.coz.io:443",
-            "http://seed1.neo.org:10332",
-            "http://seed2.neo.org:10332",
-            "http://seed3.neo.org:10332",
         ],
     ),
     (
@@ -45,14 +55,6 @@ pub static DEFAULT_NEO_N3_RPC_URLS: &[(&str, &[&str])] = &[
         &[
             "https://api.n3index.dev/testnet",
             "https://testnet1.neo.coz.io:443",
-            "http://seed1t5.neo.org:20332",
-            "http://seed2t5.neo.org:20332",
-            "http://seed3t5.neo.org:20332",
-            "http://seed4t5.neo.org:20332",
-            "http://seed5t5.neo.org:20332",
-            "http://seed3.neo.org:20332",
-            "http://seed4.neo.org:20332",
-            "http://seed5.neo.org:20332",
         ],
     ),
 ];

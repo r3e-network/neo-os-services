@@ -671,7 +671,9 @@ test('handleOracleFeed fails closed when on-chain baseline is unavailable and lo
   process.env.MORPHEUS_FEED_PROVIDERS = 'twelvedata';
   process.env.TWELVEDATA_API_KEY = 'test-twelvedata-key';
   process.env.MORPHEUS_NETWORK = 'mainnet';
-  process.env.NEO_RPC_URL = 'http://seed1.neo.org:10332';
+  // https:// so no fixture in the tree models a cleartext wallet RPC hop as
+  // normal; the fetch below is stubbed to throw, so the host is never dialed.
+  process.env.NEO_RPC_URL = 'https://mainnet1.neo.coz.io:443';
   process.env.CONTRACT_MORPHEUS_DATAFEED_HASH = '0x03013f49c42a14546c8bbe58f9d434c3517fccab';
   process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = 'true';
   process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET =
@@ -701,7 +703,7 @@ test('handleOracleFeed fails closed when on-chain baseline is unavailable and lo
   assert.equal(body.batch_count, 0);
   assert.deepEqual(body.sync_results, []);
   assert.match(body.errors[0].error, /baseline/i);
-  assert.ok(calls.some((entry) => entry.includes('seed1.neo.org:10332')));
+  assert.ok(calls.some((entry) => entry.includes('mainnet1.neo.coz.io:443')));
   assert.ok(!calls.some((entry) => entry.includes('api.twelvedata.com')));
 });
 
