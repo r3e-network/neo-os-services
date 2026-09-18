@@ -1742,8 +1742,25 @@ test('createRelayerConfig ranks https mainnet Neo N3 RPC endpoints before plaint
       firstHttp === -1 || lastHttps < firstHttp,
       'no plaintext http:// RPC may be ranked before an https:// RPC'
     );
-    // The http seeds remain present as a last-resort fallback.
-    assert.ok(config.neo_n3.rpcUrls.includes('http://seed1.neo.org:10332'));
+    // Strengthened from "http seeds remain present as a last-resort fallback".
+    // Ranking them last was never a control: uniqueRankedRpcUrls only demotes
+    // http://, so a surviving cleartext seed is still dialed once every https://
+    // node is unreachable — the exact state an on-path attacker who can drop
+    // traffic can force, after which they see every address and balance query
+    // and can rewrite the response a signing decision is made from. No cleartext
+    // endpoint may appear in the resolved list at all; failing closed with a
+    // short https-only list is the intended outcome.
+    assert.equal(
+      firstHttp,
+      -1,
+      `resolved mainnet RPC list must contain no cleartext http:// endpoint, got ${JSON.stringify(
+        config.neo_n3.rpcUrls
+      )}`
+    );
+    assert.ok(
+      config.neo_n3.rpcUrls.every((url) => url.startsWith('https://')),
+      'every resolved mainnet RPC endpoint must be https://'
+    );
   } finally {
     for (const [key, value] of previous.entries()) {
       if (value === undefined) delete process.env[key];

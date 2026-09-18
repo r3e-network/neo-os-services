@@ -383,8 +383,11 @@ await loadExampleEnv();
 const network = trimString(process.env.MORPHEUS_NETWORK || 'testnet') || 'testnet';
 const registry = await readDeploymentRegistry(network);
 const deployment = registry.neo_n3 || {};
+// HTTPS only: a cleartext RPC hop exposes every address and balance query on
+// the wire and lets an on-path attacker rewrite the response a signing decision
+// is made from. Never restore an http:// default here.
 const defaultRpcUrl =
-  network === 'mainnet' ? 'http://seed1.neo.org:10332' : 'https://testnet1.neo.coz.io:443';
+  network === 'mainnet' ? 'https://mainnet1.neo.coz.io:443' : 'https://testnet1.neo.coz.io:443';
 const defaultNetworkMagic = network === 'mainnet' ? 860833102 : 894710606;
 const rpcUrl = trimString(process.env.NEO_RPC_URL || deployment.rpc_url || defaultRpcUrl);
 const networkMagic = Number(

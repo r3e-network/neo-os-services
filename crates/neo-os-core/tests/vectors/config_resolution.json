@@ -23,15 +23,7 @@
           "rpc_url": "https://api.n3index.dev/testnet",
           "rpc_urls": [
             "https://api.n3index.dev/testnet",
-            "https://testnet1.neo.coz.io:443",
-            "http://seed1t5.neo.org:20332",
-            "http://seed2t5.neo.org:20332",
-            "http://seed3t5.neo.org:20332",
-            "http://seed4t5.neo.org:20332",
-            "http://seed5t5.neo.org:20332",
-            "http://seed3.neo.org:20332",
-            "http://seed4.neo.org:20332",
-            "http://seed5.neo.org:20332"
+            "https://testnet1.neo.coz.io:443"
           ],
           "network_magic": 894710606,
           "domains": {
@@ -448,38 +440,6 @@
                   {
                     "__t": "string",
                     "v": "https://testnet1.neo.coz.io:443"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed1t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed2t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed3t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed4t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed5t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed3.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed4.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed5.neo.org:20332"
                   }
                 ]
               },
@@ -676,10 +636,7 @@
           "rpc_urls": [
             "https://api.n3index.dev/mainnet",
             "https://mainnet1.neo.coz.io:443",
-            "https://mainnet2.neo.coz.io:443",
-            "http://seed1.neo.org:10332",
-            "http://seed2.neo.org:10332",
-            "http://seed3.neo.org:10332"
+            "https://mainnet2.neo.coz.io:443"
           ],
           "network_magic": 860833102,
           "domains": {
@@ -1104,18 +1061,6 @@
                   {
                     "__t": "string",
                     "v": "https://mainnet2.neo.coz.io:443"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed1.neo.org:10332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed2.neo.org:10332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed3.neo.org:10332"
                   }
                 ]
               },
@@ -1331,10 +1276,7 @@
           "rpc_urls": [
             "https://api.n3index.dev/mainnet",
             "https://mainnet1.neo.coz.io:443",
-            "https://mainnet2.neo.coz.io:443",
-            "http://seed1.neo.org:10332",
-            "http://seed2.neo.org:10332",
-            "http://seed3.neo.org:10332"
+            "https://mainnet2.neo.coz.io:443"
           ],
           "network_magic": 860833102,
           "domains": {
@@ -1762,18 +1704,6 @@
                   {
                     "__t": "string",
                     "v": "https://mainnet2.neo.coz.io:443"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed1.neo.org:10332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed2.neo.org:10332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed3.neo.org:10332"
                   }
                 ]
               },
@@ -1976,15 +1906,7 @@
           "rpc_url": "https://api.n3index.dev/testnet",
           "rpc_urls": [
             "https://api.n3index.dev/testnet",
-            "https://testnet1.neo.coz.io:443",
-            "http://seed1t5.neo.org:20332",
-            "http://seed2t5.neo.org:20332",
-            "http://seed3t5.neo.org:20332",
-            "http://seed4t5.neo.org:20332",
-            "http://seed5t5.neo.org:20332",
-            "http://seed3.neo.org:20332",
-            "http://seed4.neo.org:20332",
-            "http://seed5.neo.org:20332"
+            "https://testnet1.neo.coz.io:443"
           ],
           "network_magic": 894710606,
           "domains": {
@@ -2403,38 +2325,6 @@
                   {
                     "__t": "string",
                     "v": "https://testnet1.neo.coz.io:443"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed1t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed2t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed3t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed4t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed5t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed3.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed4.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed5.neo.org:20332"
                   }
                 ]
               },
@@ -2633,15 +2523,7 @@
           "rpc_url": "https://api.n3index.dev/testnet",
           "rpc_urls": [
             "https://api.n3index.dev/testnet",
-            "https://testnet1.neo.coz.io:443",
-            "http://seed1t5.neo.org:20332",
-            "http://seed2t5.neo.org:20332",
-            "http://seed3t5.neo.org:20332",
-            "http://seed4t5.neo.org:20332",
-            "http://seed5t5.neo.org:20332",
-            "http://seed3.neo.org:20332",
-            "http://seed4.neo.org:20332",
-            "http://seed5.neo.org:20332"
+            "https://testnet1.neo.coz.io:443"
           ],
           "network_magic": 894710606,
           "domains": {
@@ -3058,38 +2940,6 @@
                   {
                     "__t": "string",
                     "v": "https://testnet1.neo.coz.io:443"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed1t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed2t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed3t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed4t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed5t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed3.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed4.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed5.neo.org:20332"
                   }
                 ]
               },
@@ -3285,15 +3135,7 @@
           "rpc_url": "https://api.n3index.dev/testnet",
           "rpc_urls": [
             "https://api.n3index.dev/testnet",
-            "https://testnet1.neo.coz.io:443",
-            "http://seed1t5.neo.org:20332",
-            "http://seed2t5.neo.org:20332",
-            "http://seed3t5.neo.org:20332",
-            "http://seed4t5.neo.org:20332",
-            "http://seed5t5.neo.org:20332",
-            "http://seed3.neo.org:20332",
-            "http://seed4.neo.org:20332",
-            "http://seed5.neo.org:20332"
+            "https://testnet1.neo.coz.io:443"
           ],
           "network_magic": 894710606,
           "domains": {
@@ -3710,38 +3552,6 @@
                   {
                     "__t": "string",
                     "v": "https://testnet1.neo.coz.io:443"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed1t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed2t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed3t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed4t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed5t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed3.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed4.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed5.neo.org:20332"
                   }
                 ]
               },
@@ -3937,15 +3747,7 @@
           "rpc_url": "https://api.n3index.dev/testnet",
           "rpc_urls": [
             "https://api.n3index.dev/testnet",
-            "https://testnet1.neo.coz.io:443",
-            "http://seed1t5.neo.org:20332",
-            "http://seed2t5.neo.org:20332",
-            "http://seed3t5.neo.org:20332",
-            "http://seed4t5.neo.org:20332",
-            "http://seed5t5.neo.org:20332",
-            "http://seed3.neo.org:20332",
-            "http://seed4.neo.org:20332",
-            "http://seed5.neo.org:20332"
+            "https://testnet1.neo.coz.io:443"
           ],
           "network_magic": 894710606,
           "domains": {
@@ -4028,15 +3830,7 @@
           "rpc_url": "https://api.n3index.dev/testnet",
           "rpc_urls": [
             "https://api.n3index.dev/testnet",
-            "https://testnet1.neo.coz.io:443",
-            "http://seed1t5.neo.org:20332",
-            "http://seed2t5.neo.org:20332",
-            "http://seed3t5.neo.org:20332",
-            "http://seed4t5.neo.org:20332",
-            "http://seed5t5.neo.org:20332",
-            "http://seed3.neo.org:20332",
-            "http://seed4.neo.org:20332",
-            "http://seed5.neo.org:20332"
+            "https://testnet1.neo.coz.io:443"
           ],
           "network_magic": 894710606,
           "domains": {
@@ -4119,15 +3913,7 @@
           "rpc_url": "https://api.n3index.dev/testnet",
           "rpc_urls": [
             "https://api.n3index.dev/testnet",
-            "https://testnet1.neo.coz.io:443",
-            "http://seed1t5.neo.org:20332",
-            "http://seed2t5.neo.org:20332",
-            "http://seed3t5.neo.org:20332",
-            "http://seed4t5.neo.org:20332",
-            "http://seed5t5.neo.org:20332",
-            "http://seed3.neo.org:20332",
-            "http://seed4.neo.org:20332",
-            "http://seed5.neo.org:20332"
+            "https://testnet1.neo.coz.io:443"
           ],
           "network_magic": 894710606,
           "domains": {
@@ -4211,15 +3997,7 @@
           "rpc_url": "https://api.n3index.dev/testnet",
           "rpc_urls": [
             "https://api.n3index.dev/testnet",
-            "https://testnet1.neo.coz.io:443",
-            "http://seed1t5.neo.org:20332",
-            "http://seed2t5.neo.org:20332",
-            "http://seed3t5.neo.org:20332",
-            "http://seed4t5.neo.org:20332",
-            "http://seed5t5.neo.org:20332",
-            "http://seed3.neo.org:20332",
-            "http://seed4.neo.org:20332",
-            "http://seed5.neo.org:20332"
+            "https://testnet1.neo.coz.io:443"
           ],
           "network_magic": 894710606,
           "domains": {
@@ -4636,38 +4414,6 @@
                   {
                     "__t": "string",
                     "v": "https://testnet1.neo.coz.io:443"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed1t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed2t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed3t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed4t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed5t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed3.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed4.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed5.neo.org:20332"
                   }
                 ]
               },
@@ -4864,15 +4610,7 @@
           "rpc_url": "https://api.n3index.dev/testnet",
           "rpc_urls": [
             "https://api.n3index.dev/testnet",
-            "https://testnet1.neo.coz.io:443",
-            "http://seed1t5.neo.org:20332",
-            "http://seed2t5.neo.org:20332",
-            "http://seed3t5.neo.org:20332",
-            "http://seed4t5.neo.org:20332",
-            "http://seed5t5.neo.org:20332",
-            "http://seed3.neo.org:20332",
-            "http://seed4.neo.org:20332",
-            "http://seed5.neo.org:20332"
+            "https://testnet1.neo.coz.io:443"
           ],
           "network_magic": 894710606,
           "domains": {
@@ -5293,38 +5031,6 @@
                   {
                     "__t": "string",
                     "v": "https://testnet1.neo.coz.io:443"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed1t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed2t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed3t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed4t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed5t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed3.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed4.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed5.neo.org:20332"
                   }
                 ]
               },
@@ -5521,15 +5227,7 @@
           "rpc_url": "https://api.n3index.dev/testnet",
           "rpc_urls": [
             "https://api.n3index.dev/testnet",
-            "https://testnet1.neo.coz.io:443",
-            "http://seed1t5.neo.org:20332",
-            "http://seed2t5.neo.org:20332",
-            "http://seed3t5.neo.org:20332",
-            "http://seed4t5.neo.org:20332",
-            "http://seed5t5.neo.org:20332",
-            "http://seed3.neo.org:20332",
-            "http://seed4.neo.org:20332",
-            "http://seed5.neo.org:20332"
+            "https://testnet1.neo.coz.io:443"
           ],
           "network_magic": 894710606,
           "domains": {
@@ -5950,38 +5648,6 @@
                   {
                     "__t": "string",
                     "v": "https://testnet1.neo.coz.io:443"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed1t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed2t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed3t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed4t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed5t5.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed3.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed4.neo.org:20332"
-                  },
-                  {
-                    "__t": "string",
-                    "v": "http://seed5.neo.org:20332"
                   }
                 ]
               },
