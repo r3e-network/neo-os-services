@@ -40,7 +40,18 @@ a7bb5cb1ded13c3294dde6ebee1e2e4a6ff819f61fcfbf1b37ef691dc5e2a70d config/protocol
 
 After reviewing a registry change, run `node scripts/export-network-identities.mjs
 --write` from Services. `--check` verifies the Services generated JSON, Fura
-embedded copy, and DevPack Shared JSON against the selected registry fields.
+embedded copy, DevPack Shared JSON, and the Web Edge runtime copy at
+`neo-os-web/platform/edge/functions/_shared/network-identities.v1.json` against
+the selected registry fields. The Edge copy exists because Supabase Edge
+functions are bundled from `platform/edge/functions/` alone and cannot import
+across repositories; `_shared/network-identity.ts` is the only Edge module
+allowed to read it, and `_shared/network-magic-single-source_test.ts` fails on a
+magic restated anywhere else under `functions/`. DevPack Shared reaches the
+TypeScript tree the same way: `shared/constants/rpc.ts` derives `MAINNET_MAGIC`,
+`TESTNET_MAGIC` and every `ExternalIntegrationConfig.networkMagic` from the
+projection, and `shared/test/rpc-network-identity.test.ts` pins both that
+derivation and the agreement between this projection and the `networkMagic`
+field the public Morpheus registry carries.
 It also renders the fixed `NeoOS.Networks.NeoN3NetworkIdentity` C# constants in
 Services and Native, and checks Native's `ProtocolConfiguration.Network` token.
 All other Native protocol bytes remain Native-owned; duplicate/ambiguous keys

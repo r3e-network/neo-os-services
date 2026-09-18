@@ -13,6 +13,7 @@
     "lint": "eslint . --ext .js,.mjs,.ts,.tsx",
     "lint:fix": "eslint . --ext .js,.mjs,.ts,.tsx --fix",
     "verify:repo": "bash scripts/verify_repo.sh",
+    "verify:formal": "python3 packages/shared/src/formal_verify_anchor_policy.py",
     "format:rust": "cargo fmt --all",
     "format:rust:check": "node scripts/check-rust-format.mjs",
     "check:cargo-lock-provenance": "node scripts/check-cargo-lock-provenance.mjs",

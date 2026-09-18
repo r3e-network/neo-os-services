@@ -40,7 +40,10 @@ const csharp = renderCSharpNetworkIdentities(catalog);
 const nativeRoot = path.join(root, '../neo-os-app');
 const furaRoot = path.join(root, '../neo-os-fura');
 const devpackRoot = path.join(root, '../neo-os-devpack');
-const repositories = [root, nativeRoot, furaRoot, devpackRoot];
+// The Edge runtime cannot import across repositories, so it reads a vendored
+// projection beside its own modules rather than a literal in each function.
+const webRoot = path.join(root, '../neo-os-web');
+const repositories = [root, nativeRoot, furaRoot, devpackRoot, webRoot];
 
 // A generator may create directories within an existing consumer checkout, but
 // must never invent a repository or follow its output through a symlink. Check
@@ -114,6 +117,11 @@ const outputs = [
   {
     repository: devpackRoot,
     target: path.join(devpackRoot, 'shared/constants/generated-network-identities.json'),
+    text,
+  },
+  {
+    repository: webRoot,
+    target: path.join(webRoot, 'platform/edge/functions/_shared/network-identities.v1.json'),
     text,
   },
   {

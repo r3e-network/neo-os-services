@@ -811,3 +811,114 @@ fn concurrent_unknown_kid_requests_share_one_refresh() {
         "initial load plus exactly one shared forced refresh"
     );
 }
+
+/// Finite-domain differential check against the real RS256 entry point.
+/// Signing uses one ephemeral test key, never custody or network I/O. The
+/// acceptance table is independent of verifier helpers. This does not model
+/// revocation, JWKS refresh, precise clock boundaries or arbitrary claim JSON.
+#[test]
+fn rs256_acceptance_domain_model() {
+    let private_key = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).expect("test keygen");
+    let public_key = RsaPublicKey::from(&private_key);
+    let jwks = json!({"keys": [{
+        "kty": "RSA", "use": "sig", "alg": "RS256", "kid": "model-test-key",
+        "n": URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be()),
+        "e": URL_SAFE_NO_PAD.encode(public_key.e().to_bytes_be()),
+    }]});
+    let signing_key = SigningKey::<Sha256>::new(private_key);
+    let encode = |value: &serde_json::Value| {
+        URL_SAFE_NO_PAD.encode(serde_json::to_vec(value).expect("fixture json"))
+    };
+    let now = chrono_now();
+    let mut checked = 0;
+    let mut accepted = 0;
+    for expiration in 0..3 {
+        for audience in 0..3 {
+            for algorithm_ok in [false, true] {
+                let mut claims = json!({"sub": "test-subject", "iss": "test-issuer",
+                    "aud": match audience {
+                        0 => json!("wrong-client"),
+                        1 => json!("test-client"),
+                        _ => json!(["other-client", "test-client"]),
+                    },
+                    "nbf": now - 3600, "iat": now - 3600});
+                // Document existing policy: absent exp is allowed by this layer.
+                if expiration != 2 {
+                    claims["exp"] = json!(if expiration == 0 {
+                        now - 3600
+                    } else {
+                        now + 3600
+                    });
+                }
+                let header = json!({"alg": if algorithm_ok { "RS256" } else { "HS256" },
+                    "kid": "model-test-key"});
+                let signing_input = format!("{}.{}", encode(&header), encode(&claims));
+                let signature = signing_key.sign(signing_input.as_bytes()).to_vec();
+                for signature_ok in [false, true] {
+                    let mut bytes = signature.clone();
+                    if !signature_ok {
+                        bytes[0] ^= 1;
+                    }
+                    let token = format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(bytes));
+                    for issuer_ok in [false, true] {
+                        for key_present in [false, true] {
+                            let empty_keys = json!({"keys": []});
+                            let result = verify_rs256_token(
+                                &token,
+                                if key_present { &jwks } else { &empty_keys },
+                                "test-client",
+                                Some(if issuer_ok {
+                                    "test-issuer"
+                                } else {
+                                    "other-issuer"
+                                }),
+                            );
+                            let expected = expiration != 0
+                                && audience != 0
+                                && algorithm_ok
+                                && signature_ok
+                                && issuer_ok
+                                && key_present;
+                            assert_eq!(result.is_ok(), expected,
+                                "expiration={expiration} audience={audience} alg={algorithm_ok} sig={signature_ok} issuer={issuer_ok} key={key_present}: {result:?}");
+                            if expected {
+                                assert_eq!(result.unwrap(), claims);
+                                accepted += 1;
+                            }
+                            checked += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!((checked, accepted, checked - accepted), (144, 4, 140));
+    println!(
+        "rs256_acceptance_domain_model: checked={checked} accepted={accepted} rejected={}",
+        checked - accepted
+    );
+}
+
+#[test]
+fn timestamp_claim_exact_second_boundaries_and_malformed_values() {
+    let now = 1_800_000_000_u64;
+    let policies: [(&str, fn(u64, u64) -> bool, [bool; 3]); 3] = [
+        ("exp", |at, now| now >= at, [false, false, true]),
+        ("nbf", |at, now| now < at, [true, true, false]),
+        ("iat", |at, now| now < at, [true, true, false]),
+    ];
+    for (claim, rejects, expected) in policies {
+        for (offset, accepted) in expected.into_iter().enumerate() {
+            let mut claims = json!({});
+            claims[claim] = json!(now - 1 + offset as u64);
+            assert_eq!(check_timestamp_claim(&claims, claim, rejects, now).is_ok(), accepted,
+                "{claim} offset {offset}");
+        }
+        for value in [json!(null), json!("1800000000"), json!(-1), json!(1.5),
+            json!(true), json!([]), json!({})] {
+            let mut claims = json!({});
+            claims[claim] = value;
+            assert!(check_timestamp_claim(&claims, claim, rejects, now).is_err(), "{claim}: {claims}");
+        }
+    }
+}
