@@ -1044,7 +1044,7 @@ fn verify_replay_proof(
 
 /// The direct-lane finalize proof: the elapsed time the enclave froze for this
 /// exact op-log, presented back through the sealed kernel payload.
-pub fn finalize_proof_for(
+fn finalize_proof_for(
     secret_root: &[u8; 32],
     canonical: &str,
     session: &Session,
