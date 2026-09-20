@@ -1,0 +1,74 @@
+{
+  "$schema": "https://neoos.network/schemas/signing-recovery-v1.json",
+  "schemaVersion": 1,
+  "protocol": "neoos.signing-recovery",
+  "purpose": "Whether a signing request whose result is uncertain may be recovered, and only with the identical digest. Recovery never creates a second signature over different bytes and never implies chain confirmation.",
+  "authority": "secure-sign-service-rs (gateway-signer-custody-backend) owns the wire shape; neo-os-services/workers/neo-signer is its only platform consumer",
+  "fields": {
+    "operationId": {
+      "type": "string",
+      "description": "platform operation the signing request belongs to"
+    },
+    "requestDigest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 of the exact bytes presented for signing"
+    },
+    "method": {
+      "type": "string",
+      "description": "signing method requested (for example sign_n3_tx, sign_evm_tx)"
+    },
+    "network": {
+      "type": "string",
+      "description": "NetworkIdentity name the request is bound to"
+    },
+    "identity": {
+      "type": "string",
+      "description": "custody key identity or caller identity the request was issued under"
+    },
+    "issuedAt": {
+      "type": "integer",
+      "description": "unix milliseconds the original request was accepted"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "recoverable",
+        "conflicting",
+        "expired",
+        "unknown"
+      ],
+      "description": "recovery classification of the original request"
+    },
+    "evidence": {
+      "type": "string",
+      "optional": true,
+      "description": "reference to the signing audit record that supports the classification"
+    }
+  },
+  "required": [
+    "operationId",
+    "requestDigest",
+    "method",
+    "network",
+    "identity",
+    "issuedAt",
+    "state"
+  ],
+  "states": {
+    "recoverable": "the same operationId, method, network, identity and requestDigest were recorded; the original signature may be returned again",
+    "conflicting": "a request with the same operationId but a different digest, method, network or identity exists; operator review is required before any signature is released",
+    "expired": "the original request is past its validity and no signature may be recovered",
+    "unknown": "no durable record of the request exists; the caller must treat the signing attempt as never made"
+  },
+  "invariants": [
+    "recovery returns only the signature over the original requestDigest; a different digest is a new request under a new operationId",
+    "conflicting claims are never resolved automatically",
+    "a recovered signature is signing evidence only and never implies submission or chain confirmation (neoos.transaction-outcome owns that)"
+  ],
+  "producedBy": "gateway-signer-custody-backend",
+  "consumedBy": [
+    "gateway-signer"
+  ],
+  "adoption": "vocabulary published 2026-09-21 from the target architecture's SigningRecovery domain; the custody gateway's recovery protocol rework in progress binds to these states and fields (finding A-20)"
+}
