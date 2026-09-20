@@ -11,6 +11,28 @@ Production hosts use `/opt/neoos/services` for code and retain
 `npm run install:code-path-compat` migration creates legacy code-path links only
 after validating the canonical checkout and refuses to overwrite existing data.
 
+## Architecture authority
+
+`neo-os-services` owns the NeoDID registry (`protocol-did-registry`): commitments, claims,
+nullifiers, and action tickets. Eligibility is an independent proof that the
+operation-policy layer composes with AA authorization; the registry never grants
+authorization, and an indexer never grants eligibility.
+
+`config/networks` in this repository is the sole source of network identity
+(`gateway-network-identity`): magic, genesis, RPC authorities, and signer policy version,
+published as the generated network-identities projection that every runtime consumes. No
+consumer may restate a magic, genesis, or endpoint as a literal, and a missing or ambiguous
+identity fails closed before any write path starts.
+
+The durable service kernel (`gateway-service-kernel`) owns durable jobs, callbacks, and relay
+policy: a job is persisted before a cursor advances, retries reuse the same request and
+idempotency key, and the delivery store is the completion authority for every delivery
+job. Delivery success never implies chain confirmation, and the kernel never replaces AA
+authorization or chain finality.
+
+The binding is declared in `neo-os-web/docs/workspace/neoos-target-architecture.v1.json` and
+checked by the architecture source-coverage gate.
+
 ## Current Design
 
 1. **Cloudflare edge gateway**

@@ -1599,7 +1599,19 @@ mod tests {
                 replies: Mutex::new(
                     replies
                         .into_iter()
-                        .map(|(status, body)| (status, body.to_string()))
+                        .map(|(status, mut body)| {
+                            // Keep scripted fixtures faithful to JSON-RPC 2.0. Older
+                            // fixtures supplied only `result`/`error`, which made
+                            // otherwise valid delivery paths fail before exercising
+                            // their intended assertions.
+                            if body.get("jsonrpc").is_none() {
+                                body["jsonrpc"] = json!("2.0");
+                            }
+                            if body.get("id").is_none() {
+                                body["id"] = json!(1);
+                            }
+                            (status, body.to_string())
+                        })
                         .collect(),
                 ),
                 calls: Mutex::new(Vec::new()),

@@ -433,9 +433,10 @@ struct DbJournal<'a> {
 impl DbJournal<'_> {
     fn summary_status(&self) -> Result<&'static str, String> {
         let job = self.job.lock().map_err(|_| "journal lock poisoned")?;
-        Ok(match job.status.as_str() {
-            "completed" => "completed",
-            "dead_letter" | "reconcile_required" => "terminal",
+        Ok(match job.status {
+            neo_os_relayer_store::delivery::DeliveryStatus::Completed => "completed",
+            neo_os_relayer_store::delivery::DeliveryStatus::DeadLetter
+            | neo_os_relayer_store::delivery::DeliveryStatus::ReconcileRequired => "terminal",
             _ => "retry_scheduled",
         })
     }
@@ -508,7 +509,7 @@ pub fn visit(
         }
         return Ok(json!({"chain":chain,"status":"healthy_empty_or_owned"}));
     };
-    if job.status == "dead_letter" {
+    if job.status == neo_os_relayer_store::delivery::DeliveryStatus::DeadLetter {
         return Ok(json!({"chain":chain,"status":"terminal","reason":"max_attempts_exhausted"}));
     }
     let event = JsValue::from_json(&job.event);

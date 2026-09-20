@@ -17,6 +17,15 @@ Apply the migrations in order:
 13. `0013_automation_processing_claims.sql`
 14. `0014_tighten_request_job_rls.sql`
 15. `0015_harden_operational_table_rls.sql`
+16. `0016_allow_neox_relayer_jobs.sql`
+17. `0017_workflow_registry.sql`
+18. `0018_secret_rotation.sql`
+19. `0019_tighten_workflow_namespace.sql`
+20. `0020_harden_remaining_rls.sql`
+21. `20260806223618_network_scoped_business_keys.sql`
+22. `20260806231613_distributed_rate_limits.sql`
+23. `20260908040427_relayer_delivery_v2.sql`
+24. `20260920102300_relayer_delivery_completion_identity.sql`
 
 Optional:
 

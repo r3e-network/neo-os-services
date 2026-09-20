@@ -5,6 +5,60 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+const DELIVERY_OPERATIONS: &[&str] = &[
+    "renew",
+    "prepared",
+    "signed",
+    "no_update",
+    "faulted",
+    "expired",
+    "reconciled",
+    "completed",
+    "retry",
+    "terminal",
+];
+
+/// The durable delivery state is a separate protocol from transaction outcome.
+/// In particular, `completed` means the delivery job reached its terminal
+/// store state; chain confirmation still requires an evidence-bound receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryStatus {
+    Queued,
+    Processing,
+    Prepared,
+    Signed,
+    BroadcastUnknown,
+    RetryScheduled,
+    Completed,
+    DeadLetter,
+    ReconcileRequired,
+}
+
+impl DeliveryStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Processing => "processing",
+            Self::Prepared => "prepared",
+            Self::Signed => "signed",
+            Self::BroadcastUnknown => "broadcast_unknown",
+            Self::RetryScheduled => "retry_scheduled",
+            Self::Completed => "completed",
+            Self::DeadLetter => "dead_letter",
+            Self::ReconcileRequired => "reconcile_required",
+        }
+    }
+}
+
+fn validate_delivery_operation(operation: &str) -> Result<(), String> {
+    if DELIVERY_OPERATIONS.contains(&operation) {
+        Ok(())
+    } else {
+        Err(format!("unsupported delivery operation: {operation}"))
+    }
+}
+
 fn pack_event(event: &Value) -> Value {
     let semantics = json!([
         event.get("payload"),
@@ -49,7 +103,7 @@ pub struct DeliveryJob {
     pub attempts: u64,
     pub event: Value,
     pub journal: Value,
-    pub status: String,
+    pub status: DeliveryStatus,
     pub kind: String,
     pub contract: String,
     pub chain: String,
@@ -181,6 +235,7 @@ impl<T: HttpTransport> DeliveryStore<'_, T> {
         lease_ms: u64,
         now_ms: u64,
     ) -> Result<DeliveryJob, String> {
+        validate_delivery_operation(op)?;
         let data = if op == "prepared" {
             json!({"content_base64":neo_os_core::base64::encode_standard(data.to_string().as_bytes()),"feed_response":data.get("feed_response"),"feed_baseline_patch":data.get("feed_baseline_patch")})
         } else {
@@ -204,5 +259,43 @@ impl<T: HttpTransport> DeliveryStore<'_, T> {
             .as_str()
             .map(|value| Some(value.to_owned()))
             .ok_or_else(|| "invalid delivery checkpoint".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_delivery_operation, DeliveryStatus};
+    use serde_json::json;
+
+    #[test]
+    fn delivery_status_is_closed_and_does_not_alias_transaction_terminals() {
+        let completed: DeliveryStatus = serde_json::from_value(json!("completed")).unwrap();
+        assert_eq!(completed, DeliveryStatus::Completed);
+        assert_eq!(completed.as_str(), "completed");
+        assert!(serde_json::from_value::<DeliveryStatus>(json!("confirmed")).is_err());
+        assert!(serde_json::from_value::<DeliveryStatus>(json!("unknown")).is_err());
+    }
+
+    #[test]
+    fn delivery_operations_fail_closed_before_rpc() {
+        for operation in [
+            "renew",
+            "prepared",
+            "signed",
+            "no_update",
+            "faulted",
+            "expired",
+            "reconciled",
+            "completed",
+            "retry",
+            "terminal",
+        ] {
+            assert!(
+                validate_delivery_operation(operation).is_ok(),
+                "{operation}"
+            );
+        }
+        let error = validate_delivery_operation("confirmed").unwrap_err();
+        assert!(error.contains("unsupported delivery operation"));
     }
 }

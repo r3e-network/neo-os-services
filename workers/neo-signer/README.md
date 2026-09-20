@@ -12,6 +12,19 @@ back in the glob, and every aggregate `npm -ws` script would then treat a Rust
 crate as a Node package. Nothing else keeps it out: `workers/*` matches this
 directory, and npm skips it only because there is no manifest to read.
 
+## Architecture authority
+
+`neo-os-services/workers/neo-signer` is the sole NeoOS signer policy authority: caller
+authentication, network binding, per-key limits, anti-equivocation state, and the signing
+audit trail are decided here and nowhere else. Key custody and attestation are supplied
+by the `secure-sign-service-rs` custody backend through the `coordinator` client; this
+service does not expose a second custody implementation, and the backend cannot select
+policy or mint caller permissions. Any local or compatibility key path is a development
+adapter with an explicit owner and retirement condition, never a platform authority.
+The binding is declared as `gateway-signer` in
+`neo-os-web/docs/workspace/neoos-target-architecture.v1.json` and checked by the
+architecture source-coverage gate.
+
 ## What is here
 
 | Module          | Role                                                                                   |

@@ -10,6 +10,20 @@ and fault-injection gates pass. No production rollout is implied.
   the current owner/generation. Renewal cannot resurrect an expired lease.
 - Prepared results and signed transactions are persisted before broadcast.
   Unknown broadcast/confirmation resumes the same transaction, not compute.
+- Delivery success records callback or job completion only. The system must
+  never infer chain confirmation from delivery success. Chain confirmation
+  requires the exact transaction identity and an independently validated
+  receipt.
+- The store, not the worker, is the completion authority. `completed` is
+  refused unless the journal already holds the signed stage, the receipt hash
+  equals the signed hash exactly, and the receipt state is HALT. RECONCILED
+  settlement enters only through `reconciled` for unsigned request jobs and a
+  finalized fault only through `faulted` against the signed hash. Journal
+  stages must be objects with non-blank string `tx_hash`/`raw`; every refusal
+  is SQLSTATE `22023` and leaves the row untouched, while lease loss stays
+  `P0002`. This is enforced by
+  `supabase/migrations/20260920102300_relayer_delivery_completion_identity.sql`
+  and exercised on real PostgreSQL by `scripts/test-relayer-delivery-v2.sh`.
 - Due time and terminal outcomes are enforced in the store. Replay is explicit.
 - Account-level nonce ownership serializes sends across instances.
 - A failed store/commit is degraded, not a successful tick. Backoff survives ticks.
@@ -60,9 +74,10 @@ restart. Local processed/dead-letter caches never override a v2 job's state.
 2. Back up the existing state file and export `morpheus_relayer_jobs`, including
    transaction hashes, retries and dead letters. Preserve immutable copies.
 3. Apply the additive migration
-   `supabase/migrations/20260908040427_relayer_delivery_v2.sql` through the normal
-   reviewed database release process. No migration has been applied to a remote
-   database by the remediation task.
+   `supabase/migrations/20260908040427_relayer_delivery_v2.sql` and its follow-up
+   `supabase/migrations/20260920102300_relayer_delivery_completion_identity.sql`
+   through the normal reviewed database release process. No migration has been
+   applied to a remote database by the remediation task.
 4. Configure v2 and run `neo-os-relayer config:validate`. The first v2 tick imports
    the local retry/dead-letter recovery lanes and legacy nonterminal DB jobs.
    Fresh, never-attempted queued rows may execute. Any prior attempt or known
