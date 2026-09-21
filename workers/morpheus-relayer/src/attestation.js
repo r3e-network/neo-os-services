@@ -7,6 +7,10 @@ import {
   buildCoseSign1SigStructure,
   coseEs384SignatureToDer,
 } from '@r3e-network/neo-os-services-shared/cose-verify';
+import {
+  AWS_NITRO_ROOT_G1_PEM,
+  assertPinnedNitroRootPem,
+} from '@r3e-network/neo-os-services-shared/nitro-root';
 import { normalizeErrorMessage } from './feed-sync.js';
 import { resolvePinnedNeoN3VerifierPublicKey } from './lib/neo-signers.js';
 
@@ -41,9 +45,12 @@ function extractAttestationCertChain(payload) {
 // COSE_Sign1 ES384 signature + certificate-chain verification against a pinned AWS
 // Nitro root certificate. Returns one of:
 //   { verified: true }                     — signature + chain to the pinned root OK
-//   { verified: false, checked: false }    — not checkable (no root pinned / no cert
-//                                            / placeholder signature). The caller
-//                                            MUST NOT treat this as attested.
+//   { verified: false, checked: false }    — not checkable (no cert chain in the
+//                                            document / placeholder signature). The
+//                                            caller MUST NOT treat this as attested.
+//                                            The root itself is always pinned (see
+//                                            resolveNitroRootCertPem), so "no anchor"
+//                                            is no longer one of these cases.
 //   throws                                 — a real, checkable signature/chain that
 //                                            FAILS verification (forged document)
 function verifyCoseSign1Crypto(rootCertPem, cose, payload) {
@@ -122,13 +129,23 @@ export function resolveExpectedPcr0(config) {
   );
 }
 
-// Whether the enclave signature cross-check (digest-sig) is enabled. Opt-in via
-// config.nitro.verifyEnclaveSignature OR MORPHEUS_RELAYER_VERIFY_ENCLAVE_SIGNATURE
-// (read directly so it is operable without a config.js change). Default OFF so the
-// current deployment (which has not pinned strict verification) keeps fulfilling.
+// Whether the enclave signature cross-check (digest-sig) is enabled. Resolved from
+// config.nitro.verifyEnclaveSignature (an explicit boolean there is authoritative —
+// that is the operator's documented opt-out) and otherwise from
+// MORPHEUS_RELAYER_VERIFY_ENCLAVE_SIGNATURE, read directly so it is operable without
+// a config.js change. SECURITY (SVC-A-4): the fallback default is ON in production,
+// matching how config.js:597-600 and crates/neo-os-core/src/config.rs:1331-1337
+// already resolve the same key, so a partially-built config can no longer silently
+// downgrade a production relayer to no cross-check. Outside production it stays
+// opt-in, and resolveAttestationMaxAgeMs below hardens the same way.
 export function enclaveSignatureVerificationEnabled(config) {
-  if (config?.nitro?.verifyEnclaveSignature) return true;
-  return parseBooleanEnv(process.env.MORPHEUS_RELAYER_VERIFY_ENCLAVE_SIGNATURE, false);
+  const configured = config?.nitro?.verifyEnclaveSignature;
+  if (typeof configured === 'boolean') return configured;
+  if (configured) return true;
+  return parseBooleanEnv(
+    process.env.MORPHEUS_RELAYER_VERIFY_ENCLAVE_SIGNATURE,
+    process.env.NODE_ENV === 'production'
+  );
 }
 
 /**
@@ -148,13 +165,27 @@ export function enclaveSignatureVerificationEnabled(config) {
  */
 // Pinned AWS Nitro attestation ROOT certificate (PEM). The relayer verifies the
 // COSE_Sign1 ES384 signature + the document's chain up to this root before it may
-// claim `attested:true`. Unset keeps fulfillment backward-compatible, but the result
-// is explicitly downgraded to host-unattested even when PCR0 matches.
+// claim `attested:true`.
+//
+// SECURITY (SVC-A-4, CL-01): the anchor is PINNED IN CODE — it defaults to
+// AWS_NITRO_ROOT_G1_PEM, whose DER SHA-256 the shared module asserts against
+// AWS_NITRO_ROOT_FINGERPRINTS_SHA256 at load. There is deliberately no
+// "unset means skip" branch any more: a host that left MORPHEUS_NITRO_ROOT_CERT_PEM
+// unset previously got no signature or chain verification at all, and a host that
+// set it to a root of its own got forged documents verified as attested. An
+// operator override is still accepted (so a G1->G2 rotation can be staged from
+// config), but only when it hashes to a pinned fingerprint; anything else is a hard
+// error rather than a new trust anchor.
 export function resolveNitroRootCertPem(config) {
-  return (
-    trimString(config?.nitro?.nitroRootCertPem || '') ||
-    trimString(process.env.MORPHEUS_NITRO_ROOT_CERT_PEM || '')
-  );
+  const fromConfig = trimString(config?.nitro?.nitroRootCertPem || '');
+  if (fromConfig) {
+    return assertPinnedNitroRootPem(fromConfig, { source: 'config nitro.nitroRootCertPem' });
+  }
+  const fromEnv = trimString(process.env.MORPHEUS_NITRO_ROOT_CERT_PEM || '');
+  if (fromEnv) {
+    return assertPinnedNitroRootPem(fromEnv, { source: 'MORPHEUS_NITRO_ROOT_CERT_PEM' });
+  }
+  return AWS_NITRO_ROOT_G1_PEM;
 }
 
 // Maximum accepted age (ms) of an attestation document's echoed timestamp. 0 (the
@@ -248,12 +279,12 @@ export function verifyEnclaveAttestation(config, body, localDigestHex, options =
     }
   }
 
-  // COSE_Sign1 signature + certificate-chain verification (b). When a
-  // pinned AWS Nitro root cert is configured AND the document carries a real
-  // certificate chain + a 96-byte ES384 signature, verify the COSE_Sign1 signature
-  // and the chain up to the pinned root. A document that FAILS this crypto check is
+  // COSE_Sign1 signature + certificate-chain verification (b). The AWS Nitro root is
+  // always pinned (resolveNitroRootCertPem), so whenever the document carries a real
+  // certificate chain + a 96-byte ES384 signature the COSE_Sign1 signature and the
+  // chain up to that root ARE verified. A document that FAILS this crypto check is
   // NOT attested — it is a forged/tampered structure and a hard failure (throw). When
-  // no root is pinned / no cert chain present / placeholder signature, fulfillment may
+  // the document carries no cert chain / a placeholder signature, fulfillment may
   // continue for compatibility, but it MUST remain host-unattested. PCR fields inside
   // an unsigned payload are attacker-controlled and can never establish enclave trust.
   const cryptoResult = verifyCoseSign1Crypto(resolveNitroRootCertPem(config), cose, payload);

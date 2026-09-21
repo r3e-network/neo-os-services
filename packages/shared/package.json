@@ -15,6 +15,9 @@
     "./cbor": {
       "default": "./src/cbor.js"
     },
+    "./nitro-root": {
+      "default": "./src/nitro-root.js"
+    },
     "./cose-verify": {
       "types": "./src/cose-verify.d.ts",
       "default": "./src/cose-verify.js"

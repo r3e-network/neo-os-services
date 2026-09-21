@@ -23,6 +23,7 @@ import {
   verifyEnclaveAttestation,
   verifyEnclaveSignatureAgainstPinnedVerifier,
 } from './fulfillment.js';
+import { AWS_NITRO_ROOT_G1_PEM } from '@r3e-network/neo-os-services-shared/nitro-root';
 import { buildEventKey, createEmptyRelayerState } from './state.js';
 import {
   markSupabasePersistenceUnavailable,
@@ -2372,38 +2373,40 @@ describe('verifyEnclaveAttestation COSE crypto verification', () => {
   const userDataFor = (digestHex) =>
     createHash('sha256').update(Buffer.from(digestHex, 'hex')).digest('hex');
   const PCR0 = 'cd'.repeat(48);
-  const ROOT_PEM = '-----BEGIN CERTIFICATE-----\nMIIBfakeRootCert\n-----END CERTIFICATE-----';
 
-  it('resolveNitroRootCertPem reads config then env', () => {
-    assert.equal(resolveNitroRootCertPem({ nitro: { nitroRootCertPem: 'PEM-A' } }), 'PEM-A');
+  // SVC-A-4: the anchor is no longer host-supplied. resolveNitroRootCertPem returns
+  // the pinned AWS Nitro root by default, and any config/env override must hash to a
+  // pinned fingerprint — so these cases no longer need (or accept) a stand-in PEM.
+  it('resolveNitroRootCertPem returns the pinned root and rejects unpinned overrides', () => {
+    assert.equal(resolveNitroRootCertPem({}), AWS_NITRO_ROOT_G1_PEM);
+    assert.equal(
+      resolveNitroRootCertPem({ nitro: { nitroRootCertPem: AWS_NITRO_ROOT_G1_PEM } }),
+      AWS_NITRO_ROOT_G1_PEM
+    );
+    assert.throws(
+      () => resolveNitroRootCertPem({ nitro: { nitroRootCertPem: 'PEM-A' } }),
+      /contains no PEM CERTIFICATE block/
+    );
     const saved = process.env.MORPHEUS_NITRO_ROOT_CERT_PEM;
     process.env.MORPHEUS_NITRO_ROOT_CERT_PEM = 'PEM-B';
     try {
-      assert.equal(resolveNitroRootCertPem({}), 'PEM-B');
+      assert.throws(() => resolveNitroRootCertPem({}), /contains no PEM CERTIFICATE block/);
     } finally {
       if (saved === undefined) delete process.env.MORPHEUS_NITRO_ROOT_CERT_PEM;
       else process.env.MORPHEUS_NITRO_ROOT_CERT_PEM = saved;
     }
   });
 
-  it('downgrades when no root cert is pinned', () => {
+  it('downgrades when the doc carries no cert chain', () => {
     const config = { nitro: { expectedPcr0: PCR0 } };
     const doc = buildAttestationDoc({ userDataHex: userDataFor(DIGEST), pcr0Hex: PCR0 });
     const res = verifyEnclaveAttestation(config, { attestation_doc_base64: doc }, DIGEST);
     assert.equal(res.attested, false);
-    assert.equal(res.cose_verified, false, 'no root pinned => crypto check skipped');
+    assert.equal(res.cose_verified, false, 'nothing to verify => still host-unattested');
   });
 
-  it('downgrades when a root is pinned but the doc carries no cert chain', () => {
-    const config = { nitro: { expectedPcr0: PCR0, nitroRootCertPem: ROOT_PEM } };
-    const doc = buildAttestationDoc({ userDataHex: userDataFor(DIGEST), pcr0Hex: PCR0 });
-    const res = verifyEnclaveAttestation(config, { attestation_doc_base64: doc }, DIGEST);
-    assert.equal(res.attested, false);
-    assert.equal(res.cose_verified, false);
-  });
-
-  it('hard-fails when a root is pinned and the doc carries a MALFORMED cert chain', () => {
-    const config = { nitro: { expectedPcr0: PCR0, nitroRootCertPem: ROOT_PEM } };
+  it('hard-fails when the doc carries a MALFORMED cert chain', () => {
+    const config = { nitro: { expectedPcr0: PCR0 } };
     const doc = buildAttestationDocWithChain({
       userDataHex: userDataFor(DIGEST),
       pcr0Hex: PCR0,
