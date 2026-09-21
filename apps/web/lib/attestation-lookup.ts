@@ -112,12 +112,18 @@ export function buildVerifierInput(envelope: Record<string, unknown>, fallbackHa
   const attestationHash =
     safeString(verification.attestation_hash || envelope.attestation_hash, 128) ||
     `0x${fallbackHash}`;
+  // SECURITY (SVC-A-2): the verifier derives the document<->envelope binding
+  // from the envelope, so the fulfil lane's digest has to survive this
+  // projection or a fulfil-shaped envelope arrives at /api/attestation/verify
+  // with no binding at all.
+  const fulfillmentDigestHex = normalizeFixedHex(envelope.fulfillment_digest_hex, 64);
   const safeEnvelope = {
     verification: {
       output_hash: outputHash,
       attestation_hash: attestationHash,
       tee_attestation: safeAttestation,
     },
+    ...(fulfillmentDigestHex ? { fulfillment_digest_hex: fulfillmentDigestHex } : {}),
     ...(attestationDocument ? { attestation_document: attestationDocument } : {}),
   };
 

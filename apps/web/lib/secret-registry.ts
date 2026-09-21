@@ -61,6 +61,95 @@ export function validateEncryptionAlgorithm(value: unknown): string | null {
   return null;
 }
 
+/**
+ * SECURITY (SVC-C-5): the encryption-label keys. The enclave read path
+ * (crates/neo-os-compute/src/oracle/crypto.rs `assert_encrypted_ref_scope`)
+ * enforces a binding ONLY when the stored row carries one, so a caller that
+ * can write these keys can write itself an unbound — i.e. universally
+ * spendable — credential. They are server-computed and stripped from any
+ * caller-supplied metadata object.
+ */
+export const RESERVED_SECRET_BINDING_KEYS = Object.freeze([
+  'bound_requester',
+  'bound_callback_contract',
+]);
+
+/**
+ * Neo N3 script hash, `0x` + 40 lowercase hex, or '' when not one. Only a real
+ * string is considered: coercing arrays/objects here would let a JSON body
+ * smuggle a binding through a shape the rest of the stack does not expect.
+ */
+export function normalizeBindingHash160(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const raw = value.trim().replace(/^0x/i, '').toLowerCase();
+  return /^[0-9a-f]{40}$/.test(raw) ? `0x${raw}` : '';
+}
+
+export interface SecretMetadataInput {
+  /** Whatever the caller sent as `metadata`; never trusted for binding keys. */
+  callerMetadata: unknown;
+  source: string;
+  network?: string;
+  requester?: unknown;
+  callbackContract?: unknown;
+}
+
+export interface SecretMetadataResult {
+  metadata: Record<string, unknown>;
+  boundRequester: string;
+  boundCallbackContract: string;
+}
+
+/**
+ * Build the stored `metadata` object for an encrypted secret.
+ *
+ * The caller's own metadata is merged FIRST and the reserved binding keys are
+ * deleted from it, so a request body can never override — or erase — the
+ * binding the server computed. Previously `/api/confidential/store` spread the
+ * caller's object last, which let `metadata: { bound_requester: 'anything' }`
+ * win over the normalized value and normalize back to empty at read time.
+ */
+export function buildSecretMetadata(input: SecretMetadataInput): SecretMetadataResult {
+  const caller =
+    input.callerMetadata &&
+    typeof input.callerMetadata === 'object' &&
+    !Array.isArray(input.callerMetadata)
+      ? { ...(input.callerMetadata as Record<string, unknown>) }
+      : {};
+  for (const key of RESERVED_SECRET_BINDING_KEYS) delete caller[key];
+
+  const boundRequester = normalizeBindingHash160(input.requester);
+  const boundCallbackContract = normalizeBindingHash160(input.callbackContract);
+
+  return {
+    metadata: {
+      ...caller,
+      source: input.source,
+      ...(input.network ? { network: input.network } : {}),
+      ...(boundRequester ? { bound_requester: boundRequester } : {}),
+      ...(boundCallbackContract ? { bound_callback_contract: boundCallbackContract } : {}),
+    },
+    boundRequester,
+    boundCallbackContract,
+  };
+}
+
+/**
+ * Mainnet ciphertexts must carry at least one binding so a leaked `secret_ref`
+ * cannot be spent from an arbitrary context (Chainlink calls this an
+ * encryption label). Testnet stays permissive so development flows that have
+ * no contract yet keep working. Returns an error message, or null when ok.
+ */
+export function validateSecretBinding(
+  network: string,
+  boundRequester: string,
+  boundCallbackContract: string
+): string | null {
+  if (network !== 'mainnet') return null;
+  if (boundRequester || boundCallbackContract) return null;
+  return 'a mainnet secret must be bound: supply requester and/or callback_contract (0x + 40 hex)';
+}
+
 export type SecretRegistryRow = {
   id: string;
   project_id: string;

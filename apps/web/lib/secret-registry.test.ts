@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   MAX_SECRET_CIPHERTEXT_LENGTH,
+  buildSecretMetadata,
+  normalizeBindingHash160,
   sanitizeSecretName,
   toPublicSecretRecord,
   validateEncryptionAlgorithm,
+  validateSecretBinding,
   validateSecretCiphertext,
   validateSecretExpiry,
   type SecretRegistryRow,
@@ -88,5 +91,80 @@ describe('public projection', () => {
     expect(record.key_version).toBe(1);
     expect(record).not.toHaveProperty('ciphertext');
     expect(record).not.toHaveProperty('project_id');
+  });
+});
+
+// ===========================================================================
+// SVC-C-5: the encryption label (bound_requester / bound_callback_contract) is
+// what stops a leaked `secret_ref` from being spendable out of context. The
+// enclave read path only enforces a binding when the stored row carries one,
+// so the write path must own those keys outright.
+// ===========================================================================
+
+describe('secret binding metadata (SVC-C-5)', () => {
+  const REQUESTER = '0x' + 'ab'.repeat(20);
+  const CALLBACK = '0x' + 'cd'.repeat(20);
+
+  it('normalizes a hash160 and rejects anything that is not one', () => {
+    expect(normalizeBindingHash160('AB'.repeat(20))).toBe(REQUESTER);
+    expect(normalizeBindingHash160(REQUESTER)).toBe(REQUESTER);
+    expect(normalizeBindingHash160('anything-non-hash160')).toBe('');
+    expect(normalizeBindingHash160('0x' + 'ab'.repeat(19))).toBe('');
+    expect(normalizeBindingHash160(null)).toBe('');
+    expect(normalizeBindingHash160(undefined)).toBe('');
+    expect(normalizeBindingHash160({})).toBe('');
+    expect(normalizeBindingHash160(['ab'.repeat(20)])).toBe('');
+  });
+
+  it('caller metadata cannot override the computed binding', () => {
+    const built = buildSecretMetadata({
+      callerMetadata: {
+        bound_requester: 'anything-non-hash160',
+        bound_callback_contract: 'also-garbage',
+        note: 'kept',
+      },
+      source: 'api.confidential.store',
+      network: 'mainnet',
+      requester: REQUESTER,
+      callbackContract: CALLBACK,
+    });
+    expect(built.metadata.bound_requester).toBe(REQUESTER);
+    expect(built.metadata.bound_callback_contract).toBe(CALLBACK);
+    expect(built.metadata.note).toBe('kept');
+    expect(built.metadata.source).toBe('api.confidential.store');
+    expect(built.boundRequester).toBe(REQUESTER);
+  });
+
+  it('caller metadata cannot invent a binding the server did not compute', () => {
+    const built = buildSecretMetadata({
+      callerMetadata: { bound_requester: REQUESTER, bound_callback_contract: CALLBACK },
+      source: 'api.registry.secrets.post',
+    });
+    expect(built.metadata).not.toHaveProperty('bound_requester');
+    expect(built.metadata).not.toHaveProperty('bound_callback_contract');
+    expect(built.boundRequester).toBe('');
+    expect(built.boundCallbackContract).toBe('');
+  });
+
+  it('does not mutate the caller-supplied metadata object', () => {
+    const caller = { bound_requester: 'garbage', keep: 1 };
+    buildSecretMetadata({ callerMetadata: caller, source: 's', requester: REQUESTER });
+    expect(caller.bound_requester).toBe('garbage');
+  });
+
+  it('ignores non-object caller metadata instead of throwing', () => {
+    expect(buildSecretMetadata({ callerMetadata: [1, 2], source: 's' }).metadata).toEqual({
+      source: 's',
+    });
+    expect(buildSecretMetadata({ callerMetadata: null, source: 's' }).metadata).toEqual({
+      source: 's',
+    });
+  });
+
+  it('requires at least one binding on mainnet and stays permissive on testnet', () => {
+    expect(validateSecretBinding('mainnet', '', '')).toMatch(/bound/);
+    expect(validateSecretBinding('mainnet', REQUESTER, '')).toBeNull();
+    expect(validateSecretBinding('mainnet', '', CALLBACK)).toBeNull();
+    expect(validateSecretBinding('testnet', '', '')).toBeNull();
   });
 });

@@ -36,6 +36,7 @@ import {
   __setPinnedRootsForTest,
   __internals,
 } from './nitro-attestation';
+import { ACTIVE_NITRO_MEASUREMENT } from './nitro-measurements';
 
 // ===========================================================================
 // Minimal DER + X.509 cert builder (TEST ONLY)
@@ -902,6 +903,209 @@ describe('attestation route integration', () => {
       '641a0321a3e244efe456463195d606317ed7cdcc3c1756e09893f3c68f79bb5b'
     );
     expect(Array.isArray(json.measurements)).toBe(true);
+  });
+});
+
+// ===========================================================================
+// SVC-A-2: a GENUINE attestation document must not verify an envelope it was
+// never issued for. The document below is real in every cryptographic sense —
+// correct COSE signature, chain to the pinned test root, the pinned production
+// PCRs, a fresh timestamp. The only thing wrong with it is that it belongs to
+// a DIFFERENT result. Before the fix the route asked for no binding at all, so
+// it happily reported full_attestation_ok over a harvested document.
+// ===========================================================================
+
+describe('attestation route — harvested-document replay (SVC-A-2)', () => {
+  const PINNED_PCRS = {
+    0: Buffer.from(ACTIVE_NITRO_MEASUREMENT.pcr0, 'hex'),
+    1: Buffer.from(ACTIVE_NITRO_MEASUREMENT.pcr1, 'hex'),
+    2: Buffer.from(ACTIVE_NITRO_MEASUREMENT.pcr2, 'hex'),
+  };
+
+  /** The enclave commits `output_hash` into the NSM document's nonce field. */
+  async function genuineLaneDocument(outputHashHex: string): Promise<string> {
+    return buildValidDocB64({
+      pcrs: PINNED_PCRS,
+      userData: undefined,
+      nonce: Buffer.from(outputHashHex, 'hex'),
+    });
+  }
+
+  function laneEnvelope(outputHashHex: string, documentB64: string) {
+    return {
+      verification: {
+        output_hash: `0x${outputHashHex}`,
+        attestation_hash: `0x${outputHashHex}`,
+        tee_attestation: {
+          runtime: 'aws-nitro',
+          report_data: `0x${outputHashHex}`,
+          quote: 'present',
+          event_log: [],
+        },
+      },
+      attestation_document: documentB64,
+    };
+  }
+
+  async function postVerify(body: unknown) {
+    const { POST } = await import('@/app/api/attestation/verify/route');
+    __setPinnedRootsForTest(fx.testRootPem, [fx.testRootFingerprint]);
+    const res = await POST(
+      new Request('http://x/api/attestation/verify', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+    );
+    return { res, json: (await res.json()) as Record<string, unknown> };
+  }
+
+  it('rejects a genuine document replayed onto an attacker-authored result', async () => {
+    const harvestedHash = createHash('sha256').update('the-result-the-enclave-ran').digest('hex');
+    const forgedHash = createHash('sha256').update('the-result-the-attacker-wants').digest('hex');
+    const harvestedDocument = await genuineLaneDocument(harvestedHash);
+
+    const { res, json } = await postVerify({
+      ...laneEnvelope(forgedHash, harvestedDocument),
+      expected_output_hash: forgedHash,
+    });
+
+    // The document itself is genuine: signature, chain, PCRs all check out.
+    const nitro = json.nitro_attestation as Record<string, unknown>;
+    expect(nitro.cose_signature_ok).toBe(true);
+    expect(nitro.root_pinned_ok).toBe(true);
+    expect(nitro.pcr0_match).toBe(true);
+    // ...but it is not bound to the result being verified.
+    expect(nitro.nonce_match).toBe(false);
+    expect(json.result_binding_source).toBe('report_data');
+    expect(json.result_binding_verified).toBe(false);
+    expect(json.measurement_chain_verified).toBe(false);
+    expect(json.full_attestation_ok).toBe(false);
+    expect(json.ok).toBe(false);
+    expect(String(json.attestation_scope)).not.toContain('result binding');
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts the same document over the result it was actually issued for', async () => {
+    const outputHash = createHash('sha256').update('the-result-the-enclave-ran').digest('hex');
+    const document = await genuineLaneDocument(outputHash);
+
+    const { res, json } = await postVerify({
+      ...laneEnvelope(outputHash, document),
+      expected_output_hash: outputHash,
+    });
+
+    expect(json.result_binding_source).toBe('report_data');
+    expect(json.result_binding_verified).toBe(true);
+    expect(json.measurement_chain_verified).toBe(true);
+    expect(json.full_attestation_ok).toBe(true);
+    expect(String(json.attestation_scope)).toContain('result binding');
+    expect(res.status).toBe(200);
+  });
+
+  it('denies the trust decision when the envelope carries no binding at all', async () => {
+    const outputHash = createHash('sha256').update('unbound-case').digest('hex');
+    // A verified document with NO report_data/fulfillment digest to tie it to
+    // the envelope: the chain verifies, the result claim does not.
+    const document = await buildValidDocB64({
+      pcrs: PINNED_PCRS,
+      userData: undefined,
+      nonce: undefined,
+    });
+
+    const { res, json } = await postVerify({
+      verification: { output_hash: `0x${outputHash}`, attestation_hash: `0x${outputHash}` },
+      attestation_document: document,
+      expected_output_hash: outputHash,
+    });
+
+    const nitro = json.nitro_attestation as Record<string, unknown>;
+    expect(nitro.measurement_chain_verified).toBe(true);
+    expect(json.result_binding_source).toBe('none');
+    expect(json.result_binding_checked).toBe(false);
+    expect(json.nitro_chain_verified).toBe(true);
+    expect(json.result_binding_verified).toBe(false);
+    expect(json.measurement_chain_verified).toBe(false);
+    expect(json.full_attestation_ok).toBe(false);
+    expect(String(json.attestation_scope)).toContain('NOT bound to this result');
+    expect(res.status).toBe(400);
+  });
+
+  it('a caller-supplied expected_user_data_hex cannot manufacture a result binding', async () => {
+    const outputHash = createHash('sha256').update('caller-forged-binding').digest('hex');
+    const preimage = createHash('sha256').update('attacker-chosen-digest').digest();
+    const document = await buildValidDocB64({
+      pcrs: PINNED_PCRS,
+      userData: createHash('sha256').update(preimage).digest(),
+      nonce: undefined,
+    });
+
+    // The caller asks for exactly the binding the document happens to satisfy.
+    const { res, json } = await postVerify({
+      verification: { output_hash: `0x${outputHash}`, attestation_hash: `0x${outputHash}` },
+      attestation_document: document,
+      expected_output_hash: outputHash,
+      expected_user_data_hex: preimage.toString('hex'),
+    });
+
+    const nitro = json.nitro_attestation as Record<string, unknown>;
+    expect(nitro.user_data_bound_ok).toBe(true);
+    expect(nitro.measurement_chain_verified).toBe(true);
+    // The envelope never claimed that digest, so it is not a RESULT binding.
+    expect(json.result_binding_source).toBe('none');
+    expect(json.result_binding_verified).toBe(false);
+    expect(json.full_attestation_ok).toBe(false);
+    expect(res.status).toBe(400);
+  });
+
+  it('a caller-supplied nonce that contradicts the envelope is a hard 400', async () => {
+    const outputHash = createHash('sha256').update('conflicting-binding').digest('hex');
+    const document = await genuineLaneDocument(outputHash);
+    const { res, json } = await postVerify({
+      ...laneEnvelope(outputHash, document),
+      expected_output_hash: outputHash,
+      nonce: 'dd'.repeat(32),
+    });
+    expect(res.status).toBe(400);
+    expect(json.error_code).toBe('BINDING_CONFLICT');
+  });
+
+  it('a fulfil-shaped envelope checks its digest but is never called a result binding', async () => {
+    const digest = createHash('sha256').update('fulfilment-digest').digest();
+    const outputHash = createHash('sha256').update('fulfil-result').digest('hex');
+    const document = await buildValidDocB64({
+      pcrs: PINNED_PCRS,
+      userData: createHash('sha256').update(digest).digest(),
+      nonce: undefined,
+    });
+
+    const ok = await postVerify({
+      envelope: {
+        fulfillment_digest_hex: digest.toString('hex'),
+        verification: { output_hash: `0x${outputHash}`, attestation_hash: `0x${outputHash}` },
+        attestation_doc_base64: document,
+      },
+      expected_output_hash: outputHash,
+    });
+    expect(ok.json.result_binding_source).toBe('fulfillment_digest');
+    expect((ok.json.nitro_attestation as Record<string, unknown>).user_data_bound_ok).toBe(true);
+    // The verifier cannot recompute the digest from the result, so it refuses
+    // to call this a verified result binding.
+    expect(ok.json.result_binding_verified).toBe(false);
+    expect(ok.json.full_attestation_ok).toBe(false);
+
+    // And a digest the document does not commit to fails outright.
+    const tampered = await postVerify({
+      envelope: {
+        fulfillment_digest_hex: 'ab'.repeat(32),
+        verification: { output_hash: `0x${outputHash}`, attestation_hash: `0x${outputHash}` },
+        attestation_doc_base64: document,
+      },
+      expected_output_hash: outputHash,
+    });
+    expect((tampered.json.nitro_attestation as Record<string, unknown>).user_data_bound_ok).toBe(
+      false
+    );
+    expect(tampered.json.full_attestation_ok).toBe(false);
   });
 });
 

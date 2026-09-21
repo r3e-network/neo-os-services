@@ -5,6 +5,7 @@ import { apiError } from '@/lib/api-helpers';
 import { recordOperationLog } from '@/lib/operation-logs';
 import { createRateLimitedHandler } from '@/lib/rate-limit';
 import { authorizeProjectAccess } from '@/lib/registry-access';
+import { buildSecretMetadata, validateSecretBinding } from '@/lib/secret-registry';
 import { resolveSupabaseNetwork } from '@/lib/server-supabase';
 import { trimString } from '@/lib/strings';
 
@@ -27,11 +28,6 @@ type EncryptedSecretInsertResult = {
   created_at: string | null;
 };
 
-function normalizeHash160(value: unknown) {
-  const raw = trimString(value).replace(/^0x/i, '').toLowerCase();
-  return /^[0-9a-f]{40}$/.test(raw) ? `0x${raw}` : '';
-}
-
 const handlePost = createRateLimitedHandler(
   async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
@@ -43,11 +39,19 @@ const handlePost = createRateLimitedHandler(
     const algorithm = trimString(
       body?.encryption_algorithm || body?.algorithm || 'client-supplied-ciphertext'
     );
-    const metadata = typeof body?.metadata === 'object' && body?.metadata ? body.metadata : {};
-    const boundRequester = normalizeHash160(body?.requester || body?.requester_script_hash);
-    const boundCallbackContract = normalizeHash160(
-      body?.callback_contract || body?.callbackContract
-    );
+    // SECURITY (SVC-C-5): the bindings are computed here and the caller's own
+    // metadata object can neither set nor erase them.
+    const {
+      metadata: storedMetadata,
+      boundRequester,
+      boundCallbackContract,
+    } = buildSecretMetadata({
+      callerMetadata: body?.metadata,
+      source: 'api.confidential.store',
+      network,
+      requester: body?.requester ?? body?.requester_script_hash,
+      callbackContract: body?.callback_contract ?? body?.callbackContract,
+    });
 
     if (!ciphertext) {
       return apiError('ciphertext is required', 'MISSING_CIPHERTEXT', 400);
@@ -57,6 +61,10 @@ const handlePost = createRateLimitedHandler(
     }
     if (!projectSlug) {
       return apiError('project_slug is required', 'MISSING_PROJECT_SLUG', 400);
+    }
+    const bindingError = validateSecretBinding(network, boundRequester, boundCallbackContract);
+    if (bindingError) {
+      return apiError(bindingError, 'MISSING_SECRET_BINDING', 400);
     }
 
     // SECURITY (S12): project owner (JWT) or operator (provider_config admin
@@ -90,13 +98,7 @@ const handlePost = createRateLimitedHandler(
         encryption_algorithm: algorithm,
         key_version: 1,
         ciphertext,
-        metadata: {
-          source: 'api.confidential.store',
-          network,
-          ...(boundRequester ? { bound_requester: boundRequester } : {}),
-          ...(boundCallbackContract ? { bound_callback_contract: boundCallbackContract } : {}),
-          ...metadata,
-        },
+        metadata: storedMetadata,
       };
 
       const encryptedSecrets = supabase.from('morpheus_encrypted_secrets') as any;

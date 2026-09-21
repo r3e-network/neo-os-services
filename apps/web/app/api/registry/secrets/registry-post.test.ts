@@ -142,3 +142,91 @@ describe('secrets registry POST authz & validation', () => {
     expect(body).not.toHaveProperty('project_id');
   });
 });
+
+// ===========================================================================
+// SVC-C-5: this self-serve lane wrote every row unbound, so any leaked
+// secret_ref was spendable from any requester/callback context.
+// ===========================================================================
+
+describe('secrets registry POST requester binding (SVC-C-5)', () => {
+  const REQUESTER = `0x${'ab'.repeat(20)}`;
+  const CALLBACK = `0x${'cd'.repeat(20)}`;
+
+  function capturingClient() {
+    const inserted: Record<string, unknown>[] = [];
+    const builder: any = {
+      insert: vi.fn((row: Record<string, unknown>) => {
+        inserted.push(row);
+        return builder;
+      }),
+      select: vi.fn(() => builder),
+      single: vi.fn(() => Promise.resolve({ data: SECRET_ROW, error: null })),
+    };
+    return { client: { from: vi.fn(() => builder), auth: { getUser: vi.fn() } }, inserted };
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    resetRateLimitMap();
+    mockResolveRequestUser.mockResolvedValue({ id: 'user-1', email: null });
+    mockResolveOwnedProjectId.mockResolvedValue('project-1');
+  });
+
+  async function post(body: Record<string, unknown>) {
+    const { POST } = await import('./route');
+    return POST(
+      new Request('http://localhost/api/registry/secrets', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+    );
+  }
+
+  it('records a normalized binding instead of writing an unbound row', async () => {
+    const { client, inserted } = capturingClient();
+    mockGetServerSupabaseClient.mockReturnValue(client);
+    const response = await post(
+      postBody({ network: 'mainnet', requester: REQUESTER.toUpperCase().replace('0X', '0x') })
+    );
+    expect(response.status).toBe(201);
+    const metadata = inserted[0]?.metadata as Record<string, unknown>;
+    expect(metadata.bound_requester).toBe(REQUESTER);
+    expect(metadata.source).toBe('api.registry.secrets.post');
+  });
+
+  it('a caller metadata object cannot set the binding keys', async () => {
+    const { client, inserted } = capturingClient();
+    mockGetServerSupabaseClient.mockReturnValue(client);
+    const response = await post(
+      postBody({
+        network: 'mainnet',
+        callback_contract: CALLBACK,
+        metadata: { bound_requester: REQUESTER, label: 'kept' },
+      })
+    );
+    expect(response.status).toBe(201);
+    const metadata = inserted[0]?.metadata as Record<string, unknown>;
+    expect(metadata).not.toHaveProperty('bound_requester');
+    expect(metadata.bound_callback_contract).toBe(CALLBACK);
+    expect(metadata.label).toBe('kept');
+  });
+
+  it('rejects an unbound mainnet secret before it reaches Supabase', async () => {
+    const { client, inserted } = capturingClient();
+    mockGetServerSupabaseClient.mockReturnValue(client);
+    const response = await post(postBody({ network: 'mainnet' }));
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({ error_code: 'MISSING_SECRET_BINDING' })
+    );
+    expect(inserted).toHaveLength(0);
+  });
+
+  it('leaves the testnet development flow unbound and working', async () => {
+    const { client, inserted } = capturingClient();
+    mockGetServerSupabaseClient.mockReturnValue(client);
+    const response = await post(postBody({ network: 'testnet' }));
+    expect(response.status).toBe(201);
+    expect(inserted[0]?.metadata).not.toHaveProperty('bound_requester');
+  });
+});

@@ -1,4 +1,8 @@
-import { verifyAttestation } from '@/lib/attestation';
+import {
+  deriveDocumentBindings,
+  verifyAttestation,
+  type DerivedDocumentBindings,
+} from '@/lib/attestation';
 import {
   verifyNitroAttestationDocument,
   type NitroVerificationResult,
@@ -23,6 +27,11 @@ function extractAttestationDocument(body: Record<string, unknown>): string | und
   const candidates: unknown[] = [
     body.attestation_document,
     body.attestation_document_b64,
+    // The fulfil lane names it `attestation_doc_base64`
+    // (workers/nitro-enclave-host/src/fulfill.rs).
+    body.attestation_doc_base64,
+    (body.envelope as Record<string, unknown> | undefined)?.attestation_doc_base64,
+    (body.worker_response as Record<string, unknown> | undefined)?.attestation_doc_base64,
     (body.attestation as Record<string, unknown> | undefined)?.attestation_document,
     (body.tee_attestation as Record<string, unknown> | undefined)?.attestation_document,
     (body.envelope as Record<string, unknown> | undefined)?.attestation_document,
@@ -33,6 +42,39 @@ function extractAttestationDocument(body: Record<string, unknown>): string | und
     if (value) return value;
   }
   return undefined;
+}
+
+/**
+ * SECURITY (SVC-A-2): find the document<->envelope binding by walking the same
+ * envelope shapes layer 1 accepts. The caller's own `expected_user_data_hex` /
+ * `nonce` fields are NEVER a source here — they may only agree with what the
+ * envelope already says (see the conflict check in the handler).
+ */
+function deriveBindingsFromBody(body: Record<string, unknown>): DerivedDocumentBindings {
+  const candidates: unknown[] = [
+    body.envelope,
+    body.worker_response,
+    body.callback_result,
+    body.response,
+    body.verification,
+    body.attestation,
+    body.tee_attestation,
+    body,
+  ];
+  let weakest: DerivedDocumentBindings | null = null;
+  for (const candidate of candidates) {
+    const derived = deriveDocumentBindings(candidate);
+    if (derived.bindsResult) return derived;
+    if (!weakest && derived.source !== 'none') weakest = derived;
+  }
+  return weakest ?? deriveDocumentBindings(undefined);
+}
+
+function normalizeBindingInput(value: unknown) {
+  return String(value ?? '')
+    .trim()
+    .replace(/^0x/i, '')
+    .toLowerCase();
 }
 
 const handlePost = createRateLimitedHandler(
@@ -112,21 +154,65 @@ const handlePost = createRateLimitedHandler(
       pcr2: ACTIVE_NITRO_MEASUREMENT.pcr2,
     };
 
+    // ----- SECURITY (SVC-A-2): document <-> envelope binding, derived. -----
+    // The bindings that tie the attestation document to the envelope in front
+    // of us come from the ENVELOPE, never from an optional caller field. A
+    // caller may still send `expected_user_data_hex` / `nonce`, but they may
+    // only agree with the derived value (a disagreement is a hard 400) or add
+    // a check where the envelope offers none — they can never MANUFACTURE a
+    // binding claim, which is what made a harvested genuine document verify an
+    // attacker-authored envelope.
+    const derivedBindings = deriveBindingsFromBody(body as Record<string, unknown>);
+    const callerUserDataHex = normalizeBindingInput(body.expected_user_data_hex);
+    const callerNonce = normalizeBindingInput(body.nonce);
+    const bindingConflict =
+      (derivedBindings.userDataHex &&
+        callerUserDataHex &&
+        callerUserDataHex !== derivedBindings.userDataHex) ||
+      (derivedBindings.nonceHex && callerNonce && callerNonce !== derivedBindings.nonceHex);
+    if (bindingConflict) {
+      const response = badRequest(
+        'expected_user_data_hex/nonce disagree with the bindings carried by the envelope',
+        400,
+        'BINDING_CONFLICT'
+      );
+      await recordOperationLog({
+        route: '/api/attestation/verify',
+        method: 'POST',
+        category: 'attestation',
+        requestPayload: { binding_source: derivedBindings.source },
+        responsePayload: { error: 'BINDING_CONFLICT' },
+        httpStatus: 400,
+        error: 'caller-supplied binding conflicts with the envelope',
+      });
+      return response;
+    }
+    // Derived first; a caller value is only ever an ADDITIONAL required check.
+    const expectedUserDataHex = derivedBindings.userDataHex || callerUserDataHex || undefined;
+    const expectedNonce = derivedBindings.nonceHex || callerNonce || undefined;
+
     let nitro: NitroVerificationResult | null = null;
     let nitroError: string | null = null;
     if (attestationDocument) {
       try {
         nitro = await verifyNitroAttestationDocument(attestationDocument, {
           expectedPcrs,
-          expectedUserDataHex: optionalString(body.expected_user_data_hex),
+          expectedUserDataHex,
           expectedSignerPublicKey: optionalString(body.expected_signer_public_key),
-          nonce: optionalString(body.nonce),
+          nonce: expectedNonce,
         });
       } catch (error) {
         nitroError = error instanceof Error ? error.message : String(error);
       }
     }
-    const measurementChainVerified = Boolean(nitro?.measurement_chain_verified);
+    const nitroChainVerified = Boolean(nitro?.measurement_chain_verified);
+    // A verified chain over a document that is not bound to THIS result proves
+    // an enclave ran, not that it produced the result being verified.
+    const resultBindingVerified =
+      nitroChainVerified &&
+      derivedBindings.bindsResult &&
+      (derivedBindings.userDataHex ? Boolean(nitro?.user_data_bound_ok) : true) &&
+      (derivedBindings.nonceHex ? Boolean(nitro?.nonce_match) : true);
 
     // ----- Layer 1 (legacy): output_hash <-> result hash binding + metadata. -----
     // `full_attestation_ok` / `measurement_chain_verified` REQUIRE layer 2.
@@ -155,11 +241,15 @@ const handlePost = createRateLimitedHandler(
       expectedAppId: typeof body.expected_app_id === 'string' ? body.expected_app_id : undefined,
       expectedInstanceId:
         typeof body.expected_instance_id === 'string' ? body.expected_instance_id : undefined,
-      nitroMeasurementChainVerified: measurementChainVerified,
+      nitroMeasurementChainVerified: nitroChainVerified,
+      nitroResultBindingVerified: resultBindingVerified,
     });
 
     const result = {
       ...hashBinding,
+      result_binding_source: derivedBindings.source,
+      // Named so a consumer can tell "we could not check" from "it failed".
+      result_binding_checked: derivedBindings.source !== 'none',
       nitro_attestation: nitro
         ? {
             cose_signature_ok: nitro.cose_signature_ok,

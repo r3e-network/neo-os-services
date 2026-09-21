@@ -12,11 +12,15 @@ export default function DocsFAQ() {
     },
     {
       q: 'Do I need to run my own relayer?',
-      a: 'No. The Morpheus Network operates a decentralized pool of relayers. However, for high-availability enterprise requirements, you can run a private relayer instance.',
+      a: 'Not to get started, but you should understand what you are depending on. One operator runs the relayer today — it is a single node, not a pool — so availability and censorship-resistance depend on that operator. Running your own relayer instance is how you remove that dependency; there is no second party to route around otherwise.',
     },
     {
       q: 'Is the TEE code open source?',
-      a: 'Yes. The worker, relayer, contracts, and frontend are open source. The public verifier checks application-level attestation consistency, and deeper quote-chain validation can be layered on top if required.',
+      a: 'Yes. The worker, relayer, contracts, and frontend are open source. The public verifier checks the AWS Nitro measurement chain (pinned root certificate, committed PCR0/1/2) and that the attestation document is bound to the result you are verifying.',
+    },
+    {
+      q: 'What does the TEE not protect against?',
+      a: 'The workflow logic and the enclave binary are public by design; inputs and outputs at the enclave boundary are observable; side channels and speculative execution can leak; the host sees egress destination metadata even though payloads are end-to-end TLS; and a single operator can censor or halt requests. See Attestation & Security for the full list.',
     },
   ];
 

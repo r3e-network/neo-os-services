@@ -46,12 +46,15 @@ export default function DocsVerifier() {
         <p
           style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: 1.7 }}
         >
-          <strong>Scope of trust:</strong> the built-in verifier confirms that the result is{' '}
-          <em>enclave-key-signed</em> and that the hash binding + declared metadata are consistent,
-          and that a quote and event log are <em>present</em>. It does <strong>not</strong> validate
-          the Nitro/TDX quote against an AWS/Intel root of trust, so a passing result is{' '}
-          <code>measurement_chain_verified: false</code>. Treat <code>full_attestation_ok</code> as
-          presence-based, not a verified measurement chain.
+          <strong>Scope of trust:</strong> the built-in verifier checks the COSE_Sign1 signature on
+          the AWS Nitro attestation document, the certificate chain up to the pinned AWS Nitro root,
+          the committed PCR0/1/2 measurements, document freshness, and — the part that makes the
+          rest mean anything — that the document is <em>bound to the result you are verifying</em>.{' '}
+          <code>full_attestation_ok</code> requires all of them. A document that verifies but is not
+          bound to this result reports <code>result_binding_verified: false</code> and{' '}
+          <code>measurement_chain_verified: false</code>: it proves an enclave ran, not that it
+          produced this result. See{' '}
+          <a href="#what-this-does-not-protect-against">what this does not protect against</a>.
         </p>
       </div>
 
@@ -189,11 +192,11 @@ export default function DocsVerifier() {
           deployment metadata.
         </li>
         <li>
-          The built-in verifier stops here: it confirms the enclave-key signature and hash binding
-          and that a quote is present, but it does not check the Nitro/TDX quote against a hardware
-          root of trust. For full measurement-chain validation, perform an additional
-          platform-specific verification pass (AWS Nitro / Intel TDX) outside the built-in web
-          verifier.
+          Send the attestation document with the envelope. The verifier checks the COSE signature,
+          the chain to the pinned AWS Nitro root and the committed PCR0/1/2, and then requires the
+          document to be bound to this result: the enclave commits <code>output_hash</code> into the
+          document, so a genuine document harvested from a different request is rejected rather than
+          accepted as proof of yours.
         </li>
       </ol>
 
@@ -259,7 +262,49 @@ export default function DocsVerifier() {
       <p>
         By combining hardware isolation with cryptographic proof, Morpheus shifts the security
         boundary from <strong>"Trust the Operator"</strong> to <strong>"Trust the Code"</strong>.
+        That shift is real but partial: it covers what the code does with your request, not whether
+        your request is served at all, and not everything an attacker can observe while it runs.
       </p>
+
+      <h2 id="what-this-does-not-protect-against">What this does not protect against</h2>
+      <p>
+        Morpheus runs on a <strong>single operator&apos;s node</strong>, not a decentralized quorum.
+        The enclave is the trust root, and the following are outside what an attestation can prove.
+        Read this list before you build an availability or confidentiality assumption on it.
+      </p>
+      <ul>
+        <li>
+          <strong>The workflow logic and the enclave binary are public.</strong> Reproducible builds
+          and published PCR measurements are what make the code auditable; they are not secrecy.
+          Nothing about the program running inside the enclave is hidden from anyone.
+        </li>
+        <li>
+          <strong>Inputs and outputs at the enclave boundary are observable.</strong> Attestation
+          covers the computation, not the request that enters it or the result that leaves it. The
+          on-chain request, the callback and its calldata are public by construction.
+        </li>
+        <li>
+          <strong>Side channels and speculative execution can leak.</strong> AWS Nitro isolates
+          memory from the host, but microarchitectural leakage is a live research area and is not
+          something a measurement chain rules out.
+        </li>
+        <li>
+          <strong>Egress metadata is visible to the host.</strong> Outbound calls from a workflow
+          are end-to-end TLS, so payloads are not readable — but the host sees which destinations
+          are contacted, when, and how often, and that alone can reveal a great deal.
+        </li>
+        <li>
+          <strong>A single operator can censor or halt.</strong> One operator runs the relayer, so
+          any request can be delayed, dropped or refused, and the whole service can stop. No quorum,
+          fallback operator or slashing mechanism exists today. Run your own relayer instance if
+          your product cannot carry that dependency.
+        </li>
+        <li>
+          <strong>Key custody is attested, not distributed.</strong> The signing key is born inside
+          measured code, which is the strongest honest claim a single-node TEE can make. It is not a
+          threshold key and there is no second party who would have to agree to misuse it.
+        </li>
+      </ul>
 
       <div
         style={{

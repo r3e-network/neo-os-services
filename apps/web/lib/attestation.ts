@@ -69,6 +69,116 @@ function reportDataPrefix(reportData: unknown) {
   return normalized.slice(0, 64);
 }
 
+/** Longest binding value we will ever accept out of an envelope (512 bytes). */
+const MAX_BINDING_HEX_LENGTH = 1024;
+
+/**
+ * Normalize a value that is supposed to be committed into an attestation
+ * document field. Anything that is not non-empty, even-length, bounded hex
+ * normalizes to '' so it can never become a "binding" that is trivially
+ * satisfied.
+ */
+function normalizeBindingHex(value: unknown) {
+  const normalized = normalizeHex(value);
+  if (!normalized || normalized.length % 2 !== 0) return '';
+  if (normalized.length > MAX_BINDING_HEX_LENGTH) return '';
+  return /^[0-9a-f]+$/.test(normalized) ? normalized : '';
+}
+
+function firstBindingHex(candidates: unknown[]) {
+  for (const candidate of candidates) {
+    const normalized = normalizeBindingHex(candidate);
+    if (normalized) return normalized;
+  }
+  return '';
+}
+
+/**
+ * How an attestation DOCUMENT is tied to the envelope being verified.
+ *
+ * - `report_data` (STRONG): the enclave commits the result's `output_hash`
+ *   into the document's `nonce` field (`build_tee_attestation` in
+ *   workers/nitro-enclave-host/src/compute_execute.rs calls
+ *   `handle_attestation({ report_data: output_hash })`, and
+ *   `handle_attestation` routes `report_data` into the NSM `nonce`). Because
+ *   `output_hash = sha256(canonical result payload)` and the relying party
+ *   independently supplies the expected payload/hash to layer 1, this closes
+ *   the chain result -> output_hash -> document. A document harvested from a
+ *   DIFFERENT result carries a different nonce and is rejected.
+ * - `fulfillment_digest` (WEAK): the enclave commits
+ *   `sha256(fulfillment_digest_bytes)` into `user_data`
+ *   (workers/nitro-enclave-host/src/fulfill.rs). The digest preimage is built
+ *   by `neo_os_core::digest::build_fulfillment_digest_bytes` over the request
+ *   envelope; this verifier cannot recompute it, so matching it proves only
+ *   that the document was issued for the fulfillment the envelope DECLARES,
+ *   not that the declared result is the one the enclave produced. It is
+ *   therefore checked (a mismatch fails) but never reported as a verified
+ *   result binding.
+ * - `none`: nothing in the envelope ties it to the document.
+ */
+export type DocumentBindingSource = 'report_data' | 'fulfillment_digest' | 'none';
+
+export interface DerivedDocumentBindings {
+  /** Preimage hex whose sha256 the enclave commits into `user_data`. */
+  userDataHex: string;
+  /** Hex the enclave commits verbatim into the document `nonce`. */
+  nonceHex: string;
+  source: DocumentBindingSource;
+  /** True only for a source that ties the document to the verified RESULT. */
+  bindsResult: boolean;
+}
+
+const UNBOUND_DOCUMENT: DerivedDocumentBindings = Object.freeze({
+  userDataHex: '',
+  nonceHex: '',
+  source: 'none',
+  bindsResult: false,
+});
+
+/**
+ * SECURITY (SVC-A-2): derive the document<->envelope bindings from the
+ * ENVELOPE, never from a caller-supplied `expected_user_data_hex` / `nonce`
+ * field. Before this existed, `/api/attestation/verify` only checked the
+ * bindings a caller asked it to check, and no shipped caller asked for any —
+ * so a genuine attestation document harvested from one request verified an
+ * attacker-authored envelope for any other result.
+ */
+export function deriveDocumentBindings(input: unknown): DerivedDocumentBindings {
+  const record = unwrapRecord(input);
+  if (!record) return UNBOUND_DOCUMENT;
+  const verification = unwrapVerification(record);
+  const attestation = unwrapAttestation(record) ?? unwrapAttestation(verification);
+
+  // STRONG first: report_data is derivable from the result itself.
+  const reportData = firstBindingHex([
+    attestation?.report_data,
+    verification?.report_data,
+    record.report_data,
+  ]);
+  if (reportData) {
+    return { userDataHex: '', nonceHex: reportData, source: 'report_data', bindsResult: true };
+  }
+
+  const fulfillmentDigest = firstBindingHex([
+    record.fulfillment_digest_hex,
+    record.fulfillment_digest,
+    verification?.fulfillment_digest_hex,
+    verification?.fulfillment_digest,
+    attestation?.fulfillment_digest_hex,
+  ]);
+  if (fulfillmentDigest) {
+    return {
+      userDataHex: fulfillmentDigest,
+      // The fulfil lane echoes the request nonce into the document nonce.
+      nonceHex: firstBindingHex([record.nonce, verification?.nonce]),
+      source: 'fulfillment_digest',
+      bindsResult: false,
+    };
+  }
+
+  return UNBOUND_DOCUMENT;
+}
+
 export function verifyAttestation(input: {
   envelope?: unknown;
   verification?: unknown;
@@ -90,6 +200,15 @@ export function verifyAttestation(input: {
    * "quote/event_log present" heuristic is no longer sufficient on its own.
    */
   nitroMeasurementChainVerified?: boolean;
+  /**
+   * SECURITY (SVC-A-2): true only when the verified document is tied to THIS
+   * envelope's result by a binding the verifier derived from the envelope (see
+   * `deriveDocumentBindings`). A verified measurement chain over an UNBOUND
+   * document says nothing about the result in front of it — a genuine document
+   * harvested from any other request would satisfy it — so it must never flip
+   * `ok` / `full_attestation_ok` true on its own.
+   */
+  nitroResultBindingVerified?: boolean;
 }) {
   const record = unwrapRecord(input.envelope ?? input.verification ?? input.attestation);
   const verification = unwrapVerification(input.verification ?? record ?? input.attestation);
@@ -174,10 +293,17 @@ export function verifyAttestation(input: {
   // passed in as `nitroMeasurementChainVerified`. The legacy "quote + event_log
   // present" heuristic is retained as a presence signal only — it is NEVER
   // sufficient by itself to claim a verified measurement chain.
-  const measurementChainVerified = input.nitroMeasurementChainVerified === true;
+  const measurementChainOk = input.nitroMeasurementChainVerified === true;
+  const resultBindingVerified = input.nitroResultBindingVerified === true;
+  // SECURITY (SVC-A-2): the reported measurement chain now means "a verified
+  // chain over a document that is bound to THIS result". An unbound document
+  // is reported separately (`nitro_attestation.measurement_chain_verified`)
+  // and never satisfies this field.
+  const measurementChainVerified = measurementChainOk && resultBindingVerified;
   // `full_attestation_ok` now REQUIRES the cryptographic Nitro layer: the hash
   // binding holds, metadata matches, AND the COSE/cert/PCR/binding chain
-  // verified. Quote/event_log presence alone no longer flips this true.
+  // verified over a document bound to this result. Quote/event_log presence
+  // alone no longer flips this true.
   const fullAttestationOk = bindingOk && metadataFailed.length === 0 && measurementChainVerified;
 
   return {
@@ -193,8 +319,13 @@ export function verifyAttestation(input: {
     // layer and is reflected in `measurement_chain_verified`.
     attestation_scope: measurementChainVerified
       ? 'enclave-attested; AWS Nitro measurement chain verified (pinned root + PCR0/1/2 + result binding)'
-      : 'enclave-key-signed; measurement chain NOT verified (no/invalid Nitro attestation document)',
+      : measurementChainOk
+        ? 'enclave-key-signed; AWS Nitro measurement chain verified (pinned root + PCR0/1/2) but the document is NOT bound to this result — it proves an enclave ran, not that it produced this result'
+        : 'enclave-key-signed; measurement chain NOT verified (no/invalid Nitro attestation document)',
     measurement_chain_verified: measurementChainVerified,
+    // Honest split of the two independent questions above.
+    nitro_chain_verified: measurementChainOk,
+    result_binding_verified: resultBindingVerified,
     evidence: {
       has_verification: Boolean(verification),
       has_attestation: Boolean(attestation),

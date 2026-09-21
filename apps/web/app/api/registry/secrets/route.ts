@@ -5,10 +5,13 @@ import { createRateLimitedHandler } from '@/lib/rate-limit';
 import { requireProjectOwner, SECRET_LIST_SELECT } from '@/lib/registry-access';
 import { resolveSupabaseNetwork } from '@/lib/server-supabase';
 import { trimString } from '@/lib/strings';
+import type { Json } from '@/lib/supabase-types';
 import {
+  buildSecretMetadata,
   sanitizeSecretName,
   toPublicSecretRecord,
   validateEncryptionAlgorithm,
+  validateSecretBinding,
   validateSecretCiphertext,
   validateSecretExpiry,
   type SecretRegistryRow,
@@ -72,7 +75,20 @@ export const POST = createRateLimitedHandler(
     ) {
       return apiError('metadata must be a JSON object', 'INVALID_METADATA', 400);
     }
-    const metadata = body?.metadata ?? {};
+    // SECURITY (SVC-C-5): this self-serve lane wrote every row with no
+    // requester/callback binding at all, so any leaked `secret_ref` was
+    // spendable from any context. Bindings are now first-class inputs, are
+    // server-normalized, and the caller's metadata can never set them.
+    const {
+      metadata: storedMetadata,
+      boundRequester,
+      boundCallbackContract,
+    } = buildSecretMetadata({
+      callerMetadata: body?.metadata,
+      source: 'api.registry.secrets.post',
+      requester: body?.requester ?? body?.requester_script_hash,
+      callbackContract: body?.callback_contract ?? body?.callbackContract,
+    });
     const expiresAt = body?.expires_at ?? null;
 
     if (!projectSlug) return apiError('project_slug is required', 'MISSING_PROJECT_SLUG', 400);
@@ -83,6 +99,8 @@ export const POST = createRateLimitedHandler(
     if (ciphertextError) return apiError(ciphertextError, 'INVALID_CIPHERTEXT', 400);
     const expiryError = validateSecretExpiry(expiresAt);
     if (expiryError) return apiError(expiryError, 'INVALID_EXPIRES_AT', 400);
+    const bindingError = validateSecretBinding(network, boundRequester, boundCallbackContract);
+    if (bindingError) return apiError(bindingError, 'MISSING_SECRET_BINDING', 400);
 
     const owned = await requireProjectOwner(request, projectSlug, network, {
       scope: 'secret_registry_write',
@@ -99,7 +117,9 @@ export const POST = createRateLimitedHandler(
       encryption_algorithm: algorithm,
       key_version: 1,
       ciphertext,
-      metadata: { ...metadata, source: 'api.registry.secrets.post' },
+      // The values come straight off a parsed JSON body plus two normalized
+      // 0x-hash160 strings, so this is JSON by construction.
+      metadata: storedMetadata as Json,
       network,
       expires_at: expiresAt || null,
     };
