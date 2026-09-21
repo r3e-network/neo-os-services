@@ -40,6 +40,23 @@
       "type": ["string", "null"],
       "description": "Docker image id (sha256:...) the EIF was built from."
     },
+    "superseded_by": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Release id that retired this one. Set by hand when a release is rotated out; a verifier must not pin a superseded manifest."
+    },
+    "custody_boundary": {
+      "type": "object",
+      "description": "Signer service URL and the six SIGNER_ROLE_*_KEY_ID trust anchors baked into PCR0. Written by build-enclave-eif.sh for morpheus-oracle releases."
+    },
+    "vault_profile": {
+      "type": "object",
+      "description": "Measured custody vault profile identity (schema, environment, file_sha256, required_egress). Written by build-custody-eif.sh for morpheus-custody releases."
+    },
+    "reproducible_verified": {
+      "type": "boolean",
+      "description": "True when the build script re-derived these PCRs from a second from-scratch build. Required on every manifest built on or after the cutover in scripts/check-nitro-measurements.mjs; a manifest produced with --allow-unverified must record false."
+    },
     "eif_sha256": {
       "type": ["string", "null"],
       "description": "sha256 of the .eif file.",

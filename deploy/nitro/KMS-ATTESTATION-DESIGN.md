@@ -78,6 +78,21 @@ in the key policy `EnclaveAttestedDecrypt` statement with the real EIF PCR0; enc
 X25519 key material under the CMK; (after cutover) remove the instance role's
 Secrets-Manager master access.
 
+> ⚠️ **This section and the 2026-06-15 banner above disagree about what is live.** The
+> banner says the condition is pinned to PCR0 `842f4f53…`; the paragraph immediately above
+> says it is still the all-zero placeholder. Neither claim can be checked from this
+> repository, because the key policy has never been exported into it — and an all-zero
+> `ImageSha384` gates nothing at all, so the difference is the whole guarantee.
+>
+> That gap is now recorded and enforced rather than narrated. `deploy/nitro/kms/` holds the
+> index of which CMK gates which enclave; `npm run check:nitro-measurements` asserts the
+> exported policy's `kms:RecipientAttestation:ImageSha384` equals the `pcr0` of the manifest
+> it pins, refuses the all-zero placeholder outright, and fails the build when an enclave has
+> neither a published pin nor a dated `unpublished` record. Both `morpheus-oracle` and
+> `morpheus-custody` are currently recorded as unpublished in
+> `deploy/nitro/kms/attestation-pins.json`, with `required_by` dates. Exporting the policy
+> resolves this contradiction; until then, treat the banner as unverified.
+
 > 🔴 The supplied access key is in chat history — **deactivate/rotate it** after this work.
 
 ## Approach

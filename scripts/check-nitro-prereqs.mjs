@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { auditNitroMeasurements } from './check-nitro-measurements.mjs';
 import { readMergedDotEnvFiles } from './lib-env.mjs';
 import { reportPinnedNeoN3Role } from './lib-neo-signers.mjs';
 import { trimString } from './lib-strings.mjs';
@@ -95,6 +96,14 @@ const missingNitroFiles = Object.entries(nitroFileGroups).flatMap(([group, files
     .map((entry) => `${group}: ${entry}`)
 );
 
+// Having the build inputs on disk says nothing about whether the enclave they
+// build can be identified from outside. That is a separate prerequisite: a
+// committed measurement manifest per enclave, and a committed KMS key policy
+// whose kms:RecipientAttestation:ImageSha384 equals its PCR0. Fail-closed rules
+// and the dated record of what is not published yet live in
+// check-nitro-measurements.mjs.
+const nitroMeasurementProblems = auditNitroMeasurements(repoRoot);
+
 const checks = {
   signer_material: signerRoles.every((entry) => entry.ok),
   runtime_token: pick(env, ['NITRO_SIGNER_TOKEN', 'MORPHEUS_RUNTIME_TOKEN', 'NITRO_API_TOKEN']),
@@ -106,6 +115,7 @@ const checks = {
     'morpheus_SUPABASE_SERVICE_ROLE_KEY',
   ]),
   nitro_files: missingNitroFiles.length === 0,
+  nitro_measurements: nitroMeasurementProblems.length === 0,
 };
 
 const missing = Object.entries(checks)
@@ -120,6 +130,7 @@ console.log(
       missing,
       checks,
       missing_nitro_files: missingNitroFiles,
+      nitro_measurement_problems: nitroMeasurementProblems,
       signer_roles: signerRoles,
       checked_sources: sources,
       next_action: checks.signer_material

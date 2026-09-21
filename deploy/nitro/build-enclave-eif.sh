@@ -22,11 +22,20 @@
 #   SIGNER_SERVICE_URL and SIGNER_ROLE_{ORACLE_VERIFIER,UPDATER,RELAYER,WORKER,
 #                          NEOX_UPDATER,NEOX_VERIFIER}_KEY_ID are immutable
 #                          custody trust anchors baked into PCR0
-#   --verify-reproducible  rebuild the docker image FROM SCRATCH and require
-#                          identical PCRs. Costs a second full build (the Rust
-#                          stage compiles twice) — that is the check.
+#   --verify-reproducible  accepted for existing runbooks; now the default.
+#   --allow-unverified     SKIP the reproducibility rebuild. The manifest is then
+#                          stamped reproducible_verified:false, which
+#                          scripts/check-nitro-measurements.mjs refuses to accept
+#                          into the tree — so this is for local iteration, never
+#                          for a release whose PCR0 anybody has to trust.
 #   --no-eif               build (and optionally verify) the docker image only;
 #                          skip nitro-cli build-enclave (for boxes without it)
+#
+# The reproducibility rebuild runs by DEFAULT. A PCR0 that was never re-derived
+# from an independent build is a number only this machine can produce, and the
+# KMS RecipientAttestation condition and the remote verifier are both built on
+# it. Costs a second full build (the Rust stage compiles twice) — that is the
+# check.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -66,11 +75,14 @@ if [ "$signer_role_neox_updater_key_id" = "$signer_role_neox_verifier_key_id" ];
   exit 2
 fi
 
-verify_reproducible=0
+# Reproducibility verification is the default. --verify-reproducible is kept as
+# an accepted no-op so existing runbooks and systemd wrappers keep working.
+verify_reproducible=1
 build_eif=1
 for arg in "$@"; do
   case "$arg" in
     --verify-reproducible) verify_reproducible=1 ;;
+    --allow-unverified) verify_reproducible=0 ;;
     --no-eif) build_eif=0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
@@ -176,6 +188,12 @@ pcr1="$(extract_measurement "$build_output" PCR1)"
 pcr2="$(extract_measurement "$build_output" PCR2)"
 hash_algo="$(extract_measurement "$build_output" HashAlgorithm)"
 hash_algo="${hash_algo:-SHA384}"
+# nitro-cli renders the algorithm with Rust's Debug formatter ("Sha384 { ... }")
+# on some versions. Two committed manifests carried that string and therefore
+# failed manifest.schema.json's `const: SHA384`; normalise it at the source.
+case "$(printf '%s' "$hash_algo" | tr 'A-Z' 'a-z')" in
+  *sha384*|*sha-384*) hash_algo="SHA384" ;;
+esac
 
 # FAIL if PCRs are empty (a manifest with empty PCRs is worse than none — it
 # would make the verifier accept anything or fail confusingly).
@@ -194,16 +212,21 @@ fi
 built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 if [ "$verify_reproducible" -ne 1 ]; then
-  echo "WARNING: --verify-reproducible was not passed, so this PCR0 was never re-derived" >&2
-  echo "         from an independent build. Committing this manifest makes it the" >&2
-  echo "         verifier's source of truth for an enclave whose measurement nobody has" >&2
-  echo "         reproduced — if a later build changes the PCR, the enclave is refused." >&2
+  echo "REFUSING TO CERTIFY: --allow-unverified was passed, so this PCR0 was never" >&2
+  echo "         re-derived from an independent build. The manifest below is stamped" >&2
+  echo "         reproducible_verified:false, which the measurement gate" >&2
+  echo "         (scripts/check-nitro-measurements.mjs, CI job 'measurements') refuses" >&2
+  echo "         in the tree. Committing it would make it the verifier's" >&2
+  echo "         source of truth for an enclave whose measurement nobody reproduced —" >&2
+  echo "         if a later build changes the PCR, the enclave is refused at boot." >&2
+  echo "         Re-run without --allow-unverified before shipping this release." >&2
 fi
 
 echo "==> writing manifest $manifest"
 RELEASE="$release" APP_ID="morpheus-oracle" NETWORK="$network" \
 GIT_COMMIT="$git_commit" EIF_SHA256="$eif_sha256" HASH_ALGO="$hash_algo" \
 PCR0="$pcr0" PCR1="$pcr1" PCR2="$pcr2" BUILT_AT="$built_at" IMAGE_ID="$image_id_1" \
+REPRODUCIBLE_VERIFIED="$verify_reproducible" \
 SIGNER_SERVICE_URL="$signer_service_url" \
 SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID="$signer_role_oracle_verifier_key_id" \
 SIGNER_ROLE_UPDATER_KEY_ID="$signer_role_updater_key_id" \
@@ -232,6 +255,7 @@ jq -n '
     pcr0: env.PCR0,
     pcr1: env.PCR1,
     pcr2: env.PCR2,
+    reproducible_verified: (env.REPRODUCIBLE_VERIFIED == "1"),
     built_at: env.BUILT_AT
   }
 ' >"$manifest"

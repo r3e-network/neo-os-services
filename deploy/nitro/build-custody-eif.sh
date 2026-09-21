@@ -20,11 +20,17 @@
 #   SIGNER_SERVICE_WORKLOAD_AUDIENCE
 #                           canonical origin NeoNexus/callers use for custody;
 #                           defaults to http://127.0.0.1:<custody host port>
-#   --verify-reproducible   rebuild the docker image FROM SCRATCH and require
-#                           identical PCRs. Costs a second full build (the Rust
-#                           stage compiles twice) — that is the check.
+#   --verify-reproducible   accepted for existing runbooks; now the default.
+#   --allow-unverified      SKIP the reproducibility rebuild. The manifest is
+#                           then stamped reproducible_verified:false, which
+#                           scripts/check-nitro-measurements.mjs refuses to
+#                           accept into the tree.
 #   --no-eif                build (and optionally verify) the docker image only;
 #                           skip nitro-cli build-enclave (for boxes without it)
+#
+# The reproducibility rebuild runs by DEFAULT. This is the enclave that holds
+# every private key; a PCR0 nobody re-derived cannot anchor the custody KMS key
+# policy. Costs a second full build (the Rust stage compiles twice).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -42,11 +48,14 @@ custody_host_port="${MORPHEUS_CUSTODY_HOST_PORT:-8789}"
 workload_audience="${SIGNER_SERVICE_WORKLOAD_AUDIENCE:-http://127.0.0.1:${custody_host_port}}"
 profile_file="$repo_root/deploy/nitro/custody-vault-profile.json"
 
-verify_reproducible=0
+# Reproducibility verification is the default. --verify-reproducible is kept as
+# an accepted no-op so existing runbooks and systemd wrappers keep working.
+verify_reproducible=1
 build_eif=1
 for arg in "$@"; do
   case "$arg" in
     --verify-reproducible) verify_reproducible=1 ;;
+    --allow-unverified) verify_reproducible=0 ;;
     --no-eif) build_eif=0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
@@ -166,6 +175,12 @@ pcr1="$(extract_measurement "$build_output" PCR1)"
 pcr2="$(extract_measurement "$build_output" PCR2)"
 hash_algo="$(extract_measurement "$build_output" HashAlgorithm)"
 hash_algo="${hash_algo:-SHA384}"
+# nitro-cli renders the algorithm with Rust's Debug formatter ("Sha384 { ... }")
+# on some versions. Two committed manifests carried that string and therefore
+# failed manifest.schema.json's `const: SHA384`; normalise it at the source.
+case "$(printf '%s' "$hash_algo" | tr 'A-Z' 'a-z')" in
+  *sha384*|*sha-384*) hash_algo="SHA384" ;;
+esac
 
 # FAIL if PCRs are empty (a manifest with empty PCRs is worse than none — it
 # would make the verifier accept anything or fail confusingly).
@@ -184,12 +199,15 @@ fi
 built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 if [ "$verify_reproducible" -ne 1 ]; then
-  echo "WARNING: --verify-reproducible was not passed, so this PCR0 was never re-derived" >&2
-  echo "         from an independent build. That is the assumption the next step rests on:" >&2
-  echo "         committing this manifest and pinning the same PCR0 in the custody KMS key" >&2
-  echo "         policy. If the image turns out NOT to be reproducible, the next rebuild" >&2
-  echo "         measures a different PCR0 and /provision can no longer decrypt the master" >&2
-  echo "         key — an outage discovered while booting, not while building." >&2
+  echo "REFUSING TO CERTIFY: --allow-unverified was passed, so this PCR0 was never" >&2
+  echo "         re-derived from an independent build. That is the assumption the next" >&2
+  echo "         step rests on: committing this manifest and pinning the same PCR0 in the" >&2
+  echo "         custody KMS key policy. If the image turns out NOT to be reproducible," >&2
+  echo "         the next rebuild measures a different PCR0 and /provision can no longer" >&2
+  echo "         decrypt the master key — an outage discovered while booting, not while" >&2
+  echo "         building. The manifest below is stamped reproducible_verified:false," >&2
+  echo "         which the measurement gate (scripts/check-nitro-measurements.mjs," >&2
+  echo "         CI job 'measurements') refuses in the tree." >&2
 fi
 
 echo "==> writing manifest $manifest"
@@ -201,6 +219,7 @@ printf '%s' "$profile_identity" | jq -r '
 RELEASE="$release" APP_ID="morpheus-custody" NETWORK="$network" \
 GIT_COMMIT="$git_commit" EIF_SHA256="$eif_sha256" HASH_ALGO="$hash_algo" \
 PCR0="$pcr0" PCR1="$pcr1" PCR2="$pcr2" BUILT_AT="$built_at" IMAGE_ID="$image_id_1" \
+REPRODUCIBLE_VERIFIED="$verify_reproducible" \
 jq -n --argjson profile "$profile_identity" '
   {
     release: env.RELEASE,
@@ -214,6 +233,7 @@ jq -n --argjson profile "$profile_identity" '
     pcr0: env.PCR0,
     pcr1: env.PCR1,
     pcr2: env.PCR2,
+    reproducible_verified: (env.REPRODUCIBLE_VERIFIED == "1"),
     built_at: env.BUILT_AT
   }
 ' >"$manifest"

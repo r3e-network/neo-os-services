@@ -72,39 +72,84 @@ SIGNER_ROLE_RELAYER_KEY_ID=<raw-relayer-key-id> \
 SIGNER_ROLE_WORKER_KEY_ID=<raw-worker-key-id> \
 SIGNER_ROLE_NEOX_UPDATER_KEY_ID=<neox-updater-key-id> \
 SIGNER_ROLE_NEOX_VERIFIER_KEY_ID=<neox-verifier-key-id> \
-  bash deploy/nitro/build-enclave-eif.sh --verify-reproducible --no-eif
+  bash deploy/nitro/build-enclave-eif.sh --no-eif
 ```
 
-(`--no-eif` skips `nitro-cli`, which is box-only. `--verify-reproducible` rebuilds
-the docker image from scratch — `--no-cache`, so the Rust stage compiles twice —
-and compares image IDs; without `--no-eif` it compares the PCRs themselves, which
-is the authoritative check. Cached layers would make the comparison vacuous, since
-BuildKit keys its cache on content rather than on the image tag.)
+(`--no-eif` skips `nitro-cli`, which is box-only. The reproducibility rebuild is
+now the **default**: the script rebuilds the docker image from scratch —
+`--no-cache`, so the Rust stage compiles twice — and compares the PCRs, which is
+the authoritative check; with `--no-eif` it falls back to comparing image IDs.
+Cached layers would make the comparison vacuous, since BuildKit keys its cache
+on content rather than on the image tag. `--verify-reproducible` is still
+accepted and now a no-op. `--allow-unverified` skips the rebuild and stamps
+`reproducible_verified: false` into the manifest, which the gate below refuses —
+it is for local iteration, not for a release.)
 
 ## Manifest schema
 
 See `manifest.schema.json` (JSON Schema, draft 2020-12) for the authoritative
 shape and `example.json` for a filled-in (illustrative, NON-REAL) example.
 
-| field            | type                      | meaning                                               |
-| ---------------- | ------------------------- | ----------------------------------------------------- |
-| `release`        | string                    | release id, e.g. `oracle-2026-06-14`                  |
-| `app_id`         | string                    | always `morpheus-oracle`                              |
-| `network`        | string                    | `testnet` \| `mainnet`                                |
-| `git_commit`     | string                    | full commit SHA the EIF was built from                |
-| `image_id`       | string \| null            | docker image id (`sha256:...`) the EIF was built from |
-| `eif_sha256`     | string \| null            | sha256 of the `.eif` file                             |
-| `hash_algorithm` | string                    | PCR hash algorithm, always `SHA384` for Nitro         |
-| `pcr0`           | string (hex 96)           | enclave image measurement (kernel + app)              |
-| `pcr1`           | string (hex 96)           | Linux kernel + bootstrap measurement                  |
-| `pcr2`           | string (hex 96)           | application measurement                               |
-| `pcr8`           | string (hex 96), optional | signing-cert measurement (only if the EIF is signed)  |
-| `built_at`       | string                    | ISO-8601 UTC build timestamp                          |
+| field                   | type                      | meaning                                                             |
+| ----------------------- | ------------------------- | ------------------------------------------------------------------- |
+| `release`               | string                    | release id, e.g. `oracle-2026-06-14`                                |
+| `app_id`                | string                    | `morpheus-oracle` \| `morpheus-custody`                             |
+| `network`               | string                    | `testnet` \| `mainnet`                                              |
+| `git_commit`            | string                    | full commit SHA the EIF was built from                              |
+| `image_id`              | string \| null            | docker image id (`sha256:...`) the EIF was built from               |
+| `eif_sha256`            | string \| null            | sha256 of the `.eif` file                                           |
+| `hash_algorithm`        | string                    | PCR hash algorithm, always `SHA384` for Nitro                       |
+| `pcr0`                  | string (hex 96)           | enclave image measurement (kernel + app)                            |
+| `pcr1`                  | string (hex 96)           | Linux kernel + bootstrap measurement                                |
+| `pcr2`                  | string (hex 96)           | application measurement                                             |
+| `pcr8`                  | string (hex 96), optional | signing-cert measurement (only if the EIF is signed)                |
+| `built_at`              | string                    | ISO-8601 UTC build timestamp                                        |
+| `superseded_by`         | string, optional          | release id that retired this one                                    |
+| `custody_boundary`      | object, optional          | oracle releases: the custody URL + six role key ids baked into PCR0 |
+| `vault_profile`         | object, optional          | custody releases: the measured vault profile identity               |
+| `reproducible_verified` | boolean, optional         | whether the PCRs were re-derived from a second from-scratch build   |
 
 PCR values are SHA384 → 48 bytes → 96 lowercase hex characters.
+
+`reproducible_verified` is **required** on every manifest built on or after the
+cutover in `scripts/check-nitro-measurements.mjs`. The nine manifests that
+predate it were built when the reproducibility rebuild was opt-in and nobody
+passed the flag, so they carry no claim either way — which is exactly what they
+are entitled to claim.
+
+## The gate
+
+`npm run check:nitro-measurements` (CI job `measurements`) refuses a tree where:
+
+- a manifest does not validate against `manifest.schema.json` — two manifests
+  here carried `"hash_algorithm": "Sha384 { ... }"`, nitro-cli's Rust `Debug`
+  rendering, and a third carried an undeclared `superseded_by`, for three months;
+- a manifest's `release` disagrees with its filename, or any PCR is all-zero
+  (the value a **debug-mode** enclave reports, which makes every KMS condition
+  and every verifier comparison vacuous);
+- a post-cutover manifest does not record `reproducible_verified: true`;
+- the KMS key policy committed under `../kms/` pins an
+  `kms:RecipientAttestation:ImageSha384` that is not the `pcr0` of the manifest
+  it claims to pin;
+- an enclave in `../kms/attestation-pins.json`'s `required_app_ids` has neither a
+  published pin nor a dated, owned `unpublished` record — or has a record whose
+  `required_by` has passed;
+- anything under `deploy/` or `scripts/` launches an enclave with
+  `--debug-mode` or `--attach-console`;
+- a pull request changes `Dockerfile.enclave`, `Dockerfile.signer`, `Cargo.lock`
+  or `vendor/**` without adding a manifest whose `git_commit` is reachable.
+
+What it cannot do is build an EIF: a GitHub runner has no `nitro-cli` and no
+Nitro hypervisor. Re-deriving a PCR set still happens on the box, which is why
+the build scripts now do it by default.
 
 ## Rotation
 
 A new EIF release = a new manifest file (do not edit an old one in place).
 The verifier's pinned-manifest set is updated by an explicit, reviewed code
 change — never fetched/trusted at runtime.
+
+Publish before you activate. The order and the reason are in `../kms/README.md`:
+a client that can see the new manifest and the new key policy land before the
+enclave rolls can tell an upgrade from a key substitution; a client that only
+sees the roll cannot.

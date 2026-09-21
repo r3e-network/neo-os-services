@@ -127,6 +127,7 @@
     "check:signers": "node scripts/check-neo-signers.mjs",
     "check:nitro-env": "node scripts/check-nitro-env.mjs",
     "check:nitro-prereqs": "node scripts/check-nitro-prereqs.mjs",
+    "check:nitro-measurements": "node scripts/check-nitro-measurements.mjs",
     "generate:nitro-signer-identity": "node scripts/generate-nitro-signer-identity.mjs",
     "test:control-plane": "node --test deploy/cloudflare/morpheus-control-plane/worker.test.mjs",
     "test:cloudflare": "node --test deploy/cloudflare/*/worker.test.mjs deploy/cloudflare/lib/*.test.mjs",

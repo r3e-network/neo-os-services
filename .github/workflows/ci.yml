@@ -166,6 +166,44 @@ jobs:
       - run: npm --prefix apps/web run build
         if: matrix.suite == 'web-build'
 
+  # The enclave measurement set used to be hand-maintained: nothing built an
+  # EIF, re-derived its PCRs, or compared them to deploy/nitro/measurements/,
+  # and nothing validated a manifest against manifest.schema.json (two
+  # committed manifests carried a Rust Debug string where the schema requires
+  # the SHA384 constant, and a third carried an undeclared property — all three
+  # went unnoticed for three months). This job cannot build an EIF: a plain
+  # GitHub runner has no nitro-cli and no Nitro hypervisor. What it can do is
+  # refuse a tree whose committed measurements have stopped describing it.
+  measurements:
+    needs: changes
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          # The build-input rule below diffs against the merge base, and the
+          # reachability rule resolves a manifest's git_commit.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # Schema validity, filename/release agreement, no all-zero PCR, the
+      # manifest <-> KMS key policy ImageSha384 binding, the dated record of
+      # every enclave that has not published one yet, and CL-29's refusal of a
+      # debug-mode or console-attached launch anywhere under deploy/ or scripts/.
+      - run: npm run check:nitro-measurements
+      # The same rules again, plus: a change to Dockerfile.enclave,
+      # Dockerfile.signer, Cargo.lock or vendor/** must arrive with a new
+      # manifest whose git_commit is reachable. Only meaningful on a pull
+      # request, where a merge base exists.
+      - name: Measured build inputs changed without a new manifest
+        if: github.event_name == 'pull_request'
+        run: node scripts/check-nitro-measurements.mjs --base ${{ github.event.pull_request.base.sha }}
+      - run: node --test scripts/check-nitro-measurements.test.mjs scripts/check-nitro-prereqs.test.mjs
+
   contracts:
     needs: changes
     if: ${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}
