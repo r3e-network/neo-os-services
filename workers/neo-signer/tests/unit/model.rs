@@ -266,3 +266,173 @@ fn warning_about_a_ceiling_nothing_can_satisfy() {
         .problems()
         .contains(&PolicyProblem::ZeroAmountCeiling));
 }
+
+// -- SVC-B-5: the boundary's own identity -------------------------------------
+
+/// SVC-B-5 (CL-18). CL-18 requires that "the policy version used is recorded
+/// in the audit record", and nothing in this service could record one: no
+/// version column, no digest, and the single place a policy reached the audit
+/// trail reduced every list to a COUNT. So the digest has to actually
+/// distinguish boundaries — including ones the count-based summary rendered
+/// identically, which is the exact widen-sign-narrow case an incident review
+/// cannot otherwise answer.
+#[test]
+fn the_policy_digest_separates_boundaries_a_count_summary_cannot() {
+    let with_contracts = |contracts: Vec<ScriptHash>| SignerPolicy {
+        allow_contract_call: true,
+        contract_whitelist: contracts,
+        ..SignerPolicy::default()
+    };
+    // Same LENGTH, different contracts — indistinguishable to "contracts 1/0".
+    let narrow = with_contracts(vec![account(0x11)]);
+    let widened = with_contracts(vec![account(0x22)]);
+    assert_ne!(narrow.digest(), widened.digest());
+    assert_ne!(narrow.digest_label(), widened.digest_label());
+
+    // A genuinely wider boundary differs too.
+    let wider = with_contracts(vec![account(0x11), account(0x22)]);
+    assert_ne!(narrow.digest(), wider.digest());
+}
+
+/// Usable as evidence only if it is stable: the same boundary must digest the
+/// same every time, and a policy round-tripped through the store (which
+/// normalizes list order) must not look like a different one.
+#[test]
+fn the_policy_digest_is_stable_and_order_independent() {
+    let ordered = SignerPolicy {
+        allow_transfer: true,
+        contract_whitelist: vec![account(0x11), account(0x22)],
+        asset_whitelist: vec![account(0x33)],
+        ..SignerPolicy::default()
+    };
+    let shuffled = SignerPolicy {
+        contract_whitelist: vec![account(0x22), account(0x11)],
+        ..ordered.clone()
+    };
+    assert_eq!(ordered.digest(), ordered.digest(), "deterministic");
+    assert_eq!(
+        ordered.digest(),
+        shuffled.digest(),
+        "normalization must make list order a non-difference"
+    );
+
+    // The label is a hex prefix of the digest, not a separate hash.
+    let label = ordered.digest_label();
+    assert_eq!(label.len(), POLICY_DIGEST_LABEL_LEN);
+    assert!(hex::encode(ordered.digest()).starts_with(&label));
+}
+
+/// Every field must be covered, or the digest silently stops describing part
+/// of the boundary. The exhaustive destructuring inside `digest` is the
+/// compile-time half of this; these are the fields most likely to be treated
+/// as "just a limit" and left out.
+#[test]
+fn the_policy_digest_covers_the_switches_and_the_ceilings() {
+    let base = SignerPolicy::default();
+    let variants = [
+        SignerPolicy {
+            allow_raw: true,
+            ..base.clone()
+        },
+        SignerPolicy {
+            allow_global_scope: true,
+            ..base.clone()
+        },
+        SignerPolicy {
+            max_single_amount: Some(1),
+            ..base.clone()
+        },
+        SignerPolicy {
+            max_signers: Some(1),
+            ..base.clone()
+        },
+        SignerPolicy {
+            max_system_fee: Some(1),
+            ..base.clone()
+        },
+        SignerPolicy {
+            max_network_fee: Some(1),
+            ..base.clone()
+        },
+        SignerPolicy {
+            window_limit: Some(WindowLimit {
+                seconds: 60,
+                max_amount: 5,
+            }),
+            ..base.clone()
+        },
+        SignerPolicy {
+            max_signatures: Some(SignatureRateLimit {
+                seconds: 60,
+                count: 5,
+            }),
+            ..base.clone()
+        },
+        SignerPolicy {
+            evm_chain_id: Some(47763),
+            ..base.clone()
+        },
+        SignerPolicy {
+            evm_max_gas_price: Some(1),
+            ..base.clone()
+        },
+        SignerPolicy {
+            evm_max_gas_limit: Some(1),
+            ..base.clone()
+        },
+        SignerPolicy {
+            evm_method_whitelist: vec!["0xa9059cbb".to_string()],
+            ..base.clone()
+        },
+        SignerPolicy {
+            evm_method_blacklist: vec!["0xa9059cbb".to_string()],
+            ..base.clone()
+        },
+        SignerPolicy {
+            asset_limits: vec![AssetLimit {
+                asset: account(0x44),
+                max_single_amount: Some(2),
+                window_limit: None,
+            }],
+            ..base.clone()
+        },
+        SignerPolicy {
+            contract_method_whitelist: vec![ContractMethod {
+                contract: account(0x55),
+                method: "transfer".to_string(),
+            }],
+            ..base.clone()
+        },
+        SignerPolicy {
+            chain_family: Some(crate::network::ChainFamily::NeoX),
+            ..base.clone()
+        },
+    ];
+    let mut seen = vec![base.digest()];
+    for variant in variants {
+        let digest = variant.digest();
+        assert!(
+            !seen.contains(&digest),
+            "a field change must move the digest: {variant:?}"
+        );
+        seen.push(digest);
+    }
+
+    // Unset and empty are not the same thing — a whitelist that was cleared
+    // is a different boundary from one that was never configured, and the
+    // length-prefixed encoding keeps them apart.
+    assert_ne!(
+        SignerPolicy {
+            evm_method_whitelist: Vec::new(),
+            evm_chain_id: None,
+            ..base.clone()
+        }
+        .digest(),
+        SignerPolicy {
+            evm_method_whitelist: Vec::new(),
+            evm_chain_id: Some(0),
+            ..base
+        }
+        .digest(),
+    );
+}

@@ -1252,7 +1252,7 @@ fn kms_materialized_token_connects_immutable_custody_config() {
     overlay
         .write()
         .expect("overlay lock")
-        .set_custody_token("custody-caller-token");
+        .set_custody_token("custody-caller-token", None);
     assert!(plane.role_report(TEST_NETWORK, "updater").ok, "connected");
 }
 
@@ -1275,6 +1275,145 @@ fn role_reports_never_leak_key_material_into_issues() {
             .contains("SECRET MATERIAL"),
         "the public key is not an issue line"
     );
+}
+
+// -- SVC-B-2: the two custody caller capabilities -----------------------------
+
+/// The token each lane actually presents, recorded off the fake transport.
+/// The reply is deliberately a refusal: this asserts the CREDENTIAL, and the
+/// route's own response handling is covered by the tests above.
+fn tokens_presented(overlay: &[(&str, &str)]) -> (Option<String>, Option<String>) {
+    let raw_transport = FakeTransport::answering(crate::custody::CustodyReply {
+        status: 403,
+        body: serde_json::json!({ "error": "caller-capability-missing" }),
+    });
+    let plane = signer(overlay, raw_transport.clone());
+    let _ = plane.sign_payload(TEST_NETWORK, "updater", "aa");
+    let raw = raw_transport
+        .calls()
+        .last()
+        .and_then(|call| call.token.clone());
+
+    let semantic_transport = FakeTransport::answering(crate::custody::CustodyReply {
+        status: 403,
+        body: serde_json::json!({ "error": "caller-capability-missing" }),
+    });
+    let plane = signer(overlay, semantic_transport.clone());
+    let _ = plane.sign_eip191_fulfillment(&Eip191FulfillmentRequest {
+        network: TEST_NETWORK,
+        role: "neox_verifier",
+        chain_id: 12_227_332,
+        oracle_contract: "0x2222222222222222222222222222222222222222",
+        fulfillment: &Fulfillment {
+            request_id: "42".to_string(),
+            app_id: "demo.app".to_string(),
+            module_id: "oracle.fetch".to_string(),
+            operation: "privacy_oracle".to_string(),
+            success: true,
+            error: String::new(),
+        },
+        result_bytes_hex: "0x68656c6c6f",
+        request_id: "neox-fulfill:capability",
+    });
+    let semantic = semantic_transport
+        .calls()
+        .last()
+        .and_then(|call| call.token.clone());
+
+    (raw, semantic)
+}
+
+/// SVC-B-2 (CL-18/CL-19). `neo-signer` requires a caller to name EXACTLY one
+/// of sign / raw_sign / admin, and this host needs both: `/sign/raw` is
+/// guarded by `raw_sign`, the EIP-191 fulfilment route by `sign`. With one
+/// credential there is no configuration in which both chains' fulfilment
+/// lanes work — the repo's own gate provisions the host as `raw_sign` only
+/// (`scripts/custody-plane-e2e.mjs`), which makes every NeoX `/oracle/fulfill`
+/// a custody refusal, and granting `sign` instead breaks the N3 lane.
+///
+/// The fix is a second credential, not a widened one: letting `raw_sign`
+/// satisfy the semantic route would erase the separation the custody service
+/// exists to keep.
+#[test]
+fn the_raw_and_semantic_lanes_present_their_own_custody_credentials() {
+    let mut overlay = configured_overlay();
+    overlay.push(("SIGNER_SERVICE_SEMANTIC_TOKEN", "custody-semantic-token"));
+    let (raw, semantic) = tokens_presented(&overlay);
+    assert_eq!(raw.as_deref(), Some("custody-caller-token"));
+    assert_eq!(semantic.as_deref(), Some("custody-semantic-token"));
+}
+
+/// Additive by construction: with no semantic credential provisioned both
+/// lanes present the single token, which is byte-for-byte the pre-fix
+/// behaviour. An existing deployment therefore does not change until its
+/// operator provisions the second caller.
+#[test]
+fn without_a_semantic_credential_both_lanes_fall_back_to_the_single_token() {
+    let (raw, semantic) = tokens_presented(&configured_overlay());
+    assert_eq!(raw.as_deref(), Some("custody-caller-token"));
+    assert_eq!(semantic.as_deref(), Some("custody-caller-token"));
+}
+
+/// The semantic credential gets the same production discipline as the default
+/// one: it counts only when it came from the attested KMS release. A
+/// host-supplied value in production refuses the lane rather than being used
+/// or silently falling back — either of those would be a downgrade switch the
+/// parent controls (CL-25).
+#[test]
+fn a_host_supplied_semantic_credential_is_refused_in_production() {
+    let mut overlay = configured_overlay();
+    overlay.push(("NODE_ENV", "production"));
+    overlay.push(("SIGNER_SERVICE_TOKEN_SOURCE", "nitro-recipient-kms"));
+    overlay.push(("SIGNER_SERVICE_SEMANTIC_TOKEN", "host-planted-token"));
+
+    let (raw, semantic) = tokens_presented(&overlay);
+    // The raw lane is unaffected: its own credential is properly sourced.
+    assert_eq!(raw.as_deref(), Some("custody-caller-token"));
+    // The semantic lane never reaches the transport at all.
+    assert_eq!(semantic, None);
+
+    // Marked as KMS-released, it is accepted.
+    overlay.push((
+        "SIGNER_SERVICE_SEMANTIC_TOKEN_SOURCE",
+        "nitro-recipient-kms",
+    ));
+    let (_, semantic) = tokens_presented(&overlay);
+    assert_eq!(semantic.as_deref(), Some("host-planted-token"));
+}
+
+/// The KMS envelope is where both credentials come from, so the overlay
+/// writer must stamp both with the source marker production checks.
+#[test]
+fn the_kms_release_stamps_both_custody_credentials_as_recipient_sourced() {
+    let overlay = Arc::new(RwLock::new(crate::overlay::EnvOverlay::new([(
+        "MORPHEUS_NETWORK",
+        TEST_NETWORK,
+    )])));
+    overlay
+        .write()
+        .expect("overlay lock")
+        .set_custody_token("raw-caller-token", Some("semantic-caller-token"));
+    let overlay = overlay.read().expect("overlay lock");
+    assert_eq!(
+        overlay.get_trimmed("SIGNER_SERVICE_TOKEN").as_deref(),
+        Some("raw-caller-token")
+    );
+    assert_eq!(
+        overlay
+            .get_trimmed("SIGNER_SERVICE_SEMANTIC_TOKEN")
+            .as_deref(),
+        Some("semantic-caller-token")
+    );
+    for marker in [
+        "SIGNER_SERVICE_TOKEN_SOURCE",
+        "SIGNER_SERVICE_SEMANTIC_TOKEN_SOURCE",
+    ] {
+        assert_eq!(
+            overlay.get_trimmed(marker).as_deref(),
+            Some("nitro-recipient-kms"),
+            "{marker}"
+        );
+    }
 }
 
 #[test]

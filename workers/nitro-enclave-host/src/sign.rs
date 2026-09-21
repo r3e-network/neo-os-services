@@ -5,6 +5,16 @@
 //! and pass the custody body through. The host still does the input shaping
 //! and the refusals, because that is the part the outside world can probe.
 //!
+//! `/sign/payload` is a BLIND-SIGN lane: the caller chooses the digest and the
+//! enclave signs it with a measured role key. That is the exact shape CL-14
+//! rules out, and it contradicts the property the fulfilment lane beside it
+//! claims ("the signer never sees a caller-supplied `data_hex` for this
+//! route": `fulfill.rs`). It exists only for the flag-OFF relayer cutover,
+//! which `deploy/nitro/enclave-server.mjs` already describes as retired once
+//! `MORPHEUS_RELAYER_ENCLAVE_FULFILL` is on — and that flag is on in
+//! `deploy/nitro/neo-os-relayer.env.example`. So the lane is now OFF unless
+//! the measured image opts in with [`BLIND_SIGN_OPT_IN_ENV`]`=1`.
+//!
 //! One deliberate divergence from `normalizeSignerRole`
 //! (enclave-server.mjs:405): the Node helper SILENTLY DEFAULTS an unknown
 //! role to `updater`. A caller that misspells `oracle_verifier` gets the
@@ -26,6 +36,33 @@ pub fn normalize_signer_role_strict(requested: &str) -> Option<&'static str> {
         "worker" => Some("worker"),
         _ => None,
     }
+}
+
+/// The image-owned opt-in for the blind-sign lane. Deliberately absent from
+/// [`crate::overlay::PROVISIONABLE_NAMES`]: a security toggle the untrusted
+/// parent could flip at `/provision` would be a downgrade switch outside
+/// every measurement (CL-25).
+pub const BLIND_SIGN_OPT_IN_ENV: &str = "ENCLAVE_ALLOW_BLIND_SIGN";
+
+/// `ENCLAVE_ALLOW_BLIND_SIGN=1` — and only `1`. Anything else, including
+/// `true`, `yes` and unset, leaves the lane closed: a lane this dangerous is
+/// either demanded by an exact value or it is not there at all.
+pub fn blind_sign_enabled(state: &AppState) -> bool {
+    state
+        .overlay
+        .read()
+        .expect("overlay lock")
+        .get_trimmed(BLIND_SIGN_OPT_IN_ENV)
+        .as_deref()
+        == Some("1")
+}
+
+fn blind_sign_disabled_error() -> RuntimeError {
+    http_error(
+        503,
+        "blind payload signing is retired; set ENCLAVE_ALLOW_BLIND_SIGN=1 in the measured \
+         image to re-open it, or use the semantic fulfillment lane",
+    )
 }
 
 fn unconfigured_error(role: &str) -> RuntimeError {
@@ -63,6 +100,15 @@ pub fn handle_sign_payload(
     let report = state.signer.role_report(&network, role);
     if !report.ok || !report.materialized {
         return Err(unconfigured_error(role));
+    }
+    // The opt-in is checked here rather than at dispatch so that a host with
+    // NO custody plane still answers the merged server's exact unconfigured
+    // 503 — the byte-for-byte parity `deploy/nitro/enclave-host.test.mjs`
+    // pins. What matters for the vulnerability is that this sits before
+    // `sign_payload`: with custody connected and the lane not opted into, no
+    // signature is ever produced.
+    if !blind_sign_enabled(state) {
+        return Err(blind_sign_disabled_error());
     }
     state.signer.sign_payload(&network, role, &data_hex)
 }

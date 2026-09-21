@@ -44,6 +44,8 @@ impl KmsTransport for CapturingTransport {
     }
 }
 
+const PINNED_ARN: &str = "arn:aws:kms:eu-west-1:111122223333:key/frontier-cmk";
+
 fn params() -> KmsReleaseParams {
     KmsReleaseParams {
         region: "eu-west-1".to_string(),
@@ -51,6 +53,9 @@ fn params() -> KmsReleaseParams {
         access_key_id: "AKIDEXAMPLE".to_string(),
         secret_access_key: "wJalrXUtnFEMI".to_string(),
         session_token: Some("session-token".to_string()),
+        purpose: "neoos/oracle-x25519/v1".to_string(),
+        network: "mainnet".to_string(),
+        key_arn: Some(PINNED_ARN.to_string()),
     }
 }
 
@@ -125,4 +130,66 @@ fn an_attestation_failure_stops_the_release_before_any_network_call() {
     let error = kms.decrypt(&params()).expect_err("attest refused");
     assert_eq!(error, "nsm: this platform does not support NSM");
     assert!(transport.captured.lock().expect("capture lock").is_none());
+}
+
+/// SVC-A-1 / SVC-D-9: the release is bound to a CMK and an encryption context.
+///
+/// Without both, the recipient attestation proves only which enclave is
+/// decrypting — never under which key or for which purpose — so the parent
+/// that supplies the ciphertext AND the AWS credentials can wrap an envelope
+/// of its own under a CMK of its own and have the enclave accept it.
+#[test]
+fn the_release_request_pins_the_cmk_and_the_encryption_context() {
+    let transport = CapturingTransport {
+        captured: Arc::new(Mutex::new(None)),
+        result: Err("kms transport unreachable".to_string()),
+    };
+    let kms = capturing_kms(Ok(b"doc".to_vec()), transport.clone());
+    let _ = kms.decrypt(&params());
+    let (_, _, body) = transport
+        .captured
+        .lock()
+        .expect("capture lock")
+        .take()
+        .expect("the signed request ran");
+
+    let sent: serde_json::Value = serde_json::from_str(&body).expect("the KMS body is JSON");
+    assert_eq!(
+        sent["KeyId"].as_str(),
+        Some(PINNED_ARN),
+        "the request must name the pinned CMK: {body}"
+    );
+    assert_eq!(
+        sent["EncryptionContext"]["neoos:component"].as_str(),
+        Some(KMS_CONTEXT_COMPONENT)
+    );
+    assert_eq!(
+        sent["EncryptionContext"]["neoos:purpose"].as_str(),
+        Some("neoos/oracle-x25519/v1"),
+        "the purpose the image chose, not one the parent restated: {body}"
+    );
+    assert_eq!(
+        sent["EncryptionContext"]["neoos:network"].as_str(),
+        Some("mainnet"),
+        "a testnet envelope must not open on a mainnet enclave: {body}"
+    );
+}
+
+/// The pin is checked on the way back too: a 200 that names a different key
+/// is a substituted release, not a successful one.
+#[test]
+fn a_response_naming_another_key_is_refused() {
+    let transport = CapturingTransport {
+        captured: Arc::new(Mutex::new(None)),
+        result: Ok((
+            200,
+            r#"{"KeyId":"arn:aws:kms:eu-west-1:999988887777:key/attacker","CiphertextForRecipient":"AAAA"}"#
+                .to_string(),
+        )),
+    };
+    let kms = capturing_kms(Ok(b"doc".to_vec()), transport);
+    let error = kms
+        .decrypt(&params())
+        .expect_err("a foreign CMK is not this enclave's key");
+    assert!(error.contains("did not match the pinned key"), "{error}");
 }

@@ -28,7 +28,7 @@ pub fn handle_vrf_random(
     let output_hash = neo_os_core::sha256_hex(&payload_bytes);
     let network = resolve_payload_network(state, payload);
     let signed = sign_worker_bytes(state, &network, &payload_bytes)?;
-    let tee_attestation = build_tee_attestation(state, payload, "custody", &output_hash);
+    let tee_attestation = build_tee_attestation(state, payload, "custody", &output_hash)?;
 
     let request_id = payload
         .get("request_id")

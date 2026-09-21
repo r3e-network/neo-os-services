@@ -135,7 +135,7 @@ pub fn handle_compute_execute(
     let output_hash = neo_os_core::sha256_hex(&payload_bytes);
     let network = resolve_payload_network(state, &payload);
     let signed = sign_worker_bytes(state, &network, &payload_bytes)?;
-    let tee_attestation = build_tee_attestation(state, &payload, "worker", &output_hash);
+    let tee_attestation = build_tee_attestation(state, &payload, "worker", &output_hash)?;
 
     // `{mode, target_chain, target_chain_id, ...result, ...buildLaneSignedEnvelope(signed)}`
     // — later spreads overwrite, and serde_json's preserve_order keeps a
@@ -389,27 +389,31 @@ pub(crate) fn sign_worker_hex(
 }
 
 /// `maybeBuildDstackAttestation` (nitro-signer.js): caller-keyed lanes never
-/// attest, the emit gate is `normalizeBoolean`, and every failure is
-/// best-effort null. The child POSTed `{report_data: outputHash}` to the
-/// 8787 /attestation endpoint — `handle_attestation` IS that endpoint in-process,
-/// and `normalizeReportData` rode the 64-hex output hash as raw bytes.
+/// attest and the emit gate is `normalizeBoolean`. Where this DIVERGES from
+/// the Node original is the failure path (SVC-D-5, CL-33): the JS swallowed
+/// an attestation error into `null`, which is byte-identical to
+/// `include_attestation: false` in the response — so a caller could not tell
+/// "you did not ask for a proof" from "the enclave could not produce one",
+/// and a signed result went out either way. `handle_attestation` is itself
+/// fail-closed (it answers 503); discarding that was the permissive default.
+/// A requested-but-failed attestation now refuses the lane.
+///
+/// `Ok(Null)` therefore means exactly one thing: the caller deliberately did
+/// not ask, or the lane signs with caller material and never attests.
 pub(crate) fn build_tee_attestation(
     state: &AppState,
     payload: &serde_json::Value,
     key_source: &str,
     output_hash: &str,
-) -> serde_json::Value {
+) -> Result<serde_json::Value, RuntimeError> {
     if key_source == "caller" {
-        return serde_json::Value::Null;
+        return Ok(serde_json::Value::Null);
     }
     if !should_emit_attestation(state, payload) {
-        return serde_json::Value::Null;
+        return Ok(serde_json::Value::Null);
     }
     let attestation =
-        match handle_attestation(state, &serde_json::json!({ "report_data": output_hash })) {
-            Ok(attestation) => attestation,
-            Err(_) => return serde_json::Value::Null,
-        };
+        handle_attestation(state, &serde_json::json!({ "report_data": output_hash }))?;
     // `body.attestation_document || body.document || null` — falsy → null.
     let document = match attestation.get("attestation_document") {
         Some(serde_json::Value::String(document)) if !document.is_empty() => {
@@ -417,11 +421,11 @@ pub(crate) fn build_tee_attestation(
         }
         _ => serde_json::Value::Null,
     };
-    serde_json::json!({
+    Ok(serde_json::json!({
         "runtime": "aws-nitro",
         "attestation_document": document,
         "report_data": format!("0x{output_hash}"),
-    })
+    }))
 }
 
 /// `signed?.field || null` — falsy signed fields read as null.

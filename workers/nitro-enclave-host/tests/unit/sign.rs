@@ -9,6 +9,16 @@ use super::*;
 mod support;
 use support::*;
 
+/// The blind-sign lane is OFF by default (SVC-B-1), so every test that means
+/// to exercise a SUCCESSFUL `/sign/payload` opts in explicitly. Keeping the
+/// opt-in out of `healthy_overlay()` is the point: a future test that forgets
+/// it sees the refusal, not a signature.
+fn blind_sign_overlay() -> Vec<(&'static str, &'static str)> {
+    let mut pairs = healthy_overlay();
+    pairs.push((BLIND_SIGN_OPT_IN_ENV, "1"));
+    pairs
+}
+
 #[test]
 fn the_strict_role_mapper_accepts_exactly_the_node_vocabulary() {
     assert_eq!(
@@ -51,7 +61,7 @@ fn sign_payload_rejects_an_unknown_role_with_the_legal_set() {
 #[test]
 fn sign_payload_role_aliases_resolve_in_the_node_order() {
     let harness = test_state(
-        &healthy_overlay(),
+        &blind_sign_overlay(),
         FakeAttest::with_document(b"doc"),
         FakeSigner::healthy(),
         FakeBridge::new(),
@@ -76,7 +86,7 @@ fn sign_payload_role_aliases_resolve_in_the_node_order() {
 #[test]
 fn sign_payload_requires_even_lowercase_hex_data() {
     let harness = test_state(
-        &healthy_overlay(),
+        &blind_sign_overlay(),
         FakeAttest::with_document(b"doc"),
         FakeSigner::healthy(),
         FakeBridge::new(),
@@ -104,7 +114,7 @@ fn sign_payload_requires_even_lowercase_hex_data() {
 #[test]
 fn sign_payload_passes_the_custody_response_through_verbatim() {
     let harness = test_state(
-        &healthy_overlay(),
+        &blind_sign_overlay(),
         FakeAttest::with_document(b"doc"),
         FakeSigner::healthy(),
         FakeBridge::new(),
@@ -202,4 +212,90 @@ fn an_unconfigured_role_is_the_node_503_message() {
             "{handler}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// SVC-B-1 — the blind-sign lane is retired unless the measured image opts in
+// ---------------------------------------------------------------------------
+
+/// `/sign/payload` hands the caller a signature over a digest the CALLER
+/// chose, with a key the on-chain verifier trusts. That is enough to forge an
+/// oracle fulfilment for a real pending request without any compute running
+/// in the enclave, so a fully configured custody plane must still refuse
+/// unless the measured image opted the lane back in.
+#[test]
+fn a_configured_plane_still_refuses_to_blind_sign_without_the_image_opt_in() {
+    let harness = test_state(
+        &healthy_overlay(),
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let error = handle_sign_payload(
+        &harness.state,
+        &serde_json::json!({ "key_role": "oracle_verifier", "data_hex": "cafe" }),
+    )
+    .expect_err("the retired lane must not sign");
+    assert_eq!(error.status, 503);
+    assert!(
+        error.message.contains("blind payload signing is retired"),
+        "{}",
+        error.message
+    );
+    assert!(
+        harness.signer.sign_calls().is_empty(),
+        "no custody signing call may be made at all"
+    );
+}
+
+/// Only the exact value opens it. `true`/`yes`/`0`/empty all leave it closed:
+/// a lane this dangerous is not opened by something that merely looks truthy.
+#[test]
+fn only_the_exact_opt_in_value_reopens_the_lane() {
+    for (value, expect_signed) in [
+        ("1", true),
+        ("true", false),
+        ("yes", false),
+        ("0", false),
+        (" ", false),
+    ] {
+        let mut pairs = healthy_overlay();
+        pairs.push((BLIND_SIGN_OPT_IN_ENV, value));
+        let harness = test_state(
+            &pairs,
+            FakeAttest::with_document(b"doc"),
+            FakeSigner::healthy(),
+            FakeBridge::new(),
+            FakeKms::default(),
+        );
+        let outcome = handle_sign_payload(
+            &harness.state,
+            &serde_json::json!({ "key_role": "updater", "data_hex": "cafe" }),
+        );
+        assert_eq!(
+            outcome.is_ok(),
+            expect_signed,
+            "ENCLAVE_ALLOW_BLIND_SIGN={value:?}"
+        );
+    }
+}
+
+/// The lane that replaced it is untouched: `/oracle/fulfill`'s own digest is
+/// still signed, because the refusal lives in the blind-sign shim and not in
+/// the signing plane.
+#[test]
+fn the_opt_in_does_not_gate_the_semantic_signing_plane() {
+    let harness = test_state(
+        &healthy_overlay(),
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    harness
+        .state
+        .signer
+        .sign_payload("testnet", "oracle_verifier", "cafe")
+        .expect("the plane itself still signs the fold's own digest");
 }

@@ -386,8 +386,22 @@ fn automation_fulfillment_executes_the_nested_rust_handler() {
     assert_eq!(harness.signer.sign_calls().len(), 2);
 }
 
+/// SVC-E-1 (CL-19/CL-14). `resolve_kernel_intent` picks the lane by a
+/// SUBSTRING match on the caller-chosen `operation` string, so anything
+/// containing "feed" lands on `/oracle/feed` — a lane the intent table marks
+/// `operator_only` and the retired Node relayer refused. The Rust port
+/// dropped that enforcement entirely (`operator_only` had no consumer), so a
+/// permissionless MiniApp could take the process-wide feed lock, spend the
+/// operator's provider quota and rewrite shared feed state.
+///
+/// The refusal must stay a DETERMINISTIC UNSUCCESSFUL FULFILMENT — signed,
+/// digest-bearing, `success: false` — and not an HTTP error, or the on-chain
+/// request never settles and the fee is stranded. Before the fix this reached
+/// the feed handler and answered with its background-executor refusal
+/// instead; the direct `/oracle/feed` route still covers that path in
+/// `tests/unit/oracle_feed.rs`.
 #[test]
-fn feed_fulfillment_reuses_the_direct_background_refusal() {
+fn an_operator_only_feed_lane_is_refused_as_a_settleable_fulfillment() {
     let mut harness = fulfill_harness(price_reply());
     use_production_compute(&mut harness);
     let body = json!({
@@ -400,11 +414,70 @@ fn feed_fulfillment_reuses_the_direct_background_refusal() {
 
     let response = handle_oracle_fulfill(&harness.state, &body).expect("signed rejection");
     assert_eq!(response["success"], false);
-    assert!(response["error"]
+    assert_eq!(
+        response["error"].as_str().expect("feed error"),
+        crate::fulfill::OPERATOR_ONLY_REFUSAL,
+    );
+    // Settleable: the refusal is signed and carries a digest, so the chain
+    // can close the request out exactly as a successful fulfilment would.
+    assert!(response["fulfillment_digest_hex"]
         .as_str()
-        .expect("feed error")
-        .contains("durable background feed execution is unavailable"));
+        .is_some_and(|digest| !digest.is_empty()));
+    assert!(response["signature"]
+        .as_str()
+        .is_some_and(|signature| !signature.is_empty()));
+    // No compute ran: the feed lock was never taken and no provider was paid.
     assert!(harness.bridge.forwards().is_empty());
+}
+
+/// The second half of SVC-E-1: the on-chain `moduleId` — the only identifier
+/// the contract's grant check actually validates — was folded into the
+/// fulfilment digest but never compared against the module the `operation`
+/// string routes to. A caller could self-grant one cheap module and then name
+/// an operation that reaches a different, privileged lane, with the on-chain
+/// audit record showing the innocuous granted module.
+#[test]
+fn a_granted_module_that_disagrees_with_the_routed_lane_is_refused() {
+    let mut harness = fulfill_harness(price_reply());
+    use_production_compute(&mut harness);
+    let body = json!({
+        "chain": "neo_n3",
+        "request_type": "compute_hash",
+        "request_id": "904",
+        "payload": { "function": "hash.sha256", "input": { "answer": 42 } },
+        // The chain granted the cheap oracle.fetch module; the operation
+        // string routes to compute.run.
+        "fulfillment_context": { "module_id": "oracle.fetch" },
+    });
+
+    let error = handle_oracle_fulfill(&harness.state, &body).expect_err("module mismatch");
+    assert_eq!(error.status, 400);
+    assert!(error
+        .message
+        .contains("request operation does not match the granted module"));
+    assert!(harness.bridge.forwards().is_empty());
+}
+
+/// The guard must not break the honest case: a context that names the module
+/// the operation actually routes to still fulfils, and a context that names
+/// no module at all keeps the pre-existing fallback onto the intent's module.
+#[test]
+fn a_matching_module_and_an_absent_module_both_still_fulfil() {
+    let intent = resolve_kernel_intent("compute_hash");
+    for context in [json!({ "module_id": intent.module_id }), json!({})] {
+        let mut harness = fulfill_harness(price_reply());
+        use_production_compute(&mut harness);
+        let body = json!({
+            "chain": "neo_n3",
+            "request_type": "compute_hash",
+            "request_id": "905",
+            "payload": { "function": "hash.sha256", "input": { "answer": 42 } },
+            "fulfillment_context": context,
+        });
+
+        let response = handle_oracle_fulfill(&harness.state, &body).expect("fulfillment");
+        assert_eq!(response["success"], true, "context {context}");
+    }
 }
 
 #[test]

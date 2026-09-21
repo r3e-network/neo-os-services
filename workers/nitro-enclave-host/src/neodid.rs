@@ -150,7 +150,7 @@ fn handle_ticket(
     let payload_bytes = stable_stringify(&result).into_bytes();
     let output_hash = neo_os_core::sha256_hex(&payload_bytes);
     let result_signed = sign_worker_hex(state, &network, &hex::encode(&payload_bytes))?;
-    let tee_attestation = build_tee_attestation(state, &resolved, "custody", &output_hash);
+    let tee_attestation = build_tee_attestation(state, &resolved, "custody", &output_hash)?;
 
     // `{...result, mode, callback_encoding: ... || undefined, output_hash,
     // attestation_hash, verification, tee_attestation}` — JSON.stringify drops

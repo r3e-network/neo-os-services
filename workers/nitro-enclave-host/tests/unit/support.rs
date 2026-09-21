@@ -802,6 +802,7 @@ pub fn test_state(
         jwks_fetcher: Box::new(jwks_fetcher.clone()),
         oracle_runtime: Mutex::new(neo_os_compute::oracle::providers::ProviderRuntime::default()),
         kms_diag: Mutex::new(KmsDiag::default()),
+        overload: neo_os_compute::overload::OverloadGuard::new(),
     };
     TestState {
         attest,

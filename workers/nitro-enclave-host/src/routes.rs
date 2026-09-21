@@ -159,3 +159,42 @@ pub fn classify(method: &str, path: &str) -> Target {
 #[cfg(test)]
 #[path = "../tests/unit/routes.rs"]
 mod tests;
+
+impl Target {
+    /// The route's own canonical path, independent of the optional
+    /// single-segment network prefix `matches_route` allows. Admission
+    /// control keys on this so `/mainnet/compute/execute` and
+    /// `/compute/execute` share one capacity counter instead of the prefixed
+    /// form silently routing around the cap.
+    pub fn canonical_path(&self) -> Option<&'static str> {
+        Some(match self {
+            Target::OracleFulfill => "/oracle/fulfill",
+            Target::FeedSign => "/feed/sign",
+            Target::SignPayload => "/sign/payload",
+            Target::KeysDerived => "/keys/derived",
+            Target::ComputeExecute => "/compute/execute",
+            Target::NeoDidBind => "/neodid/bind",
+            Target::NeoDidActionTicket => "/neodid/action-ticket",
+            Target::NeoDidRecoveryTicket => "/neodid/recovery-ticket",
+            Target::NeoDidZkLoginTicket => "/neodid/zklogin-ticket",
+            Target::OracleQuery => "/oracle/query",
+            Target::OracleSmartFetch => "/oracle/smart-fetch",
+            Target::OracleDecrypt => "/oracle/decrypt",
+            Target::OracleMessageReveal => "/oracle/message-reveal",
+            Target::OraclePublicKey => "/oracle/public-key",
+            Target::VrfRandom => "/vrf/random",
+            Target::PaymasterAuthorize => "/paymaster/authorize",
+            Target::SessionStart => "/session/start",
+            Target::SessionStep => "/session/step",
+            Target::SessionFinalize => "/session/finalize",
+            Target::SessionSettle => "/session/settle",
+            Target::AutomationExecute => "/automation/execute",
+            Target::OracleFeed => "/oracle/feed",
+            Target::Health
+            | Target::Attestation
+            | Target::Provision
+            | Target::ProvisionCredentials
+            | Target::NotFound => return None,
+        })
+    }
+}

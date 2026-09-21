@@ -2408,3 +2408,68 @@ fn a_restarted_service_signs_the_same_bytes_the_same_way() -> Result<()> {
     assert_eq!(listed[0].key_id, key.key_id);
     Ok(())
 }
+
+/// SVC-B-5 (CL-18): the boundary that authorized a signature must be
+/// identifiable from the audit trail alone.
+///
+/// The scenario the trail could not answer before: widen a whitelist, sign,
+/// narrow it again. The two `PolicySaved` rows both read "recipients 1/0" and
+/// the `TransactionSigned` row in between named no policy at all, so nothing
+/// in the service's own records established which recipients were permitted
+/// when the signature was produced.
+#[test]
+fn a_signature_names_the_boundary_that_authorized_it() -> Result<()> {
+    let custody = Custody::open()?;
+
+    let narrow = custody.save(&SignerPolicy {
+        allow_transfer: true,
+        asset_whitelist: vec![ScriptHash::from_wire(tx::native::NEO)],
+        transfer_to_whitelist: vec![ScriptHash::from_wire(RECIPIENT)],
+        ..Default::default()
+    })?;
+    allowed(custody.sign(&custody.transfer(100, 1))?);
+
+    // Same list LENGTH, different recipient: the count-based summary renders
+    // these two boundaries identically.
+    let widened = custody.save(&SignerPolicy {
+        transfer_to_whitelist: vec![ScriptHash::from_wire([0x7c; 20])],
+        ..narrow.clone()
+    })?;
+    assert_ne!(narrow.digest_label(), widened.digest_label());
+
+    let rows = custody.audit()?;
+    let policy_details: Vec<String> = rows
+        .iter()
+        .filter(|row| row.action == SignerAuditAction::PolicySaved)
+        .filter_map(|row| row.detail.clone())
+        .collect();
+    assert_eq!(policy_details.len(), 2, "{policy_details:?}");
+    assert!(
+        policy_details
+            .iter()
+            .any(|detail| detail.contains(&format!("policy={}", narrow.digest_label()))),
+        "the narrow boundary is named: {policy_details:?}"
+    );
+    assert!(
+        policy_details
+            .iter()
+            .any(|detail| detail.contains(&format!("policy={}", widened.digest_label()))),
+        "the widened boundary is named: {policy_details:?}"
+    );
+
+    // And the signature itself names the boundary in force when it was made —
+    // the narrow one, not whatever the store holds now.
+    let signed = row_with(&rows, SignerAuditAction::TransactionSigned)
+        .detail
+        .clone()
+        .unwrap_or_else(|| unreachable!("a signature is always written down"));
+    assert!(
+        signed.contains(&format!("policy={}", narrow.digest_label())),
+        "{signed}"
+    );
+    assert!(
+        !signed.contains(&format!("policy={}", widened.digest_label())),
+        "a later widening must not appear to have authorized an earlier signature: {signed}"
+    );
+    Ok(())
+}

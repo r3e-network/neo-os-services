@@ -112,7 +112,25 @@ fn main() {
         jwks_fetcher: Box::new(ReqwestJwksFetcher),
         oracle_runtime: Mutex::new(neo_os_compute::oracle::providers::ProviderRuntime::default()),
         kms_diag: Mutex::new(KmsDiag::default()),
+        overload: neo_os_compute::overload::OverloadGuard::new(),
     });
+
+    // SVC-D-2 / CL-29: before serving anything, prove this is a measured
+    // enclave when the image demands it. A `--debug-mode` enclave boots
+    // normally and answers NSM with all-zero PCRs — the KMS policy would then
+    // refuse to release keys, but nothing in this process said so, and
+    // /attestation is public. Refusing to serve is the honest answer; the
+    // exit code and message are the operator's signal.
+    match nitro_enclave_host::attestation::assert_attested_boot(&app_state) {
+        Ok(None) => {}
+        Ok(Some(pcr0)) => {
+            eprintln!("enclave_host: attested boot, PCR0={pcr0}");
+        }
+        Err(message) => {
+            eprintln!("enclave_host: refusing to serve — {message}");
+            std::process::exit(1);
+        }
+    }
 
     let router = Router::new().fallback(any(serve)).with_state(ShimState {
         app: app_state.clone(),

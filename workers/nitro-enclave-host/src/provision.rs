@@ -110,13 +110,56 @@ fn provisioned_or_current(
         .get_trimmed(name)
 }
 
+/// The pinned CMK ARN every frontier KMS release must name. Deliberately
+/// ABSENT from [`crate::overlay::PROVISIONABLE_NAMES`]: it belongs to the
+/// measured image (a `deploy/nitro/Dockerfile.enclave` ENV, which lands in
+/// PCR2), so `/provision` cannot restate it and a compromised parent cannot
+/// redirect a release to a CMK it controls.
+pub const FRONTIER_KMS_KEY_ARN_ENV: &str = "FRONTIER_KMS_KEY_ARN";
+
+/// The diagnostic probe's own purpose. It exercises the release path without
+/// touching a live key, so it gets its own encryption context rather than
+/// borrowing a secret's.
+pub const KMS_DIAG_PURPOSE: &str = "neoos/kms-diag/v1";
+
+/// Is this process running with `NODE_ENV=production`? Read from the overlay
+/// (image ENV, since NODE_ENV is not provisionable) exactly as
+/// `custody.rs::config` reads it.
+fn is_production(state: &AppState) -> bool {
+    state
+        .overlay
+        .read()
+        .expect("overlay lock")
+        .get_trimmed("NODE_ENV")
+        .is_some_and(|value| value.eq_ignore_ascii_case("production"))
+}
+
+/// The image-owned CMK pin. `Ok(None)` is a local dry run; production has no
+/// such mode — an unpinned release there is exactly the substitution this
+/// binding exists to prevent, so it fails closed.
+fn frontier_kms_key_arn(state: &AppState) -> Result<Option<String>, ()> {
+    let pinned = state
+        .overlay
+        .read()
+        .expect("overlay lock")
+        .get_trimmed(FRONTIER_KMS_KEY_ARN_ENV);
+    match pinned {
+        Some(arn) => Ok(Some(arn)),
+        None if is_production(state) => Err(()),
+        None => Ok(None),
+    }
+}
+
 /// The KMS inputs the release path carries — region resolved the way
 /// `materializeProvisionRuntimeToken` resolves it, credentials from the
-/// payload env or the accumulated overlay (never the raw process env).
+/// payload env or the accumulated overlay (never the raw process env), and
+/// the three image-owned bindings (`purpose`, network, CMK) the parent does
+/// not get to choose.
 fn kms_release_params(
     state: &AppState,
     env: &serde_json::Map<String, Value>,
     ciphertext_b64: &str,
+    purpose: &str,
 ) -> Option<KmsReleaseParams> {
     let region = provisioned_or_current(state, env, "AWS_REGION")
         .or_else(|| provisioned_or_current(state, env, "NITRO_AWS_REGION"))
@@ -124,12 +167,16 @@ fn kms_release_params(
     let access_key_id = provisioned_or_current(state, env, "AWS_ACCESS_KEY_ID")?;
     let secret_access_key = provisioned_or_current(state, env, "AWS_SECRET_ACCESS_KEY")?;
     let session_token = provisioned_or_current(state, env, "AWS_SESSION_TOKEN");
+    let key_arn = frontier_kms_key_arn(state).ok()?;
     Some(KmsReleaseParams {
         region,
         ciphertext_b64: ciphertext_b64.to_string(),
         access_key_id,
         secret_access_key,
         session_token,
+        purpose: purpose.to_string(),
+        network: state.resolve_network(),
+        key_arn,
     })
 }
 
@@ -152,7 +199,7 @@ pub fn materialize_provision_runtime_token(
             format!("first provision requires {RUNTIME_TOKEN_KMS_CIPHERTEXT_ENV}"),
         ));
     };
-    let Some(params) = kms_release_params(state, env, ciphertext) else {
+    let Some(params) = kms_release_params(state, env, ciphertext, RUNTIME_TOKEN_KMS_PURPOSE) else {
         // No credentials to present to KMS — the release cannot even start.
         return Err(http_error(
             503,
@@ -223,7 +270,7 @@ fn release_context_envelope(
     else {
         return Ok(None);
     };
-    let params = kms_release_params(state, env, ciphertext).ok_or_else(|| {
+    let params = kms_release_params(state, env, ciphertext, expected_purpose).ok_or_else(|| {
         http_error(
             503,
             format!("attestation-gated {ciphertext_env} materialization failed"),
@@ -323,10 +370,20 @@ fn materialize_neodid_salt(
     Ok(Some(salt.to_string()))
 }
 
+/// The custody caller credentials the envelope carries: the mandatory
+/// `raw_sign` token and, optionally, the `sign`-capability token the semantic
+/// lanes need (SVC-B-2). Both travel inside ONE envelope under one purpose
+/// and one encryption context, so the second credential costs no new
+/// ciphertext, no new provisionable name and no new production marker.
+pub struct CustodyCallerTokens {
+    pub raw: String,
+    pub semantic: Option<String>,
+}
+
 fn materialize_custody_token(
     state: &AppState,
     env: &serde_json::Map<String, Value>,
-) -> Result<Option<String>, RuntimeError> {
+) -> Result<Option<CustodyCallerTokens>, RuntimeError> {
     let Some(envelope) = release_context_envelope(
         state,
         env,
@@ -336,18 +393,37 @@ fn materialize_custody_token(
     else {
         return Ok(None);
     };
-    let token = envelope
-        .get("token")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|token| (32..=512).contains(&token.chars().count()))
-        .ok_or_else(|| {
+    let read_token = |field: &str| -> Option<&str> {
+        envelope
+            .get(field)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|token| (32..=512).contains(&token.chars().count()))
+    };
+    let raw = read_token("token").ok_or_else(|| {
+        http_error(
+            400,
+            format!("{CUSTODY_TOKEN_KMS_CIPHERTEXT_ENV} KMS envelope token is invalid"),
+        )
+    })?;
+    // Present-but-malformed is a refusal, not a silent fall back to the raw
+    // token: an operator who meant to provision the semantic caller must not
+    // discover the typo as a production 403 on the NeoX fulfilment lane.
+    let semantic = match envelope.get("semantic_token") {
+        None | Some(Value::Null) => None,
+        Some(_) => Some(read_token("semantic_token").ok_or_else(|| {
             http_error(
                 400,
-                format!("{CUSTODY_TOKEN_KMS_CIPHERTEXT_ENV} KMS envelope token is invalid"),
+                format!(
+                    "{CUSTODY_TOKEN_KMS_CIPHERTEXT_ENV} KMS envelope semantic_token is invalid"
+                ),
             )
-        })?;
-    Ok(Some(token.to_string()))
+        })?),
+    };
+    Ok(Some(CustodyCallerTokens {
+        raw: raw.to_string(),
+        semantic: semantic.map(str::to_string),
+    }))
 }
 
 fn materialize_game_secret_root(
@@ -513,12 +589,24 @@ fn run_kms_diag(state: &AppState) -> Value {
     let Some(secret_access_key) = secret_access_key else {
         return serde_json::json!({ "state": "error", "message": "AWS_SECRET_ACCESS_KEY is not set" });
     };
+    let key_arn = match frontier_kms_key_arn(state) {
+        Ok(key_arn) => key_arn,
+        Err(()) => {
+            return serde_json::json!({
+                "state": "error",
+                "message": format!("{FRONTIER_KMS_KEY_ARN_ENV} is not set"),
+            })
+        }
+    };
     let params = KmsReleaseParams {
         region,
         ciphertext_b64: ciphertext,
         access_key_id,
         secret_access_key,
         session_token,
+        purpose: KMS_DIAG_PURPOSE.to_string(),
+        network: state.resolve_network(),
+        key_arn,
     };
     match state.kms.decrypt(&params) {
         Ok(_) => serde_json::json!({ "state": "ok" }),
@@ -567,8 +655,8 @@ pub fn handle_provision(
             }
         }
         overlay.set_runtime_token(&next_runtime_token.token);
-        if let Some(token) = &custody_token {
-            overlay.set_custody_token(token);
+        if let Some(tokens) = &custody_token {
+            overlay.set_custody_token(&tokens.raw, tokens.semantic.as_deref());
         }
         if let Some(material) = &oracle_key {
             overlay.set_oracle_key_material(material);

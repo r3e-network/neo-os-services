@@ -125,7 +125,7 @@ fn finalize_session(
     let payload_bytes = stable_stringify(&JsValue::from_json(&signing_payload)).into_bytes();
     let output_hash = neo_os_core::sha256_hex(&payload_bytes);
     let signed = sign_worker_bytes(state, &identity.network, &payload_bytes)?;
-    let tee_attestation = build_tee_attestation(state, payload, "worker", &output_hash);
+    let tee_attestation = build_tee_attestation(state, payload, "worker", &output_hash)?;
 
     let signature = signed_field(&signed, "signature");
     let signed_public_key = signed_field(&signed, "public_key");

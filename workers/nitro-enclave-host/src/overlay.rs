@@ -121,13 +121,38 @@ impl EnvOverlay {
             .insert("MORPHEUS_RUNTIME_TOKEN".to_string(), token.to_string());
     }
 
-    pub(crate) fn set_custody_token(&mut self, token: &str) {
+    /// Install the custody caller credentials released from the KMS envelope.
+    ///
+    /// Two of them, because the custody service enforces that a caller names
+    /// EXACTLY ONE capability (`neo-signer/src/service.rs`: "capabilities
+    /// must name exactly one of sign, raw_sign or admin") while this host
+    /// needs two: `raw_sign` for `/sign/raw` and `sign` for the semantic
+    /// transaction and EIP-191 fulfilment routes. With one credential one of
+    /// the two fulfilment chains is always refused (SVC-B-2). The semantic
+    /// token is optional so an existing single-token deployment keeps working
+    /// unchanged — it then falls back to the raw token, which is exactly the
+    /// old behaviour, contradiction and all.
+    ///
+    /// Both arrive only through the attested KMS release, and both get the
+    /// `nitro-recipient-kms` source marker production demands, so neither can
+    /// be host-supplied plaintext.
+    pub(crate) fn set_custody_token(&mut self, token: &str, semantic_token: Option<&str>) {
         self.overlay
             .insert("SIGNER_SERVICE_TOKEN".to_string(), token.to_string());
         self.overlay.insert(
             "SIGNER_SERVICE_TOKEN_SOURCE".to_string(),
             "nitro-recipient-kms".to_string(),
         );
+        if let Some(semantic_token) = semantic_token {
+            self.overlay.insert(
+                "SIGNER_SERVICE_SEMANTIC_TOKEN".to_string(),
+                semantic_token.to_string(),
+            );
+            self.overlay.insert(
+                "SIGNER_SERVICE_SEMANTIC_TOKEN_SOURCE".to_string(),
+                "nitro-recipient-kms".to_string(),
+            );
+        }
     }
 
     /// Install KMS-released X25519 key material. This bypass is intentionally

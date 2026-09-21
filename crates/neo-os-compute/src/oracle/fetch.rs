@@ -23,12 +23,39 @@ use crate::oracle::providers::{
 use crate::ssrf::{assert_resolved_host_allowed, resolve_pinned_addresses, DnsLookup};
 use crate::transport::{read_response_text_with_limit, HttpRequest};
 
+/// The refusal a production enclave gives when no destination policy reached
+/// it. Distinct from the not-in-list refusal so an operator can tell "the
+/// image shipped without an allowlist" from "this URL is not allowed".
+pub const ALLOWLIST_UNCONFIGURED_REFUSAL: &str =
+    "ORACLE_HTTP_ALLOWLIST is unset — production egress has no in-enclave destination policy";
+
 /// `assertUrlInAllowlist(parsedUrl)` — when `ORACLE_HTTP_ALLOWLIST` is set,
 /// the URL must match an entry's origin and (unless the entry's path is empty
 /// or `/`) be the entry path or a descendant of it.
+///
+/// SVC-C-2 (CL-24/CL-25). An unset allowlist used to be an OPEN gate, which
+/// made the host-side `vsock-proxy.allowlist.yaml` the only destination
+/// policy in the system — and that file says of itself that it is "NOT baked
+/// into the measured enclave image … so it can be tuned operationally without
+/// changing the enclave PCRs". An operator could therefore add a destination,
+/// restart the host proxy, and have the enclave decrypt a stored third-party
+/// credential into a request aimed at it, with no PCR change a remote
+/// verifier could see. The value must reach the enclave through the measured
+/// image (`ENV ORACLE_HTTP_ALLOWLIST=…` in `deploy/nitro/Dockerfile.enclave`,
+/// which lands in PCR2), so widening it becomes an EIF rebuild and a
+/// measurement republish — the point of the control.
+///
+/// Unset stays an open gate OUTSIDE production so local runs and the
+/// Node-parity fixtures keep working; in production it fails closed, the same
+/// shape `message_reveal::decrypt_binding_required` already uses to
+/// production-lock the decrypt binding.
 pub fn assert_url_in_allowlist(parsed_url: &Url, env: EnvReader<'_>) -> Result<(), String> {
     let raw_allowlist = read_env(env, &["ORACLE_HTTP_ALLOWLIST"]);
+    let is_production = read_env(env, &["NODE_ENV"]).to_lowercase() == "production";
     if raw_allowlist.is_empty() {
+        if is_production {
+            return Err(ALLOWLIST_UNCONFIGURED_REFUSAL.to_string());
+        }
         return Ok(());
     }
     let allowlist: Vec<&str> = raw_allowlist
@@ -37,6 +64,9 @@ pub fn assert_url_in_allowlist(parsed_url: &Url, env: EnvReader<'_>) -> Result<(
         .filter(|entry| !entry.is_empty())
         .collect();
     if allowlist.is_empty() {
+        if is_production {
+            return Err(ALLOWLIST_UNCONFIGURED_REFUSAL.to_string());
+        }
         return Ok(());
     }
     for entry in allowlist {
@@ -481,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn allowlist_unset_or_blank_is_an_open_gate() {
+    fn allowlist_unset_or_blank_is_an_open_gate_outside_production() {
         let url = Url::parse("https://api.example.com/v1/x").unwrap();
         assert!(assert_url_in_allowlist(&url, &env_from(&[])).is_ok());
         assert!(
@@ -493,6 +523,41 @@ mod tests {
             &env_from(&[("ORACLE_HTTP_ALLOWLIST", "not-a-url,https://other.com")])
         )
         .is_err());
+    }
+
+    /// SVC-C-2: in production an absent (or all-blank) allowlist is a
+    /// refusal, not an open gate — otherwise the only destination policy in
+    /// the system is the host-owned YAML the operator can widen without
+    /// touching a PCR. A configured list still works exactly as before, so
+    /// the production lock costs nothing once the value is baked into the
+    /// measured image.
+    #[test]
+    fn production_refuses_an_unconfigured_allowlist_instead_of_opening_the_gate() {
+        let url = Url::parse("https://api.example.com/v1/x").unwrap();
+        for blank in ["", "  ", " , ,"] {
+            let env = env_from(&[("NODE_ENV", "production"), ("ORACLE_HTTP_ALLOWLIST", blank)]);
+            assert_eq!(
+                assert_url_in_allowlist(&url, &env).unwrap_err(),
+                ALLOWLIST_UNCONFIGURED_REFUSAL,
+                "blank allowlist {blank:?} must fail closed in production",
+            );
+        }
+        // Unset entirely is the same refusal.
+        assert_eq!(
+            assert_url_in_allowlist(&url, &env_from(&[("NODE_ENV", "production")])).unwrap_err(),
+            ALLOWLIST_UNCONFIGURED_REFUSAL,
+        );
+        // A configured list is unaffected by the production lock.
+        let env = env_from(&[
+            ("NODE_ENV", "production"),
+            ("ORACLE_HTTP_ALLOWLIST", "https://api.example.com/v1"),
+        ]);
+        assert!(assert_url_in_allowlist(&url, &env).is_ok());
+        let denied = Url::parse("https://evil.example.com/v1/x").unwrap();
+        assert_eq!(
+            assert_url_in_allowlist(&denied, &env).unwrap_err(),
+            "url is not in ORACLE_HTTP_ALLOWLIST",
+        );
     }
 
     #[test]

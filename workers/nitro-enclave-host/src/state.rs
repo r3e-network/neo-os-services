@@ -197,7 +197,18 @@ pub trait KmsReleaser: Send + Sync {
     fn decrypt(&self, params: &KmsReleaseParams) -> Result<Vec<u8>, String>;
 }
 
-/// What a release call carries — the provision env's projected KMS inputs.
+/// What a release call carries — the provision env's projected KMS inputs,
+/// plus the three image-owned bindings the untrusted parent cannot restate.
+///
+/// `region`, `ciphertext_b64` and the credentials are host-supplied by
+/// construction: the parent relays them through `/provision`. `purpose`,
+/// `network` and `key_arn` are NOT — they come from the measured image and
+/// the resolved network, and they are what stops a compromised parent from
+/// wrapping its own envelope under its own CMK and having the enclave accept
+/// it (CL-10/CL-12). `purpose` and `network` become a KMS encryption context,
+/// which KMS itself checks before releasing any plaintext; `key_arn` pins the
+/// one CMK whose key policy carries the `kms:RecipientAttestation:*`
+/// conditions for this image.
 #[derive(Debug, Clone)]
 pub struct KmsReleaseParams {
     pub region: String,
@@ -205,6 +216,15 @@ pub struct KmsReleaseParams {
     pub access_key_id: String,
     pub secret_access_key: String,
     pub session_token: Option<String>,
+    /// The per-secret purpose label, bound into the KMS encryption context.
+    pub purpose: String,
+    /// The image-resolved network, bound into the KMS encryption context so a
+    /// testnet envelope cannot open on a mainnet enclave even before the
+    /// in-band envelope fields are read.
+    pub network: String,
+    /// The pinned CMK ARN. `None` is possible only outside production, where
+    /// `FRONTIER_KMS_KEY_ARN` may be unset for a local dry run.
+    pub key_arn: Option<String>,
 }
 
 /// `/health`'s `kms_diag` — the outcome of the last diagnostic KMS probe,
@@ -255,6 +275,13 @@ pub struct AppState {
     /// requests here.
     pub oracle_runtime: Mutex<neo_os_compute::oracle::providers::ProviderRuntime>,
     pub kms_diag: Mutex<KmsDiag>,
+    /// Per-route admission control (CL-34). The Node worker this host
+    /// replaces calls the same guard on every request after auth
+    /// (`workers/nitro-worker/src/worker.js`); the Rust port shipped the
+    /// guard and its tests but never wired it, leaving an authenticated
+    /// caller able to park unbounded blocking-pool threads in a fixed-memory
+    /// single-node enclave. One guard per process, like the JS module global.
+    pub overload: neo_os_compute::overload::OverloadGuard,
 }
 
 impl AppState {

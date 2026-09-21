@@ -777,3 +777,85 @@ fn temporary_credentials_rotate_only_on_the_separate_authorized_route() {
         .expect("error")
         .contains("non-credential"));
 }
+
+// ---------------------------------------------------------------------------
+// SVC-A-1 / SVC-D-9 — the frontier's KMS releases are CMK- and context-bound
+// ---------------------------------------------------------------------------
+
+const PINNED_CMK: &str = "arn:aws:kms:us-east-1:111122223333:key/frontier";
+
+/// Every release the frontier makes must carry the image's purpose label, the
+/// image-resolved network and the pinned CMK — the three inputs the untrusted
+/// parent supplies none of. Without them the parent, which already supplies
+/// both the ciphertext and the AWS credentials, can wrap an envelope of its
+/// own under a CMK of its own and the recipient attestation still passes.
+#[test]
+fn every_release_carries_the_image_owned_purpose_network_and_cmk() {
+    let mut pairs: Vec<(&str, &str)> =
+        vec![(crate::provision::FRONTIER_KMS_KEY_ARN_ENV, PINNED_CMK)];
+    pairs.extend_from_slice(AWS_PAIRS);
+    let kms = FakeKms::releasing(RUNTIME_CIPHERTEXT, released_envelope(1, TEST_NETWORK));
+    kms.set_result(ORACLE_CIPHERTEXT, Ok(oracle_envelope(TEST_NETWORK)));
+    let harness = bootstrap(&pairs, kms);
+    let outcome = provision_outcome(
+        &harness,
+        &bearer(RELEASED_TOKEN),
+        json!({
+            "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64": RUNTIME_CIPHERTEXT,
+            "MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64": ORACLE_CIPHERTEXT,
+        }),
+    );
+    assert_eq!(outcome.status, 200, "{:?}", outcome.body);
+
+    let calls = harness.kms.calls();
+    assert!(calls.len() >= 2, "both envelopes were released: {calls:?}");
+    for call in &calls {
+        assert_eq!(
+            call.key_arn.as_deref(),
+            Some(PINNED_CMK),
+            "release of {} was not pinned to the image CMK",
+            call.ciphertext_b64
+        );
+        assert_eq!(call.network, TEST_NETWORK);
+    }
+    let runtime = calls
+        .iter()
+        .find(|call| call.ciphertext_b64 == RUNTIME_CIPHERTEXT)
+        .expect("the runtime token was released");
+    assert_eq!(runtime.purpose, "neoos/nitro-runtime-auth/v1");
+    let oracle = calls
+        .iter()
+        .find(|call| call.ciphertext_b64 == ORACLE_CIPHERTEXT)
+        .expect("the oracle key was released");
+    assert_eq!(
+        oracle.purpose, "neoos/oracle-x25519/v1",
+        "each secret gets its own context so one envelope cannot open another slot"
+    );
+}
+
+/// In production an unpinned release is the substitution this binding exists
+/// to prevent, so an image missing the ARN refuses to release at all rather
+/// than falling back to "any CMK the instance role can reach".
+#[test]
+fn production_without_a_pinned_cmk_refuses_to_release() {
+    let mut pairs: Vec<(&str, &str)> = vec![("NODE_ENV", "production")];
+    pairs.extend_from_slice(AWS_PAIRS);
+    let harness = bootstrap(
+        &pairs,
+        FakeKms::releasing(RUNTIME_CIPHERTEXT, released_envelope(1, TEST_NETWORK)),
+    );
+    let outcome = provision_outcome(
+        &harness,
+        &bearer(RELEASED_TOKEN),
+        json!({ "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64": RUNTIME_CIPHERTEXT }),
+    );
+    assert_eq!(outcome.status, 503);
+    assert_eq!(
+        outcome.body["error"],
+        "attestation-gated runtime authorization materialization failed"
+    );
+    assert!(
+        harness.kms.calls().is_empty(),
+        "the release must not even start without the pin"
+    );
+}

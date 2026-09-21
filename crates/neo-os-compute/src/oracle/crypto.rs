@@ -787,6 +787,85 @@ pub fn read_encrypted_ref_consumed_request_id(row: &Json) -> String {
     String::new()
 }
 
+/// The refusal an expired stored ciphertext gets. Deliberately distinct from
+/// the not-found message: "expired" is an operator-actionable state (rotate
+/// the credential upstream), "not found" is a caller mistake, and collapsing
+/// the two is how a TTL stops being diagnosable.
+pub const ENCRYPTED_REF_EXPIRED_REFUSAL: &str = "encrypted ref expired";
+
+/// Seconds since the Unix epoch, for the use-time expiry comparison.
+pub fn now_unix_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// `expires_at` is a Postgres `timestamptz` rendered by PostgREST as an
+/// ISO-8601 string. Parse the fixed prefix (`YYYY-MM-DDTHH:MM:SS`) into an
+/// epoch second; anything that does not have that shape yields `None`.
+///
+/// A row whose `expires_at` is absent, null, empty or unparseable is treated
+/// as "no TTL" — the same reading the schema gives a NULL column and the same
+/// reading the listing API's `expires_at.is.null` branch gives it. An
+/// unparseable non-empty value is the one debatable case; it is refused
+/// below rather than silently accepted, because a TTL nobody can read is not
+/// a TTL that has passed the check.
+pub fn parse_expires_at_seconds(value: Option<&Json>) -> Option<Result<i64, ()>> {
+    let text = js_trim_string(value);
+    if text.is_empty() {
+        return None;
+    }
+    let bytes = text.as_bytes();
+    if bytes.len() < 19 {
+        return Some(Err(()));
+    }
+    let number = |from: usize, to: usize| -> Option<i64> { text[from..to].parse::<i64>().ok() };
+    let (Some(year), Some(month), Some(day)) = (number(0, 4), number(5, 7), number(8, 10)) else {
+        return Some(Err(()));
+    };
+    let (Some(hour), Some(minute), Some(second)) = (number(11, 13), number(14, 16), number(17, 19))
+    else {
+        return Some(Err(()));
+    };
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return Some(Err(()));
+    }
+    let days = days_from_civil(year, month as u32, day as u32);
+    Some(Ok(days * 86_400 + hour * 3_600 + minute * 60 + second))
+}
+
+/// `assertEncryptedRefNotExpired(row, nowSeconds)` — CL-21's "expiry is
+/// enforced at USE time inside the enclave, not only by a cleanup job". There
+/// is no cleanup job in this repository, so before this check an expired row
+/// lived and was spendable forever.
+pub fn assert_encrypted_ref_not_expired(row: &Json, now_seconds: i64) -> Result<(), String> {
+    match parse_expires_at_seconds(row.get("expires_at")) {
+        None => Ok(()),
+        Some(Err(())) => Err(format!(
+            "{ENCRYPTED_REF_EXPIRED_REFUSAL}: expires_at is not a readable timestamp"
+        )),
+        Some(Ok(expires_at)) if now_seconds >= expires_at => {
+            Err(ENCRYPTED_REF_EXPIRED_REFUSAL.to_string())
+        }
+        Some(Ok(_)) => Ok(()),
+    }
+}
+
+/// Days since the Unix epoch for a proleptic-Gregorian date — the inverse of
+/// [`civil_from_days`], which this module already carries for the claim
+/// stamps (Howard Hinnant's `days_from_civil`).
+fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month = month as i64;
+    let day = day as i64;
+    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
 /// `assertEncryptedRefScope(row, payload)` — metadata bindings must match the
 /// requester/callback context the request carries.
 pub fn assert_encrypted_ref_scope(row: &Json, payload: &Json) -> Result<(), String> {
@@ -915,7 +994,10 @@ pub fn load_encrypted_ciphertext_by_ref(
     .map_err(|_| "Invalid URL".to_string())?;
     {
         let mut pairs = url.query_pairs_mut();
-        pairs.append_pair("select", "id,ciphertext,network,metadata");
+        // `expires_at` is selected so an expired row can be refused with its
+        // own diagnosable error rather than looking like "not found"
+        // (SVC-C-4, CL-21).
+        pairs.append_pair("select", "id,ciphertext,network,metadata,expires_at");
         pairs.append_pair("id", &format!("eq.{encrypted_ref}"));
         pairs.append_pair("network", &format!("eq.{network}"));
         pairs.append_pair("limit", "1");
@@ -944,6 +1026,13 @@ pub fn load_encrypted_ciphertext_by_ref(
         _ => Json::Null,
     };
     assert_encrypted_ref_scope(&row, payload)?;
+    // Expiry is enforced HERE, at use time, before the row is claimed and the
+    // credential is spent. The operator-facing list already hid expired rows
+    // (`apps/web/app/api/registry/secrets/route.ts`), so without this the TTL
+    // was a UI filter presented as a security control: a developer who set
+    // `expires_at` to bound a leaked-ciphertext window saw the secret vanish
+    // from the console while the enclave kept decrypting and spending it.
+    assert_encrypted_ref_not_expired(&row, now_unix_seconds())?;
     let claimed_row = claim_encrypted_ref(&row, payload, &rest_config, &network, transport)?;
     let effective_row = if claimed_row.is_null() {
         &row
@@ -969,10 +1058,15 @@ fn build_encrypted_ref_claim_url(
         .map_err(|_| "Invalid URL".to_string())?;
     {
         let mut pairs = url.query_pairs_mut();
-        pairs.append_pair("select", "id,ciphertext,metadata");
+        pairs.append_pair("select", "id,ciphertext,metadata,expires_at");
         pairs.append_pair("id", &format!("eq.{encrypted_ref}"));
         pairs.append_pair("network", &format!("eq.{network}"));
         pairs.append_pair("metadata->>_consumed_request_id", "is.null");
+        // Belt and braces for the use-time check above: this filter is
+        // evaluated by the database against the SAME clock `expires_at` was
+        // written against, so a skewed enclave clock cannot claim an expired
+        // row. The partial index from migration 0018 already covers it.
+        pairs.append_pair("or", "(expires_at.is.null,expires_at.gt.now())");
 
         let metadata = payload
             .get("metadata")
@@ -1803,7 +1897,7 @@ mod tests {
             if request.method == "GET" {
                 assert_eq!(
                     request.url,
-                    "https://sb.example/rest/v1/morpheus_encrypted_secrets?select=id%2Cciphertext%2Cnetwork%2Cmetadata&id=eq.ref-7&network=eq.testnet&limit=1"
+                    "https://sb.example/rest/v1/morpheus_encrypted_secrets?select=id%2Cciphertext%2Cnetwork%2Cmetadata%2Cexpires_at&id=eq.ref-7&network=eq.testnet&limit=1"
                 );
                 assert_supabase_auth(&request.headers);
                 assert_eq!(request.body, None);
@@ -1831,6 +1925,91 @@ mod tests {
             resolve_encrypted_token_ciphertext(&ref_payload(), &supabase_env(), &transport)
                 .unwrap(),
             "CT-CIPHER-CLAIMED"
+        );
+    }
+
+    /// SVC-C-4 (CL-21). The enclave is what actually releases and spends the
+    /// stored credential, so the TTL has to bind here. Before the fix the
+    /// lookup neither selected nor filtered `expires_at`, so an expired ref
+    /// kept decrypting indefinitely while the operator console
+    /// (`apps/web/app/api/registry/secrets/route.ts`, which does apply
+    /// `expires_at.gt.now`) showed it as gone.
+    #[test]
+    fn an_expired_ref_is_refused_at_use_time_not_merely_hidden_from_the_listing() {
+        let expired = json!({ "expires_at": "2020-01-02T03:04:05.000Z" });
+        assert_eq!(
+            assert_encrypted_ref_not_expired(&expired, now_unix_seconds()).unwrap_err(),
+            ENCRYPTED_REF_EXPIRED_REFUSAL,
+        );
+        // The refusal is its own message, never the not-found message — an
+        // expired credential is an operator action, not a caller mistake.
+        assert_ne!(ENCRYPTED_REF_EXPIRED_REFUSAL, "encrypted ref not found");
+
+        // A future expiry and an absent/null/blank one are all usable.
+        let future = json!({ "expires_at": "2999-12-31T23:59:59.000Z" });
+        assert!(assert_encrypted_ref_not_expired(&future, now_unix_seconds()).is_ok());
+        for usable in [json!({}), json!({ "expires_at": Json::Null })] {
+            assert!(assert_encrypted_ref_not_expired(&usable, now_unix_seconds()).is_ok());
+        }
+
+        // Exactly at the boundary is expired: `expires_at.gt.now()` is the
+        // database filter this mirrors, and it is strict.
+        let boundary = json!({ "expires_at": "1970-01-01T00:00:10.000Z" });
+        assert!(assert_encrypted_ref_not_expired(&boundary, 10).is_err());
+        assert!(assert_encrypted_ref_not_expired(&boundary, 9).is_ok());
+
+        // An unreadable timestamp fails closed rather than counting as "no TTL".
+        let garbage = json!({ "expires_at": "whenever" });
+        assert!(
+            assert_encrypted_ref_not_expired(&garbage, now_unix_seconds())
+                .unwrap_err()
+                .starts_with(ENCRYPTED_REF_EXPIRED_REFUSAL)
+        );
+
+        // The epoch parse agrees with a known value.
+        assert_eq!(
+            parse_expires_at_seconds(Some(&json!("2020-01-02T03:04:05.000Z"))),
+            Some(Ok(1_577_934_245)),
+        );
+    }
+
+    /// The end-to-end shape: an expired row is refused BEFORE the claim PATCH
+    /// runs, so the credential is never consumed, and the claim URL itself
+    /// carries the database-side expiry filter as a second barrier against a
+    /// skewed enclave clock.
+    #[test]
+    fn an_expired_row_is_never_claimed_and_the_claim_url_filters_expiry() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        let transport = |request: &HttpRequest| -> Result<HttpResponse, String> {
+            calls.borrow_mut().push(request.method.clone());
+            assert_eq!(
+                request.method, "GET",
+                "an expired row must never be PATCHed"
+            );
+            let mut row = stored_row();
+            row["expires_at"] = json!("2020-01-02T03:04:05.000Z");
+            json_response(200, json!([row]))
+        };
+        assert_eq!(
+            load_encrypted_ciphertext_by_ref("ref-7", &ref_payload(), &supabase_env(), &transport)
+                .unwrap_err(),
+            ENCRYPTED_REF_EXPIRED_REFUSAL,
+        );
+        assert_eq!(calls.borrow().as_slice(), ["GET"]);
+
+        let claim_url = build_encrypted_ref_claim_url(
+            "https://sb.example/rest/v1",
+            "ref-7",
+            "testnet",
+            &ref_payload(),
+        )
+        .unwrap();
+        assert!(
+            claim_url
+                .query()
+                .unwrap_or_default()
+                .contains("or=%28expires_at.is.null%2Cexpires_at.gt.now%28%29%29"),
+            "claim URL must filter expiry database-side: {claim_url}"
         );
     }
 
@@ -1962,12 +2141,22 @@ mod tests {
             assert_eq!(
                 query_pairs(&request.url),
                 vec![
-                    ("select".to_string(), "id,ciphertext,metadata".to_string()),
+                    (
+                        "select".to_string(),
+                        "id,ciphertext,metadata,expires_at".to_string()
+                    ),
                     ("id".to_string(), "eq.ref-7".to_string()),
                     ("network".to_string(), "eq.testnet".to_string()),
                     (
                         "metadata->>_consumed_request_id".to_string(),
                         "is.null".to_string()
+                    ),
+                    // SVC-C-4: the CAS that consumes the credential also
+                    // refuses an expired row, evaluated against the database
+                    // clock rather than the enclave's.
+                    (
+                        "or".to_string(),
+                        "(expires_at.is.null,expires_at.gt.now())".to_string()
                     ),
                     (
                         "metadata->>bound_requester".to_string(),

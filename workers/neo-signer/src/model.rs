@@ -217,7 +217,187 @@ pub struct SignatureRateLimit {
     pub count: u64,
 }
 
+/// How many hex characters of the policy digest go into an audit line. 16 is
+/// 64 bits: far past collision reach for the handful of boundaries one key
+/// ever carries, and short enough that it does not crowd out the rest of a
+/// detail string that `audit::DETAIL_LIMIT` already clips.
+pub const POLICY_DIGEST_LABEL_LEN: usize = 16;
+
 impl SignerPolicy {
+    /// A stable identity for this exact boundary (SVC-B-5, CL-18).
+    ///
+    /// CL-18 requires "the policy version used is recorded in the audit
+    /// record", and there was nothing to record: no version, no digest, no
+    /// column — and the one place a policy reached the audit trail,
+    /// `policy_summary`, reduced every list to a COUNT. An operator could
+    /// widen `contract_whitelist` on the NeoX verifier key, sign a batch of
+    /// fulfilments and narrow it again, and the trail would read "lists
+    /// contracts 3/0" then "lists contracts 1/0" with no way to establish
+    /// which contracts were permitted when each signature was produced.
+    ///
+    /// The digest is taken over the NORMALIZED policy, so a boundary
+    /// round-tripped through the database digests the same as the one that
+    /// was written, and list order is not a false difference.
+    ///
+    /// Two properties make it usable as evidence: different boundaries give
+    /// different digests (it covers every field, enforced by the exhaustive
+    /// destructuring below — adding a field to [`SignerPolicy`] without
+    /// adding it here does not compile), and the encoding is unambiguous
+    /// (every element is length-prefixed, so no two distinct policies can
+    /// serialize to the same bytes by concatenation).
+    pub fn digest(&self) -> [u8; 32] {
+        let mut encoded: Vec<u8> = Vec::new();
+        encoded.extend_from_slice(b"neoos/signer-policy/v1\0");
+
+        let normalized = self.clone().normalized();
+        // Exhaustive: the compiler rejects this if a field is added and not
+        // encoded, which is what stops the digest quietly ceasing to cover
+        // the whole boundary.
+        let SignerPolicy {
+            chain_family,
+            allow_consensus,
+            allow_transfer,
+            allow_contract_call,
+            allow_global_scope,
+            allow_raw,
+            contract_whitelist,
+            contract_blacklist,
+            contract_method_whitelist,
+            contract_method_blacklist,
+            asset_whitelist,
+            asset_blacklist,
+            transfer_to_whitelist,
+            transfer_to_blacklist,
+            max_single_amount,
+            window_limit,
+            asset_limits,
+            max_signers,
+            max_system_fee,
+            max_network_fee,
+            max_signatures,
+            evm_max_gas_price,
+            evm_max_gas_limit,
+            evm_method_whitelist,
+            evm_method_blacklist,
+            evm_chain_id,
+        } = &normalized;
+
+        /// Length-prefixed field write — `1` then the bytes for a present
+        /// value, `0` alone for an absent one, so "unset" and "empty" are
+        /// distinguishable and no boundary between fields is ambiguous.
+        fn field(encoded: &mut Vec<u8>, value: Option<&[u8]>) {
+            match value {
+                None => encoded.push(0),
+                Some(bytes) => {
+                    encoded.push(1);
+                    encoded.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
+                    encoded.extend_from_slice(bytes);
+                }
+            }
+        }
+        let text = |value: &dyn std::fmt::Display| value.to_string();
+
+        let chain_family_text = chain_family.as_ref().map(|family| text(family));
+        field(
+            &mut encoded,
+            chain_family_text.as_deref().map(str::as_bytes),
+        );
+        for flag in [
+            allow_consensus,
+            allow_transfer,
+            allow_contract_call,
+            allow_global_scope,
+            allow_raw,
+        ] {
+            encoded.push(u8::from(*flag));
+        }
+        for list in [
+            contract_whitelist,
+            contract_blacklist,
+            asset_whitelist,
+            asset_blacklist,
+            transfer_to_whitelist,
+            transfer_to_blacklist,
+        ] {
+            encoded.extend_from_slice(&(list.len() as u64).to_be_bytes());
+            for hash in list {
+                encoded.extend_from_slice(&hash.as_bytes());
+            }
+        }
+        for list in [contract_method_whitelist, contract_method_blacklist] {
+            encoded.extend_from_slice(&(list.len() as u64).to_be_bytes());
+            for entry in list {
+                encoded.extend_from_slice(&entry.contract.as_bytes());
+                field(&mut encoded, Some(entry.method.as_bytes()));
+            }
+        }
+        for value in [
+            max_single_amount.map(|value| text(&value)),
+            max_signers.map(|value| text(&value)),
+            max_system_fee.map(|value| text(&value)),
+            max_network_fee.map(|value| text(&value)),
+            evm_max_gas_price.map(|value| text(&value)),
+            evm_max_gas_limit.map(|value| text(&value)),
+            evm_chain_id.map(|value| text(&value)),
+        ] {
+            field(&mut encoded, value.as_deref().map(str::as_bytes));
+        }
+        field(
+            &mut encoded,
+            window_limit
+                .map(|limit| format!("{}:{}", limit.seconds, limit.max_amount))
+                .as_deref()
+                .map(str::as_bytes),
+        );
+        field(
+            &mut encoded,
+            max_signatures
+                .map(|limit| format!("{}:{}", limit.seconds, limit.count))
+                .as_deref()
+                .map(str::as_bytes),
+        );
+        encoded.extend_from_slice(&(asset_limits.len() as u64).to_be_bytes());
+        for limit in asset_limits {
+            encoded.extend_from_slice(&limit.asset.as_bytes());
+            field(
+                &mut encoded,
+                limit
+                    .max_single_amount
+                    .map(|value| text(&value))
+                    .as_deref()
+                    .map(str::as_bytes),
+            );
+            field(
+                &mut encoded,
+                limit
+                    .window_limit
+                    .map(|window| format!("{}:{}", window.seconds, window.max_amount))
+                    .as_deref()
+                    .map(str::as_bytes),
+            );
+        }
+        for list in [evm_method_whitelist, evm_method_blacklist] {
+            encoded.extend_from_slice(&(list.len() as u64).to_be_bytes());
+            for selector in list {
+                field(&mut encoded, Some(selector.as_bytes()));
+            }
+        }
+
+        let hashed = crypto::sha256(&encoded);
+        let mut digest = [0u8; 32];
+        digest.copy_from_slice(&hashed);
+        digest
+    }
+
+    /// The short hex label that goes into an audit detail string.
+    pub fn digest_label(&self) -> String {
+        self.digest()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()[..POLICY_DIGEST_LABEL_LEN]
+            .to_string()
+    }
+
     /// Raw signing must live on a key with no parsed semantic authority.
     ///
     /// `sign/raw` can sign `networkMagicLE || SHA256(unsignedTransaction)`,

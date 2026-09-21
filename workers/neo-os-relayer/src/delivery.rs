@@ -211,6 +211,48 @@ where
     )?;
     let custody = CustodyClient::new(transport, connection);
     let updater = resolve_signer(&custody, updater_key_id)?;
+
+    // SVC-E-4 (CL-05/CL-14). The NeoX branch pins the verifier identity the
+    // enclave answered with; the N3 branch compared only the digest — and the
+    // digest binds requestId/appId/moduleId/operation/success/result/error/
+    // scriptHash/magic, all of which the relayer recomputes from the same
+    // inputs, so a correctly-computed digest signed by SOME OTHER key would
+    // pass. Pinning the returned `public_key` to the configured
+    // oracle_verifier makes "this came from the measured verifier key" a
+    // checked claim on this lane too, using the identity custody already
+    // publishes.
+    //
+    // Not yet closed, and recorded as the follow-on: the digest does not
+    // cover the request payload, so faithful execution of substituted inputs
+    // still produces a fulfilment nobody can distinguish. Fixing that is a
+    // contract ABI change.
+    let verifier_key_id = n3
+        .get("custodyKeyIds")
+        .and_then(Value::as_object)
+        .and_then(|keys| keys.get("oracle_verifier"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "Neo N3 custody oracle_verifier key is not configured \
+             (SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID)"
+                .to_string()
+        })?;
+    if verifier_key_id == updater_key_id {
+        return Err(
+            "Neo N3 verifier and updater custody roles must use different keys".to_string(),
+        );
+    }
+    let verifier = custody.key_info(verifier_key_id)?;
+    let returned_public_key = strip_hex_prefix(&prepared.public_key);
+    if returned_public_key.is_empty()
+        || !returned_public_key.eq_ignore_ascii_case(strip_hex_prefix(&verifier.public_key))
+    {
+        return Err(
+            "Neo N3 measured fulfillment returned a different verifier identity".to_string(),
+        );
+    }
+
     let request_id = prepared.request_id.parse::<i64>().map_err(|_| {
         "Neo N3 request id is outside the supported signed 64-bit range".to_string()
     })?;
@@ -1711,7 +1753,10 @@ mod tests {
                     "rpcUrls": ["https://rpc.example"],
                     "networkMagic": 894710606,
                     "oracleContract": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
-                    "custodyKeyIds": {"updater": "updater-key"}
+                    "custodyKeyIds": {
+                        "updater": "updater-key",
+                        "oracle_verifier": "oracle-verifier-key"
+                    }
                 },
                 "neox": {
                     "rpcUrl": "https://neox-rpc.example",
@@ -1845,6 +1890,19 @@ mod tests {
         const PUBLIC_KEY: &str =
             "0315b41fcf6671b6400237730bc8a261dcb64e25cc17de9878576c78eace1c9146";
         const SCRIPT_HASH: &str = "0x3124a38a74f447b120b551db00f513ec674318c9";
+        // A DISTINCT identity from the updater: the two roles must not be the
+        // same key (SVC-E-5), and the pin only means something if the lane
+        // can tell them apart (SVC-E-4).
+        const VERIFIER_PUBLIC_KEY: &str =
+            "02911ea2e6a0ae0d3a1a1b1a4d6c0b0f5a2b3c4d5e6f708192a3b4c5d6e7f895cb4";
+        let verifier_key = json!({
+            "allowed": true,
+            "key_id": "oracle-verifier-key",
+            "chain_family": "neo-n3",
+            "public_key": VERIFIER_PUBLIC_KEY,
+            "script_hash": "0x1111111111111111111111111111111111111111",
+            "address": "NiUs458jFbTH1DA3b9QyeDhMaD282h3iJg"
+        });
         let key = json!({
             "allowed": true,
             "key_id": "updater-key",
@@ -1872,10 +1930,14 @@ mod tests {
                     "result": "ok",
                     "error": "",
                     "signature": "aa",
+                    // SVC-E-4: the enclave names the verifier key it signed
+                    // with, and the relayer pins it against custody.
+                    "public_key": VERIFIER_PUBLIC_KEY,
                     "fulfillment_digest_hex": enclave_digest("ok")
                 }),
             ),
             (200, key),
+            (200, verifier_key),
             (200, json!({"jsonrpc":"2.0","id":1,"result":1234})),
             (
                 200,
@@ -1908,16 +1970,134 @@ mod tests {
         assert_eq!(receipt.target_chain, "neo_n3");
         assert_eq!(receipt.tx_hash.len(), 66);
         let calls = transport.calls.lock().unwrap();
-        assert_eq!(calls.len(), 9, "every commit phase is observable");
+        assert_eq!(calls.len(), 10, "every commit phase is observable");
         assert!(calls[0].0.ends_with("/oracle/fulfill"));
         assert!(calls[1].0.contains("/signer/api/v1/keys/updater-key"));
-        assert!(calls[2].1.contains("getblockcount"));
-        assert!(calls[3].1.contains("invokescript"));
-        assert!(calls[4].0.ends_with("/signer/api/v1/sign/transaction"));
-        assert!(calls[5].1.contains("calculatenetworkfee"));
-        assert!(calls[6].0.ends_with("/signer/api/v1/sign/transaction"));
-        assert!(calls[7].1.contains("sendrawtransaction"));
-        assert!(calls[8].1.contains("getapplicationlog"));
+        // SVC-E-4: the verifier identity is fetched and compared BEFORE any
+        // chain call, so a fulfilment signed by another key never reaches a
+        // broadcast.
+        assert!(calls[2]
+            .0
+            .contains("/signer/api/v1/keys/oracle-verifier-key"));
+        assert!(calls[3].1.contains("getblockcount"));
+        assert!(calls[4].1.contains("invokescript"));
+        assert!(calls[5].0.ends_with("/signer/api/v1/sign/transaction"));
+        assert!(calls[6].1.contains("calculatenetworkfee"));
+        assert!(calls[7].0.ends_with("/signer/api/v1/sign/transaction"));
+        assert!(calls[8].1.contains("sendrawtransaction"));
+        assert!(calls[9].1.contains("getapplicationlog"));
+    }
+
+    /// SVC-E-4 (CL-05/CL-14). The N3 branch used to accept any correctly
+    /// computed digest: every field the digest binds is recomputed by the
+    /// relayer from its own inputs, so a fulfilment signed by a key that is
+    /// not the measured oracle_verifier verified just as well. The NeoX lane
+    /// has pinned its verifier identity since it was written; this is the
+    /// same check applied to N3.
+    #[test]
+    fn a_neo_n3_fulfillment_signed_by_another_key_is_refused_before_broadcast() {
+        const VERIFIER_PUBLIC_KEY: &str =
+            "02911ea2e6a0ae0d3a1a1b1a4d6c0b0f5a2b3c4d5e6f708192a3b4c5d6e7f895cb4";
+        const UPDATER_PUBLIC_KEY: &str =
+            "0315b41fcf6671b6400237730bc8a261dcb64e25cc17de9878576c78eace1c9146";
+        let identity = |key_id: &str, public_key: &str| {
+            json!({
+                "allowed": true,
+                "key_id": key_id,
+                "chain_family": "neo-n3",
+                "public_key": public_key,
+                "script_hash": "0x3124a38a74f447b120b551db00f513ec674318c9",
+                "address": "NeFG5A79AJovUz4BStpnmFyQChLvQkuW72"
+            })
+        };
+        // The enclave answers with a perfectly recomputable digest — and the
+        // updater's public key instead of the verifier's. That is exactly the
+        // shape a compromised host with custody credentials can produce.
+        let transport = ScriptedTransport::new(vec![
+            (
+                200,
+                json!({
+                    "nonce": "00000007000000070000000700000007",
+                    "success": true,
+                    "result": "ok",
+                    "error": "",
+                    "signature": "aa",
+                    "public_key": UPDATER_PUBLIC_KEY,
+                    "fulfillment_digest_hex": enclave_digest("ok")
+                }),
+            ),
+            (200, identity("updater-key", UPDATER_PUBLIC_KEY)),
+            (200, identity("oracle-verifier-key", VERIFIER_PUBLIC_KEY)),
+        ]);
+
+        let error = deliver_event(
+            &config(),
+            "neo_n3",
+            &event(),
+            &transport,
+            &FixedNonce(7),
+            &NoWait,
+        )
+        .expect_err("a foreign verifier identity must not be broadcast");
+        assert!(
+            error.contains("Neo N3 measured fulfillment returned a different verifier identity"),
+            "{error}"
+        );
+        // Nothing reached the chain: three custody/enclave calls and no RPC.
+        let calls = transport.calls.lock().unwrap();
+        assert_eq!(calls.len(), 3, "{calls:?}");
+        assert!(!calls
+            .iter()
+            .any(|call| call.1.contains("sendrawtransaction")));
+    }
+
+    /// An enclave that names no verifier at all is refused too: an absent
+    /// identity is not a matching one.
+    #[test]
+    fn a_neo_n3_fulfillment_with_no_verifier_identity_is_refused() {
+        const VERIFIER_PUBLIC_KEY: &str =
+            "02911ea2e6a0ae0d3a1a1b1a4d6c0b0f5a2b3c4d5e6f708192a3b4c5d6e7f895cb4";
+        const UPDATER_PUBLIC_KEY: &str =
+            "0315b41fcf6671b6400237730bc8a261dcb64e25cc17de9878576c78eace1c9146";
+        let identity = |key_id: &str, public_key: &str| {
+            json!({
+                "allowed": true,
+                "key_id": key_id,
+                "chain_family": "neo-n3",
+                "public_key": public_key,
+                "script_hash": "0x3124a38a74f447b120b551db00f513ec674318c9",
+                "address": "NeFG5A79AJovUz4BStpnmFyQChLvQkuW72"
+            })
+        };
+        let transport = ScriptedTransport::new(vec![
+            (
+                200,
+                json!({
+                    "nonce": "00000007000000070000000700000007",
+                    "success": true,
+                    "result": "ok",
+                    "error": "",
+                    "signature": "aa",
+                    "fulfillment_digest_hex": enclave_digest("ok")
+                }),
+            ),
+            (200, identity("updater-key", UPDATER_PUBLIC_KEY)),
+            (200, identity("oracle-verifier-key", VERIFIER_PUBLIC_KEY)),
+        ]);
+
+        let error = deliver_event(
+            &config(),
+            "neo_n3",
+            &event(),
+            &transport,
+            &FixedNonce(7),
+            &NoWait,
+        )
+        .expect_err("an absent verifier identity must not be broadcast");
+        assert!(
+            error.contains("Neo N3 measured fulfillment returned a different verifier identity"),
+            "{error}"
+        );
     }
 
     #[test]

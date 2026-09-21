@@ -218,6 +218,36 @@ pub fn handle_oracle_fulfill(
         operation_text
     };
 
+    // SVC-E-1 (CL-19): the lane the enclave executes is selected by a
+    // SUBSTRING match on the caller's `operation` string
+    // (`neo_os_core::kernel::resolve_kernel_intent`), while the chain only
+    // ever checked the `moduleId` grant. Two consequences, both closed here.
+    //
+    // (1) `operator_only` had no consumer in the Rust path at all — the Node
+    //     relayer enforced it (`workers/morpheus-relayer/src/fulfillment/
+    //     executor.js`) and the port dropped it. Any account can register a
+    //     MiniApp, self-grant one cheap module and submit an operation whose
+    //     text contains "feed", reaching the datafeed lane: a process-wide
+    //     lock, paid provider egress and a rewrite of the shared feed state.
+    //     The refusal is a DETERMINISTIC UNSUCCESSFUL FULFILMENT, not an HTTP
+    //     error, so the request still settles on chain exactly as the Node
+    //     relayer settled it.
+    //
+    // (2) The on-chain `module_id` was carried into the digest but never
+    //     compared with the module the operation actually routes to, so the
+    //     audit record named the granted module while a different lane ran.
+    //
+    // `module_id` already folds the "absent on chain" case onto
+    // `intent.module_id`, so comparing it refuses exactly the requests where
+    // the chain named one module and the operation string routed to another,
+    // and never the ones where the chain named nothing.
+    if !module_id.eq_ignore_ascii_case(intent.module_id) {
+        return Err(http_error(
+            400,
+            "request operation does not match the granted module",
+        ));
+    }
+
     // Host-unattested tier: arbitrary-URL fetch is not computed/signed here.
     if is_host_unattested_lane(intent.worker_route, &payload) {
         return Ok(serde_json::json!({
@@ -233,16 +263,26 @@ pub fn handle_oracle_fulfill(
         }));
     }
 
-    // (a)+(b) COMPUTE via the keyless child.
-    let reply = compute_worker_response(
-        state,
-        chain,
-        &request_type,
-        &payload,
-        &request_id,
-        intent.module_id,
-        &payload_text(body, &payload),
-    );
+    // (a)+(b) COMPUTE via the keyless child — unless the lane is
+    // operator-only, in which case nothing is computed and the deterministic
+    // refusal takes the normal encode-and-sign path so the request settles.
+    let reply = if intent.operator_only {
+        crate::state::BridgeReply {
+            ok: false,
+            status: 403,
+            body: serde_json::json!({ "error": OPERATOR_ONLY_REFUSAL }),
+        }
+    } else {
+        compute_worker_response(
+            state,
+            chain,
+            &request_type,
+            &payload,
+            &request_id,
+            intent.module_id,
+            &payload_text(body, &payload),
+        )
+    };
 
     // Infrastructure failures are retryable and must never be committed as a
     // deterministic on-chain refusal. This mirrors the relayer's worker-status
@@ -512,6 +552,12 @@ fn required_neox_chain_id(context: &serde_json::Value) -> Result<u64, RuntimeErr
     .ok_or_else(|| http_error(400, "neox fulfillment_context.chain_id is required"))?;
     Ok(chain_id)
 }
+
+/// The Node relayer's verbatim refusal text for an operator-only lane
+/// (`workers/morpheus-relayer/src/fulfillment/executor.js`). Kept byte-exact
+/// so a consumer that matched on it before the Rust port still matches.
+pub const OPERATOR_ONLY_REFUSAL: &str =
+    "datafeed requests are operator-only; users should read synchronized on-chain feed data";
 
 fn is_transient_worker_status(status: u16) -> bool {
     matches!(status, 408 | 425 | 429) || (500..=599).contains(&status)

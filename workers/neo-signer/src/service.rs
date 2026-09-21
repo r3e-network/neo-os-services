@@ -354,6 +354,11 @@ struct Approved {
     intents: Vec<Intent>,
     evm_intent: Option<EvmIntent>,
     consensus: Option<SignerConsensusReservation>,
+    /// The short digest of the boundary that authorized this signature
+    /// (SVC-B-5, CL-18). Carried out of `attempt` so the audit record names
+    /// the policy that was actually evaluated, not the one a later reader
+    /// happens to find in the store.
+    policy_digest: String,
 }
 
 impl SignerService {
@@ -1705,10 +1710,15 @@ impl SignerService {
             ..entry(
                 action,
                 format!(
-                    "NeoX fulfillment {} for contract {} on chain {}",
+                    "NeoX fulfillment {} for contract {} on chain {}; policy={}",
                     fulfillment.request_id,
                     normalized_evm_address(oracle_address),
-                    chain_id
+                    chain_id,
+                    // SVC-B-5 (CL-18): which boundary authorized THIS
+                    // signature. Without it the trail shows only that a
+                    // policy existed, and a widen-sign-narrow sequence is
+                    // indistinguishable from a steady one.
+                    boundary.digest_label(),
                 ),
             )?
         };
@@ -1928,7 +1938,7 @@ impl SignerService {
                                 &approved.intents,
                                 approved.evm_intent.as_ref(),
                             ),
-                        },
+                        } + &format!("; policy={}", approved.policy_digest),
                     )?
                 };
                 let recorded_at_unix = record.recorded_at_unix;
@@ -2135,6 +2145,7 @@ impl SignerService {
             }
         };
         Ok(Approved {
+            policy_digest: boundary.digest_label(),
             witness: SignedWitness {
                 key_id: key.id.clone(),
                 script_hash: account,
@@ -3408,6 +3419,13 @@ fn policy_summary(policy: &SignerPolicy) -> String {
         policy.transfer_to_whitelist.len(),
         policy.transfer_to_blacklist.len(),
     ));
+    // SVC-B-5 (CL-18): the counts above are all this row ever carried, so two
+    // completely different contract whitelists of the same length produced
+    // identical PolicySaved details. The digest is what lets an incident
+    // review tie a run of signatures to the exact boundary in force, and it
+    // is deliberately FIRST after the counts so `audit::DETAIL_LIMIT`
+    // clipping a long summary does not take it with it.
+    summary.push_str(&format!("; policy={}", policy.digest_label()));
     summary
 }
 

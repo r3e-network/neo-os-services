@@ -451,8 +451,12 @@ fn the_first_provision_requires_the_kms_ciphertext() {
 
 #[test]
 fn sign_payload_passes_the_custody_body_through() {
+    // SVC-B-1: the lane is retired by default, so the parity test that proves
+    // the custody body passes through must opt it back in explicitly.
+    let mut pairs = healthy_overlay();
+    pairs.push((crate::sign::BLIND_SIGN_OPT_IN_ENV, "1"));
     let harness = test_state(
-        &healthy_overlay(),
+        &pairs,
         FakeAttest::with_document(b"doc"),
         FakeSigner::healthy(),
         FakeBridge::new(),
@@ -639,4 +643,195 @@ fn an_empty_method_is_get_and_a_whitespace_method_matches_nothing() {
         dispatch_outcome(&harness, "   ", "/health", &plain(), "").status,
         404
     );
+}
+
+/// SVC-B-1 at the dispatch boundary: the route is reachable and authenticated
+/// exactly as before, and still refuses rather than producing an
+/// oracle_verifier signature over a caller-chosen digest.
+#[test]
+fn dispatch_refuses_the_retired_blind_sign_lane_by_default() {
+    let harness = test_state(
+        &healthy_overlay(),
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let outcome = dispatch_outcome(
+        &harness,
+        "POST",
+        "/sign/payload",
+        &bearer("s3cret"),
+        &body_json(&json!({ "key_role": "oracle_verifier", "data_hex": "cafe" })),
+    );
+    assert_eq!(outcome.status, 503);
+    assert!(
+        outcome.body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("blind payload signing is retired"),
+        "{:?}",
+        outcome.body
+    );
+    assert!(harness.signer.sign_calls().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// SVC-B-4 — admission control runs before the handler (CL-34)
+// ---------------------------------------------------------------------------
+
+/// `MORPHEUS_MAX_INFLIGHT_<ROUTE>` caps concurrency per route. With a cap of
+/// one and one slot already held, the next request must be REFUSED, not
+/// queued: on a single node with no reassignment path, an unbounded queue of
+/// blocking handlers inside a fixed-memory enclave stops the node answering
+/// even /health.
+#[test]
+fn a_capped_route_refuses_the_request_past_its_limit() {
+    let mut pairs = healthy_overlay();
+    pairs.push(("MORPHEUS_MAX_INFLIGHT_ORACLE_QUERY", "1"));
+    let harness = test_state(
+        &pairs,
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+
+    // Hold the route's only slot, exactly as an in-flight request would.
+    let env = harness
+        .state
+        .overlay
+        .read()
+        .expect("overlay lock")
+        .merged_map();
+    let read_env = |name: &str| env.get(name).cloned();
+    let held = match harness
+        .state
+        .overload
+        .acquire("/oracle/query", &json!({}), &read_env)
+    {
+        neo_os_compute::overload::AcquireOutcome::Granted(slot) => slot,
+        other => panic!("the first request must be admitted: {}", other.ok()),
+    };
+
+    let outcome = dispatch_outcome(
+        &harness,
+        "POST",
+        "/oracle/query",
+        &bearer("s3cret"),
+        &body_json(&json!({ "url": "https://api.example.com/x" })),
+    );
+    assert_eq!(outcome.status, 503);
+    assert_eq!(outcome.body["error"], "overloaded");
+    assert_eq!(outcome.body["route"], "oracle_query");
+    assert_eq!(outcome.body["limit"], 1);
+
+    // Releasing the slot re-opens the route: the cap bounds concurrency, it
+    // does not latch the lane off.
+    drop(held);
+    let after = dispatch_outcome(
+        &harness,
+        "POST",
+        "/oracle/query",
+        &bearer("s3cret"),
+        &body_json(&json!({ "url": "https://api.example.com/x" })),
+    );
+    assert_ne!(after.status, 503, "{:?}", after.body);
+}
+
+/// The reservation is released when the handler's arm ends, including when
+/// the handler itself fails — otherwise one failing request would permanently
+/// consume capacity.
+#[test]
+fn a_failing_handler_still_releases_its_slot() {
+    let mut pairs = healthy_overlay();
+    pairs.push(("MORPHEUS_MAX_INFLIGHT_SIGN_PAYLOAD", "1"));
+    let harness = test_state(
+        &pairs,
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    for _ in 0..3 {
+        let outcome = dispatch_outcome(
+            &harness,
+            "POST",
+            "/sign/payload",
+            &bearer("s3cret"),
+            &body_json(&json!({ "key_role": "oracle_verifier", "data_hex": "cafe" })),
+        );
+        // The blind-sign lane is retired (SVC-B-1), so this is its refusal —
+        // what matters here is that it is never the overload 503.
+        assert_ne!(outcome.body["error"], "overloaded", "{:?}", outcome.body);
+    }
+    assert!(
+        harness.state.overload.snapshot().is_empty(),
+        "no slot may be left held: {:?}",
+        harness.state.overload.snapshot()
+    );
+}
+
+/// A cap cannot be walked around with the optional single-segment network
+/// prefix the dispatcher accepts: `/mainnet/oracle/query` shares the counter
+/// with `/oracle/query`.
+#[test]
+fn the_network_prefix_does_not_bypass_the_cap() {
+    let mut pairs = healthy_overlay();
+    pairs.push(("MORPHEUS_MAX_INFLIGHT_ORACLE_QUERY", "1"));
+    let harness = test_state(
+        &pairs,
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let env = harness
+        .state
+        .overlay
+        .read()
+        .expect("overlay lock")
+        .merged_map();
+    let read_env = |name: &str| env.get(name).cloned();
+    let _held = match harness
+        .state
+        .overload
+        .acquire("/oracle/query", &json!({}), &read_env)
+    {
+        neo_os_compute::overload::AcquireOutcome::Granted(slot) => slot,
+        _ => panic!("the first request must be admitted"),
+    };
+    let outcome = dispatch_outcome(
+        &harness,
+        "POST",
+        "/mainnet/oracle/query",
+        &bearer("s3cret"),
+        &body_json(&json!({ "url": "https://api.example.com/x" })),
+    );
+    assert_eq!(outcome.status, 503, "{:?}", outcome.body);
+    assert_eq!(outcome.body["error"], "overloaded");
+}
+
+/// Admission runs AFTER authentication, so an unauthorized caller cannot
+/// consume the capacity a legitimate one needs.
+#[test]
+fn an_unauthorized_request_consumes_no_capacity() {
+    let mut pairs = healthy_overlay();
+    pairs.push(("MORPHEUS_MAX_INFLIGHT_ORACLE_QUERY", "1"));
+    let harness = test_state(
+        &pairs,
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let outcome = dispatch_outcome(
+        &harness,
+        "POST",
+        "/oracle/query",
+        &bearer("wrong-token"),
+        &body_json(&json!({ "url": "https://api.example.com/x" })),
+    );
+    assert_eq!(outcome.status, 401);
+    assert!(harness.state.overload.snapshot().is_empty());
 }

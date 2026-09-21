@@ -238,11 +238,88 @@ pub fn handle_attestation(
         "document_len": document_len,
         "attestation_document": attestation_document,
     });
+    // SVC-D-2 / CL-29 / CL-33: the tier is DERIVED from the measurement, not
+    // stamped. A `--debug-mode` enclave produces a genuine NSM document whose
+    // PCRs are all zeros; labelling that "enclave-attested" tells every
+    // consumer that reads this field the opposite of the truth. A verifier
+    // should still re-derive the COSE chain itself — but a runtime must not
+    // assert more than it checked.
+    let attested = pcr0_is_measured(&pcrs);
     if !pcrs.is_empty() {
         response["pcrs"] = serde_json::Value::Object(pcrs);
     }
-    response["trust_tier"] = serde_json::Value::String("enclave-attested".to_string());
+    if attested {
+        response["trust_tier"] = serde_json::Value::String("enclave-attested".to_string());
+    } else {
+        response["trust_tier"] = serde_json::Value::String("host-unattested".to_string());
+        response["trust_tier_reason"] = serde_json::Value::String(
+            "PCR0 is absent or all zeros — the registers were never extended, so this is not \
+             a measured enclave boot"
+                .to_string(),
+        );
+    }
     Ok(response)
+}
+
+/// Is PCR0 present AND non-zero? An all-zero PCR0 is the unmeasured-boot
+/// signature (debug mode, an emulated NSM, a broken driver): the KMS
+/// `kms:RecipientAttestation:*` conditions cannot bind to it and a pinned
+/// verifier has nothing real to compare, so it is never an attested boot.
+pub fn pcr0_is_measured(pcrs: &serde_json::Map<String, serde_json::Value>) -> bool {
+    let Some(pcr0) = pcrs.get("pcr0").and_then(serde_json::Value::as_str) else {
+        return false;
+    };
+    !pcr0.is_empty() && pcr0.bytes().any(|byte| byte != b'0')
+}
+
+/// The image-owned demand for an attested boot, mirroring custody's
+/// `SIGNER_SERVICE_ATTESTED_BOOT`. Absent from
+/// [`crate::overlay::PROVISIONABLE_NAMES`] on purpose: an attestation
+/// requirement the untrusted parent can clear is not a requirement (CL-25).
+pub const ATTESTED_BOOT_ENV: &str = "MORPHEUS_ATTESTED_BOOT";
+
+/// Demand a fresh, measured attestation before serving. Returns `Ok(None)`
+/// when the image did not ask for one (a local/dev run), `Ok(Some(pcr0))`
+/// when a live enclave answered this boot's challenge with a non-zero PCR0,
+/// and `Err` otherwise — which the caller must treat as "do not serve".
+///
+/// Like custody's guard, a value other than `require` is an error rather than
+/// a silent fall back to host mode: a typo must not be a downgrade switch.
+pub fn assert_attested_boot(state: &AppState) -> Result<Option<String>, String> {
+    let demanded = state
+        .overlay
+        .read()
+        .expect("overlay lock")
+        .get_trimmed(ATTESTED_BOOT_ENV);
+    let Some(demanded) = demanded else {
+        return Ok(None);
+    };
+    if demanded != "require" {
+        return Err(format!(
+            "{ATTESTED_BOOT_ENV} must be unset or exactly `require`; got `{demanded}` — an \
+             attested boot is either demanded or it is not"
+        ));
+    }
+    let mut nonce = [0u8; 16];
+    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut nonce);
+    let document = state
+        .attest
+        .attest(Some(&nonce), None, None)
+        .map_err(|message| format!("boot attestation failed: {message}"))?;
+    let pcrs = extract_attestation_pcrs(&document);
+    if !pcr0_is_measured(&pcrs) {
+        return Err(
+            "boot attestation PCR0 is absent or all zeros — this is a debug-mode or emulated \
+             enclave, not a measured boot"
+                .to_string(),
+        );
+    }
+    Ok(Some(
+        pcrs["pcr0"]
+            .as_str()
+            .expect("pcr0_is_measured proved a string")
+            .to_string(),
+    ))
 }
 
 #[cfg(test)]

@@ -17,6 +17,7 @@ use crate::routes::{classify, Target};
 use crate::sign::{handle_keys_derived, handle_sign_payload};
 use crate::state::AppState;
 use crate::{DispatchOutcome, RuntimeError};
+use neo_os_compute::overload::{AcquireOutcome, OverloadSlot};
 
 /// `parseBody`: an object passes through (the shim may hand a parsed body);
 /// text is trimmed, empty becomes `{}`, anything else must parse. A malformed
@@ -64,6 +65,59 @@ fn query_params(url: &url::Url) -> Value {
         map.insert(name.to_string(), Value::String(value.to_string()));
     }
     Value::Object(map)
+}
+
+/// What an admitted request carries into its handler: the parsed body, and
+/// the capacity reservation that must outlive the handler call. The slot is
+/// bound (not dropped) by every call site, so it releases when the arm's
+/// block ends — including on an early `?`.
+type Admitted = (Value, Option<OverloadSlot>);
+
+/// Authenticate, parse, then reserve capacity — in that order, and BEFORE any
+/// handler runs (CL-34). Reserving after authentication keeps an unauthorized
+/// caller from consuming a slot; reserving before the handler keeps an
+/// authenticated one from parking an unbounded number of blocking-pool
+/// threads inside a fixed-memory enclave, which on a single node with no
+/// reassignment path is a total outage of the confidential lane.
+///
+/// `Ok(Err(outcome))` is the saturated answer: the guard's own
+/// `{error, route, limit, in_flight}` 503, not a generic one, so a caller can
+/// tell overload from failure and back off against a named route.
+fn authorize_and_admit(
+    state: &AppState,
+    headers: &http::HeaderMap,
+    target: Target,
+    body: &str,
+) -> Result<Result<Admitted, DispatchOutcome>, RuntimeError> {
+    assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
+    let payload = parse_body(body)?;
+    // Key on the route's canonical path, not the request path: the dispatcher
+    // accepts an arbitrary single-segment network prefix, and a cap that a
+    // prefix walks around is not a cap.
+    let Some(route_path) = target.canonical_path() else {
+        return Ok(Ok((payload, None)));
+    };
+    let env = state.overlay.read().expect("overlay lock").merged_map();
+    let read_env = |name: &str| env.get(name).cloned();
+    match state.overload.acquire(route_path, &payload, &read_env) {
+        AcquireOutcome::Granted(slot) => Ok(Ok((payload, Some(slot)))),
+        AcquireOutcome::Uncapped { .. } => Ok(Ok((payload, None))),
+        AcquireOutcome::Rejected(rejection) => Ok(Err(DispatchOutcome {
+            status: rejection.status,
+            body: rejection.body,
+        })),
+    }
+}
+
+/// `let (payload, _slot) = admit!(...)` — the two-line prologue every
+/// authenticated arm used to repeat, plus admission control.
+macro_rules! admit {
+    ($state:expr, $headers:expr, $target:expr, $body:expr) => {
+        match authorize_and_admit($state, $headers, $target, $body)? {
+            Ok(admitted) => admitted,
+            Err(rejected) => return Ok(rejected),
+        }
+    };
 }
 
 pub fn dispatch(
@@ -145,148 +199,127 @@ fn run(
         }
 
         Target::OracleFulfill => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::OracleFulfill, body);
             Ok(DispatchOutcome::ok(crate::fulfill::handle_oracle_fulfill(
                 state, &payload,
             )?))
         }
 
         Target::FeedSign => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::FeedSign, body);
             Ok(DispatchOutcome::ok(crate::feed_sign::handle_feed_sign(
                 state, &payload,
             )?))
         }
 
         Target::SignPayload => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::SignPayload, body);
             Ok(DispatchOutcome::ok(handle_sign_payload(state, &payload)?))
         }
 
         Target::KeysDerived => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::KeysDerived, body);
             Ok(DispatchOutcome::ok(handle_keys_derived(state, &payload)?))
         }
 
         Target::ComputeExecute => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::ComputeExecute, body);
             Ok(DispatchOutcome::ok(
                 crate::compute_execute::handle_compute_execute(state, &payload)?,
             ))
         }
 
         Target::NeoDidBind => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::NeoDidBind, body);
             Ok(DispatchOutcome::ok(crate::neodid::handle_neo_did_bind(
                 state, &payload,
             )?))
         }
 
         Target::NeoDidActionTicket => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::NeoDidActionTicket, body);
             Ok(DispatchOutcome::ok(
                 crate::neodid::handle_neo_did_action_ticket(state, &payload)?,
             ))
         }
 
         Target::NeoDidRecoveryTicket => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::NeoDidRecoveryTicket, body);
             Ok(DispatchOutcome::ok(
                 crate::neodid::handle_neo_did_recovery_ticket(state, &payload)?,
             ))
         }
 
         Target::NeoDidZkLoginTicket => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::NeoDidZkLoginTicket, body);
             Ok(DispatchOutcome::ok(
                 crate::neodid::handle_neo_did_zklogin_ticket(state, &payload)?,
             ))
         }
 
         Target::VrfRandom => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::VrfRandom, body);
             Ok(DispatchOutcome::ok(crate::vrf::handle_vrf_random(
                 state, &payload,
             )?))
         }
 
         Target::PaymasterAuthorize => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::PaymasterAuthorize, body);
             Ok(DispatchOutcome::ok(
                 crate::paymaster::handle_paymaster_authorize(state, &payload)?,
             ))
         }
 
         Target::SessionStart => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::SessionStart, body);
             crate::session::handle_session_start(state, &payload)
         }
 
         Target::SessionStep => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::SessionStep, body);
             crate::session::handle_session_step(state, &payload)
         }
 
         Target::SessionFinalize => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::SessionFinalize, body);
             crate::session::handle_session_finalize(state, &payload)
         }
 
         Target::SessionSettle => {
             // This route is intentionally absent from the public capability
             // table; only the authenticated relay bearer may reach it.
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::SessionSettle, body);
             crate::session::handle_session_finalize_kernel(state, &payload)
         }
 
         Target::AutomationExecute => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::AutomationExecute, body);
             crate::automation::handle_automation_execute(state, &payload)
         }
 
         Target::OracleFeed => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::OracleFeed, body);
             crate::oracle_feed::handle_oracle_feed(state, &payload)
         }
 
         Target::OracleQuery => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::OracleQuery, body);
             crate::oracle_read::handle_oracle_query(state, &payload)
         }
 
         Target::OracleSmartFetch => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::OracleSmartFetch, body);
             crate::oracle_read::handle_oracle_smart_fetch(state, &payload)
         }
 
         Target::OracleDecrypt => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::OracleDecrypt, body);
             crate::oracle_read::handle_oracle_decrypt(state, &payload)
         }
 
         Target::OracleMessageReveal => {
-            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
-            let payload = parse_body(body)?;
+            let (payload, _slot) = admit!(state, headers, Target::OracleMessageReveal, body);
             crate::oracle_read::handle_oracle_message_reveal(state, &payload)
         }
 

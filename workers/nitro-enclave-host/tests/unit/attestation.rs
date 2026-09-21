@@ -245,7 +245,10 @@ fn serialized_len_of(response: &serde_json::Value) -> usize {
 }
 
 #[test]
-fn an_unparseable_document_simply_omits_the_pcrs() {
+fn an_unparseable_document_omits_the_pcrs_and_does_not_claim_attestation() {
+    // SVC-D-2: the response used to stamp "enclave-attested" here, with no
+    // PCRs to back it. A tier the runtime did not check is a claim, not a
+    // measurement.
     let harness = test_state(
         &healthy_overlay(),
         FakeAttest::with_document(b"not a cose document"),
@@ -255,7 +258,11 @@ fn an_unparseable_document_simply_omits_the_pcrs() {
     );
     let response = handle_attestation(&harness.state, &serde_json::json!({})).expect("attestation");
     assert!(response.get("pcrs").is_none(), "{}", response);
-    assert_eq!(response["trust_tier"], "enclave-attested");
+    assert_eq!(response["trust_tier"], "host-unattested");
+    assert!(response["trust_tier_reason"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("never extended"));
 }
 
 #[test]
@@ -273,4 +280,126 @@ fn a_failing_nsm_source_is_a_503_with_a_truncated_detail() {
     assert_eq!(error.status, 503);
     let expected: String = format!("nsm attestation helper failed: {}", "x".repeat(300));
     assert_eq!(error.message, expected);
+}
+
+// ---------------------------------------------------------------------------
+// SVC-D-2 — the public tier is derived from the measurement (CL-29, CL-33)
+// ---------------------------------------------------------------------------
+
+/// A debug-mode enclave answers NSM with a genuine, well-formed document
+/// whose PCRs are all zeros. Before the fix, `/attestation` — which is public
+/// (`deploy/nitro/runtime-gateway.nginx.conf` proxies it unauthenticated) —
+/// reported that as "enclave-attested".
+#[test]
+fn an_all_zero_pcr0_is_reported_as_unattested() {
+    let harness = test_state(
+        &healthy_overlay(),
+        FakeAttest::with_document(&cose_sign1_with_pcr0(&[0x00; 48])),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let response = handle_attestation(&harness.state, &serde_json::json!({})).expect("attestation");
+    assert_eq!(response["pcrs"]["pcr0"], "00".repeat(48));
+    assert_eq!(
+        response["trust_tier"], "host-unattested",
+        "a debug-mode boot is not an attested boot"
+    );
+}
+
+/// A real measurement still reports the strong tier, so the derivation is not
+/// simply "always downgrade".
+#[test]
+fn a_measured_pcr0_is_reported_as_attested() {
+    let harness = test_state(
+        &healthy_overlay(),
+        FakeAttest::with_document(&cose_sign1_with_pcr0(&[0x11; 48])),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let response = handle_attestation(&harness.state, &serde_json::json!({})).expect("attestation");
+    assert_eq!(response["trust_tier"], "enclave-attested");
+    assert!(response.get("trust_tier_reason").is_none());
+}
+
+/// The boot guard: unset is a dev run, `require` demands a measured boot, and
+/// anything else is an error rather than a silent host-mode fall back.
+#[test]
+fn the_boot_guard_demands_a_measured_boot_only_when_the_image_asks() {
+    let measured = cose_sign1_with_pcr0(&[0x11; 48]);
+
+    let dev = test_state(
+        &healthy_overlay(),
+        FakeAttest::with_document(b"not a cose document"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    assert_eq!(
+        assert_attested_boot(&dev.state).expect("unset is a dev run"),
+        None
+    );
+
+    let mut pairs = healthy_overlay();
+    pairs.push((ATTESTED_BOOT_ENV, "require"));
+    let attested = test_state(
+        &pairs,
+        FakeAttest::with_document(&measured),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    assert_eq!(
+        assert_attested_boot(&attested.state).expect("a measured boot serves"),
+        Some("11".repeat(48))
+    );
+    let calls = attested.attest.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(
+        calls[0].nonce.as_ref().map(Vec::len),
+        Some(16),
+        "the boot challenge is issued"
+    );
+
+    let debug_mode = test_state(
+        &pairs,
+        FakeAttest::with_document(&cose_sign1_with_pcr0(&[0x00; 48])),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let error = assert_attested_boot(&debug_mode.state)
+        .expect_err("a debug-mode enclave must not serve when the image demands attestation");
+    assert!(error.contains("debug-mode or emulated"), "{error}");
+
+    let no_nsm = test_state(
+        &pairs,
+        FakeAttest::failing("nsm: this platform does not support NSM"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    assert!(assert_attested_boot(&no_nsm.state).is_err());
+}
+
+/// A typo in the demand is refused, never guessed at — the same discipline
+/// `workers/neo-signer/src/attestation.rs` states for its own guard.
+#[test]
+fn a_boot_guard_typo_is_a_refusal_not_a_downgrade() {
+    let mut pairs = healthy_overlay();
+    pairs.push((ATTESTED_BOOT_ENV, "Require"));
+    let harness = test_state(
+        &pairs,
+        FakeAttest::with_document(&cose_sign1_with_pcr0(&[0x11; 48])),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let error = assert_attested_boot(&harness.state).expect_err("a typo is not `require`");
+    assert!(error.contains(ATTESTED_BOOT_ENV), "{error}");
+    assert!(
+        harness.attest.calls().is_empty(),
+        "the refusal precedes any NSM call"
+    );
 }

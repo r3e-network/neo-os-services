@@ -62,6 +62,67 @@ pub fn addresses_equal(a: &str, b: &str) -> bool {
     a.len() == 42 && b.len() == 42 && a.eq_ignore_ascii_case(b)
 }
 
+/// The in-enclave single-use ledger for reveal presentations (SVC-E-9,
+/// CL-15/CL-19). Entries are `(key, expires_at_seconds)`; the key is a SHA-256
+/// over the exact statement and signature bytes, so nothing about the
+/// recipient or the plaintext is retained.
+///
+/// Why this exists: `/oracle/message-reveal` is deliberately unauthenticated
+/// at the edge — `deploy/cloudflare/morpheus-edge-gateway/worker.mjs` proxies
+/// it to the box with the runtime token precisely so public clients can reach
+/// it without holding one, and the box enforces per-message access in-TEE.
+/// The edge therefore terminates TLS and re-originates, so a signed reveal
+/// statement exists in cleartext inside it. Without a used-nonce set the only
+/// replay control was [`REVEAL_FRESHNESS_WINDOW_SECONDS`], which means anyone
+/// who observed one presentation — a logging sink that captures bodies, a
+/// browser extension, a shared-device history — could replay the identical
+/// body for ten minutes and receive the plaintext.
+///
+/// Bounded by construction: every entry carries its own expiry and the sweep
+/// runs on each claim, so the set never holds more than one freshness window
+/// of traffic. Tightening the window instead is not a fix — it would penalise
+/// legitimate clients on slow links and still leave the replay open.
+static REVEAL_PRESENTATIONS: std::sync::OnceLock<std::sync::Mutex<Vec<(String, f64)>>> =
+    std::sync::OnceLock::new();
+
+/// A presentation's identity: the statement the recipient signed plus the
+/// signature that answers it. Two honest reveals of the same message differ
+/// in `issued`, so this never collides across distinct requests, and a replay
+/// is byte-identical by definition.
+pub fn reveal_presentation_key(statement: &str, signature: &str) -> String {
+    use sha2::{Digest as _, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(statement.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(signature.trim().to_ascii_lowercase().as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Claim a presentation. `true` on the first presentation, `false` on every
+/// repeat inside the freshness window. Expired entries are swept on the way
+/// in, which is what keeps the set bounded without a background task.
+pub fn claim_reveal_presentation(key: &str, now_seconds: f64) -> bool {
+    let ledger = REVEAL_PRESENTATIONS.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let mut entries = ledger
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    entries.retain(|(_, expires_at)| *expires_at > now_seconds);
+    if entries.iter().any(|(seen, _)| seen == key) {
+        return false;
+    }
+    // One window is the longest a presentation can still pass the freshness
+    // check, so an entry older than that can never be replayed anyway.
+    entries.push((
+        key.to_string(),
+        now_seconds + REVEAL_FRESHNESS_WINDOW_SECONDS,
+    ));
+    true
+}
+
 /// `isRevealTimestampFresh(issuedAt, nowSeconds)` — both finite and positive,
 /// within ±10 minutes.
 pub fn is_reveal_timestamp_fresh(issued_at: f64, now_seconds: f64) -> bool {
@@ -594,6 +655,22 @@ pub fn handle_message_reveal(
         return (
             403,
             json!({ "error": "signature does not match the message recipient" }),
+        );
+    }
+
+    // Single-use, claimed only once the presentation is PROVEN to be the
+    // recipient's: a malformed or mismatched signature must not be able to
+    // burn a key the legitimate recipient is about to use. The cost of
+    // claiming here rather than after the decrypt is that a reveal whose
+    // stored envelope is undecodable consumes its key — but that failure is
+    // not retry-fixable, so no honest client loses anything.
+    if !claim_reveal_presentation(
+        &reveal_presentation_key(&statement, &signature),
+        now_seconds,
+    ) {
+        return (
+            403,
+            json!({ "error": "reveal request already used; re-sign with a current timestamp" }),
         );
     }
 
@@ -1490,7 +1567,12 @@ mod tests {
             "signature does not match the message recipient"
         );
 
-        // undecodable (non-UTF-8) envelope -> 400
+        // undecodable (non-UTF-8) envelope -> 400.
+        //
+        // From here on each sub-case needs its OWN message id: these are the
+        // cases that get past the recipient check, and a presentation is
+        // single-use once proven (SVC-E-9), so reusing id 9 would make the
+        // second one a replay rather than the envelope failure under test.
         let broken = NeoXMessage {
             envelope: vec![0xff, 0xfe, 0xfd],
             ..base.clone()
@@ -1498,7 +1580,7 @@ mod tests {
         let read = move |_request: &ReadMessageRequest| -> Result<NeoXMessage, String> {
             Ok(broken.clone())
         };
-        let (status, body) = reveal(&signed_reveal_payload(9), &env, &read);
+        let (status, body) = reveal(&signed_reveal_payload(91), &env, &read);
         assert_eq!(status, 400);
         assert_eq!(body["error"], "stored envelope is not decodable");
 
@@ -1512,7 +1594,7 @@ mod tests {
         let read = move |_request: &ReadMessageRequest| -> Result<NeoXMessage, String> {
             Ok(unsupported.clone())
         };
-        let (status, body) = reveal(&signed_reveal_payload(9), &env, &read);
+        let (status, body) = reveal(&signed_reveal_payload(92), &env, &read);
         assert_eq!(status, 400);
         assert_eq!(
             body["error"],
@@ -1542,6 +1624,86 @@ mod tests {
         assert_eq!(body["recipient"], reveal_wallet_address());
         assert_eq!(body["messageId"], "9");
         assert_eq!(body["unlockTime"], 0);
+    }
+
+    /// SVC-E-9 (CL-15/CL-19). The reveal statement's only replay control was
+    /// the ±10-minute freshness window, on a route the edge gateway
+    /// deliberately proxies for UNAUTHENTICATED public clients — so the
+    /// signed body exists in cleartext inside the edge and anyone who
+    /// observed one could replay it for ten minutes and get the plaintext.
+    ///
+    /// The statement and signature must now be single-use. Message id 4211 is
+    /// unique to this test: the ledger is process-wide, exactly as it is in a
+    /// running enclave, so a shared id would couple parallel test threads.
+    #[test]
+    fn a_reveal_presentation_is_single_use_within_the_freshness_window() {
+        let recipient_public = crate::core::buffer_from_base64(GOLDEN_PUBLIC_KEY_RAW_B64);
+        let sealed = seal_for_oracle(&recipient_public, "meet me at dawn");
+        let message = NeoXMessage {
+            sender: ZERO_ADDRESS.to_string(),
+            recipient: reveal_wallet_address(),
+            envelope: sealed.into_bytes(),
+            unlock_time: 0.0,
+            sent_at: 0.0,
+            revealed: false,
+            plaintext: String::new(),
+        };
+        let read = move |_request: &ReadMessageRequest| -> Result<NeoXMessage, String> {
+            Ok(message.clone())
+        };
+        let payload = signed_reveal_payload(4211);
+
+        // First presentation: the recipient gets their message.
+        let (status, body) = reveal(&payload, &reveal_key_env(), &read);
+        assert_eq!(status, 200);
+        assert_eq!(body["plaintext"], "meet me at dawn");
+
+        // Byte-identical replay inside the window: refused, and no plaintext.
+        let (status, body) = reveal(&payload, &reveal_key_env(), &read);
+        assert_eq!(status, 403);
+        assert_eq!(
+            body["error"],
+            "reveal request already used; re-sign with a current timestamp"
+        );
+        assert!(body.get("plaintext").is_none());
+    }
+
+    /// The ledger's own contract: first claim wins, repeats lose, and an
+    /// entry stops occupying the set once it is older than the window it
+    /// could have been replayed in — which is what keeps it bounded without a
+    /// sweeper task.
+    #[test]
+    fn the_presentation_ledger_is_single_use_and_self_expiring() {
+        let key = reveal_presentation_key("statement-for-ledger-test", "0xSIG");
+        assert!(claim_reveal_presentation(&key, 1_000.0));
+        assert!(!claim_reveal_presentation(&key, 1_000.0));
+        // Still held anywhere inside the window.
+        assert!(!claim_reveal_presentation(
+            &key,
+            1_000.0 + REVEAL_FRESHNESS_WINDOW_SECONDS - 1.0
+        ));
+        // Past the window the entry is swept; a presentation that old cannot
+        // pass `is_reveal_timestamp_fresh` anyway, so re-admitting it is safe.
+        assert!(claim_reveal_presentation(
+            &key,
+            1_000.0 + REVEAL_FRESHNESS_WINDOW_SECONDS + 1.0
+        ));
+
+        // The key covers both halves: a different statement or a different
+        // signature is a different presentation.
+        assert_ne!(
+            reveal_presentation_key("statement-a", "0xSIG"),
+            reveal_presentation_key("statement-b", "0xSIG"),
+        );
+        assert_ne!(
+            reveal_presentation_key("statement-a", "0xSIG1"),
+            reveal_presentation_key("statement-a", "0xSIG2"),
+        );
+        // Signature casing and surrounding whitespace are not a way around it.
+        assert_eq!(
+            reveal_presentation_key("statement-a", "0xABCD"),
+            reveal_presentation_key("statement-a", "  0xabcd  "),
+        );
     }
 
     // -- gated decrypt lane --------------------------------------------------

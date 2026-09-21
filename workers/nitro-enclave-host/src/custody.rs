@@ -42,6 +42,32 @@ pub const SIGNER_SERVICE_URL: &str = "SIGNER_SERVICE_URL";
 /// it.
 pub const SIGNER_SERVICE_TOKEN: &str = "SIGNER_SERVICE_TOKEN";
 
+/// The SECOND custody credential (SVC-B-2). `neo-signer` refuses to create a
+/// caller holding more than one capability — "capabilities must name exactly
+/// one of sign, raw_sign or admin" — and that separation is deliberate, so it
+/// must not be dissolved by letting `raw_sign` satisfy the semantic routes.
+/// But this host needs both: `/sign/raw` requires `raw_sign`
+/// (`service.rs::guard_signing`) while `/sign/transaction` and
+/// `/sign/eip191-fulfillment` require `sign`. Presenting one token therefore
+/// leaves one of the two chains' fulfilment lanes permanently refused: with
+/// the documented `raw_sign`-only provisioning it is NeoX, and granting
+/// `sign` instead breaks the N3 lane and `/sign/payload` with it.
+///
+/// Unset falls back to [`SIGNER_SERVICE_TOKEN`], which reproduces the old
+/// single-credential behaviour exactly, so this is additive for an existing
+/// deployment.
+pub const SIGNER_SERVICE_SEMANTIC_TOKEN: &str = "SIGNER_SERVICE_SEMANTIC_TOKEN";
+
+/// Which custody credential a call presents. The split follows the custody
+/// service's own capability boundary, not this host's convenience.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CustodyLane {
+    /// `/sign/raw` — needs `raw_sign`.
+    Raw,
+    /// `/sign/transaction`, `/sign/eip191-fulfillment` — need `sign`.
+    Semantic,
+}
+
 /// `SIGNER_ROLE_{ROLE}_KEY_ID` — the custody key a role pins, uppercased with
 /// the role's own casing preserved (`oracle_verifier` →
 /// `SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID`).
@@ -269,7 +295,12 @@ impl CustodySigner {
         CustodySigner { overlay, transport }
     }
 
+    /// The read-only and raw lanes keep the default credential.
     fn config(&self) -> Result<Option<CustodyConfig>, &'static str> {
+        self.config_for(CustodyLane::Raw)
+    }
+
+    fn config_for(&self, lane: CustodyLane) -> Result<Option<CustodyConfig>, &'static str> {
         let overlay = self.overlay.read().expect("overlay lock");
         let Some(base_url) = overlay.get_trimmed(SIGNER_SERVICE_URL) else {
             return Ok(None);
@@ -277,9 +308,10 @@ impl CustodySigner {
         let Some(token) = overlay.get_trimmed(SIGNER_SERVICE_TOKEN) else {
             return Ok(None);
         };
-        if overlay
+        let is_production = overlay
             .get_trimmed("NODE_ENV")
-            .is_some_and(|value| value.eq_ignore_ascii_case("production"))
+            .is_some_and(|value| value.eq_ignore_ascii_case("production"));
+        if is_production
             && overlay
                 .get_trimmed("SIGNER_SERVICE_TOKEN_SOURCE")
                 .as_deref()
@@ -287,6 +319,32 @@ impl CustodySigner {
         {
             return Ok(None);
         }
+        // The semantic credential is optional; absent, the lane presents the
+        // default token and behaves exactly as it did before SVC-B-2 (which
+        // is to say, refused by a `raw_sign`-only caller — the same failure,
+        // now fixable by provisioning the second caller instead of being
+        // structurally unreachable).
+        let token = match lane {
+            CustodyLane::Raw => token,
+            CustodyLane::Semantic => match overlay.get_trimmed(SIGNER_SERVICE_SEMANTIC_TOKEN) {
+                None => token,
+                Some(semantic) => {
+                    if is_production
+                        && overlay
+                            .get_trimmed("SIGNER_SERVICE_SEMANTIC_TOKEN_SOURCE")
+                            .as_deref()
+                            != Some("nitro-recipient-kms")
+                    {
+                        // A host-supplied semantic credential in production is
+                        // the downgrade the default token's marker already
+                        // rules out; refuse rather than quietly using it or
+                        // quietly falling back.
+                        return Ok(None);
+                    }
+                    semantic
+                }
+            },
+        };
         CustodyConfig::new(&base_url, token).map(Some)
     }
 
@@ -626,7 +684,7 @@ impl SignerPlane for CustodySigner {
         unsigned_hex: &str,
         request_id: &str,
     ) -> Result<serde_json::Value, RuntimeError> {
-        let config = match self.config() {
+        let config = match self.config_for(CustodyLane::Semantic) {
             Ok(Some(config)) => config,
             Ok(None) => return Err(unconfigured_error(role)),
             Err(message) => {
@@ -744,7 +802,7 @@ impl SignerPlane for CustodySigner {
         unsigned_hex: &str,
         request_id: &str,
     ) -> Result<serde_json::Value, RuntimeError> {
-        let config = match self.config() {
+        let config = match self.config_for(CustodyLane::Semantic) {
             Ok(Some(config)) => config,
             Ok(None) => return Err(unconfigured_error(role)),
             Err(message) => {
@@ -913,7 +971,7 @@ impl SignerPlane for CustodySigner {
         let fulfillment = request.fulfillment;
         let result_bytes_hex = request.result_bytes_hex;
         let request_id = request.request_id;
-        let config = match self.config() {
+        let config = match self.config_for(CustodyLane::Semantic) {
             Ok(Some(config)) => config,
             Ok(None) => return Err(unconfigured_error(role)),
             Err(message) => {

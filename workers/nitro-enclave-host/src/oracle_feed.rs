@@ -453,7 +453,8 @@ fn resolve_quote_for_provider(
     let bytes = stable_stringify(&JsValue::from_json(&quote)).into_bytes();
     let output_hash = sha256_hex(&bytes);
     let signed = sign_worker_bytes(state, network, &bytes).map_err(|error| error.message)?;
-    let attestation = build_tee_attestation(state, &provider_payload, "custody", &output_hash);
+    let attestation = build_tee_attestation(state, &provider_payload, "custody", &output_hash)
+        .map_err(|error| error.message)?;
     let quote_fields = quote.as_object_mut().expect("quote literal is an object");
     for (key, value) in build_lane_signed_envelope(&signed, &output_hash, &attestation) {
         quote_fields.insert(key, value);

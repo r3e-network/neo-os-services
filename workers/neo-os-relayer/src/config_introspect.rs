@@ -442,6 +442,30 @@ fn dynamic_requirements(config: &Value) -> Vec<DynamicRequirement> {
             present: !oracle_contract.is_empty(),
             reason: "neo_n3 is active and mode is not feed_only",
         });
+
+        // SVC-E-5 (CL-05/CL-14). The NeoX lane below already demands a
+        // verifier distinct from the updater; the N3 lane demanded nothing,
+        // even though MorpheusOracle checks BOTH `ValidateUpdater` and
+        // `CryptoLib.VerifyWithECDsa` against the oracle_verifier key. Collapse
+        // those two roles onto one key and the two-factor structure becomes
+        // one: whoever holds the hot broadcast key can also mint the
+        // fulfilment attestation the contract verifies, and the enclave stops
+        // being in the path at all.
+        let verifier = config
+            .pointer("/neo_n3/custodyKeyIds/oracle_verifier")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let updater = config
+            .pointer("/neo_n3/custodyKeyIds/updater")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        requirements.push(DynamicRequirement {
+            key: "neo_n3.custodyKeyIds.oracle_verifier",
+            present: !verifier.is_empty() && verifier != updater,
+            reason: "Neo N3 request fulfillment requires the distinct oracle_verifier custody key",
+        });
     }
 
     if neo_active && feed_lane {
@@ -1028,6 +1052,53 @@ mod tests {
             .errors
             .iter()
             .any(|error| error.key == "neox.custodyKeyIds.updater"));
+    }
+
+    /// SVC-E-5 (CL-05/CL-14). The NeoX lane has required a verifier distinct
+    /// from the updater since it was written; the Neo N3 lane required
+    /// nothing, so an operator could point both roles at one custody key (or
+    /// import the same secret twice) and collapse MorpheusOracle's two
+    /// independent checks — `ValidateUpdater` and the oracle_verifier
+    /// signature — onto a single hot key.
+    #[test]
+    fn the_neo_n3_lane_requires_a_verifier_distinct_from_the_updater() {
+        let with_roles = |updater: &str, verifier: &str| {
+            json!({
+                "network": "testnet",
+                "mode": "requests_only",
+                "activeChains": ["neo_n3"],
+                "nitro": {
+                    "custodyUrl": "https://signer.internal",
+                    "custodyToken": "token",
+                    "token": "runtime-token",
+                    "enclaveFulfill": true,
+                    "enclaveFulfillUrl": "https://runtime.internal"
+                },
+                "neo_n3": {
+                    "rpcUrls": ["https://rpc.internal"],
+                    "networkMagic": 894710606,
+                    "oracleContract": "0xf54d8584ef82315c1800373272ab08ae0db2d5ef",
+                    "custodyKeyIds": { "updater": updater, "oracle_verifier": verifier }
+                }
+            })
+        };
+        let key = "neo_n3.custodyKeyIds.oracle_verifier";
+        let named = |config: &serde_json::Value| {
+            validate_relayer_config(&BTreeMap::new(), Some(config))
+                .errors
+                .iter()
+                .any(|error| error.key == key)
+        };
+
+        // Collapsed onto one key: refused.
+        assert!(
+            named(&with_roles("n3-key-1", "n3-key-1")),
+            "identical role key ids must be a preflight error"
+        );
+        // Absent entirely: also refused — an unset verifier is not a distinct one.
+        assert!(named(&with_roles("n3-key-1", "")));
+        // Two distinct keys: accepted.
+        assert!(!named(&with_roles("n3-key-1", "n3-verifier-1")));
     }
 
     #[test]

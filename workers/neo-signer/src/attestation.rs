@@ -19,6 +19,14 @@
 //! PCR1/PCR2 are heap/runtime measurements the deployment does not pin for
 //! this service; the measurements manifest keeps them for the remote
 //! verifier.
+//!
+//! What the guard does NOT do, stated so nobody builds on a stronger reading:
+//! it does not verify the COSE_Sign1 signature and does not walk the AWS
+//! certificate chain. It checks that a document parses, that it answers THIS
+//! boot's challenge, and that the measurement is neither all zeros nor
+//! different from an optional pin. The cryptographic gate on this service's
+//! keys is the KMS key policy's `kms:RecipientAttestation:*` conditions,
+//! which AWS evaluates against a document it validated itself.
 
 use nitro_attest::release::AttestationSource;
 
@@ -34,6 +42,11 @@ pub const EXPECTED_PCR0_ENV: &str = "SIGNER_SERVICE_EXPECTED_PCR0";
 
 /// Nitro PCRs are SHA-384: 48 bytes, 96 hex characters.
 pub const PCR0_LEN: usize = 48;
+
+/// The per-boot challenge length. Nitro accepts up to 512 bytes in `nonce`;
+/// 16 bytes of OS randomness is already far past any birthday concern for a
+/// value that lives for one boot.
+pub const NONCE_LEN: usize = 16;
 const PCR0_HEX_CHARS: usize = PCR0_LEN * 2;
 
 /// The guard, parsed from the environment. `None` is host mode: the vault
@@ -94,13 +107,30 @@ impl BootGuard {
     /// with or without a pin (KMS-ATTESTATION-DESIGN.md: an all-zero PCR0 is
     /// the "nothing can decrypt yet" state, never a passing one).
     ///
-    /// The nonce is fresh per boot so a recorded document from an earlier,
-    /// different image cannot be replayed as this boot's answer.
+    /// The nonce is fresh per boot AND compared against the document's own
+    /// `nonce` field, so a recorded document from an earlier boot cannot be
+    /// replayed as this boot's answer. Generating a challenge without
+    /// checking the answer is the CL-03 omission: everything still verifies
+    /// and the guard learns nothing about liveness.
     pub fn verify(&self, source: &dyn AttestationSource) -> Result<String, String> {
-        let mut nonce = [0u8; 16];
+        let mut nonce = [0u8; NONCE_LEN];
         use aes_gcm::aead::{rand_core::RngCore, OsRng};
         OsRng.fill_bytes(&mut nonce);
         let document = source.attest(Some(&nonce), None, None)?;
+        let answered = extract_nonce(&document)?;
+        if answered.len() != nonce.len()
+            || answered
+                .iter()
+                .zip(nonce.iter())
+                .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+                != 0
+        {
+            return Err(
+                "attestation nonce does not answer this boot's challenge — the document is \
+                 a replay or the NSM is not the one that was challenged"
+                    .to_string(),
+            );
+        }
         let measured = extract_pcr0(&document)?;
         if measured == [0u8; PCR0_LEN] {
             return Err(
@@ -162,6 +192,32 @@ pub fn extract_pcr0(document: &[u8]) -> Result<[u8; PCR0_LEN], String> {
         )
     })?;
     Ok(measured)
+}
+
+/// Pull the challenge back out of the document: the NSM echoes the caller's
+/// `nonce` into the payload's `nonce` field. A document with no nonce is
+/// refused rather than treated as "nothing to compare" — an unchallenged
+/// document is exactly the replayable bearer artifact the challenge exists to
+/// rule out.
+pub fn extract_nonce(document: &[u8]) -> Result<Vec<u8>, String> {
+    let decoded = neo_os_core::cbor::decode_cose_sign1(document)
+        .map_err(|error| format!("attestation document: {}", error.0))?;
+    let entries = match &decoded.payload {
+        neo_os_core::cbor::CborValue::Map(entries) => entries,
+        _ => return Err("attestation payload is not a map".to_string()),
+    };
+    let nonce = entries
+        .iter()
+        .find(|(name, _)| name == "nonce")
+        .ok_or_else(|| {
+            "attestation payload has no nonce — an unchallenged document proves no liveness"
+                .to_string()
+        })?;
+    nonce
+        .1
+        .as_bytes()
+        .map(<[u8]>::to_vec)
+        .ok_or_else(|| "attestation nonce is not a byte string".to_string())
 }
 
 fn decode_pcr0(raw: &str) -> Result<[u8; PCR0_LEN], String> {

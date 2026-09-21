@@ -447,7 +447,50 @@ fn attestation_gate_follows_the_normalize_boolean_contract() {
         serde_json::Value::Null
     );
 
-    // A failing NSM is best-effort null; the lane still returns 200.
+    // SVC-D-5: a requested-but-failed attestation is NOT best-effort null.
+    // See `a_requested_attestation_that_fails_refuses_the_lane` below.
+}
+
+// ---------------------------------------------------------------------------
+// SVC-D-5 — a requested attestation that fails refuses the lane (CL-33)
+// ---------------------------------------------------------------------------
+
+/// The old behaviour returned a custody-SIGNED result with
+/// `tee_attestation: null` when the NSM was unavailable — byte-identical to
+/// `include_attestation: false`. A caller could not tell "I did not ask for a
+/// proof" from "the enclave could not produce one", so the absence of the
+/// enclave's proof of itself was invisible and a signed result went out
+/// anyway.
+#[test]
+fn a_requested_attestation_that_fails_refuses_the_lane() {
+    let harness = test_state(
+        &healthy_overlay(),
+        FakeAttest::failing("nsm down"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let error = handle_compute_execute(
+        &harness.state,
+        &json!({
+            "function": "hash.sha256",
+            "input": {},
+            "include_attestation": true,
+        }),
+    )
+    .expect_err("a requested proof that cannot be produced must not be silently dropped");
+    assert_eq!(error.status, 503);
+    assert!(
+        error.message.contains("nsm attestation helper failed"),
+        "{}",
+        error.message
+    );
+}
+
+/// The two deliberate opt-outs are untouched: a caller that did not ask still
+/// gets a 200 with a null proof, because there is nothing missing.
+#[test]
+fn not_asking_for_an_attestation_is_still_a_null_not_a_refusal() {
     let harness = test_state(
         &healthy_overlay(),
         FakeAttest::failing("nsm down"),
@@ -457,13 +500,9 @@ fn attestation_gate_follows_the_normalize_boolean_contract() {
     );
     let response = handle_compute_execute(
         &harness.state,
-        &json!({
-            "function": "hash.sha256",
-            "input": {},
-            "include_attestation": true,
-        }),
+        &json!({ "function": "hash.sha256", "input": {} }),
     )
-    .expect("attestation failure stays best-effort");
+    .expect("an unrequested attestation is not a failure");
     assert_eq!(response["tee_attestation"], serde_json::Value::Null);
 }
 

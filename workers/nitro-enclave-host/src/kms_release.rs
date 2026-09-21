@@ -30,6 +30,11 @@ impl Default for ProductionKms {
     }
 }
 
+/// The component half of every frontier encryption context. Custody uses
+/// `custody` for the same pair (`neo-signer/src/provision.rs`), so a custody
+/// envelope cannot be replayed into the frontier or the other way round.
+pub const KMS_CONTEXT_COMPONENT: &str = "frontier";
+
 impl KmsReleaser for ProductionKms {
     fn decrypt(&self, params: &KmsReleaseParams) -> Result<Vec<u8>, String> {
         let credentials = Credentials {
@@ -38,7 +43,17 @@ impl KmsReleaser for ProductionKms {
             session_token: params.session_token.clone(),
         };
         let amz_date = kms::utc_amz_date_now();
-        release::release_bytes(
+        // The encryption context and the key pin are the two things the
+        // untrusted parent supplies neither of. Without them a recipient
+        // attestation proves only WHO is decrypting, never WHAT or under
+        // which key — so a host that can encrypt under any CMK its instance
+        // role reaches could substitute every secret released here.
+        let context = [
+            ("neoos:component", KMS_CONTEXT_COMPONENT),
+            ("neoos:purpose", params.purpose.as_str()),
+            ("neoos:network", params.network.as_str()),
+        ];
+        release::release_bytes_with_context_and_key(
             &*self.source,
             &*self.transport,
             &release::ReleaseParams {
@@ -47,6 +62,8 @@ impl KmsReleaser for ProductionKms {
                 ciphertext_b64: &params.ciphertext_b64,
                 amz_date: &amz_date,
             },
+            &context,
+            params.key_arn.as_deref(),
         )
     }
 }

@@ -311,7 +311,7 @@ fn build_oracle_response(
     let output_hash = sha256_hex(&payload_bytes);
     let network = resolve_payload_network(state, &resolved);
     let signed = sign_worker_bytes(state, &network, &payload_bytes)?;
-    let tee_attestation = build_tee_attestation(state, &resolved, "custody", &output_hash);
+    let tee_attestation = build_tee_attestation(state, &resolved, "custody", &output_hash)?;
     let lane = build_lane_signed_envelope(&signed, &output_hash, &tee_attestation);
 
     // Response assembly in the JS literal's insertion order (serde_json's
