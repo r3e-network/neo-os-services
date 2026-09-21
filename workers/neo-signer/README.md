@@ -25,6 +25,9 @@ The binding is declared as `gateway-signer` in
 `neo-os-web/docs/workspace/neoos-target-architecture.v1.json` and checked by the
 architecture source-coverage gate.
 
+Proposed v2 binding: in `neo-os-web/docs/workspace/neoos-target-architecture.v2.json` (status `PROPOSED`, validated by `npm run check:architecture:v2` in `neo-os-web`) this service is v2 layer L3 (gateway) and owns C12 sign. The v1 binding above remains the enforced contract until the v2 adoption procedure completes.
+
+
 ## What is here
 
 | Module          | Role                                                                                   |
