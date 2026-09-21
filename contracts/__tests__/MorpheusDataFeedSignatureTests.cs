@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Numerics;
+using System.Reflection;
 using System.Text;
 using Neo;
+using Neo.Network.P2P.Payloads;
 using Neo.Cryptography.ECC;
 using Neo.SmartContract.Testing;
 using Neo.Wallets;
@@ -81,6 +83,32 @@ namespace MorpheusOracle.Contracts.Tests
         {
             Exception ex = Assert.ThrowsAny<Exception>(action);
             Assert.Contains(messageFragment, ex.ToString());
+        }
+
+        // PersistingBlock.Timestamp is read-only; the supported way to move
+        // Runtime.Time forward is the underlying block header (same reflection as
+        // MorpheusOracleTimelockTests).
+        private static void AdvancePastTimelock(TestEngine engine)
+        {
+            object persistingBlock = engine.PersistingBlock;
+            Block block = (Block)persistingBlock.GetType()
+                .GetField("UnderlyingBlock", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .GetValue(persistingBlock)!;
+            block.Header.Timestamp =
+                (ulong)engine.PersistingBlock.Timestamp.TotalMilliseconds + 86_400_000 + 1_000;
+        }
+
+        // Registering the verification key is a two-step, 24h-timelocked change (see
+        // MorpheusDataFeedVerifierTimelockTests for the timelock's own coverage). The
+        // signature tests below only care that a key ends up installed, so they use
+        // this helper rather than repeating propose/advance/execute.
+        private static void RegisterVerificationKey(Harness h, Neo.Cryptography.ECC.ECPoint key)
+        {
+            h.Engine.SetTransactionSigners(h.Admin);
+            h.Contract.ProposeOracleVerificationKey(key);
+            AdvancePastTimelock(h.Engine);
+            h.Contract.ExecuteOracleVerificationKeyChange();
+            Assert.Equal(key, h.Contract.OracleVerificationKey);
         }
 
         // Canonical v2 message replica. Keep this byte-for-byte identical to the
@@ -179,18 +207,16 @@ namespace MorpheusOracle.Contracts.Tests
         }
 
         [Fact]
-        public void SetOracleVerificationKey_IsAdminGated()
+        public void ProposeOracleVerificationKey_IsAdminGated()
         {
             Harness h = Deploy();
 
-            // The updater (a different role) cannot register the verification key.
+            // The updater (a different role) cannot propose the verification key.
             h.Engine.SetTransactionSigners(h.Updater);
-            AssertReverts(() => h.Contract.SetOracleVerificationKey(h.Signer.PublicKey), "unauthorized");
+            AssertReverts(() => h.Contract.ProposeOracleVerificationKey(h.Signer.PublicKey), "unauthorized");
 
-            // The admin can, and it is then readable.
-            h.Engine.SetTransactionSigners(h.Admin);
-            h.Contract.SetOracleVerificationKey(h.Signer.PublicKey);
-            Assert.Equal(h.Signer.PublicKey, h.Contract.OracleVerificationKey);
+            // The admin can, and once the timelock matures the key is readable.
+            RegisterVerificationKey(h, h.Signer.PublicKey);
         }
 
         [Fact]
@@ -198,8 +224,7 @@ namespace MorpheusOracle.Contracts.Tests
         {
             Harness h = Deploy();
 
-            h.Engine.SetTransactionSigners(h.Admin);
-            h.Contract.SetOracleVerificationKey(h.Signer.PublicKey);
+            RegisterVerificationKey(h, h.Signer.PublicKey);
 
             BigInteger roundId = 1;
             BigInteger price = 50_000;
@@ -216,8 +241,7 @@ namespace MorpheusOracle.Contracts.Tests
         {
             Harness h = Deploy();
 
-            h.Engine.SetTransactionSigners(h.Admin);
-            h.Contract.SetOracleVerificationKey(h.Signer.PublicKey);
+            RegisterVerificationKey(h, h.Signer.PublicKey);
             h.Engine.SetTransactionSigners(h.Updater);
 
             BigInteger roundId = 7;
@@ -302,8 +326,7 @@ namespace MorpheusOracle.Contracts.Tests
         {
             Harness h = Deploy();
 
-            h.Engine.SetTransactionSigners(h.Admin);
-            h.Contract.SetOracleVerificationKey(h.Signer.PublicKey);
+            RegisterVerificationKey(h, h.Signer.PublicKey);
 
             // A signature over a DIFFERENT price must not transfer to the submitted
             // arguments: a leaked updater witness alone can no longer anchor an
@@ -337,8 +360,7 @@ namespace MorpheusOracle.Contracts.Tests
             // updater witness alone is no longer sufficient.
             Harness h = Deploy();
 
-            h.Engine.SetTransactionSigners(h.Admin);
-            h.Contract.SetOracleVerificationKey(h.Signer.PublicKey);
+            RegisterVerificationKey(h, h.Signer.PublicKey);
 
             h.Engine.SetTransactionSigners(h.Updater);
 
@@ -374,8 +396,7 @@ namespace MorpheusOracle.Contracts.Tests
             // leaked updater witness cannot batch-anchor arbitrary prices either.
             Harness h = Deploy();
 
-            h.Engine.SetTransactionSigners(h.Admin);
-            h.Contract.SetOracleVerificationKey(h.Signer.PublicKey);
+            RegisterVerificationKey(h, h.Signer.PublicKey);
 
             h.Engine.SetTransactionSigners(h.Updater);
             AssertReverts(
@@ -417,9 +438,7 @@ namespace MorpheusOracle.Contracts.Tests
         {
             Harness h = Deploy();
 
-            h.Engine.SetTransactionSigners(h.Admin);
-            h.Contract.SetOracleVerificationKey(h.Signer.PublicKey);
-            Assert.Equal(h.Signer.PublicKey, h.Contract.OracleVerificationKey);
+            RegisterVerificationKey(h, h.Signer.PublicKey);
 
             // While the key is registered, a signed write with a mismatched signature
             // is rejected.
@@ -429,12 +448,15 @@ namespace MorpheusOracle.Contracts.Tests
                 () => h.Contract.UpdateFeedSigned(Pair, 1, 50_000, 1_000, Array.Empty<byte>(), 1, badSignature),
                 "invalid feed signature");
 
-            // Clearing the key (admin-only) reverts to witness-only behavior.
+            // Clearing the key is admin-only AND timelocked, so a stolen admin key
+            // cannot disarm the feed inside the transaction it is compromised in.
             h.Engine.SetTransactionSigners(h.Updater);
-            AssertReverts(() => h.Contract.ClearOracleVerificationKey(), "unauthorized");
+            AssertReverts(() => h.Contract.ProposeClearOracleVerificationKey(), "unauthorized");
 
             h.Engine.SetTransactionSigners(h.Admin);
-            h.Contract.ClearOracleVerificationKey();
+            h.Contract.ProposeClearOracleVerificationKey();
+            AdvancePastTimelock(h.Engine);
+            h.Contract.ExecuteOracleVerificationKeyChange();
             Assert.Null(h.Contract.OracleVerificationKey);
 
             // The same previously-rejected signed write now succeeds: verification is

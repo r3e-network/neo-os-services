@@ -14,6 +14,7 @@ namespace MorpheusOracle.Contracts
     public delegate void UpdaterChangedHandler(UInt160 oldUpdater, UInt160 newUpdater);
     public delegate void VerificationKeyChangedHandler(ECPoint oldKey, ECPoint newKey);
     public delegate void AdminTimelockProposedHandler(UInt160 proposed, BigInteger executeAfter);
+    public delegate void AdminFeedResetHandler(string pair, BigInteger roundId, BigInteger price, BigInteger timestamp, BigInteger sourceSetId);
 
     /// <summary>
     /// On-chain synchronized storage for Morpheus shared numeric resources.
@@ -27,7 +28,7 @@ namespace MorpheusOracle.Contracts
     [ManifestExtra("Author", "Morpheus Oracle")]
     [ManifestExtra("Version", "2.0.0")]
     [ManifestExtra("Description", "Shared numeric resource registry for the Morpheus MiniApp OS")]
-    public class MorpheusDataFeed : SmartContract
+    public partial class MorpheusDataFeed : SmartContract
     {
         private const int MAX_PAIR_LENGTH = 63;
         // Versioned signing domain. Every field that can affect the stored feed
@@ -51,6 +52,8 @@ namespace MorpheusOracle.Contracts
         // Governance timelock (P0-07 pattern): admin rotation.
         private static readonly byte[] PREFIX_PENDING_ADMIN = new byte[] { 0x07 };
         private static readonly byte[] PREFIX_PENDING_ADMIN_TIME = new byte[] { 0x08 };
+        // 0x09/0x0A are claimed by the verification-key timelock in
+        // MorpheusDataFeed.Verifier.cs. Next free byte: 0x0B.
         private const long TIMELOCK_DELAY_MS = 86_400_000; // 24 hours
 
         [DisplayName("FeedUpdated")]
@@ -67,6 +70,12 @@ namespace MorpheusOracle.Contracts
 
         [DisplayName("VerificationKeyChanged")]
         public static event VerificationKeyChangedHandler OnVerificationKeyChanged;
+
+        // Emitted ONLY by AdminResetFeed. FeedUpdated alone cannot tell an indexer
+        // whether a record came from the attested publisher lane or from the admin
+        // stall-recovery hatch, so the forced write announces itself separately.
+        [DisplayName("AdminFeedReset")]
+        public static event AdminFeedResetHandler OnAdminFeedReset;
 
         public struct FeedRecord
         {
@@ -101,7 +110,10 @@ namespace MorpheusOracle.Contracts
         /// verifies against this key — the unsigned path (UpdateFeed/UpdateFeeds, or
         /// UpdateFeedSigned with an empty signature) is rejected — so a leaked updater
         /// witness alone can no longer anchor an arbitrary price. AdminResetFeed is the
-        /// only exception (admin-gated, a higher-trust key, for feed-stall recovery).
+        /// only exception (admin-gated, for feed-stall recovery); it cannot carry an
+        /// attestation hash and announces itself with its own AdminFeedReset event.
+        /// Registering/rotating/clearing this key is timelocked — see
+        /// ProposeOracleVerificationKey in MorpheusDataFeed.Verifier.cs.
         /// </remarks>
         [Safe]
         public static ECPoint OracleVerificationKey()
@@ -168,33 +180,10 @@ namespace MorpheusOracle.Contracts
             OnUpdaterChanged(oldUpdater, updater);
         }
 
-        /// <summary>
-        /// Registers (or rotates) the ECDSA public key used to verify off-chain price
-        /// signatures. Admin-only. Registering a key opts the feed into signature
-        /// verification for any signed write; until then writes stay updater-witness
-        /// only.
-        /// </summary>
-        public static void SetOracleVerificationKey(ECPoint publicKey)
-        {
-            ValidateAdmin();
-            ExecutionEngine.Assert(publicKey != null && publicKey.IsValid, "invalid verification key");
-            ECPoint oldKey = OracleVerificationKey();
-            Storage.Put(Storage.CurrentContext, PREFIX_VERIFICATION_KEY, (byte[])publicKey);
-            OnVerificationKeyChanged(oldKey, publicKey);
-        }
-
-        /// <summary>
-        /// Clears the verification key, reverting the feed to updater-witness-only
-        /// writes. Admin-only escape hatch (e.g. if the off-chain signer key is lost
-        /// before a replacement is provisioned).
-        /// </summary>
-        public static void ClearOracleVerificationKey()
-        {
-            ValidateAdmin();
-            ECPoint oldKey = OracleVerificationKey();
-            Storage.Delete(Storage.CurrentContext, PREFIX_VERIFICATION_KEY);
-            OnVerificationKeyChanged(oldKey, null);
-        }
+        // Registering, rotating and clearing the verification key all live in
+        // MorpheusDataFeed.Verifier.cs behind the 24h TIMELOCK_DELAY_MS, so a stolen
+        // admin key cannot re-point or remove the feed's second factor inside the
+        // transaction it is compromised in.
 
         private static StorageMap FeedMap() => new StorageMap(Storage.CurrentContext, PREFIX_FEED);
         private static StorageMap PairIndexMap() => new StorageMap(Storage.CurrentContext, PREFIX_PAIR_INDEX);
@@ -416,14 +405,23 @@ namespace MorpheusOracle.Contracts
         /// update and stall the feed. This admin-gated escape hatch resets a stalled feed to a
         /// sane round/timestamp. It is restricted to the admin so producers cannot abuse it to
         /// rewind/replay prices.
+        ///
+        /// It is deliberately NOT timelocked: an un-stall must be immediate. What it may
+        /// not do is masquerade as an attested update — the attestationHash argument is
+        /// rejected unless empty (the admin signs nothing off-chain, so any hash here
+        /// would be fabricated), the stored record carries an empty hash, and the write
+        /// emits AdminFeedReset alongside FeedUpdated so an indexer can tell a forced
+        /// write from an attested one.
         /// </summary>
         public static void AdminResetFeed(string pair, BigInteger roundId, BigInteger price, BigInteger timestamp, ByteString attestationHash, BigInteger sourceSetId)
         {
             ValidateAdmin();
-            ValidateFeedInputs(pair, roundId, price, timestamp, sourceSetId, attestationHash);
+            ExecutionEngine.Assert(attestationHash == null || attestationHash.Length == 0, "admin reset may not carry an attestation");
+            ValidateFeedInputs(pair, roundId, price, timestamp, sourceSetId, null);
 
             IndexPairIfNeeded(pair);
-            WriteFeedRecord(pair, roundId, price, timestamp, attestationHash, sourceSetId);
+            WriteFeedRecord(pair, roundId, price, timestamp, null, sourceSetId);
+            OnAdminFeedReset(pair, roundId, price, timestamp, sourceSetId);
         }
 
         /// <summary>

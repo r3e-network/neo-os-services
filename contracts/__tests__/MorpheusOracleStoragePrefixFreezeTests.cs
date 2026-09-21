@@ -63,6 +63,9 @@ namespace MorpheusOracle.Contracts.Tests
             ("PREFIX_UPGRADE_HASH", (byte)0x32),
             ("PREFIX_PENDING_RUNTIME_KEY", (byte)0x33),
             ("PREFIX_PENDING_RUNTIME_VERIFIER", (byte)0x34),
+            // Appended with the bounded default sponsorship cap (SVC-E-8), declared in
+            // the MorpheusOracle.Sponsorship.cs partial. Claimed from free slot 0x35.
+            ("PREFIX_SPONSOR_DEFAULT_CAP", (byte)0x35),
         };
 
         private static readonly Regex PrefixDecl = new(
@@ -71,7 +74,7 @@ namespace MorpheusOracle.Contracts.Tests
 
         private static Dictionary<string, byte> ParsePrefixes()
         {
-            string source = ContractSourceAssertions.ReadSource("contracts", "MorpheusOracle", "MorpheusOracle.cs");
+            string source = ContractSourceAssertions.ReadSourcesInDirectory("contracts", "MorpheusOracle");
             var map = new Dictionary<string, byte>(StringComparer.Ordinal);
             foreach (Match m in PrefixDecl.Matches(source))
             {
@@ -109,7 +112,7 @@ namespace MorpheusOracle.Contracts.Tests
         [Fact]
         public void FrozenLayout_UsedBytesStayInDocumentedRanges()
         {
-            // USED ranges per the frozen map: 0x01-0x09, 0x10-0x19, 0x20-0x34.
+            // USED ranges per the frozen map: 0x01-0x09, 0x10-0x19, 0x20-0x35.
             // New prefixes must not silently appear outside the frozen set —
             // any addition fails FrozenLayout_ExactNameByteMap anyway, but this
             // guard documents the append-only intent explicitly.
@@ -119,7 +122,7 @@ namespace MorpheusOracle.Contracts.Tests
                 bool inRange =
                     (kv.Value >= 0x01 && kv.Value <= 0x09) ||
                     (kv.Value >= 0x10 && kv.Value <= 0x19) ||
-                    (kv.Value >= 0x20 && kv.Value <= 0x34);
+                    (kv.Value >= 0x20 && kv.Value <= 0x35);
                 Assert.True(inRange, $"{kv.Key} uses byte 0x{kv.Value:X2} outside the frozen used ranges");
             }
         }

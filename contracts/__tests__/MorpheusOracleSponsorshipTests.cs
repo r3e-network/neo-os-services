@@ -21,8 +21,10 @@ namespace MorpheusOracle.Contracts.Tests
     /// (<see cref="Kernel.SetSponsoredRequesterAllowed"/>) and/or a per-requester spend cap
     /// (<see cref="Kernel.SetSponsoredRequesterCap"/>). Once any control is configured the fee
     /// payer covers only allowlisted or under-cap requesters; everyone else pays their own fee.
-    /// Apps that configure nothing keep the legacy sponsor-everyone behavior (backward
-    /// compatible), which is also pinned here.
+    /// Apps that configure nothing still sponsor every requester, but since SVC-E-8 only up to
+    /// DefaultSponsoredRequesterCap() each — see
+    /// <see cref="MorpheusOracleSponsorshipDefaultCapTests"/> for that bound. What is pinned
+    /// here is that ordinary traffic well inside the bound is unaffected.
     ///
     /// L1 (expiry leaves no inbox item): ExpireStaleRequest now stores a canonical InboxItem
     /// (Success=false, the documented expiry error) exactly like FulfillRequest, so inbox-only
@@ -183,15 +185,18 @@ namespace MorpheusOracle.Contracts.Tests
         // --- C3: backward-compatible default (no controls configured) -------------------------
 
         [Fact]
-        public void NoControlsConfigured_SponsorsEveryRequester_UnchangedBehavior()
+        public void NoControlsConfigured_SponsorsEveryRequester_WithinTheDefaultBound()
         {
             Harness h = Deploy();
             BigInteger deposit = 10 * DefaultFee;
             Bootstrap(h, deposit);
 
             // The app has configured no sponsorship controls, so the fee payer (owner) covers any
-            // requester exactly as before. Two different requesters both draw on the sponsor.
+            // requester. Two different requesters both draw on the sponsor. One fee each is far
+            // inside DefaultSponsoredRequesterCap(), so the SVC-E-8 bound is not what is being
+            // exercised here — ordinary traffic is unchanged.
             Assert.False(h.Contract.IsSponsorshipGated(AppId)!.Value);
+            Assert.True(h.Contract.DefaultSponsoredRequesterCap!.Value > 2 * DefaultFee);
 
             BigInteger id1 = SubmitAs(h, h.Requester);
             BigInteger id2 = SubmitAs(h, h.OtherRequester);

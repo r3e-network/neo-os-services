@@ -106,6 +106,19 @@ result, error)` for consumers that only implement the 5-arg adapter, so consumer
   hashing — whitespace-padded appId/moduleId/operation values produce a digest mismatch and
   can never be fulfilled (stall until expiry). Next upgrade: constrain identifiers to a safe
   charset (e.g. `[a-z0-9._-]`).
+- **MiniApp fee sponsorship was default-open (SVC-E-8; fixed in source, pending Update)**:
+  `IsRequesterSponsorable` returned true for any requester of an app whose admin had never
+  configured an allowlist entry or a spend cap, so any witnessed account could drain a funded
+  app's fee credit one `DEFAULT_REQUEST_FEE` at a time. The source now applies
+  `DefaultSponsoredRequesterCap()` (default 1 GAS = 100 requests) per (app, requester) to
+  unconfigured apps, reusing the existing spend ledger and its expiry-side release. New ABI:
+  `DefaultSponsoredRequesterCap()`, `SetDefaultSponsoredRequesterCap(cap)` (platform admin;
+  `0` closes open sponsorship entirely), `IsSponsorshipOpen(appId)` and
+  `SetSponsorshipOpen(appId, open)` (app admin; `open=true` restores unbounded
+  sponsor-everyone as an explicit, auditable choice). `IsSponsorshipGated` keeps its meaning.
+  **Migration note**: the spend ledger has been recorded for ungated apps all along, so on
+  upgrade a requester already past the default cap starts self-paying — raise the default (or
+  set the app open) before the Update if any live app has heavy sponsored users.
 - **Hot-path triple deserialize**: `SubmitMiniAppRequestInternal` loads + deserializes the
   MiniApp record three times (`ValidateRequestInputs` twice internally, then
   `RequireActiveMiniApp` again) and re-asserts `Active` redundantly. Next rebuild: have
@@ -121,3 +134,28 @@ the contract update and the Nitro worker must be rolled out as one change before
 oracle verification key is enabled. The existing deployed contract keeps its old
 signature semantics until `ContractManagement.Update` succeeds; no live deployment is
 claimed by this source change.
+
+### DataFeed verification-key timelock and admin-reset provenance (SVC-E-3)
+
+`SetOracleVerificationKey` / `ClearOracleVerificationKey` were admin-gated but immediate, so a
+stolen admin key could remove the feed's signature second factor and anchor an arbitrary price
+in the same transaction — while the sibling contracts already timelock exactly this authority
+(`MorpheusOracle.ProposeRuntimeVerificationPublicKey`, `NeoDIDRegistry.ProposeVerifier`). Those
+two methods are **replaced** (not shimmed) by the 24h propose/wait/execute lane in
+`MorpheusDataFeed.Verifier.cs`:
+
+- `ProposeOracleVerificationKey(publicKey)` / `ProposeClearOracleVerificationKey()` — admin,
+  one pending change at a time
+- `ExecuteOracleVerificationKeyChange()` — permissionless once matured, like `ExecuteAdminChange`
+- `CancelOracleVerificationKeyChange()` — admin
+- `PendingOracleVerificationKey()`, `PendingOracleVerificationKeyIsClear()`,
+  `PendingOracleVerificationKeyChangeTime()` — read the pending change
+
+`AdminResetFeed` stays immediate (feed-stall recovery must not wait 24h) but can no longer
+masquerade as an attested update: a non-empty `attestationHash` argument now reverts with
+"admin reset may not carry an attestation", the stored record carries an empty hash, and the
+write emits a new `AdminFeedReset` event beside `FeedUpdated` so an indexer can tell a forced
+write from an attested one. New storage prefixes `0x09`/`0x0A`; next free byte is `0x0B`.
+
+No deploy tooling calls the removed methods; the change is ABI-breaking only for a caller that
+used them directly. As with the signature migration above, no live deployment is claimed here.

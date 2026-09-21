@@ -74,22 +74,41 @@ namespace MorpheusOracle.Contracts
             return requester;
         }
 
-        // Decides whether the app fee payer is willing to cover this requester's fee. Until the
-        // app admin configures any sponsorship control the answer is always yes (legacy
-        // sponsor-everyone behavior, so the change is backward compatible). Once the app is gated
-        // the fee payer covers a requester only when it is allowlisted, or when a per-requester
-        // spend cap is configured and crediting this fee keeps the requester at or below it.
+        // Decides whether the app fee payer is willing to cover this requester's fee.
+        //
+        // An app whose admin explicitly opted into sponsor-everyone (SetSponsorshipOpen) covers
+        // every requester. A gated app covers a requester only when it is allowlisted, or when a
+        // per-requester spend cap is configured and crediting this fee keeps the requester at or
+        // below it.
+        //
+        // SVC-E-8: an app whose admin has configured NOTHING used to be covered by the first
+        // branch and so sponsored everyone without limit — any account on the network could drain
+        // a funded app's credit one request at a time. It is still sponsored, because a deployed
+        // app's real users hold no credit of their own and would otherwise all fail with
+        // "request fee not paid", but only up to DefaultSponsoredRequesterCap() per requester.
+        // The bound reuses the same spend ledger as an explicit cap, including its expiry-side
+        // ReleaseSponsoredSpend reversal.
         private static bool IsRequesterSponsorable(string appId, UInt160 requester, BigInteger fee)
         {
-            if (SponsorGatedMap().Get(appId) == null) return true;
+            BigInteger mode = SponsorshipMode(appId);
+            if (mode == SPONSOR_MODE_OPEN) return true;
 
             byte[] key = BuildRequesterKey(appId, requester);
             if (SponsorAllowedMap().Get(key) != null) return true;
 
+            BigInteger cap;
             ByteString rawCap = SponsorCapMap().Get(key);
-            if (rawCap == null) return false;
-
-            BigInteger cap = (BigInteger)rawCap;
+            if (rawCap != null)
+            {
+                cap = (BigInteger)rawCap;
+            }
+            else
+            {
+                // A gated app with no explicit entry for this requester sponsors nothing
+                // (unchanged); an unconfigured one falls back to the bounded default.
+                if (mode == SPONSOR_MODE_GATED) return false;
+                cap = DefaultSponsoredRequesterCap();
+            }
             if (cap <= 0) return false;
 
             ByteString rawSpent = SponsorSpentMap().Get(key);

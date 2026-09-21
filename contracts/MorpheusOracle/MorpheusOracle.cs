@@ -669,14 +669,14 @@ namespace MorpheusOracle.Contracts
         }
 
         /// <summary>
-        /// True once the app admin has enabled sponsorship gating (set any allowlist entry or
-        /// spend cap). While false the app's fee payer sponsors every requester (legacy behavior).
+        /// True once the app admin gated sponsorship (any allowlist entry or spend cap, or
+        /// SetSponsorshipOpen(appId, false)). See IsSponsorshipOpen / DefaultSponsoredRequesterCap.
         /// </summary>
         [Safe]
         public static bool IsSponsorshipGated(string appId)
         {
             ValidateIdentifier(appId, MAX_APP_ID_LENGTH, "invalid app id");
-            return SponsorGatedMap().Get(appId) != null;
+            return SponsorshipMode(appId) == SPONSOR_MODE_GATED;
         }
 
         /// <summary>
