@@ -12,6 +12,7 @@ import {
 } from 'node:crypto';
 import { rpc as neoRpc, tx as neoTx, wallet as neoWallet } from '@cityofzion/neon-js';
 import { exportJWK, SignJWT } from 'jose';
+import { getFeedProvidersForPair } from './src/oracle/feed-registry.js';
 import {
   neoNetworkMagicLe4,
   encodeUint256Word,
@@ -1992,8 +1993,16 @@ test('feed quote returns all available providers when provider is omitted', asyn
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.pair, 'NEO-USD');
-  assert.equal(body.quotes.length, 2);
-  assert.deepEqual(body.providers_requested, ['twelvedata', 'binance-spot']);
+  // The registry is the source of truth for which providers serve a pair; the
+  // handler must request every one of them, and only the two mocked above can
+  // answer, so exactly those two quotes come back.
+  const registryProviders = getFeedProvidersForPair('NEO-USD');
+  assert.ok(registryProviders.length >= 2, 'registry lists the two mocked providers');
+  assert.deepEqual(body.providers_requested, registryProviders);
+  assert.deepEqual(
+    body.quotes.map((quote) => quote.provider).sort(),
+    ['binance-spot', 'twelvedata']
+  );
 });
 
 test('oracle query supports builtin provider mode', async () => {

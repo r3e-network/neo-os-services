@@ -5,12 +5,14 @@
 //! measured-boundary capabilities: a recipient-attested game-secret HMAC root
 //! and the custody worker signature over the successful finalize payload.
 
-use std::sync::{Mutex, OnceLock};
 use rand::RngCore;
+use std::sync::{Mutex, OnceLock};
 
 use neo_os_core::js_value::JsValue;
 use neo_os_core::stable_stringify::stable_stringify;
-use neo_os_games::session::{validate_identity_and_engine, FinalizeLane, SessionReply, SessionStore};
+use neo_os_games::session::{
+    validate_identity_and_engine, FinalizeLane, SessionReply, SessionStore,
+};
 use serde_json::Value as Json;
 
 use crate::compute_execute::{
@@ -47,7 +49,11 @@ pub fn handle_session_start(
     let mut fresh_token = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut fresh_token);
     let reply = session_store()?.start(
-        payload, &material.secret_root, &material.public_key, now_ms, &fresh_token,
+        payload,
+        &material.secret_root,
+        &material.public_key,
+        now_ms,
+        &fresh_token,
     );
     Ok(reply.into())
 }
@@ -80,9 +86,7 @@ pub(crate) fn handle_session_finalize_kernel(
     state: &AppState,
     payload: &Json,
 ) -> Result<DispatchOutcome, RuntimeError> {
-    if payload.get("kind").and_then(Json::as_str)
-        != Some("miniapp.game.session.finalize.v2")
-    {
+    if payload.get("kind").and_then(Json::as_str) != Some("miniapp.game.session.finalize.v2") {
         return Ok(protocol_error(400, "SEALED_KIND_UNSUPPORTED"));
     }
     finalize_session(state, payload, FinalizeLane::Kernel)

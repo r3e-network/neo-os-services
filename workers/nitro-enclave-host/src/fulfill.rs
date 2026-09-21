@@ -593,9 +593,9 @@ fn execute_fulfillment_route(
         "/paymaster/authorize" => {
             value_reply(crate::paymaster::handle_paymaster_authorize(state, payload))
         }
-        "/session/finalize" => {
-            outcome_reply(crate::session::handle_session_finalize_kernel(state, payload))
-        }
+        "/session/finalize" => outcome_reply(crate::session::handle_session_finalize_kernel(
+            state, payload,
+        )),
         "/automation/execute" => {
             outcome_reply(crate::automation::handle_automation_execute(state, payload))
         }

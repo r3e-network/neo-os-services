@@ -137,7 +137,11 @@ public class UserConsumerN3 : SmartContract
         // requestId, and (because it is deleted below) on a replay of a
         // requestId we already settled. A value-bearing consumer that skips
         // this check would credit/pay out on attacker-chosen callbacks.
-        ByteString pendingKey = Helper.Concat(PREFIX_PENDING, (ByteString)requestId.ToByteArray());
+        // Helper.Concat returns byte[]; the explicit ByteString conversion is a
+        // representation change only (identical key bytes), so the pending-record
+        // lookup, the replay guard below and RecordPendingRequest all address the
+        // same storage key they did before.
+        ByteString pendingKey = (ByteString)Helper.Concat(PREFIX_PENDING, (ByteString)requestId.ToByteArray());
         ByteString expectedType = Storage.Get(Storage.CurrentContext, pendingKey);
         ExecutionEngine.Assert(expectedType != null, "unknown request id");
 
@@ -182,7 +186,11 @@ public class UserConsumerN3 : SmartContract
     private static void RecordPendingRequest(BigInteger requestId, string requestType)
     {
         ExecutionEngine.Assert(requestId > 0, "invalid request id");
-        ByteString pendingKey = Helper.Concat(PREFIX_PENDING, (ByteString)requestId.ToByteArray());
+        // Helper.Concat returns byte[]; the explicit ByteString conversion is a
+        // representation change only (identical key bytes), so the pending-record
+        // lookup, the replay guard below and RecordPendingRequest all address the
+        // same storage key they did before.
+        ByteString pendingKey = (ByteString)Helper.Concat(PREFIX_PENDING, (ByteString)requestId.ToByteArray());
         // Request ids are unique per kernel, so a collision here means either a
         // misbehaving oracle or a logic error; refuse rather than clobber.
         ExecutionEngine.Assert(Storage.Get(Storage.CurrentContext, pendingKey) == null, "request id already pending");

@@ -85,6 +85,14 @@ const optional = {
   web_cutover: [['MORPHEUS_CONTROL_PLANE_URL']],
 };
 
+// `--strict` promotes the worker's own runtime dependencies from a
+// recommendation to a requirement. Without this the strict alias was
+// byte-identical to the plain run, so "we ran the strict check" was evidence of
+// nothing — and a deploy could ship a worker whose declared rate limits have no
+// enforcement backend. app_backend and web_cutover stay recommendations: they
+// describe callers of the worker, not what the worker needs to run.
+const STRICT_REQUIRED_SECTIONS = ['auth', 'rate_limit', 'execution_plane'];
+
 const missing = {};
 for (const [section, groups] of Object.entries(required)) {
   missing[section] = groups.filter((keys) => !getValue(env, keys)).map((keys) => keys.join(' | '));
@@ -172,6 +180,7 @@ const report = {
   optional_recommendations: optionalRecommendations,
   mode: {
     strict,
+    strict_required_sections: STRICT_REQUIRED_SECTIONS,
     execution_plane_configured: executionPlaneConfigured,
     app_backend_configured: appBackendConfigured,
     web_cutover_configured: webCutoverConfigured,
@@ -277,11 +286,20 @@ if (webCutoverConfigured) {
 
 report.missing_optional_when_configured = partiallyConfiguredMissing;
 
+const missingStrictRequired = Object.fromEntries(
+  STRICT_REQUIRED_SECTIONS.map((section) => [
+    section,
+    strict ? (optionalRecommendations[section] ?? []) : [],
+  ])
+);
+report.missing_strict_required = missingStrictRequired;
+
 report.ok =
   requiredOk &&
   report.forbidden_signer_env.length === 0 &&
   report.credential_domain_collisions.length === 0 &&
-  Object.values(partiallyConfiguredMissing).every((v) => v.length === 0);
+  Object.values(partiallyConfiguredMissing).every((v) => v.length === 0) &&
+  Object.values(missingStrictRequired).every((v) => v.length === 0);
 
 console.log(JSON.stringify(report, null, 2));
 if (!report.ok) process.exitCode = 1;

@@ -82,6 +82,7 @@ describe('rate-limit utilities', () => {
     });
 
     it('should prefer platform-set headers over other headers', () => {
+      vi.stubEnv('TRUST_CF_CONNECTING_IP', '1');
       const request = new Request('http://localhost', {
         headers: {
           'cf-connecting-ip': '2.2.2.2',
@@ -97,6 +98,37 @@ describe('rate-limit utilities', () => {
         headers: { 'x-vercel-forwarded-for': '9.9.9.9' },
       });
       expect(getClientIp(request)).toBe('9.9.9.9');
+    });
+
+    it('should ignore a forged cf-connecting-ip unless the deployment is Cloudflare-terminated', () => {
+      // The control plane addresses this app at its raw *.vercel.app origin,
+      // where Vercel neither sets nor strips cf-connecting-ip. Without the
+      // opt-in the caller must not be able to choose its own bucket.
+      const request = new Request('http://localhost', {
+        headers: {
+          'cf-connecting-ip': '203.0.113.9',
+          'x-vercel-forwarded-for': '9.9.9.9',
+        },
+      });
+      expect(getClientIp(request)).toBe('9.9.9.9');
+
+      const forgedOnly = new Request('http://localhost', {
+        headers: { 'cf-connecting-ip': '203.0.113.9' },
+      });
+      expect(getClientIp(forgedOnly)).toBe('unknown');
+    });
+
+    it('should use cf-connecting-ip when the deployment declares Cloudflare termination', () => {
+      // Behind Cloudflare, x-vercel-forwarded-for carries the CF edge IP, so
+      // the opt-in must flip the precedence rather than drop the header.
+      vi.stubEnv('TRUST_CF_CONNECTING_IP', '1');
+      const request = new Request('http://localhost', {
+        headers: {
+          'cf-connecting-ip': '203.0.113.9',
+          'x-vercel-forwarded-for': '9.9.9.9',
+        },
+      });
+      expect(getClientIp(request)).toBe('203.0.113.9');
     });
 
     it('should return unknown when no platform IP header is present', () => {

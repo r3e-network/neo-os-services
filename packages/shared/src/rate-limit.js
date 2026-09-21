@@ -4,6 +4,25 @@
  */
 
 /**
+ * Is an Upstash backend configured for this environment?
+ *
+ * `applyUpstashRateLimit` returns `null` both when the request is under the
+ * limit and when no backend is configured, so a caller cannot tell "allowed"
+ * from "not enforced" by its return value alone. Any lane that declares a limit
+ * must consult this first and fail closed when it is false, otherwise a dropped
+ * URL/token silently converts a protected lane into an unlimited one.
+ *
+ * @param {Object} env - Environment object
+ * @returns {boolean} true when both the REST URL and token are present
+ */
+export function upstashConfigured(env) {
+  return Boolean(
+    String(env?.UPSTASH_REDIS_REST_URL || '').trim() &&
+      String(env?.UPSTASH_REDIS_REST_TOKEN || '').trim()
+  );
+}
+
+/**
  * Apply Upstash rate limiting using a fixed-window counter algorithm
  *
  * @param {Object} env - Environment object with UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN

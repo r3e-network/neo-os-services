@@ -206,7 +206,6 @@ impl SessionStore {
         now_ms: f64,
         fresh_token: &[u8; 32],
     ) -> SessionReply {
-        let now_ms = now_ms;
         let (identity, engine) = match load_identity_and_engine(payload) {
             Ok(value) => value,
             Err(message) => return SessionReply::error(400, message),
@@ -215,13 +214,18 @@ impl SessionStore {
             .get("player_credential")
             .or_else(|| payload.get("player_witness"));
         if payload.get("player_credential").is_some() {
-            let before = credential.and_then(|v| v.get("not_before_ms")).map(crate::js::js_to_number);
-            let after = credential.and_then(|v| v.get("not_after_ms")).map(crate::js::js_to_number);
+            let before = credential
+                .and_then(|v| v.get("not_before_ms"))
+                .map(crate::js::js_to_number);
+            let after = credential
+                .and_then(|v| v.get("not_after_ms"))
+                .map(crate::js::js_to_number);
             if !before.is_some_and(|v| v.is_finite()) || !after.is_some_and(|v| v.is_finite()) {
                 return SessionReply::error(401, "player credential expired");
             }
             let (before, after) = (before.unwrap(), after.unwrap());
-            if after < before || after - before > 86_400_000.0 || now_ms < before || now_ms > after {
+            if after < before || after - before > 86_400_000.0 || now_ms < before || now_ms > after
+            {
                 return SessionReply::error(401, "player credential expired");
             }
         }
@@ -233,9 +237,14 @@ impl SessionStore {
 
         if !self.sessions.contains_key(&identity.canonical) {
             if payload.get("replay_proof").is_some() {
-                if let Err((status, message)) =
-                    self.rebuild_session(&identity, engine, problem_secret, payload, secret_root, now_ms)
-                {
+                if let Err((status, message)) = self.rebuild_session(
+                    &identity,
+                    engine,
+                    problem_secret,
+                    payload,
+                    secret_root,
+                    now_ms,
+                ) {
                     return SessionReply::error(status, message);
                 }
             } else {
@@ -324,7 +333,14 @@ impl SessionStore {
         }
 
         let problem_secret = problem_secret_for(secret_root, &identity.canonical);
-        let resumed_now = match self.resolve_session(&identity, engine, problem_secret, payload, secret_root, now_ms) {
+        let resumed_now = match self.resolve_session(
+            &identity,
+            engine,
+            problem_secret,
+            payload,
+            secret_root,
+            now_ms,
+        ) {
             Ok(resumed) => resumed,
             Err((status, message)) => return SessionReply::error(status, message),
         };
@@ -395,9 +411,14 @@ impl SessionStore {
             Err(message) => return SessionReply::error(400, message),
         };
         let problem_secret = problem_secret_for(secret_root, &identity.canonical);
-        if let Err((status, message)) =
-            self.resolve_session(&identity, engine, problem_secret, payload, secret_root, now_ms)
-        {
+        if let Err((status, message)) = self.resolve_session(
+            &identity,
+            engine,
+            problem_secret,
+            payload,
+            secret_root,
+            now_ms,
+        ) {
             return SessionReply::error(status, message);
         }
 
@@ -417,7 +438,9 @@ impl SessionStore {
                 claimed.is_finite()
                     && claimed >= 0.0
                     && claimed.fract() == 0.0
-                    && session.finalized_elapsed_ms.is_none_or(|frozen| frozen == claimed)
+                    && session
+                        .finalized_elapsed_ms
+                        .is_none_or(|frozen| frozen == claimed)
                     && verify_finalize_proof(
                         secret_root,
                         &identity.canonical,
@@ -497,7 +520,13 @@ impl SessionStore {
         };
 
         let (answer_hash, score, score_field, solved, rejection) = match scored {
-            Ok(outcome) => (outcome.answer_hash, outcome.score, outcome.score_field, true, None),
+            Ok(outcome) => (
+                outcome.answer_hash,
+                outcome.score,
+                outcome.score_field,
+                true,
+                None,
+            ),
             Err((status, message)) => match lane {
                 FinalizeLane::Direct => return SessionReply::error(status, message),
                 FinalizeLane::Kernel if status == 403 => {
@@ -609,11 +638,22 @@ impl SessionStore {
                 "unknown session — an authenticated replay record is required to resume".into(),
             ));
         }
-        self.rebuild_session(identity, engine, problem_secret, payload, secret_root, now_ms)?;
+        self.rebuild_session(
+            identity,
+            engine,
+            problem_secret,
+            payload,
+            secret_root,
+            now_ms,
+        )?;
         Ok(true)
     }
 
-    fn enforce_player_quota(&mut self, identity: &SessionIdentity, now_ms: f64) -> Result<(), String> {
+    fn enforce_player_quota(
+        &mut self,
+        identity: &SessionIdentity,
+        now_ms: f64,
+    ) -> Result<(), String> {
         self.prune_sessions(now_ms);
         let key = identity.player_key();
         let live = self
@@ -725,7 +765,8 @@ impl SessionStore {
             previous = *value;
         }
 
-        let mut session = self.create_session(identity, engine, problem_secret, started_at_ms, token, true);
+        let mut session =
+            self.create_session(identity, engine, problem_secret, started_at_ms, token, true);
         session.last_touched_ms = now_ms;
         for (index, op) in ops.iter().enumerate() {
             let at_ms = started_at_ms + elapsed[index];
@@ -830,7 +871,13 @@ pub fn validate_identity_and_engine(payload: &Json) -> Result<SessionIdentity, S
 /// `0x` + 40 lowercase hex, or the same 20 bytes in the opposite byte order
 /// (both spellings of one script hash circulate in the fleet).
 pub fn hash160_matches(expected: &str, candidate: &str) -> bool {
-    let normalize = |value: &str| value.trim().to_lowercase().trim_start_matches("0x").to_string();
+    let normalize = |value: &str| {
+        value
+            .trim()
+            .to_lowercase()
+            .trim_start_matches("0x")
+            .to_string()
+    };
     let expected = normalize(expected);
     let candidate = normalize(candidate);
     if expected.len() != 40 || candidate.len() != 40 {
@@ -896,7 +943,10 @@ fn push_var_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
 /// Verify `player_witness = { public_key, signature, salt? }` against the
 /// identity: valid secp256r1 signature over the witness digest AND the public
 /// key hashes to `identity.player`.
-pub fn verify_player_witness(identity: &SessionIdentity, witness: Option<&Json>) -> Result<(), String> {
+pub fn verify_player_witness(
+    identity: &SessionIdentity,
+    witness: Option<&Json>,
+) -> Result<(), String> {
     let Some(witness) = witness.filter(|value| value.is_object()) else {
         return Err("player_witness is required".into());
     };
@@ -911,7 +961,9 @@ pub fn verify_player_witness(identity: &SessionIdentity, witness: Option<&Json>)
     let salt = crate::js::js_trim_string(witness.get("salt"));
     let public_key = hex_decode(&public_key_hex)
         .filter(|bytes| bytes.len() == 33 && matches!(bytes[0], 0x02 | 0x03))
-        .ok_or_else(|| "player_witness.public_key must be a compressed secp256r1 key".to_string())?;
+        .ok_or_else(|| {
+            "player_witness.public_key must be a compressed secp256r1 key".to_string()
+        })?;
     let signature = hex_decode(&signature_hex)
         .filter(|bytes| bytes.len() == 64)
         .ok_or_else(|| "player_witness.signature must be 64 bytes of hex".to_string())?;
@@ -934,7 +986,7 @@ pub fn verify_player_witness(identity: &SessionIdentity, witness: Option<&Json>)
 
 fn hex_decode(text: &str) -> Option<Vec<u8>> {
     let text = text.trim().trim_start_matches("0x");
-    if text.len() % 2 != 0 {
+    if !text.len().is_multiple_of(2) {
         return None;
     }
     (0..text.len())
@@ -1038,7 +1090,9 @@ fn verify_replay_proof(
             op_elapsed_ms,
         )
         .as_bytes(),
-        crate::js::js_trim_string(supplied).to_lowercase().as_bytes(),
+        crate::js::js_trim_string(supplied)
+            .to_lowercase()
+            .as_bytes(),
     )
 }
 
@@ -1086,14 +1140,18 @@ fn verify_finalize_proof(
 ) -> bool {
     constant_time_equal(
         finalize_proof_for(secret_root, canonical, session, elapsed_ms).as_bytes(),
-        crate::js::js_trim_string(supplied).to_lowercase().as_bytes(),
+        crate::js::js_trim_string(supplied)
+            .to_lowercase()
+            .as_bytes(),
     )
 }
 
 fn verify_session_token(session: &Session, supplied: Option<&Json>) -> bool {
     constant_time_equal(
         session.session_token.as_bytes(),
-        crate::js::js_trim_string(supplied).to_lowercase().as_bytes(),
+        crate::js::js_trim_string(supplied)
+            .to_lowercase()
+            .as_bytes(),
     )
 }
 
@@ -1228,10 +1286,20 @@ fn behavioral_gate_error(session: &Session, engine: &'static EngineHandle) -> Op
     let timestamps = &session.op_timestamps;
     let min_median = engine.descriptor.gates.min_median_interval_ms;
     if min_median.is_finite() && timestamps.len() >= 2 {
-        let mut intervals = timestamps.windows(2).map(|pair| pair[1] - pair[0]).collect::<Vec<_>>();
-        intervals.sort_by(|a,b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-        let m=intervals.len()/2; let median=if intervals.len()%2==1 { intervals[m] } else { (intervals[m-1]+intervals[m])/2.0 };
-        if median < min_median { return Some("median inter-op interval below the human floor"); }
+        let mut intervals = timestamps
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .collect::<Vec<_>>();
+        intervals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        let m = intervals.len() / 2;
+        let median = if intervals.len() % 2 == 1 {
+            intervals[m]
+        } else {
+            (intervals[m - 1] + intervals[m]) / 2.0
+        };
+        if median < min_median {
+            return Some("median inter-op interval below the human floor");
+        }
     }
     let max_burst = engine.descriptor.gates.max_burst_ops_per_sec;
     if max_burst.is_finite() {
@@ -1407,8 +1475,8 @@ mod tests {
     #[test]
     fn identity_is_canonical_and_rejects_ambiguous_bounds() {
         let player = test_player(1);
-        let parsed =
-            parse_identity(&identity_payload(" MINIAPP-SUDOKU ", "00042", &player)).expect("valid identity");
+        let parsed = parse_identity(&identity_payload(" MINIAPP-SUDOKU ", "00042", &player))
+            .expect("valid identity");
         assert_eq!(parsed.game_id, "42");
         assert_eq!(parsed.network, "testnet");
         assert_eq!(
@@ -1453,11 +1521,17 @@ mod tests {
         let mut store = SessionStore::new();
         let reply = store.start(&payload, &ROOT, "03worker", 1_000.0, &TOKEN_A);
         assert_eq!(reply.status, 400);
-        assert!(reply.body["error"].as_str().unwrap().starts_with("engine_hash is required"));
+        assert!(reply.body["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("engine_hash is required"));
         payload["engine_hash"] = Json::String("ff".repeat(32));
         let reply = store.start(&payload, &ROOT, "03worker", 1_000.0, &TOKEN_A);
         assert_eq!(reply.status, 400);
-        assert!(reply.body["error"].as_str().unwrap().contains("engine_hash mismatch"));
+        assert!(reply.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("engine_hash mismatch"));
     }
 
     #[test]
@@ -1487,7 +1561,10 @@ mod tests {
         replayed["player_witness"] = witness_for(&player, &format!("{canonical}x"), "");
         let reply = store.start(&replayed, &ROOT, "03worker", 1_000.0, &TOKEN_A);
         assert_eq!(reply.status, 401);
-        assert_eq!(reply.body["error"], "player_witness signature does not verify");
+        assert_eq!(
+            reply.body["error"],
+            "player_witness signature does not verify"
+        );
 
         // Salt-less wallets sign with an empty salt; salted ones carry it.
         for salt in ["", "0123456789abcdef"] {
@@ -1537,14 +1614,22 @@ mod tests {
         let mut store = SessionStore::new();
         for game in 1..=MAX_SESSIONS_PER_PLAYER {
             let payload = witnessed("miniapp-flappy-dash", &game.to_string(), &player);
-            assert_eq!(store.start(&payload, &ROOT, "03w", 1_000.0, &TOKEN_A).status, 200);
+            assert_eq!(
+                store
+                    .start(&payload, &ROOT, "03w", 1_000.0, &TOKEN_A)
+                    .status,
+                200
+            );
         }
         let overflow = witnessed("miniapp-flappy-dash", "999", &player);
         let reply = store.start(&overflow, &ROOT, "03w", 1_000.0, &TOKEN_A);
         assert_eq!(reply.status, 429, "{}", reply.body);
         // Another player is unaffected.
         let other = witnessed("miniapp-flappy-dash", "1000", &test_player(5));
-        assert_eq!(store.start(&other, &ROOT, "03w", 1_000.0, &TOKEN_B).status, 200);
+        assert_eq!(
+            store.start(&other, &ROOT, "03w", 1_000.0, &TOKEN_B).status,
+            200
+        );
     }
 
     #[test]
@@ -1572,7 +1657,10 @@ mod tests {
         step["op"] = serde_json::json!({ "type": "place", "cell": cells[0], "digit": 1 });
         let accepted = store.step(&step, &ROOT, 11_500.0);
         assert_eq!(accepted.status, 200, "{}", accepted.body);
-        assert_eq!(accepted.body["replay_record"]["op_elapsed_ms"], serde_json::json!([1_500]));
+        assert_eq!(
+            accepted.body["replay_record"]["op_elapsed_ms"],
+            serde_json::json!([1_500])
+        );
         let stale = store.step(&step, &ROOT, 12_000.0);
         assert_eq!(stale.status, 409);
         assert_eq!(stale.body["error"], "stale seq");
@@ -1590,7 +1678,8 @@ mod tests {
         assert_eq!(store.step(&resume, &ROOT, 20_000.0).status, 404);
 
         resume["replay"] = serde_json::json!([{ "type": "place", "cell": cells[0], "digit": 1 }]);
-        resume["replay_record"] = serde_json::json!({ "started_at_ms": 19_000, "op_elapsed_ms": [1_500] });
+        resume["replay_record"] =
+            serde_json::json!({ "started_at_ms": 19_000, "op_elapsed_ms": [1_500] });
         resume["replay_proof"] = proof.clone();
         assert_eq!(store.step(&resume, &ROOT, 20_000.0).status, 401);
 
@@ -1659,8 +1748,13 @@ mod tests {
         assert_eq!(direct.status, 200, "{}", direct.body);
         assert_eq!(direct.body["solved"], true);
         assert_eq!(direct.body["score"], 1);
-        assert_eq!(direct.body["elapsed_ms"], crate::js::js_number_value(at - 10_000.0));
-        assert!(direct.body["finalize_proof"].as_str().is_some_and(|p| p.len() == 64));
+        assert_eq!(
+            direct.body["elapsed_ms"],
+            crate::js::js_number_value(at - 10_000.0)
+        );
+        assert!(direct.body["finalize_proof"]
+            .as_str()
+            .is_some_and(|p| p.len() == 64));
         assert!(direct.body["signature"].is_null());
         let mut late = payload.clone();
         late["session_token"] = token.clone();
@@ -1699,13 +1793,21 @@ mod tests {
         assert_eq!(kernel.status, 200, "{}", kernel.body);
         assert_eq!(kernel.body["solved"], true);
         assert_eq!(kernel.body["elapsed_ms"], direct.body["elapsed_ms"]);
-        assert_eq!(kernel.body["result_bytes_base64"], direct.body["result_bytes_base64"]);
+        assert_eq!(
+            kernel.body["result_bytes_base64"],
+            direct.body["result_bytes_base64"]
+        );
 
         // A forged elapsed time is rejected outright.
         store.clear();
         let mut forged = sealed.clone();
         forged["elapsed_ms"] = Json::from(95_001);
-        assert_eq!(store.finalize(&forged, &ROOT, at + 600_000.0, FinalizeLane::Kernel).status, 401);
+        assert_eq!(
+            store
+                .finalize(&forged, &ROOT, at + 600_000.0, FinalizeLane::Kernel)
+                .status,
+            401
+        );
 
         // Kernel lane without a preview: the last recorded op bounds the
         // elapsed time; here it is below the 90 s floor, so the run is a
@@ -1713,13 +1815,24 @@ mod tests {
         store.clear();
         let mut unpreviewed = sealed.clone();
         unpreviewed.as_object_mut().unwrap().remove("elapsed_ms");
-        unpreviewed.as_object_mut().unwrap().remove("finalize_proof");
+        unpreviewed
+            .as_object_mut()
+            .unwrap()
+            .remove("finalize_proof");
         let loss = store.finalize(&unpreviewed, &ROOT, at + 600_000.0, FinalizeLane::Kernel);
         assert_eq!(loss.status, 200, "{}", loss.body);
         assert_eq!(loss.body["solved"], false);
         assert_eq!(loss.body["score"], 0);
         assert_eq!(loss.body["rejection"], "solved too fast");
-        assert_eq!(loss.body["elapsed_ms"], last_step["replay_record"]["op_elapsed_ms"].as_array().unwrap().last().unwrap().clone());
+        assert_eq!(
+            loss.body["elapsed_ms"],
+            last_step["replay_record"]["op_elapsed_ms"]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap()
+                .clone()
+        );
 
         // The direct lane reports the same disqualification as a 403.
         store.clear();
@@ -1756,7 +1869,10 @@ mod tests {
         resume["replay_proof"] = last_step["replay_proof"].clone();
         let reply = store.finalize(&resume, &ROOT, 10_000.0 + 100_000.0, FinalizeLane::Direct);
         assert_eq!(reply.status, 403, "{}", reply.body);
-        assert_eq!(reply.body["error"], "median inter-op interval below the human floor");
+        assert_eq!(
+            reply.body["error"],
+            "median inter-op interval below the human floor"
+        );
         // ...and the resumed clock is the original one, not the resume time.
         assert!(store
             .sessions
@@ -1781,7 +1897,8 @@ mod tests {
             assert_eq!(reply.status, 200, "{}", reply.body);
             last = reply.body;
         }
-        let live_frames = store.sessions.values().next().unwrap().engine_state["flapFrames"].clone();
+        let live_frames =
+            store.sessions.values().next().unwrap().engine_state["flapFrames"].clone();
 
         store.clear();
         let mut resume = payload.clone();

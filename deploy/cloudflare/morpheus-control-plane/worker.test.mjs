@@ -21,6 +21,11 @@ function createEnv(overrides = {}) {
     MORPHEUS_APP_BACKEND_TOKEN: 'backend-token',
     MORPHEUS_TESTNET_RELAYER_NEO_N3_WIF: '',
     MORPHEUS_MAINNET_RELAYER_NEO_N3_WIF: '',
+    // Production shape: every rate-limited queue has an Upstash backend
+    // (wrangler.meshmini.toml sets the URL in [vars], the token is a secret).
+    // A test that needs the unconfigured case clears both explicitly.
+    UPSTASH_REDIS_REST_URL: 'https://upstash.test',
+    UPSTASH_REDIS_REST_TOKEN: 'upstash-token',
     MORPHEUS_ORACLE_REQUEST_QUEUE: {
       sent: oracleMessages,
       async send(message) {
@@ -112,6 +117,13 @@ function parseRequestBody(init = {}) {
 function createFetchMock(state) {
   return async (url, init = {}) => {
     const target = new URL(String(url));
+
+    // Healthy Upstash pipeline: first counter hit in the window, so the shared
+    // limiter allows the request. Tests that need an outage override this.
+    if (target.origin === 'https://upstash.test' && target.pathname === '/pipeline') {
+      state.upstashPipelineCalls = (state.upstashPipelineCalls ?? 0) + 1;
+      return jsonResponse(200, [{ result: 1 }, { result: 60_000 }]);
+    }
 
     if (
       target.origin === 'https://supabase.test' &&
@@ -1194,6 +1206,64 @@ test('control plane fails closed with 503 when the Upstash rate-limit backend 5x
   assert.equal(pipelineCalls, 1);
   // No job was inserted because we failed closed before the parse/insert path.
   assert.equal(state.jobs.size, 0);
+});
+
+test('control plane fails closed with 503 when no Upstash rate-limit backend is configured (N-cp-1)', async () => {
+  const state = createState();
+  global.fetch = createFetchMock(state);
+
+  // A rotation that drops UPSTASH_REDIS_REST_TOKEN (a Wrangler secret) leaves a
+  // declared limit with no enforcement backend. That must refuse ingest, not
+  // silently accept unlimited jobs on the oracle_request queue.
+  const env = createEnv({ UPSTASH_REDIS_REST_URL: '', UPSTASH_REDIS_REST_TOKEN: '' });
+
+  const response = await worker.fetch(
+    new Request('https://control-plane.test/testnet/oracle/query', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer control-plane-key',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ symbol: 'TWELVEDATA:NEO-USD', target_chain: 'neo_n3' }),
+    }),
+    env
+  );
+
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  const body = await response.json();
+  assert.equal(body.error, 'rate_limit_backend_unavailable');
+  assert.equal(body.queue, 'oracle_request');
+  assert.equal(state.upstashPipelineCalls ?? 0, 0);
+  assert.equal(state.jobs.size, 0);
+});
+
+test('control plane keeps the local-dev lane open when anonymous access is explicitly allowed (N-cp-1)', async () => {
+  const state = createState();
+  global.fetch = createFetchMock(state);
+
+  // The same explicit local/dev opt-out that already bypasses ingress auth in
+  // lib/auth.js keeps a laptop run of the worker usable without Upstash.
+  const env = createEnv({
+    UPSTASH_REDIS_REST_URL: '',
+    UPSTASH_REDIS_REST_TOKEN: '',
+    MORPHEUS_CONTROL_PLANE_ALLOW_ANONYMOUS: '1',
+  });
+
+  const response = await worker.fetch(
+    new Request('https://control-plane.test/testnet/oracle/query', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer control-plane-key',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ symbol: 'TWELVEDATA:NEO-USD', target_chain: 'neo_n3' }),
+    }),
+    env
+  );
+
+  assert.equal(response.status, 202);
+  assert.equal(state.jobs.size, 1);
 });
 
 // --- B13: oversized request body is rejected with 413 before JSON.parse ---

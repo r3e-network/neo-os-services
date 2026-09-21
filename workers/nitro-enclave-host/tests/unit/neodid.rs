@@ -201,16 +201,16 @@ fn response_field_order_matches_the_node_handler() {
     assert_eq!(
         keys,
         vec![
-        "binding_mode",
-        "vault_account",
-        "provider",
-        "claim_type",
-        "claim_value",
-        "claim_commitment",
-        "master_nullifier",
-        "metadata_hash",
-        "digest",
-        "commitment_digest",
+            "binding_mode",
+            "vault_account",
+            "provider",
+            "claim_type",
+            "claim_value",
+            "claim_commitment",
+            "master_nullifier",
+            "metadata_hash",
+            "digest",
+            "commitment_digest",
             "signature",
             "public_key",
             "signer_address",
@@ -901,8 +901,12 @@ fn rs256_acceptance_domain_model() {
 
 #[test]
 fn timestamp_claim_exact_second_boundaries_and_malformed_values() {
+    // (claim name, "is this claim value a rejection at `now`?", acceptance at
+    // offsets -1/0/+1 second) — named so the table type stays readable.
+    type ClaimPolicy = (&'static str, fn(u64, u64) -> bool, [bool; 3]);
+
     let now = 1_800_000_000_u64;
-    let policies: [(&str, fn(u64, u64) -> bool, [bool; 3]); 3] = [
+    let policies: [ClaimPolicy; 3] = [
         ("exp", |at, now| now >= at, [false, false, true]),
         ("nbf", |at, now| now < at, [true, true, false]),
         ("iat", |at, now| now < at, [true, true, false]),
@@ -911,14 +915,27 @@ fn timestamp_claim_exact_second_boundaries_and_malformed_values() {
         for (offset, accepted) in expected.into_iter().enumerate() {
             let mut claims = json!({});
             claims[claim] = json!(now - 1 + offset as u64);
-            assert_eq!(check_timestamp_claim(&claims, claim, rejects, now).is_ok(), accepted,
-                "{claim} offset {offset}");
+            assert_eq!(
+                check_timestamp_claim(&claims, claim, rejects, now).is_ok(),
+                accepted,
+                "{claim} offset {offset}"
+            );
         }
-        for value in [json!(null), json!("1800000000"), json!(-1), json!(1.5),
-            json!(true), json!([]), json!({})] {
+        for value in [
+            json!(null),
+            json!("1800000000"),
+            json!(-1),
+            json!(1.5),
+            json!(true),
+            json!([]),
+            json!({}),
+        ] {
             let mut claims = json!({});
             claims[claim] = value;
-            assert!(check_timestamp_claim(&claims, claim, rejects, now).is_err(), "{claim}: {claims}");
+            assert!(
+                check_timestamp_claim(&claims, claim, rejects, now).is_err(),
+                "{claim}: {claims}"
+            );
         }
     }
 }

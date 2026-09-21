@@ -82,6 +82,15 @@ const required = [
   'MORPHEUS_RELAY_ADMIN_API_KEY',
 ];
 
+// Mainnet-only. The arbitrary-URL oracle lane treats an unset ORACLE_HTTP_ALLOWLIST
+// as an open gate (crates/neo-os-compute/src/oracle/fetch.rs:29-32 and its Node
+// twin workers/nitro-worker/src/oracle/fetch.js:24 both return early on an empty
+// list). The primary control is the fail-closed vsock-proxy host allow-list, which
+// itself tells operators to "consider also setting ORACLE_HTTP_ALLOWLIST in the
+// image for an app-layer match" (deploy/nitro/vsock-proxy.allowlist.yaml:43-48).
+// On mainnet that second layer is not optional advice.
+const requiredOnMainnet = ['ORACLE_HTTP_ALLOWLIST'];
+
 const args = parseArgs();
 const envPath = resolveEnvPath({ networkOverride: args.network, envFileOverride: args.envFile });
 const raw = await fs.readFile(envPath, 'utf8');
@@ -94,7 +103,9 @@ const requiredEither = [
   ['MORPHEUS_RUNTIME_TOKEN', 'NITRO_API_TOKEN', 'NITRO_SHARED_SECRET'],
   ['SUPABASE_SECRET_KEY', 'SUPABASE_SERVICE_ROLE_KEY'],
 ];
-const missing = required.filter((key) => !getValue(env, runtimeConfig, key));
+const effectiveRequired =
+  network === 'mainnet' ? [...required, ...requiredOnMainnet] : required;
+const missing = effectiveRequired.filter((key) => !getValue(env, runtimeConfig, key));
 const useDerivedKeys = isTrue(getValue(env, runtimeConfig, 'NITRO_USE_DERIVED_KEYS'));
 const missingEither = requiredEither.filter(
   (group) => !group.some((key) => getValue(env, runtimeConfig, key))
@@ -141,6 +152,7 @@ const report = {
   env_path: envPath,
   mode: 'n3-only',
   missing_required: missing,
+  required_on_mainnet: network === 'mainnet' ? requiredOnMainnet : [],
   missing_either_of: missingEither,
   forbidden_settings: forbiddenSettings,
   credential_domain_collisions: credentialDomainCollisions,

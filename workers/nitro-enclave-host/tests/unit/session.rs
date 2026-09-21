@@ -153,9 +153,7 @@ fn rust_session_routes_cover_every_engine_and_sign_the_fixed_codec() {
             "cell": cell,
             "digit": solution.as_bytes()[cell] - b'0',
         });
-        harness
-            .oracle_io
-            .set_now_ms(2_001_000 + sequence * 2_250);
+        harness.oracle_io.set_now_ms(2_001_000 + sequence * 2_250);
         let accepted = post(&harness, "/session/step", &step);
         assert_eq!(accepted.status, 200, "{}", accepted.body);
         sequence += 1;
@@ -170,10 +168,7 @@ fn rust_session_routes_cover_every_engine_and_sign_the_fixed_codec() {
     let result = post(&harness, "/session/settle", &finalize);
     assert_eq!(result.status, 200, "{}", result.body);
     assert_eq!(result.body["callback_encoding"], "game_result_v1");
-    assert_eq!(
-        result.body["elapsed_ms"],
-        1_000 + (sequence - 1) * 2_250
-    );
+    assert_eq!(result.body["elapsed_ms"], 1_000 + (sequence - 1) * 2_250);
     assert_eq!(result.body["score"], 1, "{}", result.body);
     assert_eq!(
         BASE64

@@ -22,6 +22,21 @@ if (!String(process.env.CLOUDFLARE_API_TOKEN || '').trim()) {
   }
 }
 
+// Validate the environment the worker will run against BEFORE shipping code to
+// it. Nothing else in the pipeline does: CI never runs check:control-plane, so
+// without this a deploy could publish a worker whose declared rate limits have
+// no Upstash backend (it now refuses ingest) or whose ingress keys are absent.
+const envCheck = spawnSync(
+  process.execPath,
+  [resolve(process.cwd(), 'scripts/check-control-plane-env.mjs'), '--strict'],
+  { stdio: 'inherit' }
+);
+if (envCheck.status !== 0) {
+  throw new Error(
+    'control-plane environment validation failed (scripts/check-control-plane-env.mjs --strict); fix the reported gaps before deploying'
+  );
+}
+
 const config = resolve(
   process.cwd(),
   'deploy/cloudflare/morpheus-control-plane/wrangler.meshmini.toml'

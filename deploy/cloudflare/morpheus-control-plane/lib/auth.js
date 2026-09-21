@@ -8,7 +8,10 @@ import {
   trimString,
   getClientIp,
 } from '@r3e-network/neo-os-services-shared/utils';
-import { applyUpstashRateLimit } from '@r3e-network/neo-os-services-shared/rate-limit';
+import {
+  applyUpstashRateLimit,
+  upstashConfigured,
+} from '@r3e-network/neo-os-services-shared/rate-limit';
 
 const RATE_LIMITS = {
   oracle_request: { limit: 30, windowMs: 60_000 },
@@ -62,7 +65,24 @@ function validateAuth(request, env) {
 
 async function applyRateLimit(request, env, queueName) {
   const config = RATE_LIMITS[queueName];
+  // A queue with no entry in RATE_LIMITS has NO limit intended -> allow. That is
+  // the only legitimate fail-open case here.
   if (!config) return null;
+
+  // The queue HAS a declared limit. `applyUpstashRateLimit` returns null both
+  // for "under the limit" and for "Upstash is not configured", so without this
+  // check a dropped UPSTASH_REDIS_REST_TOKEN (a Wrangler secret, i.e. exactly
+  // the half a rotation can lose while the URL stays in [vars]) would silently
+  // turn a protected job-ingest lane into an unlimited one. Fail closed, the
+  // same way the sibling edge gateway does. Local/dev opts out with the same
+  // explicit flag that already opts out of ingress auth in this file.
+  if (!upstashConfigured(env) && trimString(env.MORPHEUS_CONTROL_PLANE_ALLOW_ANONYMOUS) !== '1') {
+    return json(
+      503,
+      { error: 'rate_limit_backend_unavailable', queue: queueName },
+      { 'cache-control': 'no-store' }
+    );
+  }
 
   const key = `morpheus:control-plane:${queueName}:${getClientIp(request)}`;
   let result;

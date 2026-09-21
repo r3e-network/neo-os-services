@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace MorpheusOracle.Contracts.Tests
@@ -43,6 +44,29 @@ namespace MorpheusOracle.Contracts.Tests
             Assert.Matches(
                 @"RecordPendingRequest\([^)]*\)\s*\{[\s\S]*?ExecutionEngine\.Assert\(\s*Storage\.Get\([^)]*pendingKey\)\s*==\s*null",
                 code);
+        }
+
+        [Fact]
+        public void PendingKeyIsDerivedIdenticallyByTheWriterAndTheReader()
+        {
+            string code = ReadConsumerSource();
+
+            // The unknown-request / replay guard holds only while
+            // RecordPendingRequest (the writer) and OnOracleResult (the reader)
+            // address the SAME storage key. Helper.Concat returns byte[], so this
+            // line needs a ByteString conversion to compile; a fix that instead
+            // changed the key expression on one side — a different prefix, a
+            // different requestId encoding, or inlining away the shared
+            // pendingKey variable — would retire the guard while still building.
+            MatchCollection derivations = Regex.Matches(
+                code,
+                @"ByteString pendingKey = (?:\(ByteString\))?Helper\.Concat\(PREFIX_PENDING, \(ByteString\)requestId\.ToByteArray\(\)\);");
+            Assert.Equal(2, derivations.Count);
+
+            // Both sides use that variable rather than re-deriving a key inline.
+            Assert.Contains("Storage.Get(Storage.CurrentContext, pendingKey)", code);
+            Assert.Contains("Storage.Delete(Storage.CurrentContext, pendingKey)", code);
+            Assert.Contains("Storage.Put(Storage.CurrentContext, pendingKey, requestType)", code);
         }
 
         [Fact]

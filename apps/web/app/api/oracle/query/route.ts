@@ -3,7 +3,11 @@ import { resolveProviderAwarePayload } from '@/lib/provider-configs';
 import { recordOperationLog } from '@/lib/operation-logs';
 import { proxyToNitro } from '@/lib/nitro';
 import { createRateLimitedHandler } from '@/lib/rate-limit';
-import { badRequest } from '@/lib/api-helpers';
+import {
+  isAuthorizedOracleQueryRequest,
+  isOracleQueryGateConfigured,
+} from '@/lib/control-plane-auth';
+import { apiError, badRequest } from '@/lib/api-helpers';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -11,6 +15,15 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 const handlePost = createRateLimitedHandler(
   async function POST(request: Request) {
+    // SECURITY (N-web-2): this lane spends server-held credentials on behalf of
+    // its caller — an upstream provider fetch plus a control-plane dispatch
+    // authenticated with MORPHEUS_CONTROL_PLANE_API_KEY. When
+    // MORPHEUS_ORACLE_QUERY_API_KEY is configured the caller must present it;
+    // the check is conditional so configuring it is the deployment's decision,
+    // never a silent break for a deployment that has not set it yet.
+    if (isOracleQueryGateConfigured() && !isAuthorizedOracleQueryRequest(request)) {
+      return apiError('unauthorized', 'UNAUTHORIZED', 401);
+    }
     const body = await request.json().catch(() => null);
     if (!isPlainObject(body)) {
       await recordOperationLog({

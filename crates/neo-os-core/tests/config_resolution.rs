@@ -61,7 +61,10 @@ fn config_resolution_matches_js_oracle() {
 #[test]
 fn default_rpc_tables_are_https_only() {
     for (network, urls) in neo_os_core::config::DEFAULT_NEO_N3_RPC_URLS {
-        assert!(!urls.is_empty(), "{network}: fallback table must not be empty");
+        assert!(
+            !urls.is_empty(),
+            "{network}: fallback table must not be empty"
+        );
         for url in *urls {
             assert!(
                 url.starts_with("https://"),

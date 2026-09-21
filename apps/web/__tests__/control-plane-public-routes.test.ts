@@ -29,6 +29,11 @@ vi.mock('@/lib/provider-configs', () => ({
 // exercise the control-plane failover path, so authorize the caller.
 vi.mock('@/lib/control-plane-auth', () => ({
   isAuthorizedRuntimeRequest: () => true,
+  // oracle/query's shared-secret gate is opt-in; these tests exercise the
+  // control-plane failover path with the gate unconfigured (its own coverage
+  // lives in oracle-query-auth.test.ts).
+  isOracleQueryGateConfigured: () => false,
+  isAuthorizedOracleQueryRequest: () => false,
 }));
 
 vi.mock('@/lib/operation-logs', () => ({

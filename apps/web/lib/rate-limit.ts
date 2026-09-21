@@ -113,9 +113,19 @@ export function getClientIp(request: Request): string {
   // MUST NOT feed rate-limit keys (each forged value would mint a fresh bucket).
   // Absent a platform header we return 'unknown' so all callers share one bucket
   // (over-limiting) rather than letting the limiter be bypassed.
-  const platformIp =
-    request.headers.get('cf-connecting-ip')?.trim() ||
-    request.headers.get('x-vercel-forwarded-for')?.trim();
+  //
+  // SECURITY (N-web-2): this app is also addressed at its raw Vercel origin
+  // (the control plane's MORPHEUS_APP_BACKEND_URL is a *.vercel.app host), and
+  // Vercel neither sets nor strips `cf-connecting-ip`. On that origin the header
+  // is wholly attacker-controlled, so it is consulted only when the deployment
+  // states that it really is Cloudflare-terminated. The precedence is NOT simply
+  // reversed: behind Cloudflare, `x-vercel-forwarded-for` carries the Cloudflare
+  // edge IP, which would collapse every real user into a handful of buckets.
+  const trustCloudflare = process.env.TRUST_CF_CONNECTING_IP === '1';
+  const platformIp = trustCloudflare
+    ? request.headers.get('cf-connecting-ip')?.trim() ||
+      request.headers.get('x-vercel-forwarded-for')?.trim()
+    : request.headers.get('x-vercel-forwarded-for')?.trim();
   if (platformIp) {
     return platformIp.split(',')[0].trim();
   }

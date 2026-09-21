@@ -4,7 +4,10 @@ import {
   getClientIp,
   timingSafeCompare,
 } from '@r3e-network/neo-os-services-shared/utils';
-import { applyUpstashRateLimit } from '@r3e-network/neo-os-services-shared/rate-limit';
+import {
+  applyUpstashRateLimit,
+  upstashConfigured,
+} from '@r3e-network/neo-os-services-shared/rate-limit';
 import { buildPublicRuntimeStatusSnapshot } from '../../../packages/shared/src/public-runtime.js';
 import runtimeCatalog from '../../../apps/web/public/morpheus-runtime-catalog.json' with { type: 'json' };
 
@@ -294,12 +297,6 @@ function routeLimitConfig(routeKey, env) {
     limit: Number(env[`MORPHEUS_RATE_LIMIT_${upper}_MAX`] || defaults.limit),
     windowMs: Number(env[`MORPHEUS_RATE_LIMIT_${upper}_WINDOW_MS`] || defaults.windowMs),
   };
-}
-
-function upstashConfigured(env) {
-  return Boolean(
-    trimString(env.UPSTASH_REDIS_REST_URL) && trimString(env.UPSTASH_REDIS_REST_TOKEN)
-  );
 }
 
 async function applyUpstashRateLimitImpl(request, env, routeKey) {

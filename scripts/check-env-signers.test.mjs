@@ -38,6 +38,7 @@ test('check-nitro-env accepts a custody-only env with no Neo N3 signer WIFs at a
     'SUPABASE_URL=https://supabase.test',
     'SUPABASE_SERVICE_ROLE_KEY=service-role-key',
     'MORPHEUS_NETWORK=mainnet',
+    'ORACLE_HTTP_ALLOWLIST=api.example.com',
     'NEO_RPC_URL=https://neo-rpc.test',
     'NEO_NETWORK_MAGIC=860833102',
     'CONTRACT_MORPHEUS_ORACLE_HASH=0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
@@ -67,12 +68,66 @@ test('check-nitro-env accepts a custody-only env with no Neo N3 signer WIFs at a
   }
 });
 
+function custodyOnlyEnvLines({ network = 'mainnet', omit = [] } = {}) {
+  return [
+    'NITRO_SHARED_SECRET=test-secret',
+    'SUPABASE_URL=https://supabase.test',
+    'SUPABASE_SERVICE_ROLE_KEY=service-role-key',
+    `MORPHEUS_NETWORK=${network}`,
+    'ORACLE_HTTP_ALLOWLIST=api.example.com',
+    'NEO_RPC_URL=https://neo-rpc.test',
+    `NEO_NETWORK_MAGIC=${network === 'mainnet' ? '860833102' : '894710606'}`,
+    'CONTRACT_MORPHEUS_ORACLE_HASH=0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+    'CONTRACT_ORACLE_CALLBACK_CONSUMER_HASH=0xe1226268f2fe08bea67fb29e1c8fda0d7c8e9844',
+    'SIGNER_SERVICE_URL=https://custody.test',
+    'SIGNER_SERVICE_TOKEN=custody-token',
+    'SIGNER_ROLE_UPDATER_KEY_ID=key-updater',
+    'SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID=key-oracle-verifier',
+    'SIGNER_ROLE_WORKER_KEY_ID=key-worker',
+    'MORPHEUS_SIGNING_ADMIN_API_KEY=signing-admin-token',
+    'MORPHEUS_RELAY_ADMIN_API_KEY=relay-admin-token',
+  ].filter((line) => !omit.some((key) => line.startsWith(`${key}=`)));
+}
+
+test('check-nitro-env requires the oracle HTTP allow-list on mainnet only', () => {
+  // The enclave's arbitrary-URL oracle lane treats an unset ORACLE_HTTP_ALLOWLIST
+  // as an open app-layer gate. The vsock-proxy host allow-list is still the
+  // primary, fail-closed control, so this is a mainnet-only requirement and
+  // local/testnet runs keep the open-gate behaviour.
+  const mainnetPath = writeEnvFile(custodyOnlyEnvLines({ omit: ['ORACLE_HTTP_ALLOWLIST'] }));
+  const mainnet = spawnSync(process.execPath, ['scripts/check-nitro-env.mjs'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: baseSpawnEnv({ NITRO_ENV_FILE: mainnetPath }),
+  });
+  assert.equal(mainnet.status, 1, mainnet.stderr || mainnet.stdout);
+  const mainnetReport = JSON.parse(mainnet.stdout);
+  assert.equal(mainnetReport.ok, false);
+  assert.deepEqual(mainnetReport.missing_required, ['ORACLE_HTTP_ALLOWLIST']);
+  assert.deepEqual(mainnetReport.required_on_mainnet, ['ORACLE_HTTP_ALLOWLIST']);
+
+  const testnetPath = writeEnvFile(
+    custodyOnlyEnvLines({ network: 'testnet', omit: ['ORACLE_HTTP_ALLOWLIST'] })
+  );
+  const testnet = spawnSync(process.execPath, ['scripts/check-nitro-env.mjs'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: baseSpawnEnv({ NITRO_ENV_FILE: testnetPath }),
+  });
+  assert.equal(testnet.status, 0, testnet.stderr || testnet.stdout);
+  const testnetReport = JSON.parse(testnet.stdout);
+  assert.equal(testnetReport.ok, true);
+  assert.deepEqual(testnetReport.missing_required, []);
+  assert.deepEqual(testnetReport.required_on_mainnet, []);
+});
+
 test('check-nitro-env rejects the caller-supplied local signing escape hatch', () => {
   const envPath = writeEnvFile([
     'NITRO_SHARED_SECRET=test-secret',
     'SUPABASE_URL=https://supabase.test',
     'SUPABASE_SERVICE_ROLE_KEY=service-role-key',
     'MORPHEUS_NETWORK=mainnet',
+    'ORACLE_HTTP_ALLOWLIST=api.example.com',
     'NEO_RPC_URL=https://neo-rpc.test',
     'NEO_NETWORK_MAGIC=860833102',
     'CONTRACT_MORPHEUS_ORACLE_HASH=0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
@@ -108,6 +163,7 @@ test('check-nitro-env fails a leftover WIF that disagrees with the pinned regist
     'SUPABASE_URL=https://supabase.test',
     'SUPABASE_SERVICE_ROLE_KEY=service-role-key',
     'MORPHEUS_NETWORK=mainnet',
+    'ORACLE_HTTP_ALLOWLIST=api.example.com',
     'NEO_RPC_URL=https://neo-rpc.test',
     'NEO_NETWORK_MAGIC=860833102',
     'CONTRACT_MORPHEUS_ORACLE_HASH=0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
@@ -150,6 +206,7 @@ test('check-nitro-env passes with NITRO_USE_DERIVED_KEYS and no pinned signer WI
     'SUPABASE_URL=https://supabase.test',
     'SUPABASE_SERVICE_ROLE_KEY=service-role-key',
     'MORPHEUS_NETWORK=mainnet',
+    'ORACLE_HTTP_ALLOWLIST=api.example.com',
     'NEO_RPC_URL=https://neo-rpc.test',
     'NEO_NETWORK_MAGIC=860833102',
     'CONTRACT_MORPHEUS_ORACLE_HASH=0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
@@ -252,6 +309,7 @@ test('check-nitro-env fails a runtime env file that disables signer pinning', ()
     'SUPABASE_URL=https://supabase.test',
     'SUPABASE_SERVICE_ROLE_KEY=service-role-key',
     'MORPHEUS_NETWORK=mainnet',
+    'ORACLE_HTTP_ALLOWLIST=api.example.com',
     'NEO_RPC_URL=https://neo-rpc.test',
     'NEO_NETWORK_MAGIC=860833102',
     'CONTRACT_MORPHEUS_ORACLE_HASH=0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
@@ -294,6 +352,7 @@ test('check-nitro-env still rejects host WIFs when the unpinned switch is false'
     'SUPABASE_URL=https://supabase.test',
     'SUPABASE_SERVICE_ROLE_KEY=service-role-key',
     'MORPHEUS_NETWORK=mainnet',
+    'ORACLE_HTTP_ALLOWLIST=api.example.com',
     'NEO_RPC_URL=https://neo-rpc.test',
     'NEO_NETWORK_MAGIC=860833102',
     'CONTRACT_MORPHEUS_ORACLE_HASH=0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
@@ -331,6 +390,7 @@ test('check-nitro-env requires admin credentials and rejects cross-domain reuse'
     'SUPABASE_URL=https://supabase.test',
     'SUPABASE_SERVICE_ROLE_KEY=service-role-key',
     'MORPHEUS_NETWORK=mainnet',
+    'ORACLE_HTTP_ALLOWLIST=api.example.com',
     'NEO_RPC_URL=https://neo-rpc.test',
     'NEO_NETWORK_MAGIC=860833102',
     'CONTRACT_MORPHEUS_ORACLE_HASH=0xf54d8584ef82315c1800373272ab08ae0db2d5ef',

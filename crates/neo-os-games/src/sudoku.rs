@@ -370,7 +370,9 @@ pub fn score(
     // can only assert the replayed board and can never decide settlement.
     if let Some(Json::String(answer)) = &extra.answer {
         if answer.trim() != derived {
-            return Err(ScoreRejection::new("answer does not match the recorded placements"));
+            return Err(ScoreRejection::new(
+                "answer does not match the recorded placements",
+            ));
         }
     }
     if derived != solution {

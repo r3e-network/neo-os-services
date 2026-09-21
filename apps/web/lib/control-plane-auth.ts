@@ -78,6 +78,29 @@ export function isAuthorizedWorkflowRequest(request: Request) {
   return matchesConfiguredCredential(request, controlPlaneCredentials('workflow'));
 }
 
+/**
+ * Opt-in shared-secret gate for the public oracle lanes.
+ *
+ * `/api/oracle/query` is a confused deputy: it performs an upstream provider
+ * fetch, writes an operation_logs row, and dispatches to the control plane with
+ * the server-held MORPHEUS_CONTROL_PLANE_API_KEY — all for an anonymous caller
+ * whose only limit was an IP-keyed bucket. Enforcement is conditional on the
+ * secret being configured so that an existing deployment (and the SDK/docs
+ * callers that use the lane today) does not break on upgrade; when it IS
+ * configured the lane is closed to everyone who cannot present it.
+ */
+export function isOracleQueryGateConfigured() {
+  return oracleQueryCredentials().length > 0;
+}
+
+function oracleQueryCredentials() {
+  return [process.env.MORPHEUS_ORACLE_QUERY_API_KEY].map((value) => trimString(value)).filter(Boolean);
+}
+
+export function isAuthorizedOracleQueryRequest(request: Request) {
+  return matchesConfiguredCredential(request, oracleQueryCredentials());
+}
+
 function extractRuntimeAuthToken(request: Request) {
   const authorization = trimString(request.headers.get('authorization'));
   if (authorization.toLowerCase().startsWith('bearer ')) {

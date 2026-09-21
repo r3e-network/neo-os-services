@@ -367,6 +367,9 @@ const runtimeConfig = {
       defaultValue:
         network === 'mainnet' ? existingEnv.MORPHEUS_RELAYER_NEO_N3_START_BLOCK || '' : '',
     }) || '',
+  // App-layer companion to the fail-closed vsock-proxy host allow-list. It is
+  // required on mainnet by check:nitro-env, so it has to survive a re-render.
+  ORACLE_HTTP_ALLOWLIST: get('ORACLE_HTTP_ALLOWLIST'),
   ORACLE_TIMEOUT: get('ORACLE_TIMEOUT') || '8s',
   ORACLE_MAX_PROVIDER_BODY_BYTES: get('ORACLE_MAX_PROVIDER_BODY_BYTES') || '65536',
   ORACLE_SCRIPT_TIMEOUT_MS: get('ORACLE_SCRIPT_TIMEOUT_MS') || '2000',
