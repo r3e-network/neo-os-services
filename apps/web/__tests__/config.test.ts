@@ -5,6 +5,9 @@ describe('appConfig security boundaries', () => {
     vi.resetModules();
     vi.unstubAllEnvs();
     vi.stubEnv('MORPHEUS_NETWORK', 'testnet');
+    // NEXT_PUBLIC_MORPHEUS_NETWORK outranks MORPHEUS_NETWORK in lib/networks,
+    // so pin it too or an exported value silently reselects the network.
+    vi.stubEnv('NEXT_PUBLIC_MORPHEUS_NETWORK', 'testnet');
     // Pin every accepted token source so the assertions are deterministic
     // regardless of the developer shell environment.
     vi.stubEnv('MORPHEUS_RUNTIME_TOKEN', '');

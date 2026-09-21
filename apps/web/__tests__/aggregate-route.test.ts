@@ -27,6 +27,9 @@ describe('onchain aggregate route', () => {
     fetchOnchainState.mockReset();
     buildRuntimeStatusSnapshotForNetwork.mockReset();
     vi.stubEnv('MORPHEUS_NETWORK', 'testnet');
+    // NEXT_PUBLIC_MORPHEUS_NETWORK outranks MORPHEUS_NETWORK in lib/networks,
+    // so pin it too or an exported value silently reselects the network.
+    vi.stubEnv('NEXT_PUBLIC_MORPHEUS_NETWORK', 'testnet');
   });
 
   afterEach(() => {

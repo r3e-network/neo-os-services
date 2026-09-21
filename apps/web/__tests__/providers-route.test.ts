@@ -5,6 +5,9 @@ describe('providers route', () => {
     vi.resetModules();
     vi.unstubAllEnvs();
     vi.stubEnv('MORPHEUS_NETWORK', 'mainnet');
+    // NEXT_PUBLIC_MORPHEUS_NETWORK outranks MORPHEUS_NETWORK in lib/networks,
+    // so pin it too or an exported value silently reselects the network.
+    vi.stubEnv('NEXT_PUBLIC_MORPHEUS_NETWORK', 'mainnet');
     vi.stubEnv('MORPHEUS_RUNTIME_URL_TESTNET', 'https://testnet-runtime.example');
   });
 

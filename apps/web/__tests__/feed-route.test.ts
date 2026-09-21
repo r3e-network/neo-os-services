@@ -57,6 +57,9 @@ describe('feed price route (on-chain re-home)', () => {
     vi.resetModules();
     vi.unstubAllEnvs();
     vi.stubEnv('MORPHEUS_NETWORK', 'mainnet');
+    // NEXT_PUBLIC_MORPHEUS_NETWORK outranks MORPHEUS_NETWORK in lib/networks,
+    // so pin it too or an exported value silently reselects the network.
+    vi.stubEnv('NEXT_PUBLIC_MORPHEUS_NETWORK', 'mainnet');
     vi.stubEnv('MORPHEUS_FEED_PROVIDER', 'twelvedata');
     vi.stubEnv('MORPHEUS_FEED_PROJECT_SLUG', 'morpheus');
     vi.useFakeTimers();

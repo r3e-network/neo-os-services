@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+// Every case below sets BOTH network variables explicitly. lib/networks reads
+// NEXT_PUBLIC_MORPHEUS_NETWORK first and falls back to MORPHEUS_NETWORK, so a
+// case that stubs only one of them silently inherits the other from the shell
+// (or from a future default) and stops testing what it claims to. Keeping both
+// pinned here is what lets the rest of the suite set a network of its own
+// without weakening these assertions.
 describe('network selection', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -7,6 +13,7 @@ describe('network selection', () => {
   });
 
   it('lets explicit URL/network overrides win over env defaults', async () => {
+    vi.stubEnv('NEXT_PUBLIC_MORPHEUS_NETWORK', '');
     vi.stubEnv('MORPHEUS_NETWORK', 'mainnet');
     const { getSelectedNetwork, getSelectedNetworkKey } = await import('../lib/networks');
 
@@ -16,6 +23,7 @@ describe('network selection', () => {
   });
 
   it('normalizes network env values instead of treating casing as testnet', async () => {
+    vi.stubEnv('NEXT_PUBLIC_MORPHEUS_NETWORK', '');
     vi.stubEnv('MORPHEUS_NETWORK', ' MAINNET ');
     const { getSelectedNetworkKey } = await import('../lib/networks');
 

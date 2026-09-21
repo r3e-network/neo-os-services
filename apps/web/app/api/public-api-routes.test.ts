@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetRateLimitMap } from '@/lib/rate-limit';
 
 // `server-only` throws in non-Next.js runtimes; Vitest needs it stubbed to
@@ -15,7 +15,31 @@ function publicIpHeaders(ip: string) {
   return { 'x-forwarded-for': ip };
 }
 
+// The route/lib modules imported below reach lib/config, which resolves the
+// Morpheus network at module-evaluation time. Pin it here instead of relying on
+// the ambient shell so this file is hermetic: identical behaviour with no env
+// at all (CI) and with MORPHEUS_NETWORK or NEXT_PUBLIC_MORPHEUS_NETWORK
+// exported to either value. Assigned directly rather than via vi.stubEnv
+// because this file's vi.unstubAllEnvs() would otherwise drop it before the
+// dynamic imports run.
+const originalNetworkEnv = {
+  MORPHEUS_NETWORK: process.env.MORPHEUS_NETWORK,
+  NEXT_PUBLIC_MORPHEUS_NETWORK: process.env.NEXT_PUBLIC_MORPHEUS_NETWORK,
+};
+
 describe('public API routes', () => {
+  beforeAll(() => {
+    process.env.MORPHEUS_NETWORK = 'testnet';
+    process.env.NEXT_PUBLIC_MORPHEUS_NETWORK = 'testnet';
+  });
+
+  afterAll(() => {
+    for (const [key, value] of Object.entries(originalNetworkEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
   beforeEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();

@@ -6,6 +6,9 @@ describe('control-plane fail-closed behavior', () => {
     vi.unstubAllEnvs();
     vi.stubEnv('MORPHEUS_CONTROL_PLANE_URL', 'https://control.meshmini.app');
     vi.stubEnv('MORPHEUS_NETWORK', 'mainnet');
+    // NEXT_PUBLIC_MORPHEUS_NETWORK outranks MORPHEUS_NETWORK in lib/networks,
+    // so pin it too or an exported value silently reselects the network.
+    vi.stubEnv('NEXT_PUBLIC_MORPHEUS_NETWORK', 'mainnet');
     vi.stubEnv('MORPHEUS_CONTROL_PLANE_API_KEY', 'control-plane-key');
   });
 

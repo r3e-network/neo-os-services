@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The web control plane must not sign or hold Neo N3 key material: both on-chain
@@ -27,8 +27,32 @@ function relayResponse(body: unknown, status = 200) {
   });
 }
 
+// The route/lib modules imported below reach lib/config, which resolves the
+// Morpheus network at module-evaluation time. Pin it here instead of relying on
+// the ambient shell so this file is hermetic: identical behaviour with no env
+// at all (CI) and with MORPHEUS_NETWORK or NEXT_PUBLIC_MORPHEUS_NETWORK
+// exported to either value. Assigned directly rather than via vi.stubEnv
+// because this file's vi.unstubAllEnvs() would otherwise drop it before the
+// dynamic imports run.
+const originalNetworkEnv = {
+  MORPHEUS_NETWORK: process.env.MORPHEUS_NETWORK,
+  NEXT_PUBLIC_MORPHEUS_NETWORK: process.env.NEXT_PUBLIC_MORPHEUS_NETWORK,
+};
+
 describe('control-plane custody relay wrappers', () => {
   let fetchCalls: { url: string; init: RequestInit }[];
+
+  beforeAll(() => {
+    process.env.MORPHEUS_NETWORK = 'testnet';
+    process.env.NEXT_PUBLIC_MORPHEUS_NETWORK = 'testnet';
+  });
+
+  afterAll(() => {
+    for (const [key, value] of Object.entries(originalNetworkEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
 
   beforeEach(() => {
     vi.resetModules();
