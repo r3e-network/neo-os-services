@@ -14,12 +14,11 @@
 // only uses checked-in files and always runs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { driftReport, ENGINE_SOURCES } from './sync-miniapp-game-engines.mjs';
+import { driftReport, ENGINE_SOURCES, runEsbuild } from './sync-miniapp-game-engines.mjs';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 const configuredRoot = process.env.MINIGAMES_ROOT || process.env.MINIAPPS_ROOT;
@@ -60,17 +59,10 @@ test('generated sudoku-data.js stays semantically identical to its TS twin', asy
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sudoku-data-guard-'));
   try {
     const outFile = path.join(tmpDir, 'sudoku-data.mjs');
-    execFileSync(
-      process.execPath,
-      [
-        esbuildCli,
-        'apps/sudoku/src/logic/sudoku-data.ts',
-        '--format=esm',
-        '--platform=node',
-        '--bundle',
-        `--outfile=${outFile}`,
-      ],
-      { cwd: minigamesRoot, stdio: ['ignore', 'pipe', 'pipe'] }
+    runEsbuild(
+      esbuildCli,
+      ['apps/sudoku/src/logic/sudoku-data.ts', '--format=esm', '--platform=node', '--bundle', `--outfile=${outFile}`],
+      minigamesRoot
     );
     const upstream = await import(pathToFileURL(outFile).href);
     const local = await import(pathToFileURL(path.join(gameDir, 'engines', 'sudoku-data.js')).href);

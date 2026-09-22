@@ -135,6 +135,22 @@ function bannerFor(entry, sourceSha256) {
   ].join('\n');
 }
 
+// Run the sibling repo's esbuild launcher as an executable. npm installs
+// `node_modules/esbuild/bin/esbuild` as a JS shim (`#!/usr/bin/env node`),
+// but esbuild's postinstall replaces it with the native binary unless the
+// install ran with --ignore-scripts; launching it through `node` therefore
+// fails with "Invalid or unexpected token" on a normally installed sibling.
+// Executing the file directly works for both shapes; the shim's shebang
+// resolves `node` through PATH, so the running node's directory is put first.
+export function runEsbuild(esbuildCli, args, cwd) {
+  const nodeDir = path.dirname(process.execPath);
+  const env = {
+    ...process.env,
+    PATH: `${nodeDir}${path.delimiter}${process.env.PATH ?? ''}`,
+  };
+  return execFileSync(esbuildCli, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
 // Bundle one TS source with the miniapps repo's own esbuild. Runs with cwd =
 // miniappsRoot and a RELATIVE entry so the emitted section comments carry
 // repo-relative paths (deterministic across machines).
@@ -152,17 +168,10 @@ function bundleSource(minigamesRoot, entry) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'engine-sync-'));
   try {
     const outFile = path.join(tmpDir, `${entry.name}.js`);
-    execFileSync(
-      process.execPath,
-      [
-        esbuildCli,
-        entry.source,
-        '--format=esm',
-        '--platform=node',
-        '--bundle',
-        `--outfile=${outFile}`,
-      ],
-      { cwd: minigamesRoot, stdio: ['ignore', 'pipe', 'pipe'] }
+    runEsbuild(
+      esbuildCli,
+      [entry.source, '--format=esm', '--platform=node', '--bundle', `--outfile=${outFile}`],
+      minigamesRoot
     );
     const bundle = fs.readFileSync(outFile, 'utf8');
     return `${bannerFor(entry, sourceSha256)}${bundle}`;
