@@ -4,19 +4,26 @@
 // live HTTP.
 //
 // What it proves, in order:
-//   1. a custody vault provisions (admin caller, three role keys, `allow_raw`
+//   1. a custody vault provisions (admin caller, four role keys, `allow_raw`
 //      boundaries, an enclave-host caller token);
 //   2. the host connects to it and /health reports both roles materialized
 //      with key_source `custody`;
 //   3. /keys/derived reports the pinned key's identity, no secrets;
-//   4. /sign/payload produces a REAL signature — verified independently by
-//     @noble/curves p256 over SHA-256 of the data (the byte contract the
-//     merged server's neon-js `wallet.sign` kept);
-//   5. an unpinned role still fails closed with the unconfigured 503;
+//   4. the LIVE Neo N3 signing lane: /oracle/fulfill computes in the Rust host
+//      and signs its own fulfillment digest through custody /sign/raw under the
+//      pinned oracle_verifier key. The digest is recomputed independently with
+//      the relayer's canonical JS builder, and the signature is verified by
+//      @noble/curves p256 over SHA-256 of the digest (the byte contract the
+//      on-chain verifier checks). Blind /sign/payload is retired in the shipped
+//      posture (ENCLAVE_ALLOW_BLIND_SIGN unset), and this gate asserts that it
+//      stays closed and signs nothing, instead of opting back into it;
+//   5. an unsupported role is rejected before any signer lookup;
 //   6. the host's calls landed in the custody audit trail as the caller it
 //      was registered as — the same contract every external caller gets;
 //   7. deterministic compute executes inside the Rust host and signs through
 //      the same custody boundary, with no alternate Node engine.
+// Every check records a verdict; a malformed reply is a failed check, never an
+// exception that ends the run early.
 //
 // Run: node scripts/custody-plane-e2e.mjs   (builds the binaries first)
 
@@ -30,6 +37,11 @@ import process from 'node:process';
 
 import { p256 } from '@noble/curves/p256';
 
+import {
+  buildFulfillmentDigestBytes,
+  resolveKernelIntent,
+} from '../workers/morpheus-relayer/src/router.js';
+
 const REPO_ROOT = process.cwd();
 const TARGET = join(REPO_ROOT, 'target', 'debug');
 const CUSTODY_BIN = join(
@@ -38,6 +50,10 @@ const CUSTODY_BIN = join(
 );
 const HOST_BIN = join(TARGET, process.platform === 'win32' ? 'enclave_host.exe' : 'enclave_host');
 const DATA_MESSAGE = Buffer.from('a fulfillment digest the enclave host wants signed');
+// The measured Neo N3 testnet binding the host applies to every fulfillment
+// digest (workers/nitro-enclave-host/src/fulfill.rs measured_n3_binding).
+const N3_TESTNET_ORACLE_CONTRACT = '0xf54d8584ef82315c1800373272ab08ae0db2d5ef';
+const N3_TESTNET_MAGIC = 894710606;
 
 const failures = [];
 function check(condition, description, detail) {
@@ -58,6 +74,39 @@ function freePort() {
     });
     server.on('error', reject);
   });
+}
+
+// p256 over SHA-256(message), the neon-js `wallet.sign` byte contract. Any
+// malformed input is a failed verification, not a thrown exception.
+function verifyP256(signatureHex, message, publicKeyHex) {
+  if (typeof signatureHex !== 'string' || !/^[0-9a-f]{128}$/.test(signatureHex)) return false;
+  if (typeof publicKeyHex !== 'string' || !/^(02|03)[0-9a-f]{64}$/.test(publicKeyHex)) return false;
+  try {
+    return p256.verify(
+      Buffer.from(signatureHex, 'hex'),
+      createHash('sha256').update(message).digest(),
+      Buffer.from(publicKeyHex, 'hex')
+    );
+  } catch {
+    return false;
+  }
+}
+
+// POST JSON and never throw on a non-JSON reply.
+async function postJson(url, token, body) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = { unparsed: text.slice(0, 200) };
+  }
+  return { status: response.status, body: parsed };
 }
 
 async function waitUntilReachable(url, label, timeoutMs = 20_000) {
@@ -282,63 +331,130 @@ async function main() {
       derived.neo_n3
     );
 
-    // -- 4. a real signature ------------------------------------------------
-    const signReply = await fetch(`${enclave}/sign/payload`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${hostToken}` },
-      body: JSON.stringify({ key_role: 'updater', data_hex: DATA_MESSAGE.toString('hex') }),
+    // -- 4. the live Neo N3 signing lane ------------------------------------
+    // Blind signing stays retired in the shipped posture: no opt-in is set on
+    // this host, so /sign/payload must refuse and custody must sign nothing.
+    const auditBefore = await custodyApi('GET', '/audit?limit=500', adminToken);
+    const rawSignedBefore = (auditBefore.body?.entries || []).filter(
+      (row) => row.action === 'signer-raw-signed'
+    ).length;
+    const blind = await postJson(`${enclave}/sign/payload`, hostToken, {
+      key_role: 'updater',
+      data_hex: DATA_MESSAGE.toString('hex'),
     });
-    const signed = await signReply.json();
-    check(signReply.status === 200 && signed.status === 'ok', '/sign/payload answers ok', signed);
-    check(signed.key_source === 'custody', '/sign/payload names its key_source', signed);
     check(
-      signed.key_id === roleKeys.updater.key_id,
-      '/sign/payload names the pinned key',
-      signed.key_id
+      blind.status === 503 && /blind payload signing is retired/.test(blind.body?.error || ''),
+      '/sign/payload stays retired without ENCLAVE_ALLOW_BLIND_SIGN (the shipped posture)',
+      blind
     );
+    check(blind.body?.signature === undefined, '/sign/payload returns no signature', blind.body);
+    const auditAfterBlind = await custodyApi('GET', '/audit?limit=500', adminToken);
     check(
-      signed.public_key === roleKeys.updater.public_key,
-      '/sign/payload returns the pinned public key',
-      signed.public_key
-    );
-    check(
-      signed.signature === signed.signature_hex,
-      '/sign/payload keeps the merged signature aliases',
-      signed.signature_hex
-    );
-    check(
-      /^[0-9a-f]{128}$/.test(signed.signature),
-      'the signature is 64 bytes of hex',
-      signed.signature
+      (auditAfterBlind.body?.entries || []).filter((row) => row.action === 'signer-raw-signed')
+        .length === rawSignedBefore,
+      'the retired blind lane reached no custody signature'
     );
 
-    const verified = p256.verify(
-      Buffer.from(signed.signature, 'hex'),
-      createHash('sha256').update(DATA_MESSAGE).digest(),
-      Buffer.from(signed.public_key, 'hex')
+    // The live lane: compute in the host, sign the host's own digest in custody.
+    const fulfillRequest = {
+      chain: 'neo_n3',
+      request_type: 'compute',
+      request_id: '4242',
+      payload: { function: 'hash.sha256', input: { z: 1 } },
+      fulfillment_context: { app_id: 'custody-plane-e2e' },
+      nonce: 'cafe',
+    };
+    const fulfilled = await postJson(`${enclave}/oracle/fulfill`, hostToken, fulfillRequest);
+    const fulfillment = fulfilled.body || {};
+    check(
+      fulfilled.status === 200 && fulfillment.status === 'ok',
+      '/oracle/fulfill (neo_n3) answers ok',
+      fulfilled
+    );
+    check(fulfillment.success === true, 'the in-host compute succeeded', fulfillment);
+    check(
+      fulfillment.public_key === roleKeys.oracle_verifier.public_key,
+      '/oracle/fulfill signs with the pinned oracle_verifier custody key',
+      fulfillment.public_key
     );
     check(
-      verified,
-      'the signature verifies under @noble p256 over SHA-256(data) — the neon-js byte contract'
+      typeof fulfillment.signature === 'string' && /^[0-9a-f]{128}$/.test(fulfillment.signature),
+      'the fulfillment signature is 64 bytes of hex',
+      fulfillment.signature
     );
+    // The digest the host signed is the canonical one: recompute it with the
+    // relayer's JS builder over the reply's result and the envelope the REQUEST
+    // implies (its app_id, the JS kernel intent's module/operation), plus the
+    // measured binding — never the envelope fields the host reports about itself.
+    const intent = resolveKernelIntent(fulfillRequest.request_type);
+    const expectedEnvelope = {
+      app_id: fulfillRequest.fulfillment_context.app_id,
+      module_id: intent.moduleId,
+      operation: intent.operation,
+    };
+    check(
+      fulfillment.app_id === expectedEnvelope.app_id &&
+        fulfillment.module_id === expectedEnvelope.module_id &&
+        fulfillment.operation === expectedEnvelope.operation,
+      'the host reports the envelope the request implies',
+      { host: [fulfillment.app_id, fulfillment.module_id, fulfillment.operation], expectedEnvelope }
+    );
+    let expectedDigestHex = '';
+    try {
+      expectedDigestHex = buildFulfillmentDigestBytes(
+        fulfillRequest.request_id,
+        fulfillRequest.request_type,
+        fulfillment.success,
+        fulfillment.result || '',
+        fulfillment.error || '',
+        fulfillment.result_bytes_base64 || '',
+        {
+          chain: 'neo_n3',
+          appId: expectedEnvelope.app_id,
+          moduleId: expectedEnvelope.module_id,
+          operation: expectedEnvelope.operation,
+          contractScriptHash: N3_TESTNET_ORACLE_CONTRACT,
+          networkMagic: N3_TESTNET_MAGIC,
+        }
+      ).toString('hex');
+    } catch (error) {
+      expectedDigestHex = `unbuildable: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    check(
+      fulfillment.fulfillment_digest_hex === expectedDigestHex,
+      'the signed digest equals the canonical JS builder over the reply (Rust/JS byte parity)',
+      { host: fulfillment.fulfillment_digest_hex, js: expectedDigestHex }
+    );
+    const digestBytes = Buffer.from(
+      /^[0-9a-f]{64}$/.test(fulfillment.fulfillment_digest_hex || '')
+        ? fulfillment.fulfillment_digest_hex
+        : '',
+      'hex'
+    );
+    check(
+      digestBytes.length === 32 &&
+        verifyP256(fulfillment.signature, digestBytes, roleKeys.oracle_verifier.public_key),
+      'the fulfillment signature verifies under @noble p256 over SHA-256(digest) — the on-chain byte contract'
+    );
+    check(fulfillment.nonce === 'cafe', 'the freshness nonce is echoed', fulfillment.nonce);
 
     // -- 5. an unsupported role is rejected before any signer lookup --------
-    const unpinned = await fetch(`${enclave}/sign/payload`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${hostToken}` },
-      body: JSON.stringify({ key_role: 'neox_updater', data_hex: DATA_MESSAGE.toString('hex') }),
+    const unpinned = await postJson(`${enclave}/sign/payload`, hostToken, {
+      key_role: 'neox_updater',
+      data_hex: DATA_MESSAGE.toString('hex'),
     });
-    const unpinnedBody = await unpinned.json();
-    check(unpinned.status === 400, 'an unsupported role is rejected', unpinnedBody);
+    check(unpinned.status === 400, 'an unsupported role is rejected', unpinned.body);
     check(
-      unpinnedBody.error === 'key_role must be one of oracle_verifier, updater, relayer, worker',
+      unpinned.body?.error === 'key_role must be one of oracle_verifier, updater, relayer, worker',
       'the role allowlist error is explicit',
-      unpinnedBody.error
+      unpinned.body?.error
     );
 
     // -- 6. the host's calls are audited under its own caller ----------------
     const audit = await custodyApi('GET', '/audit?limit=500', adminToken);
-    const rawSigned = audit.body.entries.filter((row) => row.action === 'signer-raw-signed');
+    const rawSigned = (audit.body?.entries || []).filter(
+      (row) => row.action === 'signer-raw-signed'
+    );
     check(
       rawSigned.length >= 1,
       'the raw signatures landed in the custody audit trail',
@@ -349,14 +465,18 @@ async function main() {
       'every audited signature names the enclave-host caller',
       rawSigned.map((row) => row.caller_id)
     );
+    check(
+      rawSigned.some((row) => row.key_id === roleKeys.oracle_verifier.key_id),
+      'the fulfillment signature is audited under the oracle_verifier key',
+      rawSigned.map((row) => row.key_id)
+    );
 
     // -- 7. deterministic compute executes in the Rust host -----------------
-    const computed = await fetch(`${enclave}/compute/execute`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${hostToken}` },
-      body: JSON.stringify({ function: 'hash.sha256', input: { z: 1 } }),
+    const computed = await postJson(`${enclave}/compute/execute`, hostToken, {
+      function: 'hash.sha256',
+      input: { z: 1 },
     });
-    const computedBody = await computed.json();
+    const computedBody = computed.body || {};
     check(
       computed.status === 200 && computedBody.mode === 'builtin',
       'the Rust host executes the builtin compute lane in-process',
@@ -375,7 +495,7 @@ async function main() {
     );
     const computeAudit = await custodyApi('GET', '/audit?limit=500', adminToken);
     check(
-      computeAudit.body.entries.some(
+      (computeAudit.body?.entries || []).some(
         (row) =>
           row.action === 'signer-raw-signed' &&
           row.key_id === roleKeys.worker.key_id &&
