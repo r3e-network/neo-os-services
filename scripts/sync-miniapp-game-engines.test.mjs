@@ -61,7 +61,13 @@ test('generated sudoku-data.js stays semantically identical to its TS twin', asy
     const outFile = path.join(tmpDir, 'sudoku-data.mjs');
     runEsbuild(
       esbuildCli,
-      ['apps/sudoku/src/logic/sudoku-data.ts', '--format=esm', '--platform=node', '--bundle', `--outfile=${outFile}`],
+      [
+        'apps/sudoku/src/logic/sudoku-data.ts',
+        '--format=esm',
+        '--platform=node',
+        '--bundle',
+        `--outfile=${outFile}`,
+      ],
       minigamesRoot
     );
     const upstream = await import(pathToFileURL(outFile).href);

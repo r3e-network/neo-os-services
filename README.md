@@ -35,7 +35,6 @@ checked by the architecture source-coverage gate.
 
 Proposed v2 binding: in `neo-os-web/docs/workspace/neoos-target-architecture.v2.json` (status `PROPOSED`, validated by `npm run check:architecture:v2` in `neo-os-web`) this repository is v2 layer L3 (gateway) and owns C14 deliver, C15 compute, C16 identity-service and C17 ingress; it also hosts C04 identity and C05 oracle, L1 components pending the move to the protocol repository; C12 sign is bound in `workers/neo-signer/README.md`. The v1 binding above remains the enforced contract until the v2 adoption procedure completes.
 
-
 ## Current Design
 
 1. **Cloudflare edge gateway**

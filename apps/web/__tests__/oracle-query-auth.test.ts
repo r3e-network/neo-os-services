@@ -44,9 +44,7 @@ describe('POST /api/oracle/query shared-secret gate (N-web-2)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
-    mocks.dispatchToControlPlane.mockResolvedValue(
-      Response.json({ ok: true }, { status: 200 })
-    );
+    mocks.dispatchToControlPlane.mockResolvedValue(Response.json({ ok: true }, { status: 200 }));
   });
 
   afterEach(() => {
@@ -73,14 +71,10 @@ describe('POST /api/oracle/query shared-secret gate (N-web-2)', () => {
   it('rejects a wrong secret and accepts the configured one via bearer or admin header', async () => {
     vi.stubEnv('MORPHEUS_ORACLE_QUERY_API_KEY', 'oracle-query-secret');
 
-    const wrong = await oracleQuery(
-      queryRequest({ authorization: 'Bearer oracle-query-secrex' })
-    );
+    const wrong = await oracleQuery(queryRequest({ authorization: 'Bearer oracle-query-secrex' }));
     expect(wrong.status).toBe(401);
 
-    const bearer = await oracleQuery(
-      queryRequest({ authorization: 'Bearer oracle-query-secret' })
-    );
+    const bearer = await oracleQuery(queryRequest({ authorization: 'Bearer oracle-query-secret' }));
     expect(bearer.status).toBe(200);
 
     const adminHeader = await oracleQuery(

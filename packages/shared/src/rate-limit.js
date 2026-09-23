@@ -18,7 +18,7 @@
 export function upstashConfigured(env) {
   return Boolean(
     String(env?.UPSTASH_REDIS_REST_URL || '').trim() &&
-      String(env?.UPSTASH_REDIS_REST_TOKEN || '').trim()
+    String(env?.UPSTASH_REDIS_REST_TOKEN || '').trim()
   );
 }
 

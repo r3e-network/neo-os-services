@@ -32,12 +32,7 @@
     },
     "state": {
       "type": "string",
-      "enum": [
-        "recoverable",
-        "conflicting",
-        "expired",
-        "unknown"
-      ],
+      "enum": ["recoverable", "conflicting", "expired", "unknown"],
       "description": "recovery classification of the original request"
     },
     "evidence": {
@@ -67,8 +62,6 @@
     "a recovered signature is signing evidence only and never implies submission or chain confirmation (neoos.transaction-outcome owns that)"
   ],
   "producedBy": "gateway-signer-custody-backend",
-  "consumedBy": [
-    "gateway-signer"
-  ],
+  "consumedBy": ["gateway-signer"],
   "adoption": "vocabulary published 2026-09-21 from the target architecture's SigningRecovery domain; the custody gateway's recovery protocol rework in progress binds to these states and fields (finding A-20)"
 }

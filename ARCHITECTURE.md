@@ -8,40 +8,40 @@ its design is `neo-os/claudedocs/NEOOS-TARGET-ARCHITECTURE-V2-20260921.md`.
 
 ## v1 binding (enforced)
 
-| Component | Plane | Published interfaces |
-| --- | --- | --- |
-| `protocol-did-registry` | protocol plane | interfaces: NeoDIDRegistry, EligibilityProof, ActionTicket |
-| `gateway-network-identity` | gateway plane | interfaces: NetworkIdentity, NetworkPolicy |
-| `gateway-signer` | gateway plane | interfaces: ScopedSigner, SubmissionReceipt, SignerPolicy |
-| `gateway-service-kernel` | gateway plane | interfaces: DurableJob, CallbackEnvelope, RelayerPolicy |
+| Component                  | Plane          | Published interfaces                                       |
+| -------------------------- | -------------- | ---------------------------------------------------------- |
+| `protocol-did-registry`    | protocol plane | interfaces: NeoDIDRegistry, EligibilityProof, ActionTicket |
+| `gateway-network-identity` | gateway plane  | interfaces: NetworkIdentity, NetworkPolicy                 |
+| `gateway-signer`           | gateway plane  | interfaces: ScopedSigner, SubmissionReceipt, SignerPolicy  |
+| `gateway-service-kernel`   | gateway plane  | interfaces: DurableJob, CallbackEnvelope, RelayerPolicy    |
 
 ## v2 binding (proposed)
 
 Repository layer: `L3` (gateway).
 
-| Component | Layer | Ownership |
-| --- | --- | --- |
-| `C04` identity | L1 | owns: NeoDIDRegistry: binding commitments, claims, nullifiers, action tickets, verifier rotation | must not own: authorization |
-| `C05` oracle | L1 | owns: MorpheusOracle request routing and fulfilment, MorpheusDataFeed, callback consumer adapter | must not own: app-registration, module-grants, app-state, fee-credits |
-| `C12` sign | L3 | owns: signer policy, caller auth, network binding, per-key limits… | must not own: key-custody |
-| `C14` deliver | L3 | owns: DeliveryJob, journal-before-broadcast, callbacks, sponsored submission with idempotent claim… | must not own: confirmation-semantics |
-| `C15` compute | L3 | owns: oracle/HTTP/VRF/seal/compute/datafeed execution in the enclave, attested result envelopes, game-session service (Rust replay kernel, finalize.v2) | must not own: signing |
-| `C16` identity-service | L3 | owns: DID issuer/verifier/resolver did:morpheus, action-ticket minting, commitment computation | must not own: registry-contract |
-| `C17` ingress | L3 | owns: public edge gateway, queues and workflows, fixed-origin proxies, one rate limiter… | must not own: policy, identity, business-logic |
+| Component              | Layer | Ownership                                                                                                                                               |
+| ---------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `C04` identity         | L1    | owns: NeoDIDRegistry: binding commitments, claims, nullifiers, action tickets, verifier rotation                                                        | must not own: authorization                                           |
+| `C05` oracle           | L1    | owns: MorpheusOracle request routing and fulfilment, MorpheusDataFeed, callback consumer adapter                                                        | must not own: app-registration, module-grants, app-state, fee-credits |
+| `C12` sign             | L3    | owns: signer policy, caller auth, network binding, per-key limits…                                                                                      | must not own: key-custody                                             |
+| `C14` deliver          | L3    | owns: DeliveryJob, journal-before-broadcast, callbacks, sponsored submission with idempotent claim…                                                     | must not own: confirmation-semantics                                  |
+| `C15` compute          | L3    | owns: oracle/HTTP/VRF/seal/compute/datafeed execution in the enclave, attested result envelopes, game-session service (Rust replay kernel, finalize.v2) | must not own: signing                                                 |
+| `C16` identity-service | L3    | owns: DID issuer/verifier/resolver did:morpheus, action-ticket minting, commitment computation                                                          | must not own: registry-contract                                       |
+| `C17` ingress          | L3    | owns: public edge gateway, queues and workflows, fixed-origin proxies, one rate limiter…                                                                | must not own: policy, identity, business-logic                        |
 
 ### Declared moves out of this repository
 
-| Path | Destination |
-| --- | --- |
-| `contracts` | C04 |
-| `contracts` | C05 |
-| `apps/web` | C20 |
-| `services/neoswap` | delete |
-| `workers/morpheus-relayer` | delete |
-| `workers/morpheus-relater-rs` | delete |
-| `contracts-evm` | archive |
-| `workers/nitro-worker/src/game` | retire |
-| `config/networks` | C08 |
+| Path                            | Destination |
+| ------------------------------- | ----------- |
+| `contracts`                     | C04         |
+| `contracts`                     | C05         |
+| `apps/web`                      | C20         |
+| `services/neoswap`              | delete      |
+| `workers/morpheus-relayer`      | delete      |
+| `workers/morpheus-relater-rs`   | delete      |
+| `contracts-evm`                 | archive     |
+| `workers/nitro-worker/src/game` | retire      |
+| `config/networks`               | C08         |
 
 No deployment or production status is asserted here. Status is generated, never written:
 see `neo-os-web/docs/workspace/ARCHITECTURE-STATUS.generated.md`.

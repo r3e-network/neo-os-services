@@ -84,7 +84,8 @@ test('generator validates Native input before any --write output mutation', () =
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'neoos-identity-generator-'));
   try {
     const service = path.join(dir, 'neo-os-services');
-    for (const repo of ['neo-os-fura', 'neo-os-devpack', 'neo-os-web']) fs.mkdirSync(path.join(dir, repo));
+    for (const repo of ['neo-os-fura', 'neo-os-devpack', 'neo-os-web'])
+      fs.mkdirSync(path.join(dir, repo));
     const write = (relative, text) => {
       const target = path.join(dir, relative);
       fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -165,7 +166,8 @@ function generatorFixture(run) {
     fs.writeFileSync(target, text);
   };
   try {
-    for (const repo of ['neo-os-fura', 'neo-os-devpack', 'neo-os-web']) fs.mkdirSync(path.join(dir, repo));
+    for (const repo of ['neo-os-fura', 'neo-os-devpack', 'neo-os-web'])
+      fs.mkdirSync(path.join(dir, repo));
     for (const relative of [
       'scripts/export-network-identities.mjs',
       'scripts/lib/network-identity-projections.mjs',

@@ -94,7 +94,9 @@ export function isOracleQueryGateConfigured() {
 }
 
 function oracleQueryCredentials() {
-  return [process.env.MORPHEUS_ORACLE_QUERY_API_KEY].map((value) => trimString(value)).filter(Boolean);
+  return [process.env.MORPHEUS_ORACLE_QUERY_API_KEY]
+    .map((value) => trimString(value))
+    .filter(Boolean);
 }
 
 export function isAuthorizedOracleQueryRequest(request: Request) {

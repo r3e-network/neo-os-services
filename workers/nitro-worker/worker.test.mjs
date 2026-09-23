@@ -1999,10 +1999,10 @@ test('feed quote returns all available providers when provider is omitted', asyn
   const registryProviders = getFeedProvidersForPair('NEO-USD');
   assert.ok(registryProviders.length >= 2, 'registry lists the two mocked providers');
   assert.deepEqual(body.providers_requested, registryProviders);
-  assert.deepEqual(
-    body.quotes.map((quote) => quote.provider).sort(),
-    ['binance-spot', 'twelvedata']
-  );
+  assert.deepEqual(body.quotes.map((quote) => quote.provider).sort(), [
+    'binance-spot',
+    'twelvedata',
+  ]);
 });
 
 test('oracle query supports builtin provider mode', async () => {

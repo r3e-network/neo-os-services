@@ -103,8 +103,7 @@ const requiredEither = [
   ['MORPHEUS_RUNTIME_TOKEN', 'NITRO_API_TOKEN', 'NITRO_SHARED_SECRET'],
   ['SUPABASE_SECRET_KEY', 'SUPABASE_SERVICE_ROLE_KEY'],
 ];
-const effectiveRequired =
-  network === 'mainnet' ? [...required, ...requiredOnMainnet] : required;
+const effectiveRequired = network === 'mainnet' ? [...required, ...requiredOnMainnet] : required;
 const missing = effectiveRequired.filter((key) => !getValue(env, runtimeConfig, key));
 const useDerivedKeys = isTrue(getValue(env, runtimeConfig, 'NITRO_USE_DERIVED_KEYS'));
 const missingEither = requiredEither.filter(

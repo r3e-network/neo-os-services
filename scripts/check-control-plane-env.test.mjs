@@ -49,9 +49,7 @@ test('--strict fails a missing rate-limit backend that the plain check only reco
   const plain = runCheck(env);
   assert.equal(plain.status, 0, plain.stderr || plain.stdout);
   assert.equal(plain.report.ok, true);
-  assert.deepEqual(plain.report.optional_recommendations.rate_limit, [
-    'UPSTASH_REDIS_REST_TOKEN',
-  ]);
+  assert.deepEqual(plain.report.optional_recommendations.rate_limit, ['UPSTASH_REDIS_REST_TOKEN']);
   assert.deepEqual(plain.report.missing_strict_required.rate_limit, []);
 
   // --strict must actually mean something: the worker declares rate limits and
@@ -59,9 +57,7 @@ test('--strict fails a missing rate-limit backend that the plain check only reco
   const strict = runCheck(env, ['--strict']);
   assert.equal(strict.status, 1);
   assert.equal(strict.report.ok, false);
-  assert.deepEqual(strict.report.missing_strict_required.rate_limit, [
-    'UPSTASH_REDIS_REST_TOKEN',
-  ]);
+  assert.deepEqual(strict.report.missing_strict_required.rate_limit, ['UPSTASH_REDIS_REST_TOKEN']);
 });
 
 test('--strict also promotes the ingress-auth and execution-plane sections', () => {
