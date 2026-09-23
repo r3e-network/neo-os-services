@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using Neo;
 using Neo.SmartContract.Testing;
@@ -99,6 +100,63 @@ namespace MorpheusOracle.Contracts.Tests
             Assert.Equal(ModuleId, Str(cb[1]));     // ModuleId
             Assert.Equal(Operation, Str(cb[2]));    // Operation
             Assert.False(cb[3] is Neo.VM.Types.Null, "requester populated; legacy adapter passes null");
+        }
+
+        [Fact]
+        public void Fulfill_DispatchesLegacyCallback_WhenRichMethodIsAbsentFromDeployedAbi()
+        {
+            byte[] committeePriv = new byte[32];
+            committeePriv[31] = 1;
+            ProtocolSettings settings = ProtocolSettings.Default with
+            {
+                StandbyCommittee = new[] { new KeyPair(committeePriv).PublicKey },
+                ValidatorsCount = 1,
+            };
+
+            TestEngine engine = new(settings, true);
+            engine.Fee = 10_000 * 100_000_000L;
+            UInt160 owner = engine.Sender;
+            engine.SetTransactionSigners(owner);
+
+            Kernel oracle = engine.Deploy<Kernel>(Kernel.Nef, Kernel.Manifest, null);
+            var legacyManifest = Consumer.Manifest;
+            legacyManifest.Abi.Methods = legacyManifest.Abi.Methods
+                .Where(method => method.Name != "onMiniAppResult")
+                .ToArray();
+            Assert.DoesNotContain(legacyManifest.Abi.Methods,
+                method => method.Name == "onMiniAppResult");
+            Assert.Contains(legacyManifest.Abi.Methods,
+                method => method.Name == "onOracleResult" && method.Parameters.Length == 5);
+            Consumer consumer = engine.Deploy<Consumer>(Consumer.Nef, legacyManifest, null);
+            consumer.SetKernel(oracle.Hash);
+
+            Assert.True(engine.Native.GAS.Transfer(owner, oracle.Hash, 10 * DefaultFee, null) == true);
+            oracle.RegisterMiniApp(AppId, owner, owner, consumer.Hash, "ipfs://meta", "deadbeef");
+            oracle.GrantModuleToMiniApp(AppId, ModuleId);
+
+            UInt160 requester = TestEngine.GetNewSigner().Account;
+            engine.SetTransactionSigners(requester);
+            BigInteger requestId = oracle.SubmitMiniAppRequest(
+                AppId, ModuleId, Operation, new byte[] { 1, 2, 3 })!.Value;
+
+            byte[] verifierPriv = new byte[32];
+            verifierPriv[31] = 7;
+            KeyPair verifier = new KeyPair(verifierPriv);
+            engine.SetTransactionSigners(owner);
+            oracle.ProposeRuntimeVerificationPublicKey(verifier.PublicKey);
+            AdvanceTimeMs(engine, 86_400_000 + 1_000);
+            oracle.ExecuteRuntimeVerificationPublicKey();
+            oracle.SetUpdater(owner);
+
+            byte[] result = new byte[] { 0x01 };
+            byte[] digest = ComputeFulfillmentDigest(
+                requestId, AppId, ModuleId, Operation, true, result, "",
+                oracle.Hash.GetSpan().ToArray(), ProtocolSettings.Default.Network);
+            oracle.FulfillRequest(requestId, true, result, "", SignVerified(digest, verifier));
+
+            IList<object> callback = consumer.GetCallback(requestId)!;
+            Assert.Equal("legacy", Str(callback[0]));
+            Assert.Equal(Operation, Str(callback[2]));
         }
 
         // ── helpers (mirrors MorpheusOracleFeeAccountingTests harness) ───────────────
