@@ -1,10 +1,20 @@
+> **Retracted 2026-09-23.** This guide presented `workers/redis-cache` as finished:
+> "✅ COMPLETE - All cache modules implemented with tests". That was never true. The crate
+> has never compiled, its tests have never run, nothing depends on it, and it is retired:
+> excluded from the Cargo workspace and registered `retired` in the NeoOS module registry
+> (`neo-os-web/docs/workspace/neoos-module-registry.v1.json`). The cargo measurements are
+> recorded beside its `exclude` entry in the root `Cargo.toml`. Read everything below as
+> unimplemented design intent: the latency, hit-rate and metric figures are targets or
+> illustrations, not measurements; the Grafana dashboard it names does not exist; and the
+> "Monitor initial deployment" item under Next Steps records no deployment.
+
 # Redis Caching Layer Implementation Guide for NeoOS Services
 
 ## Executive Summary
 
 This guide documents the comprehensive Redis caching layer implementation designed to reduce API latency p99 from 80ms to <50ms and achieve >90% cache hit rate, reducing database load by ≥60%.
 
-**Implementation Status**: ✅ COMPLETE - All cache modules implemented with tests
+**Implementation Status**: Retracted - not complete. Even with its manifest faults worked around, `cargo check -p redis-cache` fails with 52 compile errors across all seven source files, so none of its 13 test functions has ever run; 9 of them would also need a live Redis at `localhost:6379` (`test_cache_manager_creation` names that address but never connects).
 
 ---
 

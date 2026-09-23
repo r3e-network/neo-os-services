@@ -19,16 +19,25 @@ members = [
 # evaluate its manifest from the nested checkout exactly as CI invokes it.
 # `workers/morpheus-relater-rs` is a retired heartbeat skeleton; excluding it
 # keeps cargo --workspace and measured Docker resolves off its unused graph.
-# `workers/redis-cache` is a complete cache layer (address, policy, pubkey and
-# query caches over the `redis` crate) with NO consumer anywhere in this repo:
-# nothing depends on `redis_cache`, and it is not referenced by any worker or
-# crate. Listing it here is deliberate rather than silent - it was previously in
-# neither `members` nor `exclude`, so `cargo metadata` omitted it and
-# `cargo test --workspace` skipped an entire crate without saying so. It claims
-# workspace inheritance (`edition.workspace = true`), so leaving it unlisted
-# made the manifest lie about what the workspace builds. Promote it to `members`
-# when something starts using it; that also brings its `redis` dependency into
-# the shared lockfile, which is why it is not done speculatively.
+# `workers/redis-cache` is retired (module-registry status `retired`): an
+# unfinished Redis cache layer that nothing here depends on and that has never
+# compiled. It is listed here so that leaving it out is explicit. Measured
+# 2026-09-23 with cargo 1.98:
+#   - while excluded, loading its manifest directly fails: `edition.workspace`
+#     and `license.workspace` cannot be inherited ("failed to find a workspace
+#     root");
+#   - it declares `[[bench]] cache_benchmarks` but has no `benches/` file;
+#   - it requests `redis` 0.25 feature `tokio-runtime`, which does not exist,
+#     so dependency resolution fails;
+#   - even as a member with that bench entry and that feature removed,
+#     `cargo check -p redis-cache` fails with 52 errors across all seven
+#     source files.
+# Do not move it to `members` as it stands: `cargo build`, `check`, `test` and
+# `clippy` then fail for the whole workspace (even `cargo check -p
+# neo-os-core` stops at "could not parse `redis-cache` (manifest)"), and
+# `cargo metadata` and `cargo tree` fail resolving `redis`. `cargo metadata
+# --no-deps` still passes, listing 13 packages, so it cannot vouch for a
+# promotion.
 exclude = ["neo-nexus-contract", "workers/morpheus-relater-rs", "workers/redis-cache"]
 
 # Every member keeps `workers/` or `crates/` positioning without a package.json,
