@@ -1,32 +1,42 @@
-// Morpheus Oracle — compute-in-enclave server (LOCAL).
+// Morpheus Oracle — the pre-split merged Node enclave server. A REFERENCE, not a
+// runtime: no image ships this file and no unit runs it.
 //
-// A single Node process that does the oracle COMPUTE and the on-chain SIGN
-// atomically: it computes the result IN-PROCESS by reusing the worker `handler`
-// (no host hop between compute and signature) and signs the EXACT on-chain
-// fulfillment digest the relayer produces — byte-for-byte — so the on-chain
-// `fulfillRequest` verification is unchanged.
+// What runs instead. The measured frontier (deploy/nitro/Dockerfile.enclave) is
+// the Rust workers/nitro-enclave-host; scripts/check-rust-migration.mjs rejects
+// this file from both measured Dockerfiles. At HEAD every Neo N3 signature is
+// custody-side: the relayer calls that frontier, which signs a fulfillment digest
+// through the custody enclave's /signer/api/v1/sign/raw and a feed transaction
+// through /signer/api/v1/sign/transaction, each under the key its measured
+// SIGNER_ROLE_<ROLE>_KEY_ID pins. The EIF the live mainnet host runs is not this
+// file either: deploy/feed-pusher/FEED-PAIR-REGISTRY.md records it as
+// morpheus-oracle-exec-10, a Node-lineage image built 2026-06-15 whose baked
+// feed-pusher.mjs is at commit fb6c32b, which is not in this repository —
+// nothing here describes what that image signs.
 //
-// CONSENSUS-CRITICAL: the digest, the result envelope and the compact callback
-// bytes are NEVER re-derived here. We IMPORT the canonical builders from the
-// relayer (`router.js` / `neox.js`) and feed them the same inputs the relayer's
-// `prepareOracleFulfillment` feeds them, so the produced signature is identical
-// to today's relayer-path signature. The only thing this server changes is WHERE
-// the compute happens (in-process, inside the measured boundary) and that the
-// signer never sees a caller-supplied `data_hex` for the attested tier.
+// What this file still is:
+//   - The golden-vector reference the Rust port cites line by line. The
+//     consensus-critical builders it used (router.js / neox.js, and the
+//     updateFeeds / updateFeed tx builders below) are exercised byte for byte by
+//     deploy/nitro/enclave-server.test.mjs.
+//   - A working NeoX (EVM) fulfillment and feed-signing lane that reads its key
+//     from process.env (image ENV or an in-TEE KMS release). That lane is left
+//     in place by owner decision; /provision refuses its plaintext key names.
+//   - /attestation, /provision (runtime-token bootstrap/rotation and the X25519 /
+//     NeoDID / NeoX KMS releases), the execution-plane passthrough and
+//     /oracle/public-key.
 //
-// Scope:
-//   - `POST /oracle/fulfill` — atomic compute+sign (the attested fulfillment tier).
-//   - `POST /feed/sign`      — feed compute (price fetch + planFeedUpdate + scale)
-//                              + sign of the SAME updateFeeds tx the feed-pusher
-//                              signs today. Byte-identical to feed-pusher.mjs.
-//   - `GET|POST /attestation`— nsm-attest passthrough, binding
-//                              user_data = sha256(fulfillment_digest|tx_message),
-//                              --public-key (signer pubkey), --nonce.
-//   - `GET /health`          — compute + signer readiness.
+// What it no longer is: a Neo N3 signer. S5 retired plaintext signing keys on
+// every process and this file has no custody client, so its Neo N3 lanes answer
+// HTTP 410 with error_code neo_n3_signer_retired and name their replacement:
+//   - POST /oracle/fulfill for chain neo_n3 / legacy
+//   - POST /feed/sign for chain neo_n3 / legacy (updateFeeds and the testnet-only
+//     per-pair updateFeed)
+//   - POST /sign/payload (blind signing) and POST /keys/derived
+// /health reports ready:false with the Neo N3 signer marked retired.
 
 import http from 'node:http';
 import { execFile, execFileSync } from 'node:child_process';
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 
 // Canonical compute reuse — the worker's default export `handler(Request)=>Response`.
 import workerHandler from '../../workers/nitro-worker/src/worker.js';
@@ -39,7 +49,6 @@ import workerHandler from '../../workers/nitro-worker/src/worker.js';
 //   - buildOnchainResultEnvelope is imported separately for the `verification` field
 //     (it equals the JSON the relayer puts on-chain as `result`).
 import {
-  buildFulfillmentDigestBytes,
   buildWorkerPayload,
   buildOnchainResultEnvelope,
   encodeFulfillmentResult,
@@ -54,20 +63,23 @@ import {
   resolveResultBytesHex,
 } from '../../workers/morpheus-relayer/src/neox.js';
 
-// Signer role/key resolution — the SAME resolution the enclave signer
-// (nitro-signer-server.mjs) uses: reportPinnedNeoN3Role -> materialized key ->
-// neon-js wallet.sign (secp256r1). Those functions are not exported from the
-// signer server, so we reuse the shared resolver + sign inline with neon-js.
-import { reportPinnedNeoN3Role, normalizeMorpheusNetwork } from '../../scripts/lib-neo-signers.mjs';
+// Pinned-role PUBLIC identities only: /attestation binds the pinned verifier's
+// public key. No Neo N3 private key is resolved here (the shared resolver
+// materializes none since S5, and refuses a plaintext one by name).
+import {
+  NEO_N3_RETIRED_PLAINTEXT_KEY_ENV_NAMES,
+  reportPinnedNeoN3Role,
+  normalizeMorpheusNetwork,
+} from '../../scripts/lib-neo-signers.mjs';
 import { decodeCoseSign1Payload } from '../../packages/shared/src/cbor.js';
 import neonPkg from '@cityofzion/neon-js';
 
 const { wallet: neoWallet, sc, tx, u } = neonPkg;
 
 // Canonical feed decision core — IMPORTED from the feed-pusher (the SAME function
-// the host feed-pusher uses today), never re-implemented. td()/the tx builder are
-// NOT exported by feed-pusher.mjs, so those are mirrored precisely below (the
-// updateFeeds tx must be byte-identical to feed-pusher.mjs `pushNeoN3`).
+// the host feed-pusher uses), never re-implemented; the NeoX feed lane uses it.
+// td()/the N3 tx builder are NOT exported by feed-pusher.mjs, so they are mirrored
+// below (the updateFeeds tx must stay byte-identical to feed-pusher.mjs `pushNeoN3`).
 //
 // feed-pusher.mjs runs a live push cycle on import unless FEED_PUSHER_SKIP_MAIN=1.
 // We pin it BEFORE the dynamic import so importing it here never touches a live
@@ -105,9 +117,10 @@ const EXECUTION_PLANE_PASSTHROUGH = [
   '/neodid/recovery-ticket',
 ];
 
-// ── Neo N3 feed contract constants — MIRRORED EXACTLY from feed-pusher.mjs ──────
-// These MUST stay identical to feed-pusher.mjs (pushNeoN3) or the signed
-// updateFeeds message diverges from what the deployed MorpheusDataFeed verifies.
+// ── Neo N3 feed contract pins — MIRRORED EXACTLY from feed-pusher.mjs ──────────
+// The updateFeeds / updateFeed tx builders below take the feed contract + magic
+// from the bound network identity, identical to feed-pusher.mjs (pushNeoN3), so
+// the byte checks in enclave-server.test.mjs hold the feed-pusher to them.
 function feedNetworkPins() {
   try {
     return bindEnclaveNetworkIdentity(process.env);
@@ -117,16 +130,50 @@ function feedNetworkPins() {
   }
 }
 
-const FEED_N3_PAIR_PREFIX = 'TWELVEDATA:';
-const FEED_PRICE_SCALE = 1e6; // px = Math.round(price * 1e6)  (feed-pusher.mjs:278/290)
 const FEED_VALID_UNTIL_OFFSET = 500; // count + 500  (feed-pusher.mjs:315)
 const FEED_TD_TIMEOUT_MS = Math.max(Number(process.env.FEED_TD_TIMEOUT_MS || 25000), 1000);
 const MAX_BODY_BYTES = Math.max(Number(process.env.ENCLAVE_MAX_BODY_BYTES || 262144), 1024);
-// Hard security ceilings, intentionally not runtime-configurable: the untrusted
-// parent supplies preliminary fee estimates, but must not turn the updater into
-// a GAS-draining signer. Neo N3 fees are fixed-8 integers (1 GAS = 1e8).
-const FEED_N3_MAX_SYSTEM_FEE = 10 * 1e8;
-const FEED_N3_MAX_NETWORK_FEE = 2 * 1e8;
+
+// ── Retired Neo N3 signing lanes ─────────────────────────────────────────────────
+// S5 retired plaintext signing keys on every process, and this file has no custody
+// client, so it cannot produce a Neo N3 signature. Each former Neo N3 lane answers
+// 410 with this stable code, the route, and the Rust replacement, BEFORE it
+// validates, computes, or looks at any key: a caller learns where the lane went,
+// never a half-answer.
+export const NEO_N3_SIGNER_RETIRED_CODE = 'neo_n3_signer_retired';
+export const NEO_N3_SIGNER_REPLACEMENT = 'workers/nitro-enclave-host';
+
+const NEO_N3_RETIRED_LANES = Object.freeze({
+  '/oracle/fulfill':
+    'Neo N3 fulfillment signing (chain neo_n3 / legacy) is retired from ' +
+    'deploy/nitro/enclave-server.mjs (S5: this process holds no Neo N3 key). It lives in ' +
+    'workers/nitro-enclave-host: its /oracle/fulfill computes in the measured image and ' +
+    'signs the digest through custody /signer/api/v1/sign/raw with ' +
+    'SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID.',
+  '/feed/sign':
+    'Neo N3 feed signing (updateFeeds, and the testnet per-pair updateFeed) is retired from ' +
+    'deploy/nitro/enclave-server.mjs (S5: this process holds no Neo N3 key). It lives in ' +
+    'workers/nitro-enclave-host: its /feed/sign signs updateFeeds through custody ' +
+    '/signer/api/v1/sign/transaction with SIGNER_ROLE_UPDATER_KEY_ID.',
+  '/sign/payload':
+    'blind payload signing is retired from deploy/nitro/enclave-server.mjs (S5: this ' +
+    'process holds no Neo N3 key). workers/nitro-enclave-host keeps its /sign/payload ' +
+    'closed unless its measured image sets ENCLAVE_ALLOW_BLIND_SIGN=1, and signs the ' +
+    'semantic lanes (/oracle/fulfill, /feed/sign) through custody instead.',
+  '/keys/derived':
+    'role identity reporting is retired from deploy/nitro/enclave-server.mjs (S5: this ' +
+    'process holds no Neo N3 key). workers/nitro-enclave-host answers /keys/derived from ' +
+    'the custody key its SIGNER_ROLE_<ROLE>_KEY_ID pins.',
+});
+
+// errorCode / details (not `code`, which Node system errors also carry) are the
+// only fields dispatch copies into an error body besides the message.
+function neoN3SignerRetired(route) {
+  const error = httpError(410, NEO_N3_RETIRED_LANES[route]);
+  error.errorCode = NEO_N3_SIGNER_RETIRED_CODE;
+  error.details = { route, replacement: NEO_N3_SIGNER_REPLACEMENT };
+  return error;
+}
 
 function trimString(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -160,21 +207,16 @@ function resolveWorkerAuthToken() {
 }
 
 // ---------------------------------------------------------------------------
-// Runtime provisioning + auth — folds in the signer surface so this merged
-// enclave is a strict SUPERSET of nitro-signer-server.mjs.
+// Runtime provisioning + auth
 // ---------------------------------------------------------------------------
 //
-// A Nitro enclave boots with only the baked image ENV (no host env, no keys), so
-// keys + network + the worker's runtime config arrive at runtime via POST
-// /provision (exactly as the signer does). We write the provisioned values into
-// process.env so the EXISTING reads (resolveNetwork(), reportPinnedNeoN3Role({env:
-// process.env}), resolveWorkerAuthToken(), and the in-process worker handler's own
-// config) all observe them with no further plumbing. Carrying /provision +
-// /sign/payload + /keys/derived means the host start script and the flag-OFF
-// relayer path (host-worker compute + a separate enclave /sign/payload) keep
-// working byte-for-byte on this EIF — so swapping the signer EIF for this one is
-// non-breaking, and flipping MORPHEUS_RELAYER_ENCLAVE_FULFILL later moves compute
-// into the measured boundary.
+// A Nitro enclave boots with only the baked image ENV, so network, the worker's
+// runtime config, the runtime token and KMS ciphertexts arrive via POST
+// /provision. The provisioned values are written into process.env so the existing
+// reads (resolveNetwork(), resolveWorkerAuthToken(), the in-process worker
+// handler's own config, the KMS releases) observe them with no further plumbing.
+// /provision validates EVERYTHING before it writes anything: a refused or failing
+// provision leaves process.env exactly as it found it (see handleProvision).
 
 const TOKEN_ENV_KEYS = [
   'NITRO_SIGNER_TOKEN',
@@ -186,20 +228,63 @@ const RUNTIME_TOKEN_KMS_CIPHERTEXT_ENV = 'MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_
 const RUNTIME_TOKEN_KMS_PURPOSE = 'neoos/nitro-runtime-auth/v1';
 let runtimeTokenKmsVersion = 0;
 
-// SECURITY (S5): No plaintext signing keys ever leave KMS or appear in any runtime
-// environment. All Neo N3 and NeoX signing uses the custody enclave via SIGNER_ROLE_*_KEY_ID
-// - private key material exists ONLY inside the TEE as sealed artifacts under the signer
-// service's vault, never as env vars on any process. This list is now empty because no
-// plaintext signing keys are acceptable on any runtime process.
-// SECURITY (S5): No plaintext signing key env vars are acceptable on any runtime
-// process. All signing uses the custody enclave via SIGNER_ROLE_*_KEY_ID.
-const PLAINTEXT_KEY_ENV_KEYS = [
+// SECURITY (S5): plaintext key material a compromised parent could otherwise inject
+// through /provision. Every name here is refused with 403, whatever the process
+// env says: only attestation-gated *_KMS_CIPHERTEXT_BASE64 values cross this
+// boundary. The list is IDENTICAL to PLAINTEXT_KEY_ENV_KEYS in
+// workers/nitro-enclave-host/src/provision.rs — enclave-server.test.mjs parses the
+// Rust list and fails on any difference, so the two cannot drift again (942adfe
+// once dropped the 18 signing-key names here while the Rust port kept them).
+export const PLAINTEXT_KEY_ENV_KEYS = Object.freeze([
+  // Neo N3 (secp256r1) WIFs / raw keys.
+  'MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET',
+  'MORPHEUS_ORACLE_VERIFIER_WIF_TESTNET',
+  'MORPHEUS_ORACLE_VERIFIER_WIF',
+  'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_MAINNET',
+  'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_TESTNET',
+  'MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET',
+  'MORPHEUS_UPDATER_NEO_N3_WIF_TESTNET',
+  'MORPHEUS_UPDATER_NEO_N3_WIF',
+  'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET',
+  'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_TESTNET',
+  // Neo X (EVM, secp256k1) keys. The NeoX lanes below still READ these from
+  // process.env (image ENV or an in-TEE KMS release); /provision never writes them.
+  'MORPHEUS_NEOX_VERIFIER_PRIVATE_KEY',
+  'MORPHEUS_NEOX_VERIFIER_KEY',
+  'NEOX_VERIFIER_PK',
+  'MORPHEUS_NEOX_UPDATER_PRIVATE_KEY',
+  'NEOX_UPDATER_PK',
+  'MORPHEUS_NEOX_FEED_PRIVATE_KEY',
+  'NEOX_FEED_PK',
+  'NEOX_FEED_PRIVATE_KEY',
   // X25519 oracle confidential-decrypt key material.
   'MORPHEUS_ORACLE_KEY_MATERIAL_JSON',
   'MORPHEUS_ORACLE_KEY_MATERIAL_BASE64',
   // NeoDID nullifier/ticket salt.
   'NEODID_SECRET_SALT',
-];
+  // Game-session HMAC root (non-signing, but just as confidential).
+  'MORPHEUS_GAME_SECRET_ROOT_HEX',
+]);
+
+// Plaintext key names this Node /provision also refuses, beyond the Rust list.
+// The Rust frontier refuses them too, as non-allowlisted names (400); this file
+// has no allowlist, so it must name them: every Neo N3 private-key / WIF name the
+// pinned-role resolver read before S5 (MORPHEUS_RELAYER_NEO_N3_WIF, NEO_N3_WIF,
+// MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY, ...), and the PKCS8 half of the X25519
+// key the in-process worker (oracle/crypto.js) still accepts from env.
+// PLAINTEXT_KEY_ENV_KEYS stays the Rust list verbatim (parity-checked).
+export const NODE_ONLY_PLAINTEXT_KEY_ENV_KEYS = Object.freeze(
+  [
+    ...new Set([
+      ...Object.values(NEO_N3_RETIRED_PLAINTEXT_KEY_ENV_NAMES).flatMap((byRole) =>
+        Object.values(byRole).flat()
+      ),
+      'MORPHEUS_ORACLE_PRIVATE_KEY_PKCS8',
+    ]),
+  ]
+    .filter((name) => !PLAINTEXT_KEY_ENV_KEYS.includes(name))
+    .sort()
+);
 
 // The set of accepted bearer tokens, derived live from process.env (so a
 // /provision that adds a token takes effect immediately).
@@ -373,71 +458,32 @@ export function __resetEnclaveNetworkIdentityForTests() {
   __resetBoundEnclaveNetworkIdentityForTests();
 }
 
-function normalizeSignerRole(value) {
-  const role = trimString(value).toLowerCase();
-  if (role === 'oracle_verifier' || role === 'verifier') return 'oracle_verifier';
-  if (role === 'updater') return 'updater';
-  if (role === 'relayer') return 'relayer';
-  if (role === 'worker') return 'worker';
-  return null;
+// The Neo N3 signer this file used to be. /health and /provision report it
+// instead of per-role health, so neither claims a capability the file lost.
+function neoN3SignerRetiredDescriptor() {
+  return {
+    status: 'retired',
+    error_code: NEO_N3_SIGNER_RETIRED_CODE,
+    replacement: NEO_N3_SIGNER_REPLACEMENT,
+  };
 }
 
-// F-9: an absent or unmappable role used to sign as `updater`. It never signs
-// now — the caller names the role it is entitled to, or the request leaves.
-function requireSignerRole(role) {
-  if (!role) {
-    throw httpError(
-      400,
-      'key_role is required and must name a signer role; refusing to act under a defaulted role'
-    );
-  }
-  return role;
-}
-
-// Whether a KMS ciphertext is provisioned for a given signer role. When a key is
-// materialized AND its ciphertext is present, the key is KMS-attested; a
-// materialized key with NO ciphertext came from a host-provided plaintext env var.
-function roleHasKmsCiphertext(role) {
-  if (role === 'oracle_verifier') {
-    return Boolean(trimString(process.env.MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64));
-  }
-  if (role === 'updater') {
-    return Boolean(trimString(process.env.MORPHEUS_UPDATER_NEO_N3_KMS_CIPHERTEXT_BASE64));
-  }
-  return false;
-}
-
-// Classify how a (materialized) role key reached the enclave: 'kms_attested' when
-// recovered in-TEE from a provisioned KMS ciphertext, else 'host_plaintext' (a
-// directly-provided plaintext key — only possible when the plaintext-provision
-// opt-in is on). 'none' when no key is materialized. Surfaced via /health so any
-// reliance on a plaintext key is detectable.
-function roleKeySource(role, materialized) {
-  if (!materialized) return 'none';
-  return roleHasKmsCiphertext(role) ? 'kms_attested' : 'host_plaintext';
-}
-
-// Pinned-role health for the two signing roles the enclave holds (matches the
-// signer's signerHealth()). Used by /provision + folded into /health.
-function signerRolesHealth() {
-  const network = resolveNetwork();
-  return ['updater', 'oracle_verifier'].map((role) => {
-    const report = reportPinnedNeoN3Role(network, role, { env: process.env, allowMissing: false });
-    const materialized = Boolean(report.materialized);
-    return {
-      role,
-      ok: report.ok && materialized,
-      identity: report.selected_identity || report.pinned || null,
-      issues: report.issues,
-      key_source: roleKeySource(role, materialized),
-    };
-  });
-}
-
-// POST /provision — inject keys + network + worker config at runtime. Mirrors the
-// signer's handleProvision, but writes into process.env (the merged server reads
-// process.env everywhere) instead of a separate overlay.
+// POST /provision. Two phases, and their order is the contract:
+//   planProvision  — every check that can refuse (403 plaintext / runtime-token
+//                    names, 401/503 KMS runtime-token release, 409 version
+//                    replay, 400/409 network identity) runs here and writes
+//                    NOTHING;
+//   applyProvision — writes the validated values, then runs the best-effort
+//                    in-TEE KMS releases, none of which can throw.
+// So a refused or failing provision leaves process.env exactly as it found it.
+// (942adfe broke this: it deleted two materializers this function still called,
+// so every provision that passed validation wrote its payload — runtime token
+// included — into process.env and then answered 500.)
 function handleProvision(payload, bootstrapRuntimeToken = null) {
+  return applyProvision(planProvision(payload, bootstrapRuntimeToken));
+}
+
+function planProvision(payload, bootstrapRuntimeToken) {
   const env = resolveProvisionEnv(payload);
   // Plaintext key provisioning is not a runtime policy knob. A compromised host
   // must not be able to enable it in one request and inject a known signer or
@@ -449,7 +495,8 @@ function handleProvision(payload, bootstrapRuntimeToken = null) {
         trimString(env[key]) &&
         (key === 'MORPHEUS_ALLOW_PLAINTEXT_KEY_PROVISION' ||
           TOKEN_ENV_KEYS.includes(key) ||
-          PLAINTEXT_KEY_ENV_KEYS.includes(key))
+          PLAINTEXT_KEY_ENV_KEYS.includes(key) ||
+          NODE_ONLY_PLAINTEXT_KEY_ENV_KEYS.includes(key))
     )
     .sort();
   if (rejected.length) {
@@ -459,122 +506,61 @@ function handleProvision(payload, bootstrapRuntimeToken = null) {
         `*_KMS_CIPHERTEXT_BASE64 value instead. Rejected: ${rejected.join(', ')}`
     );
   }
-  const nextRuntimeToken = trimString(env[RUNTIME_TOKEN_KMS_CIPHERTEXT_ENV])
+  // Exactly the assignments applyProvision will make — the network-identity check
+  // below validates these values, not a looser reading of the payload.
+  const staged = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (!/^[A-Z0-9_]{1,96}$/.test(key)) continue;
+    const text = trimString(value);
+    if (text) staged[key] = text;
+  }
+  const nextRuntimeToken = staged[RUNTIME_TOKEN_KMS_CIPHERTEXT_ENV]
     ? bootstrapRuntimeToken || materializeProvisionRuntimeToken(payload)
     : null;
   if (nextRuntimeToken && nextRuntimeToken.version <= runtimeTokenKmsVersion) {
     throw httpError(409, 'runtime authorization KMS envelope version must increase monotonically');
   }
-  let provisionedIdentity = null;
+  let bindIdentity = false;
   try {
-    provisionedIdentity = assertProvisionEnclaveNetworkIdentity(process.env, env);
+    bindIdentity = Boolean(assertProvisionEnclaveNetworkIdentity(process.env, staged));
   } catch (error) {
     const summary = error instanceof Error ? error.message : String(error);
     throw httpError(/immutable/.test(summary) ? 409 : 400, summary);
   }
-  const applied = [];
-  for (const [key, value] of Object.entries(env)) {
-    if (!/^[A-Z0-9_]{1,96}$/.test(key)) continue;
-    const text = trimString(value);
-    if (text) {
-      process.env[key] = text;
-      applied.push(key);
-    }
+  return { staged, nextRuntimeToken, bindIdentity };
+}
+
+function applyProvision({ staged, nextRuntimeToken, bindIdentity }) {
+  for (const [key, value] of Object.entries(staged)) {
+    process.env[key] = value;
   }
   if (nextRuntimeToken) {
     process.env.MORPHEUS_RUNTIME_TOKEN = nextRuntimeToken.token;
     runtimeTokenKmsVersion = nextRuntimeToken.version;
   }
-  // Provisioning may have rotated a signer env var — drop the materialized-signer cache so
-  // the next sign call re-resolves against the new key material. (Round-2 R2-2.1.)
-  if (applied.length > 0) clearResolvedSignerCache();
-  if (provisionedIdentity) {
+  // planProvision validated these exact values against the bound identity, so
+  // binding them cannot refuse.
+  if (bindIdentity) {
     bindEnclaveNetworkIdentity(process.env);
   }
-  // If a KMS-attested oracle-key ciphertext was provisioned, recover the key
-  // material in-TEE now (before any decrypt request needs it) so the host never
-  // injects plaintext. No-op when not configured or already materialized.
+  // In-TEE KMS releases (the host only ever holds ciphertext). Each is a no-op
+  // when its ciphertext is absent or its target already set, and each logs and
+  // returns on failure rather than throwing.
   materializeOracleKeyFromKms();
   materializeNeoDidSaltFromKms();
-  // Same KMS-attestation path for the Neo X (EVM) verifier + feed keys, so EVM
-  // oracle fulfillments and feed-update txs are signed in-TEE with no host-resident
-  // secp256k1 key. No-op when not configured (e.g. EVM not yet enabled on this host).
+  // The NeoX (EVM) verifier + feed keys the NeoX lanes read from process.env.
   materializeNeoXVerifierKeyFromKms();
   materializeNeoXFeedKeyFromKms();
-  // Neo N3 signer keys (oracle_verifier + updater) recovered in-TEE from KMS when sealed;
-  // no-op until their ciphertexts are provisioned (plaintext WIF still works meanwhile).
-  materializeNeoN3OracleVerifierKeyFromKms();
-  materializeNeoN3UpdaterKeyFromKms();
   // Non-destructive probe of the attestation-gated KMS path (no-op unless a diag
   // ciphertext is provisioned); result surfaced via /health for diagnostics.
   runKmsDiag();
-  const roles = signerRolesHealth();
   return {
-    status: roles.every((entry) => entry.ok) ? 'ok' : 'degraded',
+    status: 'ok',
     runtime: 'morpheus-enclave-server',
     network: resolveNetwork(),
     provisioned: true,
-    env_keys: applied.sort(),
-    roles,
-  };
-}
-
-// POST /sign/payload — sign caller-supplied data_hex with a pinned role key. This
-// is the signer's blind-sign endpoint, carried so the flag-OFF relayer path keeps
-// working during cutover. Once MORPHEUS_RELAYER_ENCLAVE_FULFILL is on the relayer
-// uses /oracle/fulfill (attested compute+sign) and this path goes unused.
-function handleSignPayload(payload) {
-  const role = requireSignerRole(
-    normalizeSignerRole(payload.key_role || payload.dstack_key_role || payload.role)
-  );
-  const dataHex = normalizeHex(payload.data_hex || payload.message_hex || '');
-  if (!/^[0-9a-f]+$/.test(dataHex) || dataHex.length % 2 !== 0) {
-    throw httpError(400, 'data_hex is required');
-  }
-  const network = resolveNetwork();
-  const report = reportPinnedNeoN3Role(network, role, { env: process.env, allowMissing: false });
-  if (!report.ok || !report.materialized) {
-    throw httpError(503, `${role} signer is not configured or does not match pinned identity`);
-  }
-  const secret = report.materialized.private_key || report.materialized.wif;
-  const account = new neoWallet.Account(secret);
-  const signature = neoWallet.sign(dataHex, account.privateKey);
-  return {
-    status: 'ok',
-    network,
-    role,
-    signature,
-    signature_hex: signature,
-    public_key: account.publicKey,
-    address: account.address,
-    script_hash: `0x${account.scriptHash}`,
-    key_source: 'nitro_explicit_pinned',
-  };
-}
-
-// POST /keys/derived — report a pinned role's public Neo identity (no secret).
-function handleKeysDerived(payload) {
-  const role = requireSignerRole(
-    normalizeSignerRole(payload.role || payload.key_role || payload.dstack_key_role)
-  );
-  const network = resolveNetwork();
-  const report = reportPinnedNeoN3Role(network, role, { env: process.env, allowMissing: false });
-  if (!report.ok || !report.materialized) {
-    throw httpError(503, `${role} signer is not configured or does not match pinned identity`);
-  }
-  const identity = report.selected_identity || report.pinned || {};
-  const neo = {
-    address: identity.address || null,
-    script_hash: identity.script_hash || null,
-    public_key: identity.public_key || report.public_key || null,
-  };
-  return {
-    status: 'ok',
-    network,
-    role,
-    derived: { neo_n3: neo },
-    neo_n3: neo,
-    key_source: 'nitro_explicit_pinned',
+    env_keys: Object.keys(staged).sort(),
+    neo_n3_signer: neoN3SignerRetiredDescriptor(),
   };
 }
 
@@ -623,63 +609,10 @@ async function computeViaWorker(route, workerPayload) {
 }
 
 // ---------------------------------------------------------------------------
-// Signing
+// Signing — NeoX only. The Neo N3 signer (the pinned-role key cache,
+// signNeoN3OracleVerifier, the updater signer) is gone: since S5 the shared
+// resolver materializes no Neo N3 key, so those helpers could only ever throw.
 // ---------------------------------------------------------------------------
-
-// Signer-key memoization (Round-2 R2-2.1). signNeoN3OracleVerifier / resolveUpdaterIdentity
-// each call reportPinnedNeoN3Role, which materializes up to ~12 candidate neon.Account
-// objects (WIF decode + secp256r1 pubkey + script-hash) per call — work that is identical
-// across calls unless /provision (or a KMS materialization) writes a new signer env var.
-// Cache the materialized account per (network, role) and clear the cache on every
-// process.env key mutation in handleProvision + materialize*FromKms. signerRolesHealth and
-// the /health handler stay UNCACHED (they must reflect live key material). The cache holds
-// the neon account + the resolved report (so the second `new neoWallet.Account(secret)` in
-// the signers is also eliminated — they reuse the cached account directly).
-const resolvedSignerCache = new Map();
-function clearResolvedSignerCache() {
-  resolvedSignerCache.clear();
-}
-function resolvePinnedSigner(network, role) {
-  const cacheKey = `${network}:${role}`;
-  const cached = resolvedSignerCache.get(cacheKey);
-  if (cached) return cached;
-  const report = reportPinnedNeoN3Role(network, role, {
-    env: process.env,
-    allowMissing: false,
-  });
-  if (!report.ok || !report.materialized) {
-    return null;
-  }
-  const secret = report.materialized.private_key || report.materialized.wif;
-  const account = new neoWallet.Account(secret);
-  const entry = { account, report };
-  resolvedSignerCache.set(cacheKey, entry);
-  return entry;
-}
-
-// Resolve + sign with the oracle_verifier secp256r1 (Neo N3) key, using the SAME
-// role/key resolution the enclave signer uses (reportPinnedNeoN3Role) and the SAME
-// signing primitive (neon-js wallet.sign over the digest hex). The materialized account
-// is cached per (network, 'oracle_verifier') so the ~12-candidate secp256r1 derivation
-// runs once per process unless /provision or KMS materialization rotates the key.
-function signNeoN3OracleVerifier(digestBytes) {
-  const resolved = resolvePinnedSigner(resolveNetwork(), 'oracle_verifier');
-  if (!resolved) {
-    throw new Error('oracle_verifier signer is not configured or does not match pinned identity');
-  }
-  const { account } = resolved;
-  const digestHex = Buffer.isBuffer(digestBytes)
-    ? digestBytes.toString('hex')
-    : normalizeHex(digestBytes);
-  const signature = neoWallet.sign(digestHex, account.privateKey);
-  return {
-    signature,
-    public_key: account.publicKey,
-    address: account.address,
-    script_hash: `0x${account.scriptHash}`,
-    source: 'enclave_oracle_verifier',
-  };
-}
 
 // Build a config-shaped object for the EVM digest/sign builders from the request's
 // fulfillment_context (chain_id + oracle_contract) + the verifier key from env.
@@ -710,7 +643,7 @@ function resolveNeoXConfig(fulfillmentContext) {
 }
 
 // ---------------------------------------------------------------------------
-// /oracle/fulfill — atomic compute + sign
+// /oracle/fulfill — atomic compute + sign (NeoX); Neo N3 / legacy answer 410
 // ---------------------------------------------------------------------------
 
 function normalizeChain(value) {
@@ -763,6 +696,9 @@ async function computeWorkerResponse(
 
 export async function handleOracleFulfill(requestBody) {
   const chain = normalizeChain(requestBody?.chain);
+  // Retired before validation, compute, or any key lookup: this lane has no Neo N3
+  // signer, and a caller must learn that rather than a validation detail.
+  if (chain !== 'neox') throw neoN3SignerRetired('/oracle/fulfill');
   const requestType = trimString(requestBody?.request_type || requestBody?.requestType || '');
   const requestId = trimString(requestBody?.request_id ?? requestBody?.requestId ?? '');
   const payload =
@@ -834,49 +770,21 @@ export async function handleOracleFulfill(requestBody) {
   const resultBytesBase64 = fulfillment.result_bytes_base64 || '';
   const error = fulfillment.error || '';
 
-  // (d)+(e) BUILD the digest with the imported canonical builder + SIGN atomically.
-  let signed;
-  let digestHex;
-  if (chain === 'neox') {
-    const neoxConfig = resolveNeoXConfig(fulfillmentContext);
-    const evmFulfillment = {
-      requestId,
-      appId,
-      moduleId,
-      operation,
-      success,
-      result,
-      result_bytes_base64: resultBytesBase64,
-      error,
-    };
-    const resultBytesHex = resolveResultBytesHex(result, resultBytesBase64);
-    digestHex = buildNeoXDigest(neoxConfig, evmFulfillment, resultBytesHex);
-    signed = await signNeoXFulfillment(neoxConfig, evmFulfillment);
-  } else {
-    // Neo N3 / legacy: bind to the executing contract + network magic when supplied
-    // (matches signFulfillmentPayload, which appends contractScriptHash + magic).
-    const digestContext = {
-      chain,
-      appId,
-      moduleId,
-      operation,
-      contractScriptHash: trimString(
-        fulfillmentContext.contract_script_hash || fulfillmentContext.contractScriptHash || ''
-      ),
-      networkMagic: fulfillmentContext.network_magic ?? fulfillmentContext.networkMagic,
-    };
-    const digestBytes = buildFulfillmentDigestBytes(
-      requestId,
-      requestType,
-      success,
-      result,
-      error,
-      resultBytesBase64,
-      digestContext
-    );
-    digestHex = digestBytes.toString('hex');
-    signed = signNeoN3OracleVerifier(digestBytes);
-  }
+  // (d)+(e) BUILD the EVM digest with the imported canonical builder + SIGN atomically.
+  const neoxConfig = resolveNeoXConfig(fulfillmentContext);
+  const evmFulfillment = {
+    requestId,
+    appId,
+    moduleId,
+    operation,
+    success,
+    result,
+    result_bytes_base64: resultBytesBase64,
+    error,
+  };
+  const resultBytesHex = resolveResultBytesHex(result, resultBytesBase64);
+  const digestHex = buildNeoXDigest(neoxConfig, evmFulfillment, resultBytesHex);
+  const signed = await signNeoXFulfillment(neoxConfig, evmFulfillment);
 
   // (f) Return the contract. result_bytes_base64 only present for compact lanes
   // (vrf/neodid). nonce echoed for the relayer/verifier freshness binding.
@@ -954,16 +862,15 @@ function extractAttestationPcrs(docBase64) {
 }
 
 // ---------------------------------------------------------------------------
-// /feed/sign — feed COMPUTE (fetch + plan + scale) + SIGN the updateFeeds tx
+// /feed/sign — NeoX feed COMPUTE (fetch + plan + scale) + SIGN; Neo N3 answers 410
 // ---------------------------------------------------------------------------
 //
-// Moves the feed value+decision in-enclave. It MIRRORS feed-pusher.mjs precisely:
-//   1. td(symbols)           -> per-symbol TwelveData price (drop non-positive)
-//   2. planFeedUpdate(...)   -> IMPORTED from feed-pusher.mjs (the SAME decision)
-//   3. px = Math.round(price * 1e6); AH = sha256(`${s}|${px}|${ts}`).slice(0,32)
-//   4. build the SAME updateFeeds(P,R,PX,TS,AH,SS) tx and sign
-//      txn.getMessageForSigning(N3_MAGIC) with the `updater` role.
-// The signed message MUST be byte-identical to feed-pusher.mjs `pushNeoN3`.
+// The NeoX lane moves the feed value+decision in-enclave and signs the EIP-1559
+// updateFeeds tx with the NeoX feed key from process.env. The Neo N3 lane
+// (updateFeeds, and the testnet-only per-pair updateFeed) is retired: this file
+// has no Neo N3 signer. The two N3 tx builders stay, exported and unused by any
+// route, as the byte-exact mirror of feed-pusher.mjs `pushNeoN3` that
+// enclave-server.test.mjs holds the feed-pusher construction to.
 
 // Price fetch — MIRRORS feed-pusher.mjs td() exactly (URL, parse, non-positive
 // drop). Injectable seam (__setPriceFetcherForTests) so the route is unit-testable
@@ -1004,30 +911,10 @@ export function __resetPriceFetcherForTests() {
   activePriceFetcher = defaultPriceFetcher;
 }
 
-// Network params that feed-pusher derives from live RPC (getblockcount,
-// invokescript, calculatenetworkfee). Injectable so the test reproduces the EXACT
-// tx; in production the enclave fills them via vsock-proxy RPC (Phase >=3).
-let activeFeedTxParamsProvider = defaultFeedTxParamsProvider;
-
-async function defaultFeedTxParamsProvider() {
-  throw httpError(
-    503,
-    'feed tx network params (block_count/system_fee/network_fee) unavailable: ' +
-      'supply tx_params in the request or configure an RPC provider'
-  );
-}
-
-export function __setFeedTxParamsProviderForTests(fn) {
-  activeFeedTxParamsProvider = typeof fn === 'function' ? fn : defaultFeedTxParamsProvider;
-}
-
-export function __resetFeedTxParamsProviderForTests() {
-  activeFeedTxParamsProvider = defaultFeedTxParamsProvider;
-}
-
 // Build the EXACT updateFeeds transaction feed-pusher.mjs pushNeoN3 builds, and
 // return its signing message. The construction mirrors pushNeoN3 (lines 300-336)
-// field-for-field.
+// field-for-field. No route calls this since the Neo N3 feed lane was retired; it
+// is kept as the byte-exact reference enclave-server.test.mjs checks.
 //
 // IMPORTANT (consensus correctness): tx.Transaction assigns a RANDOM `nonce` when
 // one is not supplied, which makes getMessageForSigning() non-deterministic. In
@@ -1102,81 +989,6 @@ export function buildUpdateFeedTxMessage(planned, txParams, updaterPublicKey) {
   txn.systemFee = u.BigInteger.fromNumber(txParams.systemFee);
   txn.networkFee = u.BigInteger.fromNumber(txParams.networkFee);
   return { txn, script, message: txn.getMessageForSigning(pins.magic) };
-}
-
-function resolveEnclaveFeedWriteMode(requestBody, network) {
-  const raw = String(requestBody?.write_mode || requestBody?.operation || 'updateFeeds')
-    .trim()
-    .toLowerCase();
-  if (raw === 'updatefeeds' || raw === 'batch_update_feeds') return 'updateFeeds';
-  if (raw === 'updatefeed' || raw === 'per_pair_update_feed') {
-    if (network !== 'testnet') {
-      throw httpError(
-        400,
-        'updateFeed write_mode is testnet-only; refusing mainnet/unknown downgrade'
-      );
-    }
-    return 'updateFeed';
-  }
-  throw httpError(400, `unsupported feed write_mode ${raw}`);
-}
-
-function validateFeedN3TxParams(value) {
-  const blockCount = Number(value?.blockCount ?? value?.block_count);
-  const systemFee = Number(value?.systemFee ?? value?.system_fee);
-  const networkFee = Number(value?.networkFee ?? value?.network_fee);
-  if (
-    !Number.isSafeInteger(blockCount) ||
-    blockCount < 0 ||
-    blockCount > 0xffffffff - FEED_VALID_UNTIL_OFFSET
-  ) {
-    throw httpError(400, 'feed tx block_count is outside the supported Neo N3 range');
-  }
-  if (!Number.isSafeInteger(systemFee) || systemFee < 0 || systemFee > FEED_N3_MAX_SYSTEM_FEE) {
-    throw httpError(400, 'feed tx system_fee exceeds the enclave safety ceiling');
-  }
-  if (!Number.isSafeInteger(networkFee) || networkFee < 0 || networkFee > FEED_N3_MAX_NETWORK_FEE) {
-    throw httpError(400, 'feed tx network_fee exceeds the enclave safety ceiling');
-  }
-  return { blockCount, systemFee, networkFee };
-}
-
-// Resolve + sign with the updater secp256r1 (Neo N3) key — SAME role/key
-// resolution + signing primitive the enclave signer uses for {role:'updater'}.
-// Uses the cached account (resolvePinnedSigner) for the same per-process memoization as
-// signNeoN3OracleVerifier.
-function resolveUpdaterIdentity() {
-  const identity = feedNetworkPins();
-  const resolved = resolvePinnedSigner(identity.network, 'updater');
-  if (!resolved) {
-    throw httpError(503, 'updater signer is not configured or does not match pinned identity');
-  }
-  if (trimString(process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS) !== '1') {
-    const scriptHash = String(resolved.account.scriptHash || '')
-      .replace(/^0x/i, '')
-      .toLowerCase();
-    if (scriptHash !== identity.updaterSh) {
-      throw httpError(403, 'updater key does not match bound network identity');
-    }
-  }
-  return { account: resolved.account };
-}
-
-function signUpdaterMessage(messageHex) {
-  const { account } = resolveUpdaterIdentity();
-  const dataHex = normalizeHex(messageHex);
-  const signature = neoWallet.sign(dataHex, account.privateKey);
-  return {
-    signature,
-    public_key: account.publicKey,
-    address: account.address,
-    script_hash: `0x${account.scriptHash}`,
-    source: 'enclave_updater',
-  };
-}
-
-function randomUint32() {
-  return randomBytes(4).readUInt32BE(0);
 }
 
 function normalizeOnchainState(rawState) {
@@ -1341,166 +1153,9 @@ export async function handleFeedSign(requestBody) {
   if (chain === 'neox') {
     return handleNeoXFeedSign(requestBody);
   }
-  if (chain !== 'neo_n3' && chain !== 'legacy') {
-    throw httpError(
-      400,
-      `unsupported feed chain: ${chain} (only neo_n3 and neox are enclave-signed)`
-    );
-  }
-
-  const symbols = Array.isArray(requestBody?.symbols)
-    ? requestBody.symbols.map((s) => trimString(s)).filter(Boolean)
-    : [];
-  if (!symbols.length) throw httpError(400, 'symbols[] is required');
-  const writeMode = resolveEnclaveFeedWriteMode(requestBody, feedNetworkPins().network);
-
-  const onchainState = normalizeOnchainState(
-    requestBody?.onchain_state || requestBody?.onchainState
-  );
-  const nonce = normalizeHex(requestBody?.nonce || '');
-  const now = Number.isFinite(Number(requestBody?.now))
-    ? Math.floor(Number(requestBody.now))
-    : Math.floor(Date.now() / 1000);
-
-  // (1) COMPUTE: fetch prices in-enclave (mirrors feed-pusher td()).
-  const prices = await activePriceFetcher(symbols);
-
-  // (2)+(3) PLAN + SCALE — identical arrays to feed-pusher.mjs pushNeoN3.
-  const planned = { P: [], R: [], PX: [], TS: [], AH: [], SS: [] };
-  const pairs = [];
-  const rounds = [];
-  const pricesScaled = [];
-  const timestamps = [];
-  const attestationHashes = [];
-  const sourceSetIds = [];
-  const skipped = [];
-  const missing = [];
-
-  for (const s of symbols) {
-    if (!(s in prices)) {
-      missing.push(s);
-      continue;
-    }
-    const cur = onchainState[s] || { round: 0, price: 0, ts: 0 };
-    const px = Math.round(prices[s] * FEED_PRICE_SCALE);
-    const plan = planFeedUpdate(cur, prices[s], now);
-    if (!plan.push) {
-      skipped.push({ symbol: s, reason: plan.rejected || 'unchanged_recent' });
-      continue;
-    }
-    const round = plan.round;
-    const ts = plan.ts;
-    const attestationHash = createHash('sha256')
-      .update(`${s}|${px}|${ts}`)
-      .digest('hex')
-      .slice(0, 32);
-    const pair = FEED_N3_PAIR_PREFIX + s;
-    planned.P.push(pair);
-    planned.R.push(round);
-    planned.PX.push(px);
-    planned.TS.push(ts);
-    planned.AH.push(attestationHash);
-    planned.SS.push(0);
-    pairs.push(pair);
-    rounds.push(round);
-    pricesScaled.push(px);
-    timestamps.push(ts);
-    attestationHashes.push(attestationHash);
-    sourceSetIds.push(0);
-  }
-
-  // No symbol cleared the push decision — nothing to sign (matches feed-pusher's
-  // "no updates" branch; not an error).
-  if (!planned.P.length) {
-    return {
-      status: 'no-update',
-      chain: 'neo_n3',
-      write_mode: writeMode,
-      operation: writeMode,
-      pairs: [],
-      rounds: [],
-      prices_scaled: [],
-      timestamps: [],
-      attestation_hashes: [],
-      source_set_ids: [],
-      tx_message_hex: null,
-      signature: null,
-      public_key: null,
-      trust_tier: 'enclave-attested',
-      skipped,
-      missing,
-      ...(nonce ? { nonce } : {}),
-    };
-  }
-
-  // The updater pubkey drives the tx signer's verification script; resolve it
-  // before building the tx so the message binds the SAME signer that signs it.
-  const updater = resolveUpdaterIdentity();
-  const updaterPublicKey = updater.account.publicKey;
-
-  // RPC-derived tx params (block count + fees). Caller may supply them directly
-  // (relayer/feed-pusher already read them on the host), else the configured
-  // provider fetches via the enclave egress lane.
-  const suppliedParams =
-    requestBody?.tx_params && typeof requestBody.tx_params === 'object'
-      ? requestBody.tx_params
-      : null;
-  let txParams;
-  if (suppliedParams) {
-    txParams = validateFeedN3TxParams(suppliedParams);
-  } else {
-    txParams = validateFeedN3TxParams(await activeFeedTxParamsProvider({ planned, script: null }));
-  }
-
-  // The tx nonce is the reproducibility key (see buildUpdateFeedsTxMessage). Honour
-  // a caller-supplied nonce (so the host can pin one), else derive a deterministic
-  // uint32 from the freshness nonce when present, else a fresh random uint32. It is
-  // RETURNED so the broadcaster can rebuild the identical tx and attach the witness.
-  let txNonce = Number(
-    suppliedParams?.nonce ?? suppliedParams?.tx_nonce ?? requestBody?.tx_nonce ?? NaN
-  );
-  if (!Number.isInteger(txNonce) || txNonce < 0 || txNonce > 0xffffffff) {
-    if (nonce) {
-      // Deterministic uint32 from the freshness nonce: first 4 bytes of its sha256.
-      txNonce = createHash('sha256').update(Buffer.from(nonce, 'hex')).digest().readUInt32BE(0);
-    } else {
-      txNonce = randomUint32();
-    }
-  }
-  const fullTxParams = { ...txParams, nonce: txNonce };
-
-  if (writeMode === 'updateFeed' && planned.P.length !== 1) {
-    throw httpError(400, 'updateFeed write_mode requires exactly one planned pair');
-  }
-
-  // (4) BUILD the EXACT updateFeeds or testnet-only updateFeed tx + SIGN it.
-  const { message } =
-    writeMode === 'updateFeed'
-      ? buildUpdateFeedTxMessage(planned, fullTxParams, updaterPublicKey)
-      : buildUpdateFeedsTxMessage(planned, fullTxParams, updaterPublicKey);
-  const signed = signUpdaterMessage(message);
-
-  return {
-    status: 'ok',
-    chain: 'neo_n3',
-    write_mode: writeMode,
-    operation: writeMode,
-    pairs,
-    rounds,
-    prices_scaled: pricesScaled,
-    timestamps,
-    attestation_hashes: attestationHashes,
-    source_set_ids: sourceSetIds,
-    tx_message_hex: message,
-    tx_nonce: txNonce,
-    valid_until_block: fullTxParams.blockCount + FEED_VALID_UNTIL_OFFSET,
-    signature: signed.signature,
-    public_key: signed.public_key,
-    trust_tier: 'enclave-attested',
-    skipped,
-    missing,
-    ...(nonce ? { nonce } : {}),
-  };
+  // neo_n3 / legacy (normalizeChain maps every other value to neo_n3). Retired
+  // before validation, price fetch, or any key lookup.
+  throw neoN3SignerRetired('/feed/sign');
 }
 
 // ---------------------------------------------------------------------------
@@ -1672,7 +1327,9 @@ export function materializeOracleKeyFromKms() {
     );
     return;
   }
-  if (parsed && parsed.ok && parsed.plaintext_b64) {
+  // typeof, not truthiness: Buffer.from on a non-string plaintext_b64 throws, and
+  // this runs inside /provision's apply phase, which must not throw.
+  if (parsed && parsed.ok && typeof parsed.plaintext_b64 === 'string' && parsed.plaintext_b64) {
     // The KMS plaintext is the oracle key-material JSON ({public_key_raw,
     // private_key_pkcs8}); expose it via the worker's configured-env JSON path.
     process.env.MORPHEUS_ORACLE_KEY_MATERIAL_JSON = Buffer.from(
@@ -1718,7 +1375,9 @@ function materializeTextSecretFromKms({
     );
     return;
   }
-  if (!(parsed && parsed.ok && parsed.plaintext_b64)) {
+  // typeof, not truthiness: Buffer.from on a non-string plaintext_b64 throws, and
+  // this runs inside /provision's apply phase, which must not throw.
+  if (!(parsed && parsed.ok && typeof parsed.plaintext_b64 === 'string' && parsed.plaintext_b64)) {
     console.error(JSON.stringify({ level: 'error', event: `${event}_bad_output` }));
     return;
   }
@@ -1729,7 +1388,7 @@ function materializeTextSecretFromKms({
       const obj = JSON.parse(plaintext);
       secret = '';
       for (const f of jsonFields) {
-        const v = trimString(obj[f]);
+        const v = trimString(obj?.[f]);
         if (v) {
           secret = v;
           break;
@@ -1744,9 +1403,6 @@ function materializeTextSecretFromKms({
     return;
   }
   process.env[targetEnvVar] = secret;
-  // KMS materialization may have written a signer env var — drop the cached signers so the
-  // next sign call re-resolves. (Round-2 R2-2.1.)
-  clearResolvedSignerCache();
 }
 
 // EVM oracle-fulfillment VERIFIER key (signs the attestation over oracle results) —
@@ -1778,9 +1434,8 @@ export function materializeNeoXFeedKeyFromKms() {
   });
 }
 
-// SECURITY (S5): These key materialization functions are DEPRECATED. All signing
-// uses the custody enclave via SIGNER_ROLE_*_KEY_ID - private key material never
-// appears in env vars on any runtime process.
+// No Neo N3 key is ever materialized here: the former oracle_verifier/updater KMS
+// releases were deleted with S5 (942adfe), and Neo N3 signing is custody-side.
 
 // NeoDID nullifier salt. The host provisions only a KMS CiphertextBlob; the
 // salt is released into the measured enclave and never crosses the parent-host
@@ -1795,8 +1450,9 @@ export function materializeNeoDidSaltFromKms() {
   });
 }
 
-// Resolve the public key to bind into the document for the requested role
-// (default oracle_verifier — the fulfillment signer; updater for feed binding).
+// Resolve the PINNED public key to bind into the document for the requested role
+// (default oracle_verifier; updater on request). It is a public registry fact —
+// this process holds no Neo N3 key and signs nothing under it.
 function resolveAttestationPublicKey(role) {
   const network = resolveNetwork();
   const normalized = trimString(role).toLowerCase() === 'updater' ? 'updater' : 'oracle_verifier';
@@ -1889,62 +1545,31 @@ export async function handleAttestation(payload = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// /health — compute + signer readiness
+// /health — compute readiness; the Neo N3 signer is reported retired
 // ---------------------------------------------------------------------------
-
+//
+// ready is false (HTTP 503) on purpose: the Neo N3 signer — the half of "compute
+// and sign" the relayer came here for — is retired, and a 200 would invite a
+// caller to route Neo N3 fulfillment here. The body states what is left instead of
+// claiming a signer: checks.signer is false, neo_n3_signer names the replacement,
+// and there is no per-role key_source because no Neo N3 key exists in this process.
 export function handleHealth() {
-  const network = resolveNetwork();
-  let signerOk = false;
-  let signerError = null;
-  let verifierPublicKey = null;
-  let verifierMaterialized = false;
-  let updaterMaterialized = false;
-  try {
-    const report = reportPinnedNeoN3Role(network, 'oracle_verifier', {
-      env: process.env,
-      allowMissing: false,
-    });
-    verifierMaterialized = Boolean(report.materialized);
-    signerOk = report.ok && verifierMaterialized;
-    verifierPublicKey = report.public_key || null;
-    if (!signerOk && report.issues?.length) signerError = report.issues.join('; ');
-  } catch (error) {
-    signerError = error instanceof Error ? error.message : String(error);
-  }
-  try {
-    const updaterReport = reportPinnedNeoN3Role(network, 'updater', {
-      env: process.env,
-      allowMissing: false,
-    });
-    updaterMaterialized = Boolean(updaterReport.materialized);
-  } catch {
-    updaterMaterialized = false;
-  }
   const computeReady = typeof activeWorkerHandler === 'function';
-  const ready = computeReady && signerOk;
-  // key_source per signing role lets ops detect any reliance on a host-provided
-  // plaintext key (vs the expected kms_attested path). 'host_plaintext' should
-  // can only be image-baked legacy material; /provision cannot inject it.
-  const keySource = {
-    oracle_verifier: roleKeySource('oracle_verifier', verifierMaterialized),
-    updater: roleKeySource('updater', updaterMaterialized),
-  };
   return {
-    status: ready ? 'ok' : 'degraded',
-    ready,
+    status: 'retired',
+    ready: false,
     runtime: 'morpheus-enclave-server',
-    network,
+    network: resolveNetwork(),
     checks: {
       compute: computeReady,
-      signer: signerOk,
-      ...(verifierPublicKey ? { oracle_verifier_public_key: verifierPublicKey } : {}),
+      signer: false,
     },
-    key_source: keySource,
+    neo_n3_signer: neoN3SignerRetiredDescriptor(),
+    // True to fact: /provision refuses every name in PLAINTEXT_KEY_ENV_KEYS.
     plaintext_key_provision_allowed: false,
     // Outcome of the in-TEE KMS-path probe (no secrets) — lets ops confirm
     // attestation-gated decrypt works (the prerequisite for TEE-exclusive keys).
     kms_diag: lastKmsDiag,
-    ...(signerError ? { signer_error: signerError } : {}),
   };
 }
 
@@ -2008,7 +1633,8 @@ export async function dispatch(method, rawUrl, headers = {}, body = '') {
       return { status: 200, body: result };
     }
 
-    // Sensitive (signing) endpoints — require the provisioned bearer token.
+    // Sensitive (signing) endpoints — require the provisioned bearer token. Their
+    // Neo N3 chains answer 410 (see NEO_N3_RETIRED_LANES); NeoX still signs.
     if (httpMethod === 'POST' && matchesRoute(path, '/oracle/fulfill')) {
       assertAuthorized(headers);
       const result = await handleOracleFulfill(parseBody(body));
@@ -2021,14 +1647,17 @@ export async function dispatch(method, rawUrl, headers = {}, body = '') {
       return { status: 200, body: result };
     }
 
+    // Retired Neo N3 surfaces: still behind the bearer token (an unauthenticated
+    // caller learns nothing about the route table), then 410 whatever the body —
+    // a retired lane never acts under any role, defaulted or named.
     if (httpMethod === 'POST' && matchesRoute(path, '/sign/payload')) {
       assertAuthorized(headers);
-      return { status: 200, body: handleSignPayload(parseBody(body)) };
+      throw neoN3SignerRetired('/sign/payload');
     }
 
     if (httpMethod === 'POST' && matchesRoute(path, '/keys/derived')) {
       assertAuthorized(headers);
-      return { status: 200, body: handleKeysDerived(parseBody(body)) };
+      throw neoN3SignerRetired('/keys/derived');
     }
 
     // Execution-plane passthrough (AA edge migration): the Cloudflare control
@@ -2076,6 +1705,8 @@ export async function dispatch(method, rawUrl, headers = {}, body = '') {
       body: {
         status: 'error',
         error: error instanceof Error ? error.message : String(error),
+        ...(typeof error?.errorCode === 'string' ? { error_code: error.errorCode } : {}),
+        ...(error?.details && typeof error.details === 'object' ? error.details : {}),
         runtime: 'morpheus-enclave-server',
       },
     };

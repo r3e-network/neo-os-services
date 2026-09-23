@@ -1,33 +1,38 @@
-// Golden-vector consensus gate for deploy/nitro/enclave-server.mjs.
+// Contract + golden-vector gate for deploy/nitro/enclave-server.mjs.
 //
-// PROVES the enclave-server's /oracle/fulfill produces a fulfillment digest +
-// result envelope that are BYTE-IDENTICAL to the canonical relayer builders, and
-// a signature that verifies against the returned public key — across neo_n3
-// (with appId), legacy neo_n3 (no appId), and neox.
+// That file is a reference, not a runtime (no image ships it). Since S5 it holds
+// no Neo N3 key, so this gate proves four things:
 //
-// How compute is made deterministic: the worker `handler` is STUBBED via the
-// test-only seam __setWorkerHandlerForTests so each lane returns a FIXED result
-// body (a fixed price string, a fixed 32-byte VRF randomness). The worker source
-// is never touched. This isolates the test to the digest/envelope/signature
-// pipeline — the consensus-critical part — instead of live price data.
+//   1. The retired Neo N3 lanes (/oracle/fulfill and /feed/sign for neo_n3 /
+//      legacy, /sign/payload, /keys/derived) answer 410 with error_code
+//      neo_n3_signer_retired, name their replacement (workers/nitro-enclave-host),
+//      and do so BEFORE any compute, price fetch or attestation runs.
+//   2. The consensus-critical BYTES those lanes used to sign are still pinned,
+//      key-free, by calling the canonical builders directly: the fulfillment
+//      digest + result envelope (router.js) against golden vectors and negative
+//      controls, and the updateFeeds / updateFeed tx messages (exported from the
+//      server) against INDEPENDENT reconstructions of the feed-pusher's own
+//      construction.
+//   3. The NeoX lanes, left in place by owner decision, still compute + sign
+//      end to end (digest + EIP-191 signature, EIP-1559 feed tx).
+//   4. /provision validates before it writes (a refused or failing provision
+//      leaves process.env unchanged), refuses every plaintext key name the Rust
+//      port refuses (parity-checked against provision.rs), and keeps the
+//      KMS-sealed runtime-token bootstrap/rotation contract.
 //
-// How byte-exactness is proven: the test feeds the SAME {ok, status, body}
-// workerResponse the server's stub returned into the IMPORTED builders
-// (encodeFulfillmentResult, buildOnchainResultEnvelope, buildFulfillmentDigestBytes
-// / buildNeoXDigest) independently, and asserts the server's
-// fulfillment_digest_hex + verification equal the independently-recomputed values.
-// Because the server uses those exact imported builders, equality proves it did
-// NOT re-derive the digest.
+// Compute is made deterministic by stubbing the worker `handler` through the
+// test-only seam __setWorkerHandlerForTests (fixed price body, fixed 32-byte VRF
+// randomness); the worker source is never touched.
 
 import { test, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-import neonPkg, { wallet as neoWallet } from '@cityofzion/neon-js';
+import neonPkg from '@cityofzion/neon-js';
 import { ethers } from 'ethers';
 
-const { sc, tx, u } = neonPkg;
+const { sc, tx, u, wallet: neoWallet } = neonPkg;
 
 import {
   buildFulfillmentDigestBytes,
@@ -36,23 +41,19 @@ import {
   resolveKernelIntent,
 } from '../../workers/morpheus-relayer/src/router.js';
 import { buildNeoXDigest, resolveResultBytesHex } from '../../workers/morpheus-relayer/src/neox.js';
+import {
+  NEO_N3_RETIRED_PLAINTEXT_KEY_ENV_NAMES,
+  getPinnedNeoN3Role,
+} from '../../scripts/lib-neo-signers.mjs';
 
 // ---------------------------------------------------------------------------
-// Test-only keys + env (injected BEFORE importing the server so resolveNetwork /
-// signer resolution see them). MORPHEUS_ALLOW_UNPINNED_SIGNERS lets us use a
-// freshly-generated oracle_verifier key without matching the committed pinned
-// identity (test-only — never use in production).
+// Test env, injected BEFORE importing the server. No Neo N3 key is set anywhere
+// in this file: the server resolves none, and the byte checks need only public
+// keys. Pinning stays ON (no MORPHEUS_ALLOW_UNPINNED_SIGNERS), so /attestation
+// binds the registry's pinned verifier key.
 // ---------------------------------------------------------------------------
 process.env.MORPHEUS_NETWORK = 'testnet';
-process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS = '1';
-
-const ORACLE_VERIFIER_ACCOUNT = new neoWallet.Account(neoWallet.generatePrivateKey());
-process.env.MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_TESTNET = ORACLE_VERIFIER_ACCOUNT.privateKey;
-
-// Test-only updater key (the feed signer). Unpinned (allowed via the flag above).
-const UPDATER_ACCOUNT = new neoWallet.Account(neoWallet.generatePrivateKey());
-process.env.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_TESTNET = UPDATER_ACCOUNT.privateKey;
-process.env.MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET = UPDATER_ACCOUNT.privateKey;
+delete process.env.MORPHEUS_ALLOW_UNPINNED_SIGNERS;
 
 // Pin the N3 magic the feed tx is signed under so the server + the independent
 // test recompute use the SAME magic (default 860833102; explicit for clarity).
@@ -62,7 +63,8 @@ process.env.FEED_MAGIC = '860833102';
 // either the server OR this test imports it (both import planFeedUpdate from it).
 process.env.FEED_PUSHER_SKIP_MAIN = '1';
 
-// Deterministic test-only EVM verifier key.
+// Deterministic test-only EVM verifier key (the NeoX lane still reads its key
+// from process.env).
 const NEOX_VERIFIER_PK = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
 const NEOX_VERIFIER_WALLET = new ethers.Wallet(NEOX_VERIFIER_PK);
 process.env.MORPHEUS_NEOX_VERIFIER_PRIVATE_KEY = NEOX_VERIFIER_PK;
@@ -92,21 +94,28 @@ const {
   handleHealth,
   __setPriceFetcherForTests,
   __resetPriceFetcherForTests,
-  __setFeedTxParamsProviderForTests,
-  __resetFeedTxParamsProviderForTests,
   __setAttestRunnerForTests,
   __resetAttestRunnerForTests,
   __setAsyncAttestRunnerForTests,
   __resetAsyncAttestRunnerForTests,
+  buildUpdateFeedsTxMessage,
+  buildUpdateFeedTxMessage,
   materializeOracleKeyFromKms,
   materializeNeoXVerifierKeyFromKms,
   materializeNeoXFeedKeyFromKms,
   materializeNeoDidSaltFromKms,
   __resetRuntimeProvisionStateForTests,
   __resetEnclaveNetworkIdentityForTests,
+  NEO_N3_SIGNER_RETIRED_CODE,
+  NEO_N3_SIGNER_REPLACEMENT,
+  NODE_ONLY_PLAINTEXT_KEY_ENV_KEYS,
+  PLAINTEXT_KEY_ENV_KEYS,
 } = enclave;
 
-import { FEED_NETWORK_DEFAULTS } from '../feed-pusher/lib-feed-network.mjs';
+import {
+  FEED_NETWORK_DEFAULTS,
+  encodeUpdateFeedInvocation,
+} from '../feed-pusher/lib-feed-network.mjs';
 
 const DEFAULT_FEED_ENV = Object.freeze({
   FEED_NETWORK: process.env.FEED_NETWORK,
@@ -131,25 +140,22 @@ function alignEnclaveFeedIdentity(network) {
 }
 
 // Import planFeedUpdate from the feed-pusher INDEPENDENTLY (the SAME decision the
-// server imports) so the /feed/sign golden vector recomputes the planned arrays
-// with the canonical function, not a copy.
+// server imports) so the feed byte checks recompute the planned arrays with the
+// canonical function, not a copy.
 const { planFeedUpdate } = await import('../feed-pusher/feed-pusher.mjs');
 
-// Feed contract constants — MIRRORED from feed-pusher.mjs pushNeoN3 so the test's
-// independent tx build matches the server's. If feed-pusher.mjs changes these the
-// test (correctly) breaks alongside the server.
-const FEED_N3_CONTRACT = '03013f49c42a14546c8bbe58f9d434c3517fccab';
-const FEED_N3_MAGIC = Number(process.env.FEED_MAGIC);
+// The pinned updater's PUBLIC key per network — the only key material the tx
+// builders take. No private key is needed to pin their bytes.
+const UPDATER_PUBLIC_KEY = {
+  mainnet: FEED_NETWORK_DEFAULTS.mainnet.updaterPub,
+  testnet: FEED_NETWORK_DEFAULTS.testnet.updaterPub,
+};
 
 // ---------------------------------------------------------------------------
 // Deterministic worker-handler stub. Returns a fixed Response per route so the
-// pipeline (encode -> envelope -> digest -> sign) is exercised against a known
-// body. The body shapes mirror the real worker lanes:
-//   - /oracle/query, /oracle/feed: a price/oracle result body
-//   - /vrf/random: { randomness } (fixed 32 bytes)
-//   - /oracle/decrypt: { plaintext } -> but encodeFulfillmentResult for decrypt is
-//     handled by the relayer's special-case; here the generic encode is exercised
-//     for query/feed/vrf which is sufficient for the digest pipeline proof.
+// NeoX pipeline (encode -> envelope -> digest -> sign) is exercised against a
+// known body, and records every route it is asked for so a retired lane can be
+// shown to compute NOTHING.
 // ---------------------------------------------------------------------------
 
 const FIXED_PRICE_BODY = {
@@ -180,10 +186,14 @@ function jsonResponse(status, body) {
   });
 }
 
+let workerCalls = [];
+
 function installDeterministicWorker() {
+  workerCalls = [];
   __setWorkerHandlerForTests(async (request) => {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/$/, '');
+    workerCalls.push(path);
     if (path.endsWith('/vrf/random')) {
       return jsonResponse(200, { request_id: '1', randomness: FIXED_VRF_RANDOMNESS });
     }
@@ -201,6 +211,42 @@ function installDeterministicWorker() {
   });
 }
 
+// A retired lane must reach neither the NSM helper nor the price fetcher.
+function installTripwires() {
+  const calls = { attest: 0, price: 0 };
+  __setAsyncAttestRunnerForTests(() => {
+    calls.attest += 1;
+    throw new Error('a retired lane must not attest');
+  });
+  __setPriceFetcherForTests(async () => {
+    calls.price += 1;
+    throw new Error('a retired lane must not fetch prices');
+  });
+  return calls;
+}
+
+function removeTripwires() {
+  __resetAsyncAttestRunnerForTests();
+  __resetPriceFetcherForTests();
+}
+
+// The 410 contract every retired Neo N3 surface answers.
+function assertRetired({ status, body }, route) {
+  assert.equal(status, 410, `${route}: expected 410, got ${status}: ${JSON.stringify(body)}`);
+  assert.equal(body.status, 'error');
+  assert.equal(body.error_code, NEO_N3_SIGNER_RETIRED_CODE);
+  assert.equal(body.error_code, 'neo_n3_signer_retired');
+  assert.equal(body.route, route);
+  assert.equal(body.replacement, NEO_N3_SIGNER_REPLACEMENT);
+  assert.equal(body.replacement, 'workers/nitro-enclave-host');
+  assert.match(body.error, /workers\/nitro-enclave-host/);
+  assert.match(body.error, /\bS5\b/);
+  assert.equal(body.runtime, 'morpheus-enclave-server');
+  for (const field of ['signature', 'public_key', 'fulfillment_digest_hex', 'tx_message_hex']) {
+    assert.equal(body[field], undefined, `${route}: a retired lane returns no ${field}`);
+  }
+}
+
 before(() => {
   installDeterministicWorker();
 });
@@ -210,8 +256,8 @@ beforeEach(() => {
   restoreDefaultFeedEnv();
 });
 
-// Recompute the workerResponse the stub produced for a given route, so the test
-// can drive the imported builders INDEPENDENTLY of the server.
+// Recompute the workerResponse the stub produces for a given request type, so the
+// tests drive the imported builders exactly as the server's compute would.
 function expectedWorkerResponse(requestType) {
   const intent = resolveKernelIntent(requestType);
   if (intent.moduleId === 'random.generate') {
@@ -220,11 +266,22 @@ function expectedWorkerResponse(requestType) {
   return { ok: true, status: 200, body: { ...FIXED_PRICE_BODY } };
 }
 
+// Golden vectors: the canonical builders' output for the fixed inputs below. A
+// change here is a change to what the on-chain verifier checks — regenerate only
+// together with the Rust vectors (scripts/export-rust-vectors.mjs).
+const GOLDEN = Object.freeze({
+  appIdDigest: '3537ff17cf6b308ca0135246b2bb810774dcdac4c19330b3dcde54e8ef51bbe3',
+  legacyDigest: '9c91d9ccdca6f0207099205969760e9ae92567d1eca31b74cf44b1c6de1b529b',
+  vrfDigest: '29ff6f4694ec2e40ea4f8221f44864a11d232692870bebb849af55c8f8e0e8e9',
+  // sha256 of the encoded on-chain `result` string (the result envelope JSON).
+  priceResultSha256: '2c4c4a3c0f486d6a76a917cc8e26c97886d52be1ce6bc05607f35eccd424accb',
+});
+
 // ---------------------------------------------------------------------------
-// neo_n3 (with appId) — full kernel envelope digest, deployment-bound.
+// neo_n3 (with appId) — 410; full kernel envelope digest pinned key-free.
 // ---------------------------------------------------------------------------
 
-test('neo_n3 (with appId): digest + envelope + signature byte-exact', async () => {
+test('neo_n3 (with appId): lane answers 410; digest + envelope bytes pinned via the builders', async () => {
   const requestType = 'oracle_query';
   const requestId = '4242';
   const contractScriptHash = '0x' + '1f'.repeat(20);
@@ -248,47 +305,49 @@ test('neo_n3 (with appId): digest + envelope + signature byte-exact', async () =
     nonce: 'deadbeef',
   };
 
-  const { status, body } = await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(req));
-  assert.equal(status, 200, `dispatch failed: ${JSON.stringify(body)}`);
-  assert.equal(body.status, 'ok');
-  assert.equal(body.trust_tier, 'enclave-attested');
-  assert.equal(body.success, true);
-  assert.equal(body.nonce, 'deadbeef');
+  const tripwires = installTripwires();
+  try {
+    assertRetired(
+      await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(req)),
+      '/oracle/fulfill'
+    );
+    assert.match(
+      (await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(req))).body.error,
+      /\/signer\/api\/v1\/sign\/raw.*SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID/
+    );
+    assert.deepEqual(workerCalls, [], 'a retired lane computes nothing');
+    assert.deepEqual(tripwires, { attest: 0, price: 0 });
+  } finally {
+    removeTripwires();
+  }
 
-  // Independently recompute from the SAME workerResponse the stub returned.
+  // Key-free byte checks: the SAME workerResponse through the canonical builders.
   const workerResponse = expectedWorkerResponse(requestType);
   const fulfillment = encodeFulfillmentResult(requestType, workerResponse);
-  const expectedEnvelope = buildOnchainResultEnvelope(requestType, workerResponse);
-  const expectedDigest = buildFulfillmentDigestBytes(
+  const envelope = buildOnchainResultEnvelope(requestType, workerResponse);
+  assert.equal(fulfillment.success, true);
+  // The on-chain result bytes ARE the result envelope, and both are pinned.
+  assert.deepEqual(JSON.parse(fulfillment.result), envelope);
+  assert.equal(envelope.version, 'morpheus-result/v1');
+  assert.equal(envelope.module_id, moduleId);
+  assert.equal(
+    createHash('sha256').update(fulfillment.result, 'utf8').digest('hex'),
+    GOLDEN.priceResultSha256
+  );
+
+  const digest = buildFulfillmentDigestBytes(
     requestId,
     requestType,
     fulfillment.success,
     fulfillment.result || '',
     fulfillment.error || '',
     fulfillment.result_bytes_base64 || '',
-    {
-      chain: 'neo_n3',
-      appId,
-      moduleId,
-      operation,
-      contractScriptHash,
-      networkMagic,
-    }
+    { chain: 'neo_n3', appId, moduleId, operation, contractScriptHash, networkMagic }
   ).toString('hex');
+  assert.equal(digest, GOLDEN.appIdDigest, 'fulfillment digest must be byte-exact');
 
-  // Byte-exactness: server digest === independently-recomputed canonical digest.
-  assert.equal(
-    body.fulfillment_digest_hex,
-    expectedDigest,
-    'fulfillment digest must be byte-exact'
-  );
-  // Result + envelope match the canonical encoding.
-  assert.equal(body.result, fulfillment.result || '');
-  assert.deepEqual(body.verification, expectedEnvelope);
-
-  // Negative control: a digest WITHOUT the deployment binding (a common
-  // re-derivation mistake) must NOT match — proving the server actually appended
-  // the contract script hash + network magic via the canonical builder.
+  // Negative controls: a digest WITHOUT the deployment binding (a common
+  // re-derivation mistake), or bound to another network's magic, must differ.
   const digestNoBinding = buildFulfillmentDigestBytes(
     requestId,
     requestType,
@@ -298,30 +357,24 @@ test('neo_n3 (with appId): digest + envelope + signature byte-exact', async () =
     fulfillment.result_bytes_base64 || '',
     { chain: 'neo_n3', appId, moduleId, operation } // no contractScriptHash/networkMagic
   ).toString('hex');
-  assert.notEqual(
-    body.fulfillment_digest_hex,
-    digestNoBinding,
-    'digest must include the deployment binding (script hash + magic)'
-  );
-
-  // Signature verifies against the returned public_key over the digest (secp256r1).
-  assert.equal(
-    body.public_key.toLowerCase(),
-    ORACLE_VERIFIER_ACCOUNT.publicKey.toLowerCase(),
-    'public_key must be the oracle_verifier'
-  );
-  assert.equal(
-    neoWallet.verify(body.fulfillment_digest_hex, body.signature, body.public_key),
-    true,
-    'signature must verify over the digest'
-  );
+  assert.notEqual(digest, digestNoBinding, 'digest must include the deployment binding');
+  const digestMainnetMagic = buildFulfillmentDigestBytes(
+    requestId,
+    requestType,
+    fulfillment.success,
+    fulfillment.result || '',
+    fulfillment.error || '',
+    fulfillment.result_bytes_base64 || '',
+    { chain: 'neo_n3', appId, moduleId, operation, contractScriptHash, networkMagic: 860833102 }
+  ).toString('hex');
+  assert.notEqual(digest, digestMainnetMagic, 'digest must bind the network magic');
 });
 
 // ---------------------------------------------------------------------------
-// legacy neo_n3 (no appId) — legacy digest domain, requestType-based.
+// legacy neo_n3 (no appId) — 410; legacy digest domain pinned key-free.
 // ---------------------------------------------------------------------------
 
-test('legacy neo_n3 (no appId): legacy digest + signature byte-exact', async () => {
+test('legacy neo_n3 (no appId): lane answers 410; legacy digest pinned via the builders', async () => {
   const requestType = 'oracle_query';
   const requestId = '7';
 
@@ -334,14 +387,15 @@ test('legacy neo_n3 (no appId): legacy digest + signature byte-exact', async () 
     nonce: '',
   };
 
-  const { status, body } = await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(req));
-  assert.equal(status, 200, `dispatch failed: ${JSON.stringify(body)}`);
-  assert.equal(body.trust_tier, 'enclave-attested');
+  assertRetired(
+    await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(req)),
+    '/oracle/fulfill'
+  );
+  assert.deepEqual(workerCalls, []);
 
   const workerResponse = expectedWorkerResponse(requestType);
   const fulfillment = encodeFulfillmentResult(requestType, workerResponse);
-  const expectedEnvelope = buildOnchainResultEnvelope(requestType, workerResponse);
-  const expectedDigest = buildFulfillmentDigestBytes(
+  const digest = buildFulfillmentDigestBytes(
     requestId,
     requestType,
     fulfillment.success,
@@ -350,21 +404,16 @@ test('legacy neo_n3 (no appId): legacy digest + signature byte-exact', async () 
     fulfillment.result_bytes_base64 || '',
     { chain: 'legacy', appId: '', moduleId: '', operation: '' }
   ).toString('hex');
-
-  assert.equal(body.fulfillment_digest_hex, expectedDigest, 'legacy digest must be byte-exact');
-  assert.deepEqual(body.verification, expectedEnvelope);
-  assert.equal(
-    neoWallet.verify(body.fulfillment_digest_hex, body.signature, body.public_key),
-    true,
-    'legacy signature must verify over the digest'
-  );
+  assert.equal(digest, GOLDEN.legacyDigest, 'legacy digest must be byte-exact');
+  // Domain separation: the same request under the kernel (appId) domain differs.
+  assert.notEqual(digest, GOLDEN.appIdDigest);
 });
 
 // ---------------------------------------------------------------------------
-// neo_n3 VRF (with FIXED randomness) — compact callback bytes lane.
+// neo_n3 VRF (with FIXED randomness) — 410; compact callback bytes pinned.
 // ---------------------------------------------------------------------------
 
-test('neo_n3 vrf (fixed randomness): compact callback digest + signature byte-exact', async () => {
+test('neo_n3 vrf (fixed randomness): lane answers 410; compact callback bytes + digest pinned', async () => {
   const requestType = 'random';
   const requestId = '99';
   const appId = 'dice.app';
@@ -387,27 +436,25 @@ test('neo_n3 vrf (fixed randomness): compact callback digest + signature byte-ex
     },
   };
 
-  const { status, body } = await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(req));
-  assert.equal(status, 200, `dispatch failed: ${JSON.stringify(body)}`);
+  assertRetired(
+    await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(req)),
+    '/oracle/fulfill'
+  );
+  assert.deepEqual(workerCalls, [], 'the VRF is not even computed on a retired lane');
 
   const workerResponse = expectedWorkerResponse(requestType);
   const fulfillment = encodeFulfillmentResult(requestType, workerResponse);
   // VRF -> compact 32-byte randomness as result_bytes_base64, empty result string.
   assert.equal(fulfillment.result, '');
   assert.ok(fulfillment.result_bytes_base64, 'vrf must produce compact callback bytes');
-  assert.equal(
-    body.result_bytes_base64,
-    fulfillment.result_bytes_base64,
-    'server must return the compact callback bytes'
-  );
   // The compact bytes must decode to the fixed randomness.
   assert.equal(
-    Buffer.from(body.result_bytes_base64, 'base64').toString('hex'),
+    Buffer.from(fulfillment.result_bytes_base64, 'base64').toString('hex'),
     FIXED_VRF_RANDOMNESS,
     'compact callback bytes must equal the fixed VRF randomness'
   );
 
-  const expectedDigest = buildFulfillmentDigestBytes(
+  const digest = buildFulfillmentDigestBytes(
     requestId,
     requestType,
     fulfillment.success,
@@ -416,17 +463,11 @@ test('neo_n3 vrf (fixed randomness): compact callback digest + signature byte-ex
     fulfillment.result_bytes_base64 || '',
     { chain: 'neo_n3', appId, moduleId, operation, contractScriptHash, networkMagic }
   ).toString('hex');
-
-  assert.equal(body.fulfillment_digest_hex, expectedDigest, 'vrf digest must be byte-exact');
-  assert.equal(
-    neoWallet.verify(body.fulfillment_digest_hex, body.signature, body.public_key),
-    true,
-    'vrf signature must verify over the digest'
-  );
+  assert.equal(digest, GOLDEN.vrfDigest, 'vrf digest must be byte-exact');
 });
 
 // ---------------------------------------------------------------------------
-// neox (EVM) — keccak digest + EIP-191 signature.
+// neox (EVM) — keccak digest + EIP-191 signature. The NeoX lane still signs.
 // ---------------------------------------------------------------------------
 
 test('neox: keccak digest + envelope + EIP-191 signature byte-exact', async () => {
@@ -504,41 +545,45 @@ test('neox: keccak digest + envelope + EIP-191 signature byte-exact', async () =
 // Host-unattested lane: arbitrary-URL smart-fetch is NOT signed in-enclave.
 // ---------------------------------------------------------------------------
 
-test('arbitrary-url smart-fetch is host-unattested (no in-enclave signature)', async () => {
-  const req = {
-    chain: 'neo_n3',
+test('arbitrary-url smart-fetch: host-unattested on neox; the retired neo_n3 lane answers 410 first', async () => {
+  // smart-fetch is the host-tier lane.
+  assert.equal(resolveKernelIntent('privacy_oracle').workerRoute, '/oracle/smart-fetch');
+
+  const neox = {
+    chain: 'neox',
     request_type: 'privacy_oracle', // -> oracle.fetch -> /oracle/smart-fetch
     request_id: '5',
     payload: { url: 'https://example.com/data' },
     fulfillment_context: { app_id: 'x' },
   };
-  // smart-fetch is the host-tier lane.
-  assert.equal(resolveKernelIntent('privacy_oracle').workerRoute, '/oracle/smart-fetch');
-
-  const { status, body } = await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(req));
+  const { status, body } = await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(neox));
   assert.equal(status, 200);
   assert.equal(body.trust_tier, 'host-unattested');
   assert.equal(body.signature, null);
   assert.equal(body.fulfillment_digest_hex, null);
+  assert.deepEqual(workerCalls, [], 'the host-tier lane is never computed in-enclave');
+
+  // The Neo N3 lane is retired as a whole, including its host-tier marker.
+  assertRetired(
+    await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify({ ...neox, chain: 'neo_n3' })),
+    '/oracle/fulfill'
+  );
 });
 
 // ---------------------------------------------------------------------------
-// /feed/sign — golden vector: the signed updateFeeds message is byte-identical to
-// what feed-pusher.mjs pushNeoN3 signs today, and the signature verifies.
+// Neo N3 feed signing — 410; the updateFeeds / updateFeed tx bytes stay pinned
+// by comparing the server's exported builders with INDEPENDENT reconstructions.
 // ---------------------------------------------------------------------------
 
 // Independently rebuild the EXACT updateFeeds tx feed-pusher.mjs pushNeoN3 builds
 // (sc.createScript + tx.Transaction + getMessageForSigning), using raw neon-js —
-// NOT the server's builder. Equality proves the server reproduced the on-chain
-// message byte-for-byte. This mirrors pushNeoN3 lines 300-336 precisely.
-// txParams must include the EXACT nonce the server used (tx.Transaction otherwise
-// assigns a random nonce, making getMessageForSigning non-deterministic). The
-// server returns its nonce as body.tx_nonce so the broadcaster — and this test —
-// rebuild the identical tx.
-function feedPusherTxMessage(planned, txParams, updaterPublicKey) {
+// NOT the server's builder. This mirrors pushNeoN3 lines 300-336 precisely.
+// txParams must include the nonce (tx.Transaction otherwise assigns a random one,
+// making getMessageForSigning non-deterministic).
+function feedPusherTxMessage(network, planned, txParams, updaterPublicKey) {
   const { P, R, PX, TS, AH, SS } = planned;
   const script = sc.createScript({
-    scriptHash: FEED_N3_CONTRACT,
+    scriptHash: FEED_NETWORK_DEFAULTS[network].feed,
     operation: 'updateFeeds',
     args: [
       sc.ContractParam.array(...P.map((x) => sc.ContractParam.string(x))),
@@ -558,60 +603,64 @@ function feedPusherTxMessage(planned, txParams, updaterPublicKey) {
   });
   txn.systemFee = u.BigInteger.fromNumber(txParams.systemFee);
   txn.networkFee = u.BigInteger.fromNumber(txParams.networkFee);
-  return txn.getMessageForSigning(FEED_N3_MAGIC);
+  return txn.getMessageForSigning(FEED_NETWORK_DEFAULTS[network].magic);
 }
 
-test('feed/sign: updateFeeds tx message byte-identical to feed-pusher + signature verifies', async () => {
-  alignEnclaveFeedIdentity('mainnet');
-  // Deterministic price set (the stubbed in-enclave fetch), fixed clock, and the
-  // on-chain state the relayer/feed-pusher would read on the host.
-  const FIXED_NOW = 1_780_000_000;
-  const SYMBOLS = ['NEO-USD', 'GAS-USD', 'BTC-USD'];
-  const STUB_PRICES = { 'NEO-USD': 5.25, 'GAS-USD': 2.1, 'BTC-USD': 65000.123456 };
-  const ONCHAIN_STATE = {
-    // NEO/BTC will push (price move / no prior record); GAS is unchanged+recent → skipped.
-    'NEO-USD': { round: FIXED_NOW - 60, price: 5.0, timestamp: FIXED_NOW - 60 },
-    'GAS-USD': { round: FIXED_NOW - 60, price: 2.1, timestamp: FIXED_NOW - 60 },
-    'BTC-USD': { round: 0, price: 0, timestamp: 0 },
-  };
-  // Pin the tx nonce so the message is deterministic (tx.Transaction otherwise
-  // randomizes it). The server echoes it back as body.tx_nonce.
-  const TX_PARAMS = { block_count: 1234567, system_fee: 1234567, network_fee: 234567, nonce: 777 };
-
-  __setPriceFetcherForTests(async (syms) => {
-    const out = {};
-    for (const s of syms) if (s in STUB_PRICES) out[s] = STUB_PRICES[s];
-    return out;
+// Independently rebuild the testnet per-pair updateFeed tx the way the feed-pusher
+// does (rebuildUpdateFeedTxFromEnclavePlan): through its canonical invocation
+// encoder encodeUpdateFeedInvocation, not the server's direct ContractParams.
+function feedPusherPerPairTxMessage(network, planned, txParams, updaterPublicKey) {
+  const invocation = encodeUpdateFeedInvocation({
+    pair: planned.P[0],
+    roundId: planned.R[0],
+    price: planned.PX[0],
+    timestamp: planned.TS[0],
+    attestationHash: planned.AH[0],
+    sourceSetId: planned.SS[0],
   });
+  const script = sc.createScript({
+    scriptHash: FEED_NETWORK_DEFAULTS[network].feed,
+    operation: invocation.operation,
+    args: [
+      sc.ContractParam.string(invocation.params[0].value),
+      sc.ContractParam.integer(Number(invocation.params[1].value)),
+      sc.ContractParam.integer(Number(invocation.params[2].value)),
+      sc.ContractParam.integer(Number(invocation.params[3].value)),
+      sc.ContractParam.byteArray(invocation.params[4].value),
+      sc.ContractParam.integer(Number(invocation.params[5].value)),
+    ],
+  });
+  const txn = new tx.Transaction({
+    nonce: txParams.nonce,
+    signers: [
+      {
+        account: neoWallet.getScriptHashFromPublicKey(updaterPublicKey),
+        scopes: tx.WitnessScope.CalledByEntry,
+      },
+    ],
+    validUntilBlock: txParams.blockCount + 500,
+    script,
+  });
+  txn.systemFee = u.BigInteger.fromNumber(txParams.systemFee);
+  txn.networkFee = u.BigInteger.fromNumber(txParams.networkFee);
+  return txn.getMessageForSigning(FEED_NETWORK_DEFAULTS[network].magic);
+}
 
-  const req = {
-    chain: 'neo_n3',
-    symbols: SYMBOLS,
-    onchain_state: ONCHAIN_STATE,
-    now: FIXED_NOW,
-    tx_params: TX_PARAMS,
-    nonce: 'cafe',
-  };
-
-  const { status, body } = await dispatch('POST', '/feed/sign', AUTH, JSON.stringify(req));
-  assert.equal(status, 200, `dispatch failed: ${JSON.stringify(body)}`);
-  assert.equal(body.status, 'ok');
-  assert.equal(body.trust_tier, 'enclave-attested');
-  assert.equal(body.nonce, 'cafe');
-
-  // Independently recompute the planned arrays using the IMPORTED planFeedUpdate +
-  // the SAME scaling/attestation-hash feed-pusher.mjs uses.
+// The plan feed-pusher.mjs (and the retired lane) derives: planFeedUpdate from the
+// feed-pusher, 1e6 scaling, AH = sha256(`${s}|${px}|${ts}`).slice(0, 32).
+function planFeeds(symbols, prices, onchainState, now) {
   const planned = { P: [], R: [], PX: [], TS: [], AH: [], SS: [] };
-  for (const s of SYMBOLS) {
-    if (!(s in STUB_PRICES)) continue;
-    const cur = {
-      round: ONCHAIN_STATE[s].round,
-      price: ONCHAIN_STATE[s].price,
-      ts: ONCHAIN_STATE[s].timestamp,
-    };
-    const px = Math.round(STUB_PRICES[s] * 1e6);
-    const plan = planFeedUpdate(cur, STUB_PRICES[s], FIXED_NOW);
-    if (!plan.push) continue;
+  const skipped = [];
+  for (const s of symbols) {
+    if (!(s in prices)) continue;
+    const state = onchainState[s] || { round: 0, price: 0, timestamp: 0 };
+    const cur = { round: state.round, price: state.price, ts: state.timestamp };
+    const px = Math.round(prices[s] * 1e6);
+    const plan = planFeedUpdate(cur, prices[s], now);
+    if (!plan.push) {
+      skipped.push(s);
+      continue;
+    }
     planned.P.push('TWELVEDATA:' + s);
     planned.R.push(plan.round);
     planned.PX.push(px);
@@ -621,179 +670,192 @@ test('feed/sign: updateFeeds tx message byte-identical to feed-pusher + signatur
     );
     planned.SS.push(0);
   }
+  return { planned, skipped };
+}
 
-  // GAS-USD is skipped (recent + unchanged); only NEO + BTC are signed.
-  assert.deepEqual(body.pairs, ['TWELVEDATA:NEO-USD', 'TWELVEDATA:BTC-USD']);
-  assert.deepEqual(body.prices_scaled, planned.PX);
-  assert.deepEqual(body.rounds, planned.R);
-  assert.deepEqual(body.timestamps, planned.TS);
-  assert.deepEqual(body.attestation_hashes, planned.AH);
-  assert.deepEqual(body.source_set_ids, planned.SS);
-  assert.ok(
-    body.skipped.some((e) => e.symbol === 'GAS-USD'),
-    'GAS-USD must be reported skipped (recent + unchanged)'
-  );
+test('feed/sign neo_n3: lane answers 410; updateFeeds tx bytes identical to feed-pusher', async () => {
+  alignEnclaveFeedIdentity('mainnet');
+  // Deterministic prices, fixed clock, and the on-chain state the feed-pusher
+  // would read on the host.
+  const FIXED_NOW = 1_780_000_000;
+  const SYMBOLS = ['NEO-USD', 'GAS-USD', 'BTC-USD'];
+  const STUB_PRICES = { 'NEO-USD': 5.25, 'GAS-USD': 2.1, 'BTC-USD': 65000.123456 };
+  const ONCHAIN_STATE = {
+    // NEO/BTC will push (price move / no prior record); GAS is unchanged+recent → skipped.
+    'NEO-USD': { round: FIXED_NOW - 60, price: 5.0, timestamp: FIXED_NOW - 60 },
+    'GAS-USD': { round: FIXED_NOW - 60, price: 2.1, timestamp: FIXED_NOW - 60 },
+    'BTC-USD': { round: 0, price: 0, timestamp: 0 },
+  };
+  const TX_PARAMS = { block_count: 1234567, system_fee: 1234567, network_fee: 234567, nonce: 777 };
 
-  // The server returns the nonce it used; rebuilding with it must reproduce the
-  // signed message byte-for-byte. (Also assert the server honoured our pin.)
-  assert.equal(body.tx_nonce, TX_PARAMS.nonce, 'server must honour the supplied tx nonce');
-  assert.equal(body.valid_until_block, TX_PARAMS.block_count + 500);
+  const tripwires = installTripwires();
+  try {
+    const retired = await dispatch(
+      'POST',
+      '/feed/sign',
+      AUTH,
+      JSON.stringify({
+        chain: 'neo_n3',
+        symbols: SYMBOLS,
+        onchain_state: ONCHAIN_STATE,
+        now: FIXED_NOW,
+        tx_params: TX_PARAMS,
+        nonce: 'cafe',
+      })
+    );
+    assertRetired(retired, '/feed/sign');
+    assert.match(
+      retired.body.error,
+      /\/signer\/api\/v1\/sign\/transaction.*SIGNER_ROLE_UPDATER_KEY_ID/
+    );
+    assert.deepEqual(tripwires, { attest: 0, price: 0 }, 'no price fetch on a retired lane');
+  } finally {
+    removeTripwires();
+  }
 
-  // The load-bearing assertion: the server's signed message === the message
-  // feed-pusher.mjs would sign, recomputed independently from raw neon-js using
-  // the SAME nonce the server returned.
-  const expectedMessage = feedPusherTxMessage(
-    planned,
-    {
-      blockCount: TX_PARAMS.block_count,
-      systemFee: TX_PARAMS.system_fee,
-      networkFee: TX_PARAMS.network_fee,
-      nonce: body.tx_nonce,
-    },
-    UPDATER_ACCOUNT.publicKey
-  );
+  // Key-free byte check: the plan the lane used to sign, through the server's
+  // exported builder, equals the independent feed-pusher reconstruction.
+  const { planned, skipped } = planFeeds(SYMBOLS, STUB_PRICES, ONCHAIN_STATE, FIXED_NOW);
+  assert.deepEqual(planned.P, ['TWELVEDATA:NEO-USD', 'TWELVEDATA:BTC-USD']);
+  assert.deepEqual(skipped, ['GAS-USD'], 'GAS-USD is recent + unchanged');
+  const txParams = {
+    blockCount: TX_PARAMS.block_count,
+    systemFee: TX_PARAMS.system_fee,
+    networkFee: TX_PARAMS.network_fee,
+    nonce: TX_PARAMS.nonce,
+  };
+  const built = buildUpdateFeedsTxMessage(planned, txParams, UPDATER_PUBLIC_KEY.mainnet);
   assert.equal(
-    body.tx_message_hex,
-    expectedMessage,
+    built.message,
+    feedPusherTxMessage('mainnet', planned, txParams, UPDATER_PUBLIC_KEY.mainnet),
     'feed tx message must be byte-identical to feed-pusher.mjs'
   );
-
-  // The signer is the updater, and the signature verifies over that message.
-  assert.equal(
-    body.public_key.toLowerCase(),
-    UPDATER_ACCOUNT.publicKey.toLowerCase(),
-    'feed signer must be the updater'
+  assert.equal(built.txn.nonce, TX_PARAMS.nonce, 'the pinned nonce is the reproducibility key');
+  assert.equal(built.txn.validUntilBlock, TX_PARAMS.block_count + 500);
+  // Negative control: another nonce is another message (the nonce is load-bearing).
+  assert.notEqual(
+    built.message,
+    buildUpdateFeedsTxMessage(planned, { ...txParams, nonce: 778 }, UPDATER_PUBLIC_KEY.mainnet)
+      .message
   );
-  assert.equal(
-    neoWallet.verify(body.tx_message_hex, body.signature, body.public_key),
-    true,
-    'feed signature must verify over the tx message'
-  );
-
-  // Sanity: a Witness built from this signature is the witness feed-pusher.mjs
-  // attaches (tx.Witness.fromSignature(sig, pub)) — proves the signature is in the
-  // form the broadcast path consumes.
-  const witness = tx.Witness.fromSignature(body.signature, body.public_key);
-  assert.ok(witness.invocationScript.toString().length > 0);
-
-  __resetPriceFetcherForTests();
 });
 
-test('feed/sign: updateFeed write_mode is refused on mainnet (no silent downgrade)', async () => {
+test('feed/sign neo_n3: an updateFeed write_mode on mainnet answers 410 (nothing is signed to downgrade)', async () => {
   alignEnclaveFeedIdentity('mainnet');
-  const { status, body } = await dispatch(
-    'POST',
-    '/feed/sign',
-    AUTH,
-    JSON.stringify({
-      chain: 'neo_n3',
-      write_mode: 'updateFeed',
-      symbols: ['NEO-USD'],
-      now: 1_780_000_000,
-      tx_params: { block_count: 1, system_fee: 1, network_fee: 1, nonce: 1 },
-    })
+  assertRetired(
+    await dispatch(
+      'POST',
+      '/feed/sign',
+      AUTH,
+      JSON.stringify({
+        chain: 'neo_n3',
+        write_mode: 'updateFeed',
+        symbols: ['NEO-USD'],
+        now: 1_780_000_000,
+        tx_params: { block_count: 1, system_fee: 1, network_fee: 1, nonce: 1 },
+      })
+    ),
+    '/feed/sign'
   );
-  assert.equal(status, 400);
-  assert.match(String(body.error || body.message || JSON.stringify(body)), /testnet-only|refusing/);
 });
 
-test('feed/sign: TestNet updateFeed is accepted only with matching FEED_NETWORK/magic/MORPHEUS_NETWORK', async () => {
+// GAP (owner decision pending, round-9 audit 3a): the testnet-only per-pair
+// updateFeed write mode has NO other implementation. The Rust frontier
+// (workers/nitro-enclave-host/src/feed_sign.rs) builds only the batch
+// updateFeeds transaction, so retiring this lane leaves the feed-pusher's
+// per-pair testnet path (deploy/feed-pusher, write_mode 'updateFeed') without an
+// enclave signer. This test pins the 410 and the per-pair tx bytes; it does not
+// port the mode.
+test('feed/sign neo_n3: TestNet per-pair updateFeed answers 410; its tx bytes match the feed-pusher encoder', async () => {
   alignEnclaveFeedIdentity('testnet');
   const FIXED_NOW = 1_780_000_000;
-  __setPriceFetcherForTests(async () => ({ 'NEO-USD': 5.25 }));
+  const tripwires = installTripwires();
   try {
-    const { status, body } = await dispatch(
-      'POST',
-      '/feed/sign',
-      AUTH,
-      JSON.stringify({
-        chain: 'neo_n3',
-        write_mode: 'updateFeed',
-        symbols: ['NEO-USD'],
-        onchain_state: {
-          'NEO-USD': { round: FIXED_NOW - 3600, price: 5.0, timestamp: FIXED_NOW - 3600 },
-        },
-        now: FIXED_NOW,
-        tx_params: { block_count: 100, system_fee: 1, network_fee: 1, nonce: 9 },
-      })
+    assertRetired(
+      await dispatch(
+        'POST',
+        '/feed/sign',
+        AUTH,
+        JSON.stringify({
+          chain: 'neo_n3',
+          write_mode: 'updateFeed',
+          symbols: ['NEO-USD'],
+          onchain_state: {
+            'NEO-USD': { round: FIXED_NOW - 3600, price: 5.0, timestamp: FIXED_NOW - 3600 },
+          },
+          now: FIXED_NOW,
+          tx_params: { block_count: 100, system_fee: 1, network_fee: 1, nonce: 9 },
+        })
+      ),
+      '/feed/sign'
     );
-    assert.equal(status, 200, `dispatch failed: ${JSON.stringify(body)}`);
-    assert.equal(body.status, 'ok');
-    assert.equal(body.write_mode, 'updateFeed');
-    assert.equal(body.operation, 'updateFeed');
-    assert.deepEqual(body.pairs, ['TWELVEDATA:NEO-USD']);
-    assert.equal(body.tx_nonce, 9);
-    assert.equal(neoWallet.verify(body.tx_message_hex, body.signature, body.public_key), true);
-    const { buildUpdateFeedTxMessage } = await import('./enclave-server.mjs');
-    const rebuilt = buildUpdateFeedTxMessage(
-      {
-        P: body.pairs,
-        R: body.rounds,
-        PX: body.prices_scaled,
-        TS: body.timestamps,
-        AH: body.attestation_hashes,
-        SS: body.source_set_ids,
-      },
-      {
-        nonce: body.tx_nonce,
-        blockCount: 100,
-        systemFee: 1,
-        networkFee: 1,
-      },
-      UPDATER_ACCOUNT.publicKey
-    );
-    assert.equal(body.tx_message_hex, rebuilt.message);
+    assert.deepEqual(tripwires, { attest: 0, price: 0 });
   } finally {
-    __resetPriceFetcherForTests();
+    removeTripwires();
   }
+
+  const { planned } = planFeeds(
+    ['NEO-USD'],
+    { 'NEO-USD': 5.25 },
+    { 'NEO-USD': { round: FIXED_NOW - 3600, price: 5.0, timestamp: FIXED_NOW - 3600 } },
+    FIXED_NOW
+  );
+  assert.deepEqual(planned.P, ['TWELVEDATA:NEO-USD']);
+  const txParams = { nonce: 9, blockCount: 100, systemFee: 1, networkFee: 1 };
+  const built = buildUpdateFeedTxMessage(planned, txParams, UPDATER_PUBLIC_KEY.testnet);
+  assert.equal(
+    built.message,
+    feedPusherPerPairTxMessage('testnet', planned, txParams, UPDATER_PUBLIC_KEY.testnet),
+    'the per-pair updateFeed message must be byte-identical to the feed-pusher encoder'
+  );
+  assert.throws(
+    () => buildUpdateFeedTxMessage({ ...planned, P: [] }, txParams, UPDATER_PUBLIC_KEY.testnet),
+    /exactly one planned pair/
+  );
 });
 
-test('feed/sign: mismatched FEED_MAGIC / MORPHEUS_NETWORK refuse before signing', async () => {
+test('feed tx builders refuse a mismatched FEED_MAGIC / MORPHEUS_NETWORK before building', async () => {
+  const planned = {
+    P: ['TWELVEDATA:NEO-USD'],
+    R: [7],
+    PX: [5_250_000],
+    TS: [1_780_000_000],
+    AH: ['aa'],
+    SS: [0],
+  };
+  const txParams = { nonce: 1, blockCount: 1, systemFee: 1, networkFee: 1 };
+
   process.env.FEED_NETWORK = 'testnet';
   process.env.MORPHEUS_NETWORK = 'testnet';
-  process.env.FEED_MAGIC = '860833102';
+  process.env.FEED_MAGIC = '860833102'; // mainnet magic on a testnet identity
   __resetEnclaveNetworkIdentityForTests();
-  __setPriceFetcherForTests(async () => ({ 'NEO-USD': 5.25 }));
-  try {
-    const magic = await dispatch(
-      'POST',
-      '/feed/sign',
-      AUTH,
-      JSON.stringify({
-        chain: 'neo_n3',
-        write_mode: 'updateFeed',
-        symbols: ['NEO-USD'],
-        now: 1_780_000_000,
-        tx_params: { block_count: 1, system_fee: 1, network_fee: 1, nonce: 1 },
-      })
-    );
-    assert.equal(magic.status, 400);
-    assert.match(String(magic.body.error || ''), /FEED_MAGIC|split-brain|does not match/);
+  assert.throws(
+    () => buildUpdateFeedTxMessage(planned, txParams, UPDATER_PUBLIC_KEY.testnet),
+    (error) => error.status === 400 && /FEED_MAGIC|split-brain|does not match/.test(error.message)
+  );
 
-    process.env.FEED_MAGIC = String(FEED_NETWORK_DEFAULTS.testnet.magic);
-    process.env.MORPHEUS_NETWORK = 'mainnet';
-    __resetEnclaveNetworkIdentityForTests();
-    const split = await dispatch(
+  process.env.FEED_MAGIC = String(FEED_NETWORK_DEFAULTS.testnet.magic);
+  process.env.MORPHEUS_NETWORK = 'mainnet';
+  __resetEnclaveNetworkIdentityForTests();
+  assert.throws(
+    () => buildUpdateFeedsTxMessage(planned, txParams, UPDATER_PUBLIC_KEY.testnet),
+    (error) =>
+      error.status === 400 && /split-brain|FEED_NETWORK|MORPHEUS_NETWORK/.test(error.message)
+  );
+
+  // The route itself is retired whatever the identity says.
+  assertRetired(
+    await dispatch(
       'POST',
       '/feed/sign',
       AUTH,
-      JSON.stringify({
-        chain: 'neo_n3',
-        write_mode: 'updateFeed',
-        symbols: ['NEO-USD'],
-        now: 1_780_000_000,
-        tx_params: { block_count: 1, system_fee: 1, network_fee: 1, nonce: 1 },
-      })
-    );
-    assert.equal(split.status, 400);
-    assert.match(String(split.body.error || ''), /split-brain|FEED_NETWORK|MORPHEUS_NETWORK/);
-  } finally {
-    __resetPriceFetcherForTests();
-  }
+      JSON.stringify({ chain: 'neo_n3', write_mode: 'updateFeed', symbols: ['NEO-USD'] })
+    ),
+    '/feed/sign'
+  );
 });
 
 test('buildUpdateFeedTxMessage has no pinOverride escape and follows the bound identity', async () => {
-  const { buildUpdateFeedTxMessage } = await import('./enclave-server.mjs');
   assert.equal(buildUpdateFeedTxMessage.length, 3);
   const planned = {
     P: ['TWELVEDATA:NEO-USD'],
@@ -805,170 +867,194 @@ test('buildUpdateFeedTxMessage has no pinOverride escape and follows the bound i
   };
   const txParams = { nonce: 9, blockCount: 100, systemFee: 1, networkFee: 1 };
   alignEnclaveFeedIdentity('testnet');
-  const testnet = buildUpdateFeedTxMessage(planned, txParams, UPDATER_ACCOUNT.publicKey);
+  const testnet = buildUpdateFeedTxMessage(planned, txParams, UPDATER_PUBLIC_KEY.testnet);
   alignEnclaveFeedIdentity('mainnet');
-  const mainnet = buildUpdateFeedTxMessage(planned, txParams, UPDATER_ACCOUNT.publicKey);
+  const mainnet = buildUpdateFeedTxMessage(planned, txParams, UPDATER_PUBLIC_KEY.testnet);
   assert.notEqual(testnet.message, mainnet.message);
 });
 
-test('feed/sign: no symbol clears the push decision → no-update (no signature)', async () => {
+test('feed/sign neo_n3: a plan with nothing to push still answers 410 (no-update was a signing-lane answer)', async () => {
   alignEnclaveFeedIdentity('mainnet');
   const FIXED_NOW = 1_780_000_000;
-  __setPriceFetcherForTests(async () => ({ 'NEO-USD': 5.0 }));
-  const req = {
-    chain: 'neo_n3',
-    symbols: ['NEO-USD'],
-    // recent + unchanged → planFeedUpdate returns push:false
-    onchain_state: { 'NEO-USD': { round: FIXED_NOW - 60, price: 5.0, timestamp: FIXED_NOW - 60 } },
-    now: FIXED_NOW,
-  };
-  const { status, body } = await dispatch('POST', '/feed/sign', AUTH, JSON.stringify(req));
-  assert.equal(status, 200);
-  assert.equal(body.status, 'no-update');
-  assert.equal(body.tx_message_hex, null);
-  assert.equal(body.signature, null);
-  assert.deepEqual(body.pairs, []);
-  __resetPriceFetcherForTests();
+  const tripwires = installTripwires();
+  try {
+    assertRetired(
+      await dispatch(
+        'POST',
+        '/feed/sign',
+        AUTH,
+        JSON.stringify({
+          chain: 'neo_n3',
+          symbols: ['NEO-USD'],
+          // recent + unchanged → planFeedUpdate returns push:false
+          onchain_state: {
+            'NEO-USD': { round: FIXED_NOW - 60, price: 5.0, timestamp: FIXED_NOW - 60 },
+          },
+          now: FIXED_NOW,
+        })
+      ),
+      '/feed/sign'
+    );
+    assert.deepEqual(tripwires, { attest: 0, price: 0 });
+  } finally {
+    removeTripwires();
+  }
+  // The decision itself is the feed-pusher's, unchanged: nothing to push.
+  assert.equal(
+    planFeedUpdate({ round: FIXED_NOW - 60, price: 5.0, ts: FIXED_NOW - 60 }, 5.0, FIXED_NOW).push,
+    false
+  );
 });
 
-test('feed/sign: tx params come from the provider seam when not supplied in the request', async () => {
+test('feed/sign neo_n3: without tx_params answers 410; provider-param tx bytes identical to feed-pusher', async () => {
   alignEnclaveFeedIdentity('mainnet');
   const FIXED_NOW = 1_780_000_000;
-  __setPriceFetcherForTests(async () => ({ 'NEO-USD': 7.0 }));
-  // No tx_params in the request → the server pulls them from the provider seam
-  // (in production: an RPC read via the egress lane). Pin a nonce so the rebuild
-  // is deterministic.
-  __setFeedTxParamsProviderForTests(async () => ({
-    blockCount: 9000000,
-    systemFee: 555,
-    networkFee: 666,
-  }));
-  const req = {
-    chain: 'neo_n3',
-    symbols: ['NEO-USD'],
-    onchain_state: { 'NEO-USD': { round: FIXED_NOW - 60, price: 5.0, timestamp: FIXED_NOW - 60 } },
-    now: FIXED_NOW,
-    tx_nonce: 4242,
-  };
-  const { status, body } = await dispatch('POST', '/feed/sign', AUTH, JSON.stringify(req));
-  assert.equal(status, 200, `dispatch failed: ${JSON.stringify(body)}`);
-  assert.equal(body.status, 'ok');
-  assert.equal(
-    body.valid_until_block,
-    9000000 + 500,
-    'valid_until_block must come from the provider'
+  // No tx_params: the lane used to pull block count + fees from a provider seam
+  // (or answer 503). That seam is gone with the lane.
+  assertRetired(
+    await dispatch(
+      'POST',
+      '/feed/sign',
+      AUTH,
+      JSON.stringify({
+        chain: 'neo_n3',
+        symbols: ['NEO-USD'],
+        onchain_state: {
+          'NEO-USD': { round: FIXED_NOW - 60, price: 5.0, timestamp: FIXED_NOW - 60 },
+        },
+        now: FIXED_NOW,
+        tx_nonce: 4242,
+      })
+    ),
+    '/feed/sign'
   );
-  assert.equal(body.tx_nonce, 4242);
 
-  // Rebuild independently with the provider's params + returned nonce.
-  const px = Math.round(7.0 * 1e6);
-  const plan = planFeedUpdate(
-    { round: FIXED_NOW - 60, price: 5.0, ts: FIXED_NOW - 60 },
-    7.0,
+  const { planned } = planFeeds(
+    ['NEO-USD'],
+    { 'NEO-USD': 7.0 },
+    { 'NEO-USD': { round: FIXED_NOW - 60, price: 5.0, timestamp: FIXED_NOW - 60 } },
     FIXED_NOW
   );
-  const planned = {
-    P: ['TWELVEDATA:NEO-USD'],
-    R: [plan.round],
-    PX: [px],
-    TS: [plan.ts],
-    AH: [createHash('sha256').update(`NEO-USD|${px}|${plan.ts}`).digest('hex').slice(0, 32)],
-    SS: [0],
-  };
-  const expectedMessage = feedPusherTxMessage(
-    planned,
-    { blockCount: 9000000, systemFee: 555, networkFee: 666, nonce: body.tx_nonce },
-    UPDATER_ACCOUNT.publicKey
-  );
+  const txParams = { blockCount: 9000000, systemFee: 555, networkFee: 666, nonce: 4242 };
+  const built = buildUpdateFeedsTxMessage(planned, txParams, UPDATER_PUBLIC_KEY.mainnet);
+  assert.equal(built.txn.validUntilBlock, 9000000 + 500);
   assert.equal(
-    body.tx_message_hex,
-    expectedMessage,
+    built.message,
+    feedPusherTxMessage('mainnet', planned, txParams, UPDATER_PUBLIC_KEY.mainnet),
     'provider-param tx message must be byte-exact'
   );
-  assert.equal(neoWallet.verify(body.tx_message_hex, body.signature, body.public_key), true);
-
-  __resetFeedTxParamsProviderForTests();
-  __resetPriceFetcherForTests();
+  assert.throws(
+    () =>
+      buildUpdateFeedsTxMessage(planned, { ...txParams, nonce: 1.5 }, UPDATER_PUBLIC_KEY.mainnet),
+    /nonce must be an integer/
+  );
 });
 
-test('feed/sign: missing tx params (no request params, default provider) surfaces 503', async () => {
+test('feed/sign neo_n3: missing tx params answers 410, not the retired lane’s 503', async () => {
   alignEnclaveFeedIdentity('mainnet');
   const FIXED_NOW = 1_780_000_000;
-  // 5.0 -> 5.5 is a 10% move: past the bps threshold, well under the 50%
-  // deviation ceiling, so the symbol pushes and the provider IS reached.
-  __setPriceFetcherForTests(async () => ({ 'NEO-USD': 5.5 }));
-  __resetFeedTxParamsProviderForTests(); // default provider throws 503
-  const req = {
-    chain: 'neo_n3',
-    symbols: ['NEO-USD'],
-    onchain_state: { 'NEO-USD': { round: FIXED_NOW - 60, price: 5.0, timestamp: FIXED_NOW - 60 } },
-    now: FIXED_NOW,
-  };
-  const { status, body } = await dispatch('POST', '/feed/sign', AUTH, JSON.stringify(req));
-  assert.equal(status, 503, `expected 503, got ${status}: ${JSON.stringify(body)}`);
-  assert.match(body.error, /tx network params/);
-  __resetPriceFetcherForTests();
+  assertRetired(
+    await dispatch(
+      'POST',
+      '/feed/sign',
+      AUTH,
+      JSON.stringify({
+        chain: 'neo_n3',
+        symbols: ['NEO-USD'],
+        onchain_state: {
+          'NEO-USD': { round: FIXED_NOW - 60, price: 5.0, timestamp: FIXED_NOW - 60 },
+        },
+        now: FIXED_NOW,
+      })
+    ),
+    '/feed/sign'
+  );
 });
 
-test('feed/sign: rejects host-supplied N3 fees above enclave safety ceilings', async () => {
+// The fee ceilings (10 GAS system, 2 GAS network) belonged to the retired lane;
+// the Rust frontier enforces the same ceilings (feed_sign.rs
+// FEED_N3_MAX_SYSTEM_FEE / FEED_N3_MAX_NETWORK_FEE).
+test('feed/sign neo_n3: host-supplied fees above the old ceilings answer 410 (never reach a signer)', async () => {
   alignEnclaveFeedIdentity('mainnet');
   const FIXED_NOW = 1_780_000_000;
-  __setPriceFetcherForTests(async () => ({ 'NEO-USD': 5.5 }));
+  const tripwires = installTripwires();
   try {
-    const request = {
-      chain: 'neo_n3',
-      symbols: ['NEO-USD'],
-      onchain_state: {
-        'NEO-USD': { round: FIXED_NOW - 60, price: 5.0, timestamp: FIXED_NOW - 60 },
-      },
-      now: FIXED_NOW,
-      tx_params: {
-        block_count: 9_000_000,
-        system_fee: 10 * 1e8 + 1,
-        network_fee: 1,
-        nonce: 7,
-      },
-    };
-    const rejected = await dispatch('POST', '/feed/sign', AUTH, JSON.stringify(request));
-    assert.equal(rejected.status, 400);
-    assert.match(rejected.body.error, /system_fee.*ceiling/);
+    assertRetired(
+      await dispatch(
+        'POST',
+        '/feed/sign',
+        AUTH,
+        JSON.stringify({
+          chain: 'neo_n3',
+          symbols: ['NEO-USD'],
+          onchain_state: {
+            'NEO-USD': { round: FIXED_NOW - 60, price: 5.0, timestamp: FIXED_NOW - 60 },
+          },
+          now: FIXED_NOW,
+          tx_params: {
+            block_count: 9_000_000,
+            system_fee: 10 * 1e8 + 1,
+            network_fee: 1,
+            nonce: 7,
+          },
+        })
+      ),
+      '/feed/sign'
+    );
+    assert.deepEqual(tripwires, { attest: 0, price: 0 });
   } finally {
-    __resetPriceFetcherForTests();
+    removeTripwires();
   }
 });
 
-test('feed/sign: a symbol missing from the price fetch is reported, not signed', async () => {
+test('feed/sign neo_n3: a symbol missing from the price fetch answers 410 (nothing fetched)', async () => {
   alignEnclaveFeedIdentity('mainnet');
   const FIXED_NOW = 1_780_000_000;
-  __setPriceFetcherForTests(async () => ({ 'NEO-USD': 6.0 })); // GAS-USD missing
-  const req = {
-    chain: 'neo_n3',
-    symbols: ['NEO-USD', 'GAS-USD'],
-    onchain_state: {
-      'NEO-USD': { round: FIXED_NOW - 60, price: 5.0, timestamp: FIXED_NOW - 60 },
-      'GAS-USD': { round: FIXED_NOW - 60, price: 2.0, timestamp: FIXED_NOW - 60 },
-    },
-    now: FIXED_NOW,
-    tx_params: { block_count: 100, system_fee: 1, network_fee: 1 },
-  };
-  const { status, body } = await dispatch('POST', '/feed/sign', AUTH, JSON.stringify(req));
-  assert.equal(status, 200);
-  assert.equal(body.status, 'ok');
-  assert.deepEqual(body.pairs, ['TWELVEDATA:NEO-USD']);
-  assert.deepEqual(body.missing, ['GAS-USD']);
-  __resetPriceFetcherForTests();
+  const tripwires = installTripwires();
+  try {
+    assertRetired(
+      await dispatch(
+        'POST',
+        '/feed/sign',
+        AUTH,
+        JSON.stringify({
+          chain: 'neo_n3',
+          symbols: ['NEO-USD', 'GAS-USD'],
+          onchain_state: {
+            'NEO-USD': { round: FIXED_NOW - 60, price: 5.0, timestamp: FIXED_NOW - 60 },
+            'GAS-USD': { round: FIXED_NOW - 60, price: 2.0, timestamp: FIXED_NOW - 60 },
+          },
+          now: FIXED_NOW,
+          tx_params: { block_count: 100, system_fee: 1, network_fee: 1 },
+        })
+      ),
+      '/feed/sign'
+    );
+    assert.deepEqual(tripwires, { attest: 0, price: 0 });
+  } finally {
+    removeTripwires();
+  }
 });
 
-test('feed/sign: validation — symbols required; neox needs pinned tx_params', async () => {
+test('feed/sign: validation — neo_n3 answers 410 before validating; neox needs pinned tx_params', async () => {
   alignEnclaveFeedIdentity('mainnet');
-  const noSymbols = await dispatch(
+  assertRetired(
+    await dispatch('POST', '/feed/sign', AUTH, JSON.stringify({ chain: 'neo_n3', symbols: [] })),
+    '/feed/sign'
+  );
+  assertRetired(
+    await dispatch('POST', '/feed/sign', AUTH, JSON.stringify({ chain: 'bogus', symbols: [] })),
+    '/feed/sign'
+  );
+
+  const neoxNoSymbols = await dispatch(
     'POST',
     '/feed/sign',
     AUTH,
-    JSON.stringify({ chain: 'neo_n3', symbols: [] })
+    JSON.stringify({ chain: 'neox', symbols: [] })
   );
-  assert.equal(noSymbols.status, 400);
-  assert.match(noSymbols.body.error, /symbols/);
+  assert.equal(neoxNoSymbols.status, 400);
+  assert.match(neoxNoSymbols.body.error, /symbols/);
 
   // neox with a feed key but no tx_params → 400: the host must pin to/chain_id/nonce/fees.
   const saved = process.env.MORPHEUS_NEOX_FEED_PRIVATE_KEY;
@@ -1074,12 +1160,16 @@ test('feed/sign neox: signs the EIP-1559 updateFeeds tx in-TEE; recovers to the 
 // binds sha256(fulfillment_digest) and the nonce is echoed.
 // ---------------------------------------------------------------------------
 
-test('attestation: user_data binds sha256(fulfillment_digest) + nonce echo (stubbed seam)', async () => {
+test('attestation: user_data binds sha256(fulfillment_digest) + nonce echo + the pinned verifier key (stubbed seam)', async () => {
   const fulfillmentDigest = 'ab'.repeat(32); // 32-byte digest hex
   const nonce = 'feed1234';
   const expectedUserData = createHash('sha256')
     .update(Buffer.from(fulfillmentDigest, 'hex'))
     .digest('hex');
+  // The bound key is the REGISTRY's pinned testnet oracle_verifier public key: the
+  // server holds no Neo N3 key, so a pinned public identity is all it can bind.
+  const pinnedVerifierPublicKey = getPinnedNeoN3Role('testnet', 'oracle_verifier').public_key;
+  assert.match(pinnedVerifierPublicKey, /^[0-9a-f]{66}$/);
 
   // Stub the attest runner: capture the args the server passes, return a fake doc.
   let capturedArgs = null;
@@ -1099,17 +1189,18 @@ test('attestation: user_data binds sha256(fulfillment_digest) + nonce echo (stub
   assert.equal(body.user_data_hex.length, 64, 'user_data must be a single 32-byte commit');
   assert.equal(body.nonce, nonce, 'nonce must be echoed');
   assert.equal(body.attestation_document, 'ZmFrZS1jb3NlLWRvYw==');
+  assert.equal(body.public_key, pinnedVerifierPublicKey);
 
   // The binary actually received --user-data <sha256(digest)>, --nonce <nonce>,
-  // and --public-key <oracle_verifier pubkey>.
+  // and --public-key <pinned oracle_verifier pubkey>.
   const argMap = {};
   for (let i = 0; i < capturedArgs.length; i += 2) argMap[capturedArgs[i]] = capturedArgs[i + 1];
   assert.equal(argMap['--user-data'], expectedUserData);
   assert.equal(argMap['--nonce'], nonce);
   assert.equal(
     argMap['--public-key'].toLowerCase(),
-    ORACLE_VERIFIER_ACCOUNT.publicKey.toLowerCase(),
-    '--public-key must bind the oracle_verifier signer'
+    pinnedVerifierPublicKey,
+    '--public-key must bind the pinned oracle_verifier identity'
   );
 
   __resetAsyncAttestRunnerForTests();
@@ -1168,10 +1259,10 @@ test('attestation: a malformed (odd-length) binding hex is rejected with 400', a
 });
 
 // ---------------------------------------------------------------------------
-// /oracle/fulfill ENFORCING attestation (C1): the response binds an NSM
-// attestation document committing user_data = sha256(fulfillment_digest) and
-// surfaces the measured PCRs the relayer verifies. Best-effort: a missing NSM
-// binary does NOT break the (signed) fulfillment.
+// ENFORCING attestation (C1): a fulfillment binds an NSM document committing
+// user_data = sha256(fulfillment_digest) and surfaces the measured PCRs the
+// relayer verifies. Best-effort: a missing NSM binary does NOT break a signed
+// fulfillment. The NeoX lane still does both; the Neo N3 lane is retired.
 // ---------------------------------------------------------------------------
 
 // Encode a minimal CBOR value (just the subset the NSM attestation doc uses:
@@ -1227,107 +1318,199 @@ function buildFakeAttestationDoc({ userDataHex, pcr0Hex }) {
   return cborEncode(cose).toString('base64');
 }
 
-test('oracle/fulfill binds an attestation document committing sha256(fulfillment_digest) (C1)', async () => {
+function neoxFulfillRequest(requestId, nonce) {
   const requestType = 'oracle_query';
-  const requestId = '5150';
-  const contractScriptHash = '0x' + '3a'.repeat(20);
-  const networkMagic = 894710606;
-  const appId = 'attest.app';
-  const moduleId = resolveKernelIntent(requestType).moduleId;
-  const operation = resolveKernelIntent(requestType).operation;
-  const PCR0 = 'aa'.repeat(48);
+  return {
+    chain: 'neox',
+    request_type: requestType,
+    request_id: requestId,
+    payload: { symbol: 'BTC/USD' },
+    fulfillment_context: {
+      app_id: 'attest.app',
+      module_id: resolveKernelIntent(requestType).moduleId,
+      operation: resolveKernelIntent(requestType).operation,
+      chain_id: 12227332,
+      oracle_contract: '0xeCFC1C652B5cCdBfe3E9314a83156787D92a3fD2',
+    },
+    ...(nonce ? { nonce } : {}),
+  };
+}
 
+test('C1: the neo_n3 fulfill lane answers 410 without attesting; the attestation binding holds for its digest and for neox', async () => {
+  const PCR0 = 'aa'.repeat(48);
+  let attestCalls = 0;
   // Stub the attest runner so it returns a REAL COSE_Sign1 whose user_data is the
   // commitment the server passes (--user-data sha256(digest)) and a known PCR0.
   __setAsyncAttestRunnerForTests((args) => {
+    attestCalls += 1;
     const argMap = {};
     for (let i = 0; i < args.length; i += 2) argMap[args[i]] = args[i + 1];
     const doc = buildFakeAttestationDoc({ userDataHex: argMap['--user-data'], pcr0Hex: PCR0 });
     return { ok: true, attestation_b64: doc, document_len: doc.length };
   });
+  try {
+    const requestType = 'oracle_query';
+    const contractScriptHash = '0x' + '3a'.repeat(20);
+    const networkMagic = 894710606;
+    const moduleId = resolveKernelIntent(requestType).moduleId;
+    const operation = resolveKernelIntent(requestType).operation;
+    const n3 = {
+      chain: 'neo_n3',
+      request_type: requestType,
+      request_id: '5150',
+      payload: { symbol: 'BTC/USD' },
+      fulfillment_context: {
+        app_id: 'attest.app',
+        module_id: moduleId,
+        operation,
+        contract_script_hash: contractScriptHash,
+        network_magic: networkMagic,
+      },
+      nonce: 'cafebabe',
+    };
+    assertRetired(
+      await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(n3)),
+      '/oracle/fulfill'
+    );
+    assert.equal(attestCalls, 0, 'a retired lane attests nothing');
 
-  const req = {
-    chain: 'neo_n3',
-    request_type: requestType,
-    request_id: requestId,
-    payload: { symbol: 'BTC/USD' },
-    fulfillment_context: {
-      app_id: appId,
-      module_id: moduleId,
-      operation,
-      contract_script_hash: contractScriptHash,
-      network_magic: networkMagic,
-    },
-    nonce: 'cafebabe',
-  };
-  const { status, body } = await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(req));
-  assert.equal(status, 200, `dispatch failed: ${JSON.stringify(body)}`);
-  assert.equal(body.trust_tier, 'enclave-attested');
-  assert.ok(body.attestation_doc_base64, 'fulfill must carry the attestation document');
+    // Key-free: the digest the lane used to sign, bound through /attestation.
+    const fulfillment = encodeFulfillmentResult(requestType, expectedWorkerResponse(requestType));
+    const n3Digest = buildFulfillmentDigestBytes(
+      '5150',
+      requestType,
+      fulfillment.success,
+      fulfillment.result || '',
+      fulfillment.error || '',
+      fulfillment.result_bytes_base64 || '',
+      {
+        chain: 'neo_n3',
+        appId: 'attest.app',
+        moduleId,
+        operation,
+        contractScriptHash,
+        networkMagic,
+      }
+    ).toString('hex');
+    const bound = await dispatch(
+      'POST',
+      '/attestation',
+      {},
+      JSON.stringify({ fulfillment_digest_hex: n3Digest, nonce: 'cafebabe' })
+    );
+    assert.equal(bound.status, 200);
+    assert.equal(
+      bound.body.user_data_hex,
+      createHash('sha256').update(Buffer.from(n3Digest, 'hex')).digest('hex')
+    );
+    assert.equal(bound.body.pcrs.pcr0, PCR0);
+    assert.equal(bound.body.nonce, 'cafebabe');
 
-  // user_data committed in the response equals sha256(the returned digest bytes).
-  const expectedUserData = createHash('sha256')
-    .update(Buffer.from(body.fulfillment_digest_hex, 'hex'))
-    .digest('hex');
-  assert.equal(body.attestation_user_data_hex, expectedUserData);
-  // The PCR0 the relayer pins is surfaced from the parsed document.
-  assert.equal(body.attestation_pcrs.pcr0, PCR0);
-  assert.equal(body.nonce, 'cafebabe');
-  __resetAsyncAttestRunnerForTests();
+    // The live NeoX lane binds its own digest in the fulfillment response.
+    const { status, body } = await dispatch(
+      'POST',
+      '/oracle/fulfill',
+      AUTH,
+      JSON.stringify(neoxFulfillRequest('5152', 'cafebabe'))
+    );
+    assert.equal(status, 200, `dispatch failed: ${JSON.stringify(body)}`);
+    assert.equal(body.trust_tier, 'enclave-attested');
+    assert.ok(body.attestation_doc_base64, 'fulfill must carry the attestation document');
+    const neoxDigestBytes = Buffer.from(body.fulfillment_digest_hex.replace(/^0x/, ''), 'hex');
+    assert.equal(
+      body.attestation_user_data_hex,
+      createHash('sha256').update(neoxDigestBytes).digest('hex')
+    );
+    assert.equal(body.attestation_pcrs.pcr0, PCR0);
+    assert.equal(body.nonce, 'cafebabe');
+  } finally {
+    __resetAsyncAttestRunnerForTests();
+  }
 });
 
-test('oracle/fulfill still signs when attestation is unavailable (best-effort C1)', async () => {
-  // A throwing/absent NSM binary must NOT break the signed fulfillment — the
+test('C1 best-effort: neo_n3 answers 410; neox still signs when attestation is unavailable', async () => {
+  // A throwing/absent NSM binary must NOT break a signed fulfillment — the
   // relayer enforces and downgrades trust_tier when it cannot prove attestation.
+  let attestCalls = 0;
   __setAsyncAttestRunnerForTests(() => {
+    attestCalls += 1;
     throw new Error('spawn ENOENT (no nsm binary outside an enclave)');
   });
-  const requestType = 'oracle_query';
-  const req = {
-    chain: 'neo_n3',
-    request_type: requestType,
-    request_id: '5151',
-    payload: { symbol: 'BTC/USD' },
-    fulfillment_context: {
-      app_id: 'a',
-      module_id: resolveKernelIntent(requestType).moduleId,
-      operation: resolveKernelIntent(requestType).operation,
-    },
-  };
-  const { status, body } = await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(req));
-  assert.equal(status, 200);
-  assert.ok(body.signature, 'signature must still be produced');
-  assert.equal(body.attestation_doc_base64, undefined, 'no doc when the binary is unavailable');
-  assert.ok(body.attestation_error, 'the attestation failure is surfaced for ops');
-  __resetAsyncAttestRunnerForTests();
+  try {
+    const requestType = 'oracle_query';
+    assertRetired(
+      await dispatch(
+        'POST',
+        '/oracle/fulfill',
+        AUTH,
+        JSON.stringify({
+          chain: 'neo_n3',
+          request_type: requestType,
+          request_id: '5151',
+          payload: { symbol: 'BTC/USD' },
+          fulfillment_context: {
+            app_id: 'a',
+            module_id: resolveKernelIntent(requestType).moduleId,
+            operation: resolveKernelIntent(requestType).operation,
+          },
+        })
+      ),
+      '/oracle/fulfill'
+    );
+    assert.equal(attestCalls, 0);
+
+    const { status, body } = await dispatch(
+      'POST',
+      '/oracle/fulfill',
+      AUTH,
+      JSON.stringify(neoxFulfillRequest('5153'))
+    );
+    assert.equal(status, 200);
+    assert.ok(body.signature, 'signature must still be produced');
+    assert.equal(body.attestation_doc_base64, undefined, 'no doc when the binary is unavailable');
+    assert.ok(body.attestation_error, 'the attestation failure is surfaced for ops');
+    assert.equal(attestCalls, 1);
+  } finally {
+    __resetAsyncAttestRunnerForTests();
+  }
 });
 
 // ---------------------------------------------------------------------------
 // /health
 // ---------------------------------------------------------------------------
 
-test('GET /health reports compute + signer readiness', async () => {
+test('GET /health reports compute readiness and the Neo N3 signer as retired (ready:false)', async () => {
   const { status, body } = await dispatch('GET', '/health', {}, '');
-  assert.equal(status, 200);
-  assert.equal(body.ready, true);
+  assert.equal(status, 503, 'a retired signer is not a ready signer');
+  assert.equal(body.ready, false);
+  assert.equal(body.status, 'retired');
+  assert.equal(body.runtime, 'morpheus-enclave-server');
   assert.equal(body.checks.compute, true);
-  assert.equal(body.checks.signer, true);
+  assert.equal(body.checks.signer, false);
+  assert.deepEqual(body.neo_n3_signer, {
+    status: 'retired',
+    error_code: 'neo_n3_signer_retired',
+    replacement: 'workers/nitro-enclave-host',
+  });
+  // No per-role key_source / public-key claim: no Neo N3 key exists here.
+  assert.equal(body.key_source, undefined);
+  assert.equal(body.checks.oracle_verifier_public_key, undefined);
+  assert.equal(body.plaintext_key_provision_allowed, false);
 
   // handleHealth direct call agrees.
-  const direct = handleHealth();
-  assert.equal(direct.ready, true);
+  assert.deepEqual(handleHealth(), body);
 });
 
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
 
-test('missing request_type / request_id returns 400', async () => {
+test('missing request_type / request_id: 400 on neox; neo_n3 answers 410 before validating', async () => {
   const noType = await dispatch(
     'POST',
     '/oracle/fulfill',
     AUTH,
-    JSON.stringify({ chain: 'neo_n3', request_id: '1' })
+    JSON.stringify({ chain: 'neox', request_id: '1' })
   );
   assert.equal(noType.status, 400);
   assert.match(noType.body.error, /request_type/);
@@ -1336,10 +1519,22 @@ test('missing request_type / request_id returns 400', async () => {
     'POST',
     '/oracle/fulfill',
     AUTH,
-    JSON.stringify({ chain: 'neo_n3', request_type: 'oracle_query' })
+    JSON.stringify({ chain: 'neox', request_type: 'oracle_query' })
   );
   assert.equal(noId.status, 400);
   assert.match(noId.body.error, /request_id/);
+
+  assertRetired(
+    await dispatch(
+      'POST',
+      '/oracle/fulfill',
+      AUTH,
+      JSON.stringify({ chain: 'neo_n3', request_id: '1' })
+    ),
+    '/oracle/fulfill'
+  );
+  // An absent chain is neo_n3 (normalizeChain's default).
+  assertRetired(await dispatch('POST', '/oracle/fulfill', AUTH, '{}'), '/oracle/fulfill');
 });
 
 test('unknown route returns 404', async () => {
@@ -1349,8 +1544,7 @@ test('unknown route returns 404', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Auth + provisioning + signer surface (the folded-in signer endpoints that make
-// this enclave a strict superset of nitro-signer-server.mjs).
+// Auth + provisioning + the retired signer surface
 // ---------------------------------------------------------------------------
 
 test('sensitive routes require the bearer token; health + attestation stay open', async () => {
@@ -1401,76 +1595,82 @@ test('sensitive routes fail closed before a runtime token is provisioned', async
   }
 });
 
-test('sign/payload signs data_hex with the pinned role key', async () => {
+test('sign/payload (blind signing) answers 410 and names the closed Rust lane', async () => {
   const dataHex = createHash('sha256').update('enclave-sign-payload-test').digest('hex');
-  const { status, body } = await dispatch(
+  const retired = await dispatch(
     'POST',
     '/sign/payload',
     AUTH,
     JSON.stringify({ role: 'oracle_verifier', data_hex: dataHex })
   );
-  assert.equal(status, 200);
-  assert.equal(body.role, 'oracle_verifier');
-  assert.equal(body.public_key, ORACLE_VERIFIER_ACCOUNT.publicKey);
-  // The signature must verify against the returned public key over the data.
-  assert.equal(neoWallet.verify(dataHex, body.signature, body.public_key), true);
+  assertRetired(retired, '/sign/payload');
+  assert.match(retired.body.error, /ENCLAVE_ALLOW_BLIND_SIGN=1/);
+  assert.equal(retired.body.signature_hex, undefined);
 });
 
-test('keys/derived returns a pinned role identity (no secret)', async () => {
-  const { status, body } = await dispatch(
+test('keys/derived answers 410 and names the custody-backed Rust lane', async () => {
+  const retired = await dispatch(
     'POST',
     '/keys/derived',
     AUTH,
     JSON.stringify({ role: 'updater' })
   );
-  assert.equal(status, 200);
-  assert.equal(body.role, 'updater');
-  assert.equal(body.neo_n3.public_key, UPDATER_ACCOUNT.publicKey);
+  assertRetired(retired, '/keys/derived');
+  assert.match(retired.body.error, /SIGNER_ROLE_<ROLE>_KEY_ID/);
+  assert.equal(retired.body.neo_n3, undefined);
+  assert.equal(retired.body.derived, undefined);
 });
 
-test('enclave signer refuses to act under a defaulted or unmappable role', async () => {
-  // regression: normalizeSignerRole used to fall back to 'updater', so an
-  // absent or bogus key_role signed with the updater key
-  const absent = await dispatch('POST', '/sign/payload', AUTH, JSON.stringify({}));
-  assert.equal(absent.status, 400);
-  assert.match(absent.body.error, /key_role is required and must name a signer role/);
-  const bogus = await dispatch(
-    'POST',
-    '/sign/payload',
-    AUTH,
-    JSON.stringify({ key_role: 'superadmin', data_hex: '00' })
-  );
-  assert.equal(bogus.status, 400);
-  assert.match(bogus.body.error, /key_role is required and must name a signer role/);
-  const derived = await dispatch('POST', '/keys/derived', AUTH, JSON.stringify({}));
-  assert.equal(derived.status, 400);
-  assert.match(derived.body.error, /key_role is required and must name a signer role/);
+test('the retired signer surface never acts under a defaulted or unmappable role', async () => {
+  // regression: normalizeSignerRole once fell back to 'updater', so an absent or
+  // bogus key_role signed with the updater key. The surface is retired: every
+  // body, whatever role it names or omits, answers the same 410.
+  for (const [route, body] of [
+    ['/sign/payload', {}],
+    ['/sign/payload', { key_role: 'superadmin', data_hex: '00' }],
+    ['/sign/payload', { key_role: 'updater', data_hex: '00' }],
+    ['/keys/derived', {}],
+    ['/keys/derived', { role: 'oracle_verifier' }],
+  ]) {
+    assertRetired(await dispatch('POST', route, AUTH, JSON.stringify(body)), route);
+  }
 });
 
-test('provision applies env keys at runtime and reports role health', async () => {
-  // Provision a benign extra key + re-affirm the network; the keys are already set
-  // at module load, so roles should report ok. First-boot provisioning is not
-  // exercised here because NITRO_API_TOKEN already seeds a trusted token.
-  const { status, body } = await dispatch(
-    'POST',
-    '/provision',
-    AUTH,
-    JSON.stringify({
-      env: {
-        MORPHEUS_NETWORK: 'testnet',
-        FEED_NETWORK: 'testnet',
-        FEED_MAGIC: String(FEED_NETWORK_DEFAULTS.testnet.magic),
-        TD_KEY: 'provisioned-td-key',
-      },
-    })
-  );
-  assert.equal(status, 200);
-  assert.equal(body.provisioned, true);
-  assert.equal(body.network, 'testnet');
-  assert.ok(body.env_keys.includes('TD_KEY'));
-  assert.equal(process.env.TD_KEY, 'provisioned-td-key');
-  const verifier = body.roles.find((r) => r.role === 'oracle_verifier');
-  assert.equal(verifier.ok, true);
+test('provision applies env keys at runtime and reports the Neo N3 signer retired (not role health)', async () => {
+  // Provision a benign extra key + re-affirm the network. First-boot provisioning
+  // is not exercised here because NITRO_API_TOKEN already seeds a trusted token.
+  try {
+    const { status, body } = await dispatch(
+      'POST',
+      '/provision',
+      AUTH,
+      JSON.stringify({
+        env: {
+          MORPHEUS_NETWORK: 'testnet',
+          FEED_NETWORK: 'testnet',
+          FEED_MAGIC: String(FEED_NETWORK_DEFAULTS.testnet.magic),
+          TD_KEY: 'provisioned-td-key',
+        },
+      })
+    );
+    // D1: before, this answered 500 — after writing the payload into process.env —
+    // because it called two KMS materializers 942adfe deleted.
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(body.status, 'ok');
+    assert.equal(body.provisioned, true);
+    assert.equal(body.network, 'testnet');
+    assert.deepEqual(body.env_keys, ['FEED_MAGIC', 'FEED_NETWORK', 'MORPHEUS_NETWORK', 'TD_KEY']);
+    assert.equal(process.env.TD_KEY, 'provisioned-td-key');
+    assert.equal(body.roles, undefined, 'no per-role signer health: this file signs no Neo N3');
+    assert.deepEqual(body.neo_n3_signer, {
+      status: 'retired',
+      error_code: 'neo_n3_signer_retired',
+      replacement: 'workers/nitro-enclave-host',
+    });
+  } finally {
+    delete process.env.TD_KEY;
+    delete process.env.FEED_NETWORK;
+  }
 });
 
 test('provision refuses a FEED_NETWORK / MORPHEUS_NETWORK mismatch before applying', async () => {
@@ -1492,24 +1692,97 @@ test('provision refuses a FEED_NETWORK / MORPHEUS_NETWORK mismatch before applyi
   assert.notEqual(process.env.TD_KEY, 'must-not-apply-split');
 });
 
-test('provision permanently rejects plaintext keys and the former runtime opt-in flag', async () => {
-  // A plaintext WIF is rejected with 403 and is not applied.
+// D2: the Rust port (workers/nitro-enclave-host/src/provision.rs) is the list of
+// record. Parse its PLAINTEXT_KEY_ENV_KEYS and require the Node list to be the
+// same set, so a one-sided edit (942adfe dropped 18 names here) fails this test.
+function parseRustPlaintextKeyEnvKeys() {
+  const source = readFileSync(
+    new URL('../../workers/nitro-enclave-host/src/provision.rs', import.meta.url),
+    'utf8'
+  );
+  const match = source.match(
+    /pub const PLAINTEXT_KEY_ENV_KEYS:\s*\[&str;\s*(\d+)\]\s*=\s*\[([\s\S]*?)\];/
+  );
+  assert.ok(match, 'provision.rs must declare pub const PLAINTEXT_KEY_ENV_KEYS: [&str; N]');
+  const body = match[2]
+    .split('\n')
+    .map((line) => line.replace(/\/\/.*$/, ''))
+    .join('\n');
+  const names = [...body.matchAll(/"([A-Z0-9_]+)"/g)].map((entry) => entry[1]);
+  assert.equal(
+    names.length,
+    Number(match[1]),
+    'the parser must read exactly as many names as the Rust array length declares'
+  );
+  return names;
+}
+
+test('D2 parity: PLAINTEXT_KEY_ENV_KEYS is exactly the Rust port’s list', () => {
+  const rust = parseRustPlaintextKeyEnvKeys();
+  assert.equal(rust.length, 22);
+  assert.equal(
+    new Set(PLAINTEXT_KEY_ENV_KEYS).size,
+    PLAINTEXT_KEY_ENV_KEYS.length,
+    'no duplicates'
+  );
+  assert.deepEqual(
+    [...PLAINTEXT_KEY_ENV_KEYS].sort(),
+    [...rust].sort(),
+    'enclave-server.mjs and provision.rs must refuse the same plaintext names'
+  );
+  assert.ok(Object.isFrozen(PLAINTEXT_KEY_ENV_KEYS));
+});
+
+function envSnapshot() {
+  return JSON.stringify(Object.entries(process.env).sort(([a], [b]) => a.localeCompare(b)));
+}
+
+test('D2: provision permanently rejects every plaintext key name (N3, NeoX, X25519, NeoDID, game) and the former opt-in flag', async () => {
+  // The names come from the Rust list of record, not from the export under
+  // test, so a shortened Node list (942adfe's) fails here as well as in parity.
+  const names = parseRustPlaintextKeyEnvKeys();
+  for (const name of [
+    'MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET',
+    'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_TESTNET',
+    'MORPHEUS_NEOX_VERIFIER_PRIVATE_KEY',
+    'NEOX_FEED_PK',
+  ]) {
+    assert.ok(names.includes(name), `${name} must be on the list of record`);
+  }
+  // Also with the old process-level opt-in set: it cannot reopen the code path.
   const savedFlag = process.env.MORPHEUS_ALLOW_PLAINTEXT_KEY_PROVISION;
-  delete process.env.MORPHEUS_ALLOW_PLAINTEXT_KEY_PROVISION;
   try {
-    const rejected = await dispatch(
+    for (const flagValue of [undefined, '1']) {
+      if (flagValue === undefined) delete process.env.MORPHEUS_ALLOW_PLAINTEXT_KEY_PROVISION;
+      else process.env.MORPHEUS_ALLOW_PLAINTEXT_KEY_PROVISION = flagValue;
+      for (const name of names) {
+        const before = envSnapshot();
+        const rejected = await dispatch(
+          'POST',
+          '/provision',
+          AUTH,
+          JSON.stringify({ env: { [name]: 'plaintext-value-that-must-not-land', TD_KEY: 'x' } })
+        );
+        assert.equal(rejected.status, 403, `${name} must be refused`);
+        assert.match(
+          rejected.body.error,
+          /plaintext key or runtime-token provisioning is permanently disabled/
+        );
+        assert.match(rejected.body.error, new RegExp(`Rejected: .*\\b${name}\\b`));
+        assert.equal(envSnapshot(), before, `${name}: a refused provision writes nothing`);
+      }
+    }
+    delete process.env.MORPHEUS_ALLOW_PLAINTEXT_KEY_PROVISION;
+
+    // All at once: the refusal lists every name, sorted.
+    const all = await dispatch(
       'POST',
       '/provision',
       AUTH,
-      JSON.stringify({ env: { MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET: 'L1plaintextwifvalue' } })
+      JSON.stringify({ env: Object.fromEntries(names.map((key) => [key, 'v'])) })
     );
-    assert.equal(rejected.status, 403);
-    assert.match(
-      rejected.body.error,
-      /plaintext key or runtime-token provisioning is permanently disabled/
-    );
-    assert.match(rejected.body.error, /MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET/);
-    assert.equal(process.env.MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET, undefined);
+    assert.equal(all.status, 403);
+    assert.ok(all.body.error.endsWith(`Rejected: ${[...names].sort().join(', ')}`), all.body.error);
 
     // The old escape hatch itself is forbidden at the provisioning boundary, so
     // a host cannot enable it in one request and inject a key in the next.
@@ -1523,58 +1796,395 @@ test('provision permanently rejects plaintext keys and the former runtime opt-in
     assert.match(flagAttempt.body.error, /MORPHEUS_ALLOW_PLAINTEXT_KEY_PROVISION/);
     assert.equal(process.env.MORPHEUS_ALLOW_PLAINTEXT_KEY_PROVISION, undefined);
 
-    // The KMS-ciphertext variant is always accepted (the attested path). Stub the
-    // attest runner so handleProvision's in-TEE materialize is deterministic (no
-    // real nsm-attest binary) and the WIF lands via the attested recovery path.
-    const savedCt = process.env.MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64;
-    const savedWif = process.env.MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET;
-    delete process.env.MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64;
-    delete process.env.MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET;
+    // The KMS-ciphertext variant is the attested path and is accepted: the NeoX
+    // verifier key arrives only as ciphertext and is released in-TEE (stubbed
+    // runner), landing on the name /provision itself refuses.
+    const savedCt = process.env.MORPHEUS_NEOX_VERIFIER_KMS_CIPHERTEXT_BASE64;
+    const savedPk = process.env.MORPHEUS_NEOX_VERIFIER_PRIVATE_KEY;
+    delete process.env.MORPHEUS_NEOX_VERIFIER_PRIVATE_KEY;
     __setAttestRunnerForTests(() => ({
       ok: true,
-      plaintext_b64: Buffer.from('L1someRecoveredWifValue', 'utf8').toString('base64'),
+      plaintext_b64: Buffer.from(NEOX_VERIFIER_PK, 'utf8').toString('base64'),
     }));
-    const accepted = await dispatch(
-      'POST',
-      '/provision',
-      AUTH,
-      JSON.stringify({
-        env: { MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64: 'Y2lwaGVydGV4dA==' },
-      })
-    );
-    assert.equal(accepted.status, 200);
-    assert.ok(accepted.body.env_keys.includes('MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64'));
-    __resetAttestRunnerForTests();
-    delete process.env.MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET;
-    if (savedWif !== undefined) process.env.MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET = savedWif;
-    if (savedCt === undefined) delete process.env.MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64;
-    else process.env.MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64 = savedCt;
-
-    // Even a process-level flag change cannot reopen the production code path.
-    process.env.MORPHEUS_ALLOW_PLAINTEXT_KEY_PROVISION = '1';
-    const stillRejected = await dispatch(
-      'POST',
-      '/provision',
-      AUTH,
-      JSON.stringify({ env: { NEOX_FEED_PK: '0xfeedfeedfeed' } })
-    );
-    assert.equal(stillRejected.status, 403);
-    assert.match(stillRejected.body.error, /NEOX_FEED_PK/);
-    assert.equal(process.env.NEOX_FEED_PK, undefined);
+    try {
+      const accepted = await dispatch(
+        'POST',
+        '/provision',
+        AUTH,
+        JSON.stringify({
+          env: { MORPHEUS_NEOX_VERIFIER_KMS_CIPHERTEXT_BASE64: 'Y2lwaGVydGV4dA==' },
+        })
+      );
+      assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+      assert.deepEqual(accepted.body.env_keys, ['MORPHEUS_NEOX_VERIFIER_KMS_CIPHERTEXT_BASE64']);
+      assert.equal(process.env.MORPHEUS_NEOX_VERIFIER_PRIVATE_KEY, NEOX_VERIFIER_PK);
+    } finally {
+      __resetAttestRunnerForTests();
+      if (savedCt === undefined) delete process.env.MORPHEUS_NEOX_VERIFIER_KMS_CIPHERTEXT_BASE64;
+      else process.env.MORPHEUS_NEOX_VERIFIER_KMS_CIPHERTEXT_BASE64 = savedCt;
+      if (savedPk === undefined) delete process.env.MORPHEUS_NEOX_VERIFIER_PRIVATE_KEY;
+      else process.env.MORPHEUS_NEOX_VERIFIER_PRIVATE_KEY = savedPk;
+    }
   } finally {
-    delete process.env.MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET;
     if (savedFlag === undefined) delete process.env.MORPHEUS_ALLOW_PLAINTEXT_KEY_PROVISION;
     else process.env.MORPHEUS_ALLOW_PLAINTEXT_KEY_PROVISION = savedFlag;
   }
 });
 
-test('health surfaces key_source per role (host_plaintext when no KMS ciphertext)', async () => {
-  const { body } = await dispatch('GET', '/health', {}, '');
-  // The test keys were provisioned directly as plaintext env vars (no KMS
-  // ciphertext), so both roles report host_plaintext — detectable by ops.
-  assert.equal(body.key_source.oracle_verifier, 'host_plaintext');
-  assert.equal(body.key_source.updater, 'host_plaintext');
-  assert.equal(body.plaintext_key_provision_allowed, false);
+test('D1: a refused or failing provision leaves process.env exactly as it found it', async () => {
+  // Every refusal class /provision has, each checked against a byte-for-byte
+  // snapshot of process.env. Nothing may be written before the last check.
+  const cases = [
+    ['plaintext key (403)', AUTH, { NEOX_FEED_PK: '0xfeed', TD_KEY: 'x' }, 403],
+    [
+      'runtime token name (403)',
+      AUTH,
+      { MORPHEUS_RUNTIME_TOKEN: 'y'.repeat(40), TD_KEY: 'x' },
+      403,
+    ],
+    [
+      'split-brain network identity (400)',
+      AUTH,
+      {
+        FEED_NETWORK: 'testnet',
+        MORPHEUS_NETWORK: 'mainnet',
+        FEED_MAGIC: String(FEED_NETWORK_DEFAULTS.testnet.magic),
+        TD_KEY: 'x',
+      },
+      400,
+    ],
+    [
+      'FEED_MAGIC for the other network (400)',
+      AUTH,
+      {
+        FEED_NETWORK: 'testnet',
+        MORPHEUS_NETWORK: 'testnet',
+        FEED_MAGIC: '860833102',
+        TD_KEY: 'x',
+      },
+      400,
+    ],
+  ];
+  for (const [label, headers, env, expected] of cases) {
+    const before = envSnapshot();
+    const response = await dispatch('POST', '/provision', headers, JSON.stringify({ env }));
+    assert.equal(response.status, expected, `${label}: ${JSON.stringify(response.body)}`);
+    assert.equal(envSnapshot(), before, `${label}: process.env must be unchanged`);
+  }
+
+  // Bind an identity, then try to retarget it (409 immutable) — also unchanged.
+  const bind = await dispatch(
+    'POST',
+    '/provision',
+    AUTH,
+    JSON.stringify({
+      env: {
+        FEED_NETWORK: 'testnet',
+        MORPHEUS_NETWORK: 'testnet',
+        FEED_MAGIC: String(FEED_NETWORK_DEFAULTS.testnet.magic),
+      },
+    })
+  );
+  assert.equal(bind.status, 200, JSON.stringify(bind.body));
+  const beforeRetarget = envSnapshot();
+  const retarget = await dispatch(
+    'POST',
+    '/provision',
+    AUTH,
+    JSON.stringify({
+      env: {
+        FEED_NETWORK: 'mainnet',
+        MORPHEUS_NETWORK: 'mainnet',
+        FEED_MAGIC: String(FEED_NETWORK_DEFAULTS.mainnet.magic),
+        TD_KEY: 'x',
+      },
+    })
+  );
+  assert.equal(retarget.status, 409, JSON.stringify(retarget.body));
+  assert.match(retarget.body.error, /immutable/);
+  assert.equal(envSnapshot(), beforeRetarget, 'a refused retarget writes nothing');
+  delete process.env.FEED_NETWORK;
+
+  // First-boot failures, with no trusted token: bad bearer (401), KMS release
+  // failure (503), malformed envelope (401), wrong-network envelope (401).
+  const savedTokens = Object.fromEntries(TOKEN_ENV_KEYS.map((key) => [key, process.env[key]]));
+  for (const key of TOKEN_ENV_KEYS) delete process.env[key];
+  const token = 'operator-sealed-runtime-token-d1-0123456789abcdef';
+  const bootstrap = {
+    MORPHEUS_NETWORK: 'testnet',
+    MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64: 'sealed-d1',
+    AWS_ACCESS_KEY_ID: 'must-not-apply-access-key',
+    TD_KEY: 'must-not-apply',
+  };
+  const runners = [
+    [
+      'KMS release throws (503)',
+      () => {
+        throw new Error('AccessDenied');
+      },
+      `Bearer ${token}`,
+      503,
+    ],
+    ['KMS returns ok:false (503)', () => ({ ok: false, error: 'denied' }), `Bearer ${token}`, 503],
+    [
+      'envelope is not JSON (401)',
+      () => ({ ok: true, plaintext_b64: Buffer.from('nope').toString('base64') }),
+      `Bearer ${token}`,
+      401,
+    ],
+    [
+      'envelope for the other network (401)',
+      () => ({
+        ok: true,
+        plaintext_b64: Buffer.from(
+          JSON.stringify({
+            purpose: 'neoos/nitro-runtime-auth/v1',
+            network: 'mainnet',
+            version: 1,
+            token,
+          })
+        ).toString('base64'),
+      }),
+      `Bearer ${token}`,
+      401,
+    ],
+    [
+      'presented bearer does not match the sealed token (401)',
+      () => ({
+        ok: true,
+        plaintext_b64: Buffer.from(
+          JSON.stringify({
+            purpose: 'neoos/nitro-runtime-auth/v1',
+            network: 'testnet',
+            version: 1,
+            token,
+          })
+        ).toString('base64'),
+      }),
+      'Bearer attacker-chosen-token-0123456789abcdef',
+      401,
+    ],
+  ];
+  try {
+    for (const [label, runner, authorization, expected] of runners) {
+      __setAttestRunnerForTests(runner);
+      const before = envSnapshot();
+      const response = await dispatch(
+        'POST',
+        '/provision',
+        { authorization },
+        JSON.stringify({ env: bootstrap })
+      );
+      assert.equal(response.status, expected, `${label}: ${JSON.stringify(response.body)}`);
+      assert.equal(envSnapshot(), before, `${label}: process.env must be unchanged`);
+    }
+  } finally {
+    __resetAttestRunnerForTests();
+    __resetRuntimeProvisionStateForTests();
+    for (const [key, value] of Object.entries(savedTokens)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test('D1: the apply phase cannot throw — a malformed in-TEE KMS release is logged, not a 500 after writing', async () => {
+  // Before, Buffer.from(<non-string plaintext_b64>) threw inside the apply phase:
+  // the payload was already in process.env when /provision answered 500.
+  const saved = {
+    ct: process.env.MORPHEUS_NEOX_FEED_KMS_CIPHERTEXT_BASE64,
+    pk: process.env.MORPHEUS_NEOX_FEED_PRIVATE_KEY,
+  };
+  delete process.env.MORPHEUS_NEOX_FEED_PRIVATE_KEY;
+  const logged = [];
+  const originalError = console.error;
+  console.error = (line) => logged.push(String(line));
+  __setAttestRunnerForTests(() => ({ ok: true, plaintext_b64: 5 }));
+  try {
+    const response = await dispatch(
+      'POST',
+      '/provision',
+      AUTH,
+      JSON.stringify({ env: { MORPHEUS_NEOX_FEED_KMS_CIPHERTEXT_BASE64: 'Y2lwaGVydGV4dA==' } })
+    );
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(process.env.MORPHEUS_NEOX_FEED_PRIVATE_KEY, undefined, 'nothing released');
+    assert.ok(logged.some((line) => line.includes('kms_neox_feed_key_materialize_bad_output')));
+  } finally {
+    console.error = originalError;
+    __resetAttestRunnerForTests();
+    if (saved.ct === undefined) delete process.env.MORPHEUS_NEOX_FEED_KMS_CIPHERTEXT_BASE64;
+    else process.env.MORPHEUS_NEOX_FEED_KMS_CIPHERTEXT_BASE64 = saved.ct;
+    if (saved.pk === undefined) delete process.env.MORPHEUS_NEOX_FEED_PRIVATE_KEY;
+    else process.env.MORPHEUS_NEOX_FEED_PRIVATE_KEY = saved.pk;
+  }
+});
+
+test('D1: the apply phase cannot throw on a malformed X25519 oracle-key release either', async () => {
+  const saved = {
+    ct: process.env.MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64,
+    json: process.env.MORPHEUS_ORACLE_KEY_MATERIAL_JSON,
+    b64: process.env.MORPHEUS_ORACLE_KEY_MATERIAL_BASE64,
+  };
+  delete process.env.MORPHEUS_ORACLE_KEY_MATERIAL_JSON;
+  delete process.env.MORPHEUS_ORACLE_KEY_MATERIAL_BASE64;
+  const logged = [];
+  const originalError = console.error;
+  console.error = (line) => logged.push(String(line));
+  __setAttestRunnerForTests(() => ({ ok: true, plaintext_b64: 5 }));
+  try {
+    const response = await dispatch(
+      'POST',
+      '/provision',
+      AUTH,
+      JSON.stringify({ env: { MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64: 'Y2lwaGVydGV4dA==' } })
+    );
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(process.env.MORPHEUS_ORACLE_KEY_MATERIAL_JSON, undefined, 'nothing released');
+    assert.ok(logged.some((line) => line.includes('kms_oracle_key_materialize_bad_output')));
+  } finally {
+    console.error = originalError;
+    __resetAttestRunnerForTests();
+    for (const [key, value] of [
+      ['MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64', saved.ct],
+      ['MORPHEUS_ORACLE_KEY_MATERIAL_JSON', saved.json],
+      ['MORPHEUS_ORACLE_KEY_MATERIAL_BASE64', saved.b64],
+    ]) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test('D1: a runtime token released in the plan phase is not installed when a later check refuses', async () => {
+  // The KMS release succeeds (valid envelope, matching bearer) and a LATER plan
+  // check refuses: neither the token, its version, nor any payload key may land.
+  const savedTokens = Object.fromEntries(TOKEN_ENV_KEYS.map((key) => [key, process.env[key]]));
+  for (const key of TOKEN_ENV_KEYS) delete process.env[key];
+  const token = 'operator-sealed-runtime-token-plan-0123456789abcdef';
+  __setAttestRunnerForTests((args) => {
+    const ciphertext = args[args.indexOf('--ciphertext') + 1];
+    const version = ciphertext === 'sealed-v2' ? 2 : 1;
+    return {
+      ok: true,
+      plaintext_b64: Buffer.from(
+        JSON.stringify({
+          purpose: 'neoos/nitro-runtime-auth/v1',
+          network: 'testnet',
+          version,
+          token: version === 2 ? `${token}-v2` : token,
+        })
+      ).toString('base64'),
+    };
+  });
+  const identity = (magic) => ({
+    MORPHEUS_NETWORK: 'testnet',
+    FEED_NETWORK: 'testnet',
+    FEED_MAGIC: String(magic),
+  });
+  const mainnetMagic = FEED_NETWORK_DEFAULTS.mainnet.magic;
+  const testnetMagic = FEED_NETWORK_DEFAULTS.testnet.magic;
+  try {
+    let before = envSnapshot();
+    const refusedBootstrap = await dispatch(
+      'POST',
+      '/provision',
+      { authorization: `Bearer ${token}` },
+      JSON.stringify({
+        env: {
+          ...identity(mainnetMagic),
+          MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64: 'sealed-v1',
+          TD_KEY: 'x',
+        },
+      })
+    );
+    assert.equal(refusedBootstrap.status, 400, JSON.stringify(refusedBootstrap.body));
+    assert.equal(envSnapshot(), before, 'a refused bootstrap installs no token and no key');
+    assert.equal(process.env.MORPHEUS_RUNTIME_TOKEN, undefined);
+
+    // Version 1 was not consumed: the same sealed token still bootstraps.
+    const bootstrap = await dispatch(
+      'POST',
+      '/provision',
+      { authorization: `Bearer ${token}` },
+      JSON.stringify({
+        env: {
+          ...identity(testnetMagic),
+          MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64: 'sealed-v1',
+        },
+      })
+    );
+    assert.equal(bootstrap.status, 200, JSON.stringify(bootstrap.body));
+    assert.equal(process.env.MORPHEUS_RUNTIME_TOKEN, token);
+
+    before = envSnapshot();
+    const refusedRotation = await dispatch(
+      'POST',
+      '/provision',
+      { authorization: `Bearer ${token}` },
+      JSON.stringify({
+        env: {
+          ...identity(mainnetMagic),
+          MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64: 'sealed-v2',
+        },
+      })
+    );
+    assert.equal(refusedRotation.status, 400, JSON.stringify(refusedRotation.body));
+    assert.equal(envSnapshot(), before, 'a refused rotation keeps the current token');
+
+    // Version 2 was not consumed either.
+    const rotation = await dispatch(
+      'POST',
+      '/provision',
+      { authorization: `Bearer ${token}` },
+      JSON.stringify({ env: { MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64: 'sealed-v2' } })
+    );
+    assert.equal(rotation.status, 200, JSON.stringify(rotation.body));
+    assert.equal(process.env.MORPHEUS_RUNTIME_TOKEN, `${token}-v2`);
+  } finally {
+    __resetAttestRunnerForTests();
+    __resetRuntimeProvisionStateForTests();
+    for (const [key, value] of Object.entries(savedTokens)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    delete process.env.MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64;
+    delete process.env.FEED_NETWORK;
+  }
+});
+
+test('D2: provision also refuses every Neo N3 key name the resolver read before S5, and the X25519 PKCS8 half', async () => {
+  // Derived from the resolver's retired table, not from the export under test,
+  // so a shortened Node-only list fails here.
+  const expected = [
+    ...new Set(
+      Object.values(NEO_N3_RETIRED_PLAINTEXT_KEY_ENV_NAMES).flatMap((byRole) =>
+        Object.values(byRole).flat()
+      )
+    ),
+    'MORPHEUS_ORACLE_PRIVATE_KEY_PKCS8',
+  ];
+  assert.equal(expected.length, 27);
+  for (const name of ['MORPHEUS_RELAYER_NEO_N3_WIF', 'NEO_N3_WIF', 'NEO_TESTNET_WIF']) {
+    assert.ok(expected.includes(name), `${name} was a resolver source before S5`);
+  }
+  for (const name of expected) {
+    assert.ok(
+      PLAINTEXT_KEY_ENV_KEYS.includes(name) || NODE_ONLY_PLAINTEXT_KEY_ENV_KEYS.includes(name),
+      `${name} must be refused`
+    );
+    const before = envSnapshot();
+    const rejected = await dispatch(
+      'POST',
+      '/provision',
+      AUTH,
+      JSON.stringify({ env: { [name]: 'plaintext-value-that-must-not-land', TD_KEY: 'x' } })
+    );
+    assert.equal(rejected.status, 403, `${name} must be refused`);
+    assert.match(rejected.body.error, new RegExp(`Rejected: .*\\b${name}\\b`));
+    assert.equal(envSnapshot(), before, `${name}: a refused provision writes nothing`);
+  }
+  assert.ok(Object.isFrozen(NODE_ONLY_PLAINTEXT_KEY_ENV_KEYS));
 });
 
 test('first provision and rotation require versioned attestation-gated KMS runtime tokens', async () => {
@@ -1703,6 +2313,7 @@ test('first provision and rotation require versioned attestation-gated KMS runti
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+    delete process.env.FEED_NETWORK;
   }
 });
 
