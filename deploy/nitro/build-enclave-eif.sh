@@ -291,4 +291,4 @@ cat "$manifest"
 echo
 echo "==> DONE. Commit $manifest (review the PCRs) and, in the same change, list"
 echo "    $release in REPRODUCIBLE_NITRO_RELEASES (apps/web/lib/nitro-measurements.ts);"
-echo "    npm run check:nitro-measurements refuses a reachable manifest the pin leaves out."
+echo "    the check:nitro-measurements gate refuses a reachable manifest the pin leaves out."
