@@ -12,7 +12,10 @@ import {
   assertPinnedNitroRootPem,
 } from '@r3e-network/neo-os-services-shared/nitro-root';
 import { normalizeErrorMessage } from './feed-sync.js';
-import { resolvePinnedNeoN3VerifierPublicKey } from './lib/neo-signers.js';
+import {
+  NEO_N3_PLAINTEXT_KEY_RETIRED_CODE,
+  resolvePinnedNeoN3VerifierPublicKey,
+} from './lib/neo-signers.js';
 
 export function normalizePublicKey(value) {
   return trimString(value).replace(/^0x/i, '').toLowerCase();
@@ -341,7 +344,11 @@ export function verifyEnclaveSignatureAgainstPinnedVerifier(config, chain, body,
   let pinned;
   try {
     pinned = normalizePublicKey(resolvePinnedNeoN3VerifierPublicKey(config.network, process.env));
-  } catch {
+  } catch (error) {
+    // "No verifier key pinned" skips the cross-check; a plaintext verifier key
+    // set on this process (S5) must not: swallowing it would turn a refused
+    // configuration into a silently skipped signature check.
+    if (error?.code === NEO_N3_PLAINTEXT_KEY_RETIRED_CODE) throw error;
     pinned = '';
   }
   if (!pinned) return { verified: false, checked: false };

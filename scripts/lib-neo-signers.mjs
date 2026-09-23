@@ -20,6 +20,9 @@ import {
   normalizeMorpheusNetwork,
   normalizeHash160,
   materializeNeoN3Secret,
+  NEO_N3_RETIRED_PLAINTEXT_KEY_ENV_NAMES,
+  NEO_N3_PLAINTEXT_KEY_RETIRED_CODE,
+  assertNoRetiredPlaintextSigner,
   createPinnedRoleResolvers,
 } from '../packages/shared/src/neo-signers-core.js';
 
@@ -34,6 +37,9 @@ export {
   normalizeMorpheusNetwork,
   normalizeHash160,
   materializeNeoN3Secret,
+  NEO_N3_RETIRED_PLAINTEXT_KEY_ENV_NAMES,
+  NEO_N3_PLAINTEXT_KEY_RETIRED_CODE,
+  assertNoRetiredPlaintextSigner,
 };
 
 export const {

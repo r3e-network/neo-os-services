@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { wallet } from '@cityofzion/neon-js';
 
 import {
+  NEO_N3_PLAINTEXT_KEY_RETIRED_CODE,
   NEO_N3_SIGNER_ENV_KEYS,
+  assertNoRetiredPlaintextSigner,
   normalizeMorpheusNetwork,
   normalizeHash160,
   materializeNeoN3Secret,
@@ -545,7 +547,28 @@ describe('custody migration boundary', () => {
       process.env.MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET = ACCOUNT_A.WIF;
       assert.throws(
         () => resolvePinnedNeoN3Role('testnet', 'relayer'),
-        (err) => err.message.includes('no usable relayer signer configured')
+        (err) =>
+          err.code === NEO_N3_PLAINTEXT_KEY_RETIRED_CODE &&
+          err.message.includes('MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET') &&
+          err.message.includes('S5') &&
+          err.message.includes('no usable relayer signer configured') &&
+          !err.message.includes(ACCOUNT_A.WIF)
+      );
+    });
+  });
+
+  it('reports the legacy WIF by name instead of ignoring it (report mode)', () => {
+    withCleanSignerEnv(() => {
+      process.env.MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET = ACCOUNT_A.WIF;
+      const report = reportPinnedNeoN3Role('testnet', 'relayer', { allowMissing: true });
+      assert.equal(report.ok, false);
+      assert.equal(report.materialized, null);
+      assert.deepEqual(report.retired_plaintext_sources_present, [
+        'MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET',
+      ]);
+      assert.throws(
+        () => assertNoRetiredPlaintextSigner(report),
+        (err) => err.code === NEO_N3_PLAINTEXT_KEY_RETIRED_CODE
       );
     });
   });

@@ -1,5 +1,6 @@
-// Single source of truth for Neo N3 signer-key resolution + role pinning, shared
-// by the relayer (workers/morpheus-relayer/src/lib/neo-signers.js) and the ops
+// Single source of truth for Neo N3 role pinning (the pinned registry identity and
+// public verifier key of each role, plus the S5 refusal of plaintext signer keys),
+// shared by the relayer (workers/morpheus-relayer/src/lib/neo-signers.js) and the ops
 // scripts/enclave (scripts/lib-neo-signers.mjs). Those two files are thin shims
 // that load config/signer-identities.json from their own location and inject it
 // into createPinnedRoleResolvers() — keeping registry-path resolution exactly
@@ -14,14 +15,21 @@ function trimString(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-// SECURITY (S5): The custody enclave owns ALL key material. This module is now
-// read-only - it only describes the pinned registry, not provisioning. Env var
-// names here are for registry drift detection; actual signing uses SIGNER_ROLE_*_KEY_ID.
-// Private key/WIF provisioned directly on any runtime process is a critical security
-// violation that must fail closed.
+// SECURITY (S5): the custody enclave owns ALL Neo N3 key material; signing uses
+// SIGNER_ROLE_<ROLE>_KEY_ID and never a key held by this process. This module
+// only describes the pinned registry and the public verifier key. It resolves no
+// signer: `materialized` is always null and `selected_source` always null.
+//
+// A plaintext private key or WIF set on a runtime process is an S5 violation, and
+// a resolution that sees one fails closed rather than quietly ignoring it: every
+// report carries an explicit issue naming the variable (ok:false), and the strict
+// resolvers throw that message with error.code NEO_N3_PLAINTEXT_KEY_RETIRED. See
+// NEO_N3_RETIRED_PLAINTEXT_KEY_ENV_NAMES below.
+//
+// This list is every signer-related env name: the retired private-key/WIF names
+// (which must never be set) plus the three public verifier-key names (which may
+// be). It exists for detection and snapshotting, never for signing.
 export const NEO_N3_SIGNER_ENV_KEYS = [
-  // These keys should NEVER be set on any production runtime. They exist in this
-  // list solely to detect and reject configurations that attempt to use them.
   'NEO_TESTNET_WIF',
   'NEO_N3_WIF',
   'MORPHEUS_WORKER_NEO_N3_WIF',
@@ -62,10 +70,11 @@ export const NEO_N3_SIGNER_PUBLIC_ENV_KEYS = [
   'MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_MAINNET',
 ];
 
-// SECURITY (S5): Role key groups are now DEPRECATED for runtime provisioning.
-// The custody enclave model uses SIGNER_ROLE_{ROLE}_KEY_ID exclusively. This data
-// remains here solely for drift detection and registry validation - if any of these
-// env vars ARE set, it's a critical misconfiguration that should fail closed.
+// SECURITY (S5): the primary/fallback lists are empty and must stay empty — they
+// are the names a resolution would MATERIALIZE a signing key from, and no runtime
+// process may hold one. Only the public verifier-key names remain readable. The
+// names these lists held before S5 are in NEO_N3_RETIRED_PLAINTEXT_KEY_ENV_NAMES,
+// where they are detected and refused, never read.
 const ROLE_KEY_GROUPS = {
   testnet: {
     worker: {
@@ -118,6 +127,151 @@ const ROLE_KEY_GROUPS = {
   },
 };
 
+function freezeNames(byNetwork) {
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(byNetwork).map(([network, roles]) => [
+        network,
+        Object.freeze(
+          Object.fromEntries(
+            Object.entries(roles).map(([role, names]) => [role, Object.freeze([...names])])
+          )
+        ),
+      ])
+    )
+  );
+}
+
+// The plaintext private-key env names each (network, role) resolution read,
+// primary then fallback, before 942adfe emptied ROLE_KEY_GROUPS for S5. They are
+// kept for DETECTION ONLY. When any of them is set, the resolution adds an S5
+// issue naming it, reports ok:false, and the strict resolvers throw. Presence is
+// decided from the trimmed length alone: the value is never parsed, materialized,
+// copied, logged or returned, and a set name is never used as a signer.
+export const NEO_N3_RETIRED_PLAINTEXT_KEY_ENV_NAMES = freezeNames({
+  testnet: {
+    worker: [
+      'MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_TESTNET',
+      'MORPHEUS_WORKER_NEO_N3_WIF_TESTNET',
+      'MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY',
+      'MORPHEUS_WORKER_NEO_N3_WIF',
+      'NEO_TESTNET_WIF',
+      'NEO_N3_WIF',
+      'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_TESTNET',
+      'MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET',
+      'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
+      'MORPHEUS_RELAYER_NEO_N3_WIF',
+    ],
+    relayer: [
+      'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_TESTNET',
+      'MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET',
+      'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_TESTNET',
+      'MORPHEUS_UPDATER_NEO_N3_WIF_TESTNET',
+      'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
+      'MORPHEUS_RELAYER_NEO_N3_WIF',
+      'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY',
+      'MORPHEUS_UPDATER_NEO_N3_WIF',
+    ],
+    updater: [
+      'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_TESTNET',
+      'MORPHEUS_UPDATER_NEO_N3_WIF_TESTNET',
+      'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_TESTNET',
+      'MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET',
+      'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY',
+      'MORPHEUS_UPDATER_NEO_N3_WIF',
+      'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
+      'MORPHEUS_RELAYER_NEO_N3_WIF',
+    ],
+    oracle_verifier: [
+      'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_TESTNET',
+      'MORPHEUS_ORACLE_VERIFIER_WIF_TESTNET',
+      'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY',
+      'MORPHEUS_ORACLE_VERIFIER_WIF',
+      'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_TESTNET',
+      'MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET',
+      'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
+      'MORPHEUS_RELAYER_NEO_N3_WIF',
+    ],
+  },
+  mainnet: {
+    worker: [
+      'MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY_MAINNET',
+      'MORPHEUS_WORKER_NEO_N3_WIF_MAINNET',
+      'NEO_N3_WIF',
+      'NEO_TESTNET_WIF',
+    ],
+    relayer: [
+      'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY_MAINNET',
+      'MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET',
+      'MORPHEUS_RELAYER_NEO_N3_PRIVATE_KEY',
+      'MORPHEUS_RELAYER_NEO_N3_WIF',
+      'NEO_N3_WIF',
+      'NEO_TESTNET_WIF',
+    ],
+    updater: [
+      'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY_MAINNET',
+      'MORPHEUS_UPDATER_NEO_N3_WIF_MAINNET',
+      'MORPHEUS_UPDATER_NEO_N3_PRIVATE_KEY',
+      'MORPHEUS_UPDATER_NEO_N3_WIF',
+      'NEO_N3_WIF',
+      'NEO_TESTNET_WIF',
+    ],
+    oracle_verifier: [
+      'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY_MAINNET',
+      'MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET',
+      'MORPHEUS_ORACLE_VERIFIER_PRIVATE_KEY',
+      'MORPHEUS_ORACLE_VERIFIER_WIF',
+    ],
+  },
+});
+
+// error.code carried by a strict resolver's throw when the refusal is (at least
+// partly) a retired plaintext key, so a caller that tolerates other resolution
+// failures can still let this one through instead of swallowing it.
+export const NEO_N3_PLAINTEXT_KEY_RETIRED_CODE = 'NEO_N3_PLAINTEXT_KEY_RETIRED';
+
+// Names only: which retired names carry a non-empty value. The value itself is
+// read for its trimmed length and dropped.
+function retiredPlaintextSourcesPresent(env, names) {
+  const present = [];
+  for (const name of names) {
+    const raw = typeof env === 'function' ? env(name) : env?.[name];
+    if (trimString(raw).length > 0) present.push(name);
+  }
+  return present;
+}
+
+function retiredPlaintextIssue(role, names) {
+  const noun = names.length === 1 ? 'key' : 'keys';
+  const verb = names.length === 1 ? 'is' : 'are';
+  return (
+    `plaintext Neo N3 signer ${noun} ${names.join(', ')} ${verb} set, but S5 retired plaintext ` +
+    `signing keys on every runtime process: the value is never materialized or used as the ` +
+    `${role} signer; remove it and sign through custody with ` +
+    `SIGNER_ROLE_${role.toUpperCase()}_KEY_ID`
+  );
+}
+
+function roleResolutionError(role, report) {
+  const error = new Error(formatIssues(role, report.issues));
+  if (report.retired_plaintext_sources_present?.length) {
+    error.code = NEO_N3_PLAINTEXT_KEY_RETIRED_CODE;
+    error.retired_plaintext_sources = [...report.retired_plaintext_sources_present];
+  }
+  return error;
+}
+
+// For callers that use a non-throwing report (report/prefer-match mode) and
+// would otherwise read `materialized` (always null) and carry on with no key:
+// throw the S5 refusal instead. Returns the report untouched when no retired
+// name is set, so a caller keeps its own handling of every other issue.
+export function assertNoRetiredPlaintextSigner(report) {
+  if (report?.retired_plaintext_sources_present?.length) {
+    throw roleResolutionError(report.role, report);
+  }
+  return report;
+}
+
 export function normalizeMorpheusNetwork(value) {
   return trimString(value || 'testnet').toLowerCase() === 'mainnet' ? 'mainnet' : 'testnet';
 }
@@ -137,10 +291,13 @@ function normalizePublicKey(value) {
   return /^[0-9a-f]{66}$/.test(hex) || /^[0-9a-f]{130}$/.test(hex) ? hex : '';
 }
 
+// A getter-function env is snapshotted for the PUBLIC verifier-key names only:
+// those are the only values a resolution still reads. Private-key names are
+// checked for presence by retiredPlaintextSourcesPresent and never copied.
 function toEnvSnapshot(env = process.env) {
   if (typeof env === 'function') {
     const snapshot = {};
-    for (const key of NEO_N3_SIGNER_ENV_KEYS) {
+    for (const key of NEO_N3_SIGNER_PUBLIC_ENV_KEYS) {
       const value = trimString(env(key));
       if (value) snapshot[key] = value;
     }
@@ -286,7 +443,15 @@ export function createPinnedRoleResolvers(registry) {
     const primaryCandidates = collectSecrets(snapshot, config.primary || []);
     const fallbackCandidates = collectSecrets(snapshot, config.fallback || []);
     const publicCandidates = collectPublicKeys(snapshot, config.public || []);
+    const retiredSources = retiredPlaintextSourcesPresent(
+      env,
+      NEO_N3_RETIRED_PLAINTEXT_KEY_ENV_NAMES[normalizedNetwork]?.[role] || []
+    );
     const issues = [];
+    // First, so a thrown message leads with it: a retired plaintext key is set.
+    if (retiredSources.length) {
+      issues.push(retiredPlaintextIssue(role, retiredSources));
+    }
 
     const primaryValid = primaryCandidates.filter((entry) => entry.identity);
     const fallbackValid = fallbackCandidates.filter((entry) => entry.identity);
@@ -371,13 +536,14 @@ export function createPinnedRoleResolvers(registry) {
       primary_sources_present: primaryCandidates.map((entry) => entry.key),
       fallback_sources_present: fallbackCandidates.map((entry) => entry.key),
       public_sources_present: publicCandidates.map((entry) => entry.key),
+      retired_plaintext_sources_present: retiredSources,
       issues,
       ok,
       materialized: selected?.materialized || null,
     };
 
     if (strict && issues.length) {
-      throw new Error(formatIssues(role, issues));
+      throw roleResolutionError(role, report);
     }
 
     return report;
@@ -405,7 +571,7 @@ export function createPinnedRoleResolvers(registry) {
       allowMissing: true,
     });
     if (report.issues.length > 0) {
-      throw new Error(formatIssues('updater', report.issues));
+      throw roleResolutionError('updater', report);
     }
     return normalizeHash160(
       report.selected_identity?.script_hash || report.pinned?.script_hash || ''
@@ -417,12 +583,16 @@ export function createPinnedRoleResolvers(registry) {
       env,
       allowMissing: false,
     });
+    // A retired plaintext key outranks "no pinned public key": the operator has
+    // to learn that the variable they set is refused, not that something else
+    // is missing.
+    assertNoRetiredPlaintextSigner(report);
     const publicKey = normalizePublicKey(report.public_key || report.pinned?.public_key || '');
     if (!publicKey) {
       throw new Error(`oracle_verifier signer drift: no pinned verifier public key for ${network}`);
     }
     if (report.issues.length > 0) {
-      throw new Error(formatIssues('oracle_verifier', report.issues));
+      throw roleResolutionError('oracle_verifier', report);
     }
     return publicKey;
   }

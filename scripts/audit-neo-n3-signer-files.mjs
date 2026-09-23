@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { reportPinnedNeoN3Role } from './lib-neo-signers.mjs';
+import { NEO_N3_RETIRED_PLAINTEXT_KEY_ENV_NAMES } from './lib-neo-signers.mjs';
 
 const DEFAULT_ROOTS = [
   process.cwd(),
@@ -44,31 +44,18 @@ async function walk(dir) {
   }
 }
 
-function roleEnvForSecret(role, value) {
-  const env = {};
-  const prefix =
-    role === 'oracle_verifier'
-      ? 'MORPHEUS_ORACLE_VERIFIER'
-      : `MORPHEUS_${role.toUpperCase()}_NEO_N3`;
-  if (/^[KL]/.test(value)) env[`${prefix}_WIF_MAINNET`] = value;
-  else env[`${prefix}_PRIVATE_KEY_MAINNET`] = value;
-  return env;
-}
-
-function auditSecret(value) {
-  return ['worker', 'relayer', 'updater', 'oracle_verifier'].map((role) => {
-    const report = reportPinnedNeoN3Role('mainnet', role, {
-      env: roleEnvForSecret(role, value),
-      allowMissing: false,
-    });
-    return {
-      role,
-      ok: report.ok,
-      selected: report.selected_identity?.script_hash || null,
-      pinned: report.pinned?.script_hash || null,
-    };
-  });
-}
+// S5: the pinned-role resolver materializes no plaintext key, so this audit cannot
+// say which role a found secret belongs to. (Before this, every candidate came
+// back as matching oracle_verifier — its public-key-only path reports ok with no
+// key at all — so the report named roles it never checked.) It now lists every
+// key-like value it finds by file, line, variable and fingerprint (never the whole
+// value), marks the variables a pinned-role resolution used to read before S5,
+// and exits 1 when anything is found: a leftover plaintext key fails the audit.
+const RETIRED_SIGNER_NAMES = new Set(
+  Object.values(NEO_N3_RETIRED_PLAINTEXT_KEY_ENV_NAMES).flatMap((byRole) =>
+    Object.values(byRole).flat()
+  )
+);
 
 for (const root of roots) await walk(path.resolve(root));
 
@@ -95,31 +82,30 @@ for (const file of files) {
       const fingerprint = `${value.slice(0, 4)}:${value.length}:${value.slice(-4)}`;
       if (seen.has(fingerprint)) continue;
       seen.add(fingerprint);
-      const identities = auditSecret(value);
-      const matches = identities.filter((entry) => entry.ok).map((entry) => entry.role);
       candidates.push({
         file,
         line: lineNo,
         key,
         fingerprint,
-        matches,
-        identities: identities.map(({ role, selected }) => ({ role, selected })),
+        retired_signer_name: RETIRED_SIGNER_NAMES.has(key),
       });
     }
   }
 }
 
-const matching = candidates.filter((entry) => entry.matches.length);
 console.log(
   JSON.stringify(
     {
+      ok: candidates.length === 0,
       roots,
       files_scanned: files.length,
       candidates_scanned: candidates.length,
-      matching_candidates: matching.length,
-      matching,
+      role_mapping:
+        'unavailable: S5 retired plaintext Neo N3 signer keys, so no candidate is materialized or matched to a role',
+      candidates,
     },
     null,
     2
   )
 );
+if (candidates.length) process.exitCode = 1;

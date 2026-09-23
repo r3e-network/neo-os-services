@@ -14,6 +14,7 @@ import { buildOnchainResultEnvelope } from '../workers/morpheus-relayer/src/rout
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
+  assertNoRetiredPlaintextSigner,
   materializeNeoN3Secret,
   normalizeMorpheusNetwork,
   reportPinnedNeoN3Role,
@@ -541,39 +542,53 @@ const allowSyntheticFallback = allowSyntheticOracleFallback(
   process.env.MORPHEUS_SMOKE_ALLOW_SYNTHETIC_FALLBACK
 );
 const explicitRequestWif = trimString(process.env.MORPHEUS_SMOKE_REQUEST_WIF || '');
-const preferredRequestSecrets =
+const preferredRequestSources =
   network === 'mainnet'
     ? [
-        trimString(process.env.MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET || ''),
-        trimString(process.env.NEO_N3_WIF_MAINNET || ''),
-        trimString(process.env.MORPHEUS_RELAYER_NEO_N3_WIF || ''),
-        trimString(process.env.NEO_N3_WIF || ''),
-        trimString(process.env.MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET || ''),
-        trimString(process.env.NEO_TESTNET_WIF || ''),
+        'MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET',
+        'NEO_N3_WIF_MAINNET',
+        'MORPHEUS_RELAYER_NEO_N3_WIF',
+        'NEO_N3_WIF',
+        'MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET',
+        'NEO_TESTNET_WIF',
       ]
     : [
-        trimString(process.env.MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET || ''),
-        trimString(process.env.NEO_TESTNET_WIF || ''),
-        trimString(process.env.MORPHEUS_RELAYER_NEO_N3_WIF || ''),
-        trimString(process.env.NEO_N3_WIF || ''),
-        trimString(process.env.MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET || ''),
+        'MORPHEUS_RELAYER_NEO_N3_WIF_TESTNET',
+        'NEO_TESTNET_WIF',
+        'MORPHEUS_RELAYER_NEO_N3_WIF',
+        'NEO_N3_WIF',
+        'MORPHEUS_RELAYER_NEO_N3_WIF_MAINNET',
       ];
-const requestSecret = explicitRequestWif || preferredRequestSecrets.find((value) => value) || '';
+const requestSource = explicitRequestWif
+  ? 'MORPHEUS_SMOKE_REQUEST_WIF'
+  : preferredRequestSources.find((name) => trimString(process.env[name] || '')) || '';
+const requestSecret = requestSource ? trimString(process.env[requestSource] || '') : '';
 const requestSigner = requestSecret ? materializeNeoN3Secret(requestSecret) : null;
-const updaterEnv = { ...process.env };
+// The requester key is this smoke's own account, not a pinned role key, so the
+// role reports below are judged on an env without it: S5 refuses a plaintext
+// updater/verifier key by name, never the requester source this script reads.
+const roleEnv = { ...process.env };
+if (requestSource) delete roleEnv[requestSource];
 if (explicitRequestWif) {
-  delete updaterEnv.MORPHEUS_SMOKE_REQUEST_WIF;
-  delete updaterEnv.NEO_N3_WIF;
-  delete updaterEnv.NEO_TESTNET_WIF;
+  delete roleEnv.NEO_N3_WIF;
+  delete roleEnv.NEO_TESTNET_WIF;
 }
-const updaterSigner = reportPinnedNeoN3Role(network, 'updater', {
-  env: updaterEnv,
-  allowMissing: true,
-});
+// S5: a plaintext updater/verifier key on this process is refused by name. Before,
+// the report came back with materialized:null and the smoke silently fell back to
+// the requester account for the updater and to no verifier signature at all.
+const updaterSigner = assertNoRetiredPlaintextSigner(
+  reportPinnedNeoN3Role(network, 'updater', {
+    env: roleEnv,
+    allowMissing: true,
+  })
+);
 const updaterWif = updaterSigner.materialized?.wif || updaterSigner.materialized?.private_key || '';
-const verifierSigner = reportPinnedNeoN3Role(network, 'oracle_verifier', {
-  allowMissing: true,
-});
+const verifierSigner = assertNoRetiredPlaintextSigner(
+  reportPinnedNeoN3Role(network, 'oracle_verifier', {
+    env: roleEnv,
+    allowMissing: true,
+  })
+);
 const verifierSecret =
   verifierSigner.materialized?.wif || verifierSigner.materialized?.private_key || '';
 

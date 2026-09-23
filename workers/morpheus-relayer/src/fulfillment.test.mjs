@@ -2519,4 +2519,31 @@ describe('verifyEnclaveSignatureAgainstPinnedVerifier (digest-sig)', () => {
       else process.env.MORPHEUS_ORACLE_VERIFIER_PUBLIC_KEY_TESTNET = saved.key;
     }
   });
+
+  it('refuses (does not skip) when a plaintext verifier key is set on the process (S5)', async () => {
+    const neon = await import('@cityofzion/neon-js');
+    const account = new neon.wallet.Account(neon.wallet.generatePrivateKey());
+    const saved = process.env.MORPHEUS_ORACLE_VERIFIER_WIF_TESTNET;
+    process.env.MORPHEUS_ORACLE_VERIFIER_WIF_TESTNET = account.WIF;
+    try {
+      // Before: the resolver's throw was swallowed as "no pinned key" and the
+      // cross-check returned {checked:false} — a skipped signature check.
+      assert.throws(
+        () =>
+          verifyEnclaveSignatureAgainstPinnedVerifier(
+            { network: 'testnet' },
+            'neo_n3',
+            { signature: 'a'.repeat(128), public_key: account.publicKey },
+            DIGEST
+          ),
+        (error) =>
+          error.code === 'NEO_N3_PLAINTEXT_KEY_RETIRED' &&
+          error.message.includes('MORPHEUS_ORACLE_VERIFIER_WIF_TESTNET') &&
+          error.message.includes('S5')
+      );
+    } finally {
+      if (saved === undefined) delete process.env.MORPHEUS_ORACLE_VERIFIER_WIF_TESTNET;
+      else process.env.MORPHEUS_ORACLE_VERIFIER_WIF_TESTNET = saved;
+    }
+  });
 });

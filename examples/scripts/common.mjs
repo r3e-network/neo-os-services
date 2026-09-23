@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { rpc as neoRpc, wallet } from '@cityofzion/neon-js';
 import { loadDotEnv } from '../../scripts/lib-env.mjs';
 import {
+  assertNoRetiredPlaintextSigner,
   normalizeMorpheusNetwork,
   resolvePinnedNeoN3RolePreferMatch,
 } from '../../scripts/lib-neo-signers.mjs';
@@ -63,6 +64,11 @@ export function resolveNeoN3SignerWif(
     env: process.env,
     allowMissing: true,
   });
+  // S5: a pinned-role WIF (MORPHEUS_UPDATER_NEO_N3_WIF*, MORPHEUS_RELAYER_NEO_N3_WIF*,
+  // NEO_N3_WIF, ...) is refused by name here instead of resolving to '' and
+  // surfacing later as a misleading "WIF is required". The explicit example keys
+  // above are this helper's only source of a signing key.
+  assertNoRetiredPlaintextSigner(signer);
   return trimString(signer.materialized?.wif || signer.materialized?.private_key || '');
 }
 
