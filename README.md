@@ -129,7 +129,7 @@ which they move behind the service.
 | `neo-os-contracts`       | Neo N3 platform contracts, manifests, build and deployment evidence                                                                                                |
 | `neo-os-devpack`         | App-facing framework, shared runtime, types, generated service catalogs                                                                                            |
 | `neo-os-explorer`        | Read APIs and relayer submission                                                                                                                                   |
-| `secure-sign-service-rs` | Enclave backends: NEP-6 sealing, Nitro KMS attestable start, SGX, consensus policy                                                                                 |
+| `secure-sign-service-rs` | Enclave backends: NEP-6 sealing, Nitro KMS attestable start (the deployed TEE), SGX mode (not deployed), consensus policy                                          |
 | `neo-nexus`              | **Consumer.** Operator console, runtime config generation, launch packs, endpoint pinning, health probes. It must not hold, derive, export or accept a private key |
 
 The rule: a signing key the **platform** uses lives here and nowhere else. Wallets the
