@@ -52,17 +52,35 @@ test('env-check.yml keeps its intended jobs and summary gate', () => {
   assert.equal(jobs.summary['if'], 'always()');
 });
 
-test('report heredoc stays inside the run block so shell semantics are preserved', () => {
+test('env-check reports results, not fixed success text', () => {
   const parsed = yaml.load(workflowText, { filename: '.github/workflows/env-check.yml' });
-  const step = parsed.jobs['validate-network-env'].steps.find(
-    (candidate) => candidate.name === 'Generate Validation Report'
+  // The removed report step wrote these lines whatever had happened.
+  for (const claim of [
+    'Script validation passed',
+    'Error handling implemented',
+    'Type safety maintained',
+    'Key findings',
+    'validation complete',
+    'check complete',
+  ]) {
+    assert.ok(
+      !workflowText.includes(claim),
+      `env-check.yml must not print the fixed claim "${claim}"`
+    );
+  }
+  const networkSteps = parsed.jobs['validate-network-env'].steps;
+  assert.ok(
+    networkSteps.some((step) => /test:run -- __tests__\/networks\.test\.ts/.test(step.run ?? '')),
+    'the network job runs the behavioural networks.ts test'
   );
-  assert.ok(step, 'Generate Validation Report step must exist');
-  assert.match(step.run, /cat > "\$REPORT_FILE" << EOF\n/);
-  // The heredoc terminator must be the last line before subsequent shell
-  // commands, aligned with the cat command (YAML strips the block's common
-  // indentation, so the parsed run script contains no leading spaces).
-  assert.match(step.run, /\nEOF\n/);
-  assert.match(step.run, /MORPHEUS_NETWORK: Required/);
-  assert.match(step.run, /NEXT_PUBLIC_MORPHEUS_NETWORK: Required \(alternative\)/);
+  for (const [jobId, command] of [
+    ['validate-web-app-env', 'check:web-cron-env'],
+    ['validate-signers', 'check:signers'],
+  ]) {
+    const step = parsed.jobs[jobId].steps.find((candidate) =>
+      (candidate.run ?? '').includes(command)
+    );
+    assert.ok(step, `${jobId} still runs ${command}`);
+    assert.match(step.name, /\(advisory\)$/, `${jobId} labels ${command} as advisory`);
+  }
 });
