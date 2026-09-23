@@ -16,7 +16,7 @@ use nitro_attest::asn1::{oid_aes256_cbc, oid_data, oid_enveloped_data, oid_rsaes
 use nitro_attest::kms::{Credentials, SignedRequest};
 use nitro_attest::release::{
     release_bytes, release_bytes_with_context, release_bytes_with_context_and_key,
-    release_master_key, AttestationSource, KmsTransport, NsmAttestation, ReleaseParams,
+    release_master_key, AttestationSource, KmsTransport, ReleaseParams,
 };
 use rsa::{Oaep, RsaPublicKey};
 use serde_json::{json, Value};
@@ -475,9 +475,14 @@ fn a_transport_failure_is_surfaced() {
     assert_eq!(error, "connection refused");
 }
 
+// The production source is imported inside each OS-gated test: a file-level
+// import is unused on whichever OS the other test is compiled out of, and
+// clippy -D warnings rejects it (CI and the Nitro parent are Linux).
 #[test]
 #[cfg(not(target_os = "linux"))]
 fn the_production_source_fails_closed_off_the_enclave() {
+    use nitro_attest::release::NsmAttestation;
+
     let error = NsmAttestation
         .attest(None, None, None)
         .expect_err("there is no NSM device here");
@@ -485,4 +490,19 @@ fn the_production_source_fails_closed_off_the_enclave() {
         error.contains("only available inside a Linux AWS Nitro enclave"),
         "{error}"
     );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn the_production_source_fails_closed_without_the_nsm_device() {
+    use nitro_attest::release::NsmAttestation;
+
+    // Inside an enclave the device exists and this is not the case under test.
+    if std::path::Path::new("/dev/nsm").exists() {
+        return;
+    }
+    let error = NsmAttestation
+        .attest(None, None, None)
+        .expect_err("a Linux host without /dev/nsm cannot attest");
+    assert!(error.contains("open /dev/nsm"), "{error}");
 }
