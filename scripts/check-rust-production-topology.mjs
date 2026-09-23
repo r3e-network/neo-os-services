@@ -90,6 +90,270 @@ export async function discoverNodeFeedWriterUnits(root = repoRoot) {
   });
 }
 
+// ── Boot-enabled chain writers, discovered by what a unit DOES ─────────────────
+// The filename pattern above only finds writers that are named like one, and it
+// missed deploy/feed-pusher/morpheus-public-feed-writer.{service,timer}: boot
+// enabled, every 60 s, running a script that is in no repository with the
+// frontier signer env loaded. So every service under deploy/ that is
+// boot-enabled — its own [Install], or triggered by a timer that has one — is
+// classified by its content, and each one that writes (or cannot be ruled out as
+// writing) to chain outside the Rust relayer authority is a problem unless an
+// unexpired REVIEWED exception names it. An exception never silences a unit: the
+// gate prints every excepted unit by name, an expired exception fails the gate,
+// and an exception that matches nothing fails it too (so it cannot outlive the
+// unit it covers).
+
+// A reviewed exception is { key, reason, expiresOn }. `key` is
+// `boot-enabled-chain-writer:<service stem>`; `expiresOn` (YYYY-MM-DD, UTC) is
+// the first day the exception no longer holds.
+export const REVIEWED_TOPOLOGY_EXCEPTIONS = Object.freeze([
+  Object.freeze({
+    key: 'boot-enabled-chain-writer:morpheus-public-feed-writer',
+    reason:
+      'owner decision pending, round-9 audit 3a: boot-enabled every 60 s, runs ' +
+      'workers/nitro-worker/.neoos-live-feed-write.mjs --execute (in no repository) with ' +
+      'the frontier signer env, outside the Rust relayer authority and absent from its ' +
+      'Conflicts=; kept running, not deleted or disabled, until the owner decides',
+    expiresOn: '2026-10-07',
+  }),
+]);
+
+export const BOOT_ENABLED_CHAIN_WRITER_KEY_PREFIX = 'boot-enabled-chain-writer:';
+
+// The deployed code root the units run from; a script path under it maps back
+// into this repository.
+const DEPLOYED_CODE_ROOT = '/opt/neoos/services/';
+
+const WRITER_SCRIPT_NAME = /feed-?writ|writer|pusher|push\b|fulfil|top-?up|broadcast/i;
+const WRITER_DESCRIPTION = /\b(?:writer|pusher|fulfill?er|top-?up|broadcaster)\b/i;
+const WRITER_FLAG = /(?:^|\s)--(?:execute|broadcast|submit)(?:\s|=|$)/;
+const SIGNER_ENV_FILE = /^morpheus-(?:nitro|custody)-signer(?:-[a-z0-9]+)?\.env$/;
+const CHAIN_WRITE_CALL =
+  /\bsendrawtransaction\b|\bsendRawTransaction\b|\bsignTransaction\b|\bsignMessage\b|\.sendTransaction\(|wallet\.sign\(|\bfulfillRequest\(/;
+
+export function parseSystemdUnit(source) {
+  const sections = new Set();
+  const directives = new Map();
+  for (const rawLine of String(source || '').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue;
+    const section = line.match(/^\[([^\]]+)\]$/);
+    if (section) {
+      sections.add(section[1]);
+      continue;
+    }
+    const separator = line.indexOf('=');
+    if (separator <= 0) continue;
+    const key = line.slice(0, separator).trim();
+    const value = line.slice(separator + 1).trim();
+    if (!directives.has(key)) directives.set(key, []);
+    directives.get(key).push(value);
+  }
+  return {
+    sections,
+    get: (key) => directives.get(key) || [],
+    first: (key) => (directives.get(key) || [])[0] || '',
+  };
+}
+
+function isBootEnabled(unit) {
+  return (
+    unit.sections.has('Install') && unit.get('WantedBy').concat(unit.get('RequiredBy')).length > 0
+  );
+}
+
+// The program a service launches and the script it hands to Node, if any.
+function describeExec(execStart) {
+  const tokens = String(execStart || '')
+    .replace(/^[-@:+!]+/, '')
+    .split(/\s+/)
+    .filter(Boolean);
+  const nodeIndex = tokens.findIndex((token) => /^(?:node|nodejs|npm)$/.test(path.basename(token)));
+  const viaNpm = nodeIndex >= 0 && path.basename(tokens[nodeIndex]) === 'npm';
+  let script = '';
+  if (nodeIndex >= 0 && !viaNpm) {
+    script = tokens.slice(nodeIndex + 1).find((token) => !token.startsWith('-')) || '';
+  }
+  const relayerIndex = tokens.findIndex((token) => path.basename(token) === 'neo-os-relayer');
+  return {
+    script,
+    // An npm package script cannot be traced to a reviewed entry point here.
+    npmScript: viaNpm ? tokens.slice(nodeIndex + 1).join(' ') : '',
+    rustDeliveryLoop:
+      relayerIndex >= 0 && ['loop', 'once'].includes(tokens[relayerIndex + 1] || ''),
+  };
+}
+
+// Map a deployed script path back into the repository ('' when it cannot be).
+function repoPathForScript(script, workingDirectory) {
+  if (!script) return '';
+  let deployed = '';
+  if (path.posix.isAbsolute(script)) deployed = path.posix.normalize(script);
+  else if (workingDirectory) deployed = path.posix.join(workingDirectory.replace(/^-/, ''), script);
+  return deployed.startsWith(DEPLOYED_CODE_ROOT) ? deployed.slice(DEPLOYED_CODE_ROOT.length) : '';
+}
+
+export async function chainWriterSignals(unit, root = repoRoot) {
+  const signals = [];
+  const execs = unit.get('ExecStart');
+  for (const execStart of execs) {
+    const exec = describeExec(execStart);
+    if (exec.rustDeliveryLoop) signals.push('runs the Rust relayer delivery loop');
+    if (exec.script) {
+      const name = path.posix.basename(exec.script);
+      if (WRITER_SCRIPT_NAME.test(name)) signals.push(`runs writer script ${name}`);
+      const repoPath = repoPathForScript(exec.script, unit.first('WorkingDirectory'));
+      if (repoPath) {
+        let source = null;
+        try {
+          source = await fs.readFile(path.join(root, repoPath), 'utf8');
+        } catch (error) {
+          if (!error || error.code !== 'ENOENT') throw error;
+        }
+        if (source === null) {
+          signals.push(`runs ${repoPath}, which is not in this repository`);
+        } else if (CHAIN_WRITE_CALL.test(source)) {
+          signals.push(`runs ${repoPath}, which signs or broadcasts transactions`);
+        }
+      } else {
+        signals.push(`runs ${exec.script}, which cannot be traced into this repository`);
+      }
+    }
+    if (exec.npmScript) {
+      signals.push(`runs npm ${exec.npmScript}, whose entry point cannot be traced`);
+    }
+    if (WRITER_FLAG.test(execStart)) signals.push('passes an --execute/--broadcast/--submit flag');
+  }
+  if (WRITER_DESCRIPTION.test(unit.first('Description'))) {
+    signals.push(`describes itself as a writer ("${unit.first('Description')}")`);
+  }
+  for (const environmentFile of unit.get('EnvironmentFile')) {
+    const name = path.posix.basename(environmentFile.replace(/^-/, ''));
+    if (SIGNER_ENV_FILE.test(name)) signals.push(`loads signer credentials from ${name}`);
+  }
+  return [...new Set(signals)];
+}
+
+// Every service under deploy/ that starts at boot, with the units that make it
+// do so (itself and/or its timers).
+export async function discoverBootEnabledServices(root = repoRoot) {
+  const files = await walkDeployFiles(root, {
+    predicate: (fileName) => /\.(service|timer)$/.test(fileName),
+  });
+  const byName = new Map();
+  for (const file of files) {
+    const source = await fs.readFile(path.join(root, file.relativePath), 'utf8');
+    byName.set(file.fileName, { ...file, unit: parseSystemdUnit(source) });
+  }
+  const enabled = new Map();
+  const enable = (serviceName, via) => {
+    const entry = enabled.get(serviceName) || { service: serviceName, via: [] };
+    if (!entry.via.includes(via)) entry.via.push(via);
+    enabled.set(serviceName, entry);
+  };
+  for (const [name, file] of byName) {
+    if (!isBootEnabled(file.unit)) continue;
+    if (name.endsWith('.service')) enable(name, name);
+    else enable(file.unit.first('Unit') || name.replace(/\.timer$/, '.service'), name);
+  }
+  return [...enabled.values()]
+    .map((entry) => {
+      const file = byName.get(entry.service);
+      const via = entry.via.sort();
+      return {
+        ...entry,
+        via,
+        viaPaths: via.map((name) => byName.get(name)?.relativePath || name),
+        relativePath: file ? file.relativePath : null,
+        unit: file ? file.unit : null,
+      };
+    })
+    .sort((left, right) => left.service.localeCompare(right.service));
+}
+
+function utcToday() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export async function auditBootEnabledChainWriters(
+  root = repoRoot,
+  { exceptions = REVIEWED_TOPOLOGY_EXCEPTIONS, today = utcToday() } = {}
+) {
+  const problems = [];
+  const writers = [];
+  const excepted = [];
+  const byKey = new Map();
+  for (const exception of exceptions) {
+    if (
+      typeof exception?.key !== 'string' ||
+      !exception.key.startsWith(BOOT_ENABLED_CHAIN_WRITER_KEY_PREFIX) ||
+      typeof exception.reason !== 'string' ||
+      !exception.reason.trim() ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(String(exception.expiresOn || ''))
+    ) {
+      problems.push(
+        `reviewed exception ${JSON.stringify(exception?.key)} must carry a ${BOOT_ENABLED_CHAIN_WRITER_KEY_PREFIX}<unit> key, a reason and an expiresOn date`
+      );
+      continue;
+    }
+    byKey.set(exception.key, exception);
+  }
+  const matched = new Set();
+  for (const entry of await discoverBootEnabledServices(root)) {
+    if (!entry.unit) {
+      problems.push(
+        `${entry.via.join(', ')} starts ${entry.service} at boot, but no such unit is under deploy/`
+      );
+      continue;
+    }
+    const signals = await chainWriterSignals(entry.unit, root);
+    if (!signals.length) continue;
+    const isRustAuthority =
+      RUST_FEED_AUTHORITY_BASENAMES.includes(entry.service) &&
+      entry.unit.get('ExecStart').some((execStart) => describeExec(execStart).rustDeliveryLoop);
+    if (isRustAuthority) continue;
+    const key = `${BOOT_ENABLED_CHAIN_WRITER_KEY_PREFIX}${entry.service.replace(/\.service$/, '')}`;
+    const writer = {
+      key,
+      service: entry.service,
+      relativePath: entry.relativePath,
+      bootEnabledBy: entry.via,
+      signals,
+    };
+    writers.push(writer);
+    const exception = byKey.get(key);
+    if (!exception) {
+      problems.push(
+        `${entry.relativePath} is a boot-enabled chain writer outside the Rust relayer authority ` +
+          `(started at boot by ${entry.via.join(', ')}; ${signals.join('; ')})`
+      );
+      continue;
+    }
+    matched.add(key);
+    if (today >= exception.expiresOn) {
+      problems.push(
+        `${entry.relativePath}: reviewed exception ${key} expired on ${exception.expiresOn} (${exception.reason})`
+      );
+      continue;
+    }
+    excepted.push({
+      key,
+      units: [...new Set([entry.relativePath, ...entry.viaPaths])],
+      reason: exception.reason,
+      expiresOn: exception.expiresOn,
+      signals,
+    });
+  }
+  for (const key of byKey.keys()) {
+    if (!matched.has(key)) {
+      problems.push(
+        `reviewed exception ${key} matches no boot-enabled chain writer under deploy/; remove it`
+      );
+    }
+  }
+  return { problems, writers, excepted };
+}
+
 export async function discoverOperatorMarkdown(root) {
   const found = [];
   for (const directory of ['docs', 'deploy']) {
@@ -489,7 +753,9 @@ export function checkSignerStartScript(source) {
   return problems;
 }
 
-export async function auditProductionTopology(root = repoRoot) {
+// `chainWriters` passes options through to auditBootEnabledChainWriters (tests
+// inject `exceptions` / `today`); production uses the defaults.
+export async function auditProductionTopology(root = repoRoot, { chainWriters = {} } = {}) {
   const problems = [];
   const read = (relativePath) => fs.readFile(path.join(root, relativePath), 'utf8');
 
@@ -566,6 +832,8 @@ export async function auditProductionTopology(root = repoRoot) {
   }
   const feedWriterAudit = await auditNodeFeedWriterTopology(root);
   problems.push(...feedWriterAudit.problems);
+  const chainWriterAudit = await auditBootEnabledChainWriters(root, chainWriters);
+  problems.push(...chainWriterAudit.problems);
 
   const feedCompatRunbook = await read('deploy/feed-pusher/RUNBOOK.md');
   requirePattern(
@@ -821,6 +1089,15 @@ export async function auditProductionTopology(root = repoRoot) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const problems = await auditProductionTopology();
+  // Reported whether or not the gate passes: an excepted unit is never silent.
+  const { excepted } = await auditBootEnabledChainWriters();
+  for (const exception of excepted) {
+    console.error(
+      `WARNING reviewed exception ${exception.key} (expires ${exception.expiresOn}): ` +
+        `${exception.units.join(' + ')} is a boot-enabled chain writer outside the Rust ` +
+        `relayer authority — ${exception.reason}`
+    );
+  }
   if (problems.length > 0) {
     console.error('Rust production topology audit failed:');
     for (const problem of problems) console.error(`- ${problem}`);
@@ -840,6 +1117,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
           'Node worker/relayer (explicitly pinned, never default-published)',
           'Node chain writers (feed-pusher, fee-topup, NeoX fulfiller; explicit rollback markers, never boot-enabled)',
         ],
+        reviewed_exceptions: excepted,
       },
       null,
       2

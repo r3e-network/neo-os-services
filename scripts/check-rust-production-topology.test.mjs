@@ -4,8 +4,12 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import os from 'node:os';
+
 import {
   HISTORICAL_MAINNET_FEED_WRITER_ALLOWLIST,
+  REVIEWED_TOPOLOGY_EXCEPTIONS,
+  auditBootEnabledChainWriters,
   auditNodeFeedWriterTopology,
   auditProductionTopology,
   checkAuthorityUnit,
@@ -19,6 +23,7 @@ import {
   checkSignerStartScript,
   checkWriterEnablePostureInDocs,
   compatibilityMarkerForFeedWriter,
+  discoverBootEnabledServices,
   discoverNodeFeedWriterUnits,
   isNodeFeedWriterUnitName,
 } from './check-rust-production-topology.mjs';
@@ -270,4 +275,207 @@ test('compose cannot collapse NeoX submission and fulfillment-proof roles', () =
     ].join('\n')
   );
   assert.ok(problems.some((problem) => problem.includes('distinct verifier role')));
+});
+
+// ── Boot-enabled chain writers (content discovery + reviewed exceptions) ──────
+
+const PUBLIC_WRITER_KEY = 'boot-enabled-chain-writer:morpheus-public-feed-writer';
+const BEFORE_EXPIRY = '2026-09-23';
+
+test('repository discovery finds the boot-enabled public feed writer the name pattern missed', async () => {
+  // The historical discovery is by name only and never saw it.
+  assert.equal(isNodeFeedWriterUnitName('morpheus-public-feed-writer.service'), false);
+
+  const { problems, writers, excepted } = await auditBootEnabledChainWriters(undefined, {
+    today: BEFORE_EXPIRY,
+  });
+  assert.deepEqual(problems, []);
+  assert.deepEqual(
+    writers.map((writer) => writer.key),
+    [PUBLIC_WRITER_KEY],
+    'the only boot-enabled chain writer outside the Rust relayers'
+  );
+  const [writer] = writers;
+  assert.equal(writer.relativePath, 'deploy/feed-pusher/morpheus-public-feed-writer.service');
+  assert.deepEqual(writer.bootEnabledBy, [
+    'morpheus-public-feed-writer.service',
+    'morpheus-public-feed-writer.timer',
+  ]);
+  for (const signal of [
+    /workers\/nitro-worker\/\.neoos-live-feed-write\.mjs, which is not in this repository/,
+    /--execute/,
+    /signer credentials from morpheus-nitro-signer\.env/,
+  ]) {
+    assert.ok(
+      writer.signals.some((entry) => signal.test(entry)),
+      `missing signal ${signal}`
+    );
+  }
+  // Reported by name, not passed silently.
+  assert.equal(excepted.length, 1);
+  assert.equal(excepted[0].key, PUBLIC_WRITER_KEY);
+  assert.deepEqual(excepted[0].units, [
+    'deploy/feed-pusher/morpheus-public-feed-writer.service',
+    'deploy/feed-pusher/morpheus-public-feed-writer.timer',
+  ]);
+  assert.equal(excepted[0].expiresOn, '2026-10-07');
+  assert.match(excepted[0].reason, /owner decision pending, round-9 audit 3a/);
+});
+
+test('the public feed writer exception is recorded, not the unit deleted or disabled', async () => {
+  const exception = REVIEWED_TOPOLOGY_EXCEPTIONS.find((entry) => entry.key === PUBLIC_WRITER_KEY);
+  assert.ok(exception);
+  assert.equal(exception.expiresOn, '2026-10-07');
+  for (const unit of ['morpheus-public-feed-writer.service', 'morpheus-public-feed-writer.timer']) {
+    const source = await fs.readFile(
+      path.resolve(FIXTURE_ROOT, '../..', '..', 'deploy/feed-pusher', unit),
+      'utf8'
+    );
+    assert.match(source, /^\[Install\]$/m, `${unit} stays boot-enabled until the owner decides`);
+  }
+});
+
+test('the production topology gate runs the chain-writer audit', async () => {
+  const problems = await auditProductionTopology(undefined, {
+    chainWriters: { today: BEFORE_EXPIRY, exceptions: [] },
+  });
+  assert.ok(
+    problems.some((problem) =>
+      problem.startsWith('deploy/feed-pusher/morpheus-public-feed-writer.service is a boot-enabled')
+    ),
+    problems.join('\n')
+  );
+});
+
+test('without its reviewed exception the public feed writer fails the gate by name', async () => {
+  const { problems } = await auditBootEnabledChainWriters(undefined, {
+    today: BEFORE_EXPIRY,
+    exceptions: [],
+  });
+  assert.equal(problems.length, 1, problems.join('\n'));
+  assert.match(
+    problems[0],
+    /^deploy\/feed-pusher\/morpheus-public-feed-writer\.service is a boot-enabled chain writer outside the Rust relayer authority/
+  );
+  assert.match(
+    problems[0],
+    /started at boot by morpheus-public-feed-writer\.service, morpheus-public-feed-writer\.timer/
+  );
+});
+
+test('an expired, stale or malformed reviewed exception fails the gate', async () => {
+  const expired = await auditBootEnabledChainWriters(undefined, { today: '2026-10-07' });
+  assert.equal(expired.excepted.length, 0);
+  assert.ok(
+    expired.problems.some((problem) =>
+      problem.includes(`reviewed exception ${PUBLIC_WRITER_KEY} expired on 2026-10-07`)
+    ),
+    expired.problems.join('\n')
+  );
+
+  const stale = await auditBootEnabledChainWriters(undefined, {
+    today: BEFORE_EXPIRY,
+    exceptions: [
+      ...REVIEWED_TOPOLOGY_EXCEPTIONS,
+      { key: 'boot-enabled-chain-writer:no-such-unit', reason: 'r', expiresOn: '2099-01-01' },
+    ],
+  });
+  assert.deepEqual(stale.problems, [
+    'reviewed exception boot-enabled-chain-writer:no-such-unit matches no boot-enabled chain writer under deploy/; remove it',
+  ]);
+
+  const malformed = await auditBootEnabledChainWriters(undefined, {
+    today: BEFORE_EXPIRY,
+    exceptions: [{ key: PUBLIC_WRITER_KEY, reason: '', expiresOn: 'soon' }],
+  });
+  assert.ok(malformed.problems.some((problem) => problem.includes('must carry')));
+  assert.ok(
+    malformed.problems.some((problem) => problem.includes('is a boot-enabled chain writer'))
+  );
+});
+
+async function writeTree(t, files) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'topology-writers-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  for (const [relative, content] of Object.entries(files)) {
+    await fs.mkdir(path.dirname(path.join(root, relative)), { recursive: true });
+    await fs.writeFile(path.join(root, relative), content);
+  }
+  return root;
+}
+
+test('discovery classifies boot-enabled units by content, not by name', async (t) => {
+  const root = await writeTree(t, {
+    // An innocuously named writer, started only by its timer: found by the
+    // chain-write call in the script it runs.
+    'deploy/ops/nightly-sync.service': [
+      '[Unit]',
+      'Description=Nightly sync',
+      '[Service]',
+      'WorkingDirectory=/opt/neoos/services/deploy/ops',
+      'ExecStart=/usr/bin/node sync.mjs',
+    ].join('\n'),
+    'deploy/ops/nightly-sync.timer':
+      '[Timer]\nOnCalendar=daily\n[Install]\nWantedBy=timers.target\n',
+    'deploy/ops/sync.mjs': "await rpc('sendrawtransaction', [raw]);\n",
+    // A boot-enabled Node monitor that writes nothing: not a writer.
+    'deploy/ops/monitor.service': [
+      '[Service]',
+      'WorkingDirectory=/opt/neoos/services/deploy/ops',
+      'ExecStart=/usr/bin/node monitor.mjs',
+      '[Install]',
+      'WantedBy=multi-user.target',
+    ].join('\n'),
+    'deploy/ops/monitor.mjs': "console.log(await rpc('getblockcount'));\n",
+    // The Rust authority is not reported; a second delivery loop under another
+    // name is.
+    'deploy/systemd/morpheus-relayer.service':
+      '[Service]\nExecStart=/opt/neoos/services/bin/neo-os-relayer loop\n[Install]\nWantedBy=multi-user.target\n',
+    'deploy/ops/shadow-relayer.service':
+      '[Service]\nExecStart=/opt/neoos/services/bin/neo-os-relayer loop\n[Install]\nWantedBy=multi-user.target\n',
+    // A writer that is not boot-enabled (no [Install], no enabled timer): not ours.
+    'deploy/ops/manual-writer.service':
+      '[Unit]\nDescription=Manual feed writer\n[Service]\nExecStart=/usr/bin/node push.mjs --execute\n',
+    // A timer that starts a unit nobody shipped.
+    'deploy/ops/ghost.timer':
+      '[Timer]\nUnit=ghost-writer.service\n[Install]\nWantedBy=timers.target\n',
+    // A boot-enabled npm package script: its entry point cannot be traced.
+    'deploy/ops/npm-worker.service':
+      '[Service]\nExecStart=/usr/bin/npm --prefix workers/x run start\n[Install]\nWantedBy=multi-user.target\n',
+  });
+
+  const services = await discoverBootEnabledServices(root);
+  assert.deepEqual(
+    services.map((entry) => [entry.service, entry.via]),
+    [
+      ['ghost-writer.service', ['ghost.timer']],
+      ['monitor.service', ['monitor.service']],
+      ['morpheus-relayer.service', ['morpheus-relayer.service']],
+      ['nightly-sync.service', ['nightly-sync.timer']],
+      ['npm-worker.service', ['npm-worker.service']],
+      ['shadow-relayer.service', ['shadow-relayer.service']],
+    ]
+  );
+
+  const { problems, writers } = await auditBootEnabledChainWriters(root, {
+    today: BEFORE_EXPIRY,
+    exceptions: [],
+  });
+  assert.deepEqual(
+    writers.map((writer) => writer.service),
+    ['nightly-sync.service', 'npm-worker.service', 'shadow-relayer.service']
+  );
+  assert.ok(
+    writers[0].signals.includes('runs deploy/ops/sync.mjs, which signs or broadcasts transactions')
+  );
+  assert.deepEqual(writers[1].signals, [
+    'runs npm --prefix workers/x run start, whose entry point cannot be traced',
+  ]);
+  assert.deepEqual(writers[2].signals, ['runs the Rust relayer delivery loop']);
+  assert.equal(problems.length, 4, problems.join('\n'));
+  assert.ok(
+    problems.some((problem) => problem.startsWith('ghost.timer starts ghost-writer.service'))
+  );
+  assert.ok(problems.some((problem) => problem.startsWith('deploy/ops/nightly-sync.service is')));
+  assert.ok(problems.some((problem) => problem.startsWith('deploy/ops/shadow-relayer.service is')));
 });
