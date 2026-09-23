@@ -24,9 +24,14 @@ is custody-side.
 - `deploy/nitro/Dockerfile.enclave` builds the measured enclave image — those
   two Rust binaries plus `socat` and `iproute2`, and no JavaScript runtime.
 - `deploy/nitro/enclave-server.mjs` is the pre-split Node implementation the
-  Rust port is held against: `deploy/nitro/enclave-server.test.mjs` still gates
-  it as the golden-vector reference, and the Rust parity tests cite it line by
-  line. No image ships it and no unit runs it.
+  Rust port is held against. No image ships it and no unit runs it. It holds no
+  Neo N3 key (S5), so its Neo N3 lanes — `/oracle/fulfill` and `/feed/sign` for
+  `neo_n3`/`legacy`, `/sign/payload`, `/keys/derived` — answer HTTP 410 with
+  `error_code: neo_n3_signer_retired` and name `workers/nitro-enclave-host` as
+  the replacement. `deploy/nitro/enclave-server.test.mjs` still pins the
+  fulfillment-digest and feed-transaction bytes those lanes signed, checks that
+  its `/provision` refuses exactly the plaintext names the Rust port refuses,
+  and covers its remaining NeoX lanes.
 - `deploy/nitro/build-enclave-eif.sh` builds the EIF and measurement manifest.
 - `deploy/nitro/start-nitro-signer.sh` runs the merged enclave and local bridge.
 - `deploy/systemd/morpheus-nitro-signer.service` owns that enclave's lifecycle.
@@ -50,18 +55,32 @@ Run from the repo root:
 npm run render:nitro-env -- --network mainnet --output-dir .secrets/nitro
 ```
 
-The renderer reads the configured sources and refuses production output unless
-the runtime-auth, updater and verifier KMS ciphertexts are present. It never
-copies plaintext WIF/private-key fields into the provisioning artifact.
+The renderer reads the configured sources and refuses production output (exit 2) unless all three frontier provisioning inputs are present:
+
+- the frontier bearer token (`MORPHEUS_RUNTIME_TOKEN`, or `NITRO_SIGNER_TOKEN` /
+  `NITRO_API_TOKEN`);
+- `MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64`, the KMS-sealed envelope of that
+  token;
+- `SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64`, the KMS-sealed custody caller
+  envelope (see below).
+
+Both ciphertexts must be base64, as `start-nitro-signer.sh` requires. No Neo N3
+signer ciphertext is an input: the frontier holds no Neo N3 key and signs through
+custody (`SIGNER_ROLE_*_KEY_ID`), so a source that still carries
+`MORPHEUS_UPDATER_NEO_N3_KMS_CIPHERTEXT_BASE64` or
+`MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64` has them reported by name under
+`retired_inputs_ignored` and never rendered. The renderer never copies plaintext
+WIF/private-key fields into the provisioning artifact. `--allow-missing` renders
+whatever is present and reports `ok: false`.
 
 The generated files are local-only transport/provisioning inputs:
 
 - `.secrets/nitro/morpheus-nitro-signer.env`
 - `.secrets/nitro/neo-os-relayer.env`
 
-`morpheus-nitro-signer.env` contains transport authentication plus KMS
-CiphertextBlob values, never a WIF/private key. KMS policy must require the
-published PCR measurement.
+`morpheus-nitro-signer.env` is what `deploy/nitro/start-nitro-signer.sh` reads:
+the frontier bearer token plus the two KMS CiphertextBlob values above, never a
+WIF/private key. KMS policy must require the published PCR measurement.
 
 `neo-os-relayer.env` carries the relayer's custody signer configuration —
 `SIGNER_SERVICE_URL`, a dedicated bearer-caller `SIGNER_SERVICE_TOKEN`, and
@@ -104,9 +123,21 @@ The custody caller ciphertext plaintext is:
   "purpose": "neoos/custody-caller-token/v1",
   "network": "mainnet",
   "version": 1,
-  "token": "<distinct signer caller token>"
+  "token": "<raw_sign caller token>",
+  "semantic_token": "<distinct sign-capability caller token>"
 }
 ```
+
+Custody gives a caller exactly one capability, and the frontier needs two
+callers. `token` is the `raw_sign` caller: it signs the Neo N3 fulfillment digest
+through `/signer/api/v1/sign/raw`. `semantic_token` is a separate `sign` caller:
+it is what the frontier presents on `/signer/api/v1/sign/transaction` (the Neo N3
+feed transaction, NeoX transactions) and `/signer/api/v1/sign/eip191-fulfillment`
+(the NeoX fulfillment proof). Both must be 32–512 characters (`/provision`
+refuses others). Keep both distinct from the frontier's `MORPHEUS_RUNTIME_TOKEN`;
+nothing enforces that, so it is on the operator. `semantic_token` may be omitted, but then
+those lanes present the raw token and custody refuses them; a present but
+malformed `semantic_token` fails `/provision` instead of falling back.
 
 The X25519 ciphertext plaintext is:
 

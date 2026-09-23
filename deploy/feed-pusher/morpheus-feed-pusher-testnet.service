@@ -16,4 +16,4 @@ EnvironmentFile=-/opt/morpheus/nitro/feed-pusher-testnet.env
 WorkingDirectory=/opt/neoos/services/deploy/feed-pusher
 # Exec-time pins: a copy-pasted mainnet env file cannot retarget this writer,
 # collide with mainnet PUSH_* paths, or send /feed/sign to the live 8787 bridge.
-ExecStart=/usr/bin/env FEED_NETWORK=testnet FEED_CHAINS=neo-n3 SIGNER_URL=http://127.0.0.1:8789 PUSH_LOG=/opt/morpheus/nitro/feed-pusher-testnet.log PUSH_STATUS=/opt/morpheus/nitro/feed-pusher-testnet-status.json MISSING_STATE=/opt/morpheus/nitro/feed-pusher-testnet-missing.json PUSH_PROM_TEXTFILE=/opt/morpheus/nitro/feed-pusher-testnet.prom /usr/bin/node feed-pusher.mjs
+ExecStart=/usr/bin/env FEED_NETWORK=testnet FEED_CHAINS=neo-n3 SIGNER_URL=http://127.0.0.1:8791 PUSH_LOG=/opt/morpheus/nitro/feed-pusher-testnet.log PUSH_STATUS=/opt/morpheus/nitro/feed-pusher-testnet-status.json MISSING_STATE=/opt/morpheus/nitro/feed-pusher-testnet-missing.json PUSH_PROM_TEXTFILE=/opt/morpheus/nitro/feed-pusher-testnet.prom /usr/bin/node feed-pusher.mjs

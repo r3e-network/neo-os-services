@@ -6,7 +6,7 @@ PartOf=morpheus-nitro-signer-testnet.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-Environment=MORPHEUS_NITRO_HOST_PORT=8789
+Environment=MORPHEUS_NITRO_HOST_PORT=8791
 Environment=MORPHEUS_NITRO_SIGNER_ENV=/opt/morpheus/nitro/morpheus-nitro-signer-testnet.env
 Environment=MORPHEUS_NITRO_FEED_ENV=/opt/morpheus/nitro/feed-pusher-testnet.env
 Environment=MORPHEUS_NITRO_WORKER_ENV=/opt/morpheus/nitro/nitro-worker-testnet.env

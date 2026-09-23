@@ -90,7 +90,7 @@ test('testnet pusher/monitor exec pins stay off every mainnet state path', () =>
   const mainnetMonitor = FEED_UNIT_PINNED_ENV['morpheus-feed-monitor.service'];
   assert.equal(pusher.FEED_NETWORK, 'testnet');
   assert.equal(monitor.FEED_NETWORK, 'testnet');
-  assert.equal(pusher.SIGNER_URL, 'http://127.0.0.1:8789');
+  assert.equal(pusher.SIGNER_URL, 'http://127.0.0.1:8791');
   assert.notEqual(pusher.PUSH_LOG, mainnetPusher.PUSH_LOG);
   assert.notEqual(pusher.PUSH_STATUS, mainnetPusher.PUSH_STATUS);
   assert.notEqual(pusher.MISSING_STATE, mainnetPusher.MISSING_STATE);
@@ -135,12 +135,12 @@ test('testnet pusher requires the TestNet signer and cannot inherit the live 878
   assert.match(text, /^After=.*morpheus-nitro-signer-testnet\.service/m);
   assert.doesNotMatch(text, /^After=.*\bmorpheus-nitro-signer\.service\b/m);
   assert.doesNotMatch(text, /^Requires=.*\bmorpheus-nitro-signer\.service\b/m);
-  assert.equal(parsed.execEnv.SIGNER_URL, 'http://127.0.0.1:8789');
+  assert.equal(parsed.execEnv.SIGNER_URL, 'http://127.0.0.1:8791');
   const leftover = applySystemdServiceEnv({
     environmentFile: COPY_PASTED_ENV,
     execEnv: parsed.execEnv,
   });
-  assert.equal(leftover.SIGNER_URL, 'http://127.0.0.1:8789');
+  assert.equal(leftover.SIGNER_URL, 'http://127.0.0.1:8791');
   assert.notEqual(leftover.SIGNER_URL, COPY_PASTED_ENV.SIGNER_URL);
 });
 

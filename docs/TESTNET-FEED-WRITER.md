@@ -19,6 +19,14 @@ intentional `skipped` stay distinct; overall status is fail-closed.
 Mainnet and any unknown network refuse a silent downgrade from batch to
 per-pair.
 
+**Status of the enclave half (2026-09-23).** The enclave `/feed/sign` lane
+this mode was written against is the Node `deploy/nitro/enclave-server.mjs`,
+whose Neo N3 lanes now answer HTTP 410 (`neo_n3_signer_retired`): since S5 no
+process holds a Neo N3 key. The Rust frontier (`workers/nitro-enclave-host`)
+signs only the batch `updateFeeds` transaction through custody; the per-pair
+`updateFeed` mode has no other implementation. That gap is an owner decision
+(round-9 audit 3a), not a port in progress.
+
 **Rust `neo-os-relayer` is the production writer on every network**, including
 TestNet. The Node `morpheus-feed-pusher-testnet` units in this checkout are a
 disabled compatibility artifact: they have no `[Install]` target, require
@@ -94,9 +102,11 @@ transaction, and does not fund a wallet.
    Parent `nproc=2`. A second 2-vCPU enclave cannot coexist without resizing
    or reallocating the live box. TestNet units therefore
    `Requires=` `morpheus-nitro-signer-testnet.service`, pin
-   `SIGNER_URL=http://127.0.0.1:8789`, and use CID 17 / a testnet-named EIF
+   `SIGNER_URL=http://127.0.0.1:8791`, and use CID 18 / a testnet-named EIF
    so enabling them on the live box fails closed instead of terminating
-   CID 16 or talking to `127.0.0.1:8787`.
+   CID 16 or talking to `127.0.0.1:8787`. CID 17 / host port 8789 are
+   custody's defaults (`start-nitro-custody.sh`), so the TestNet frontier
+   stays off them too.
 
 ## API Reference
 
@@ -214,7 +224,7 @@ FEED_PUSHER_SKIP_MAIN=1 node --test deploy/feed-pusher/lib-feed-network.test.mjs
 #    live mainnet EIF filename or CID 16 onto a host that already holds it.
 # 3. Install morpheus-nitro-signer-testnet.service +
 #    morpheus-nitro-provision-testnet.service with
-#    deploy/nitro/morpheus-nitro-testnet.env.example (CID 17, host 8789).
+#    deploy/nitro/morpheus-nitro-testnet.env.example (CID 18, host 8791).
 # 4. Atomically install feed-pusher.mjs + lib-feed-network.mjs +
 #    lib-feed-writer-metrics.mjs onto the
 #    TestNet writer host WorkingDirectory.
@@ -303,22 +313,24 @@ in-place cutover or a dual-write. Rollback of an EIF mistake is not
 3. **Isolated signer unit.** Install
    `morpheus-nitro-signer-testnet.service` and
    `morpheus-nitro-provision-testnet.service` with
-   `morpheus-nitro-testnet.env` (CID 17, host port 8789, testnet signer
+   `morpheus-nitro-testnet.env` (CID 18, host port 8791, testnet signer
    env, testnet feed env). The TestNet pusher `Requires=` that signer
-   and pins `SIGNER_URL=http://127.0.0.1:8789`. It must not
+   and pins `SIGNER_URL=http://127.0.0.1:8791`. It must not
    `After=` the live `morpheus-nitro-signer.service`. The signer unit also
    pins `MORPHEUS_NITRO_ENV` at `ExecStart`; do not replace that with a bare
    launcher invocation, which would fall back to the default mainnet env path.
-4. **Aligned identity.** Bake or `/provision` `FEED_NETWORK=testnet`,
-   `FEED_MAGIC=894710606`, `MORPHEUS_NETWORK=testnet`, and the TestNet
-   updater ciphertext together. Leftover mainnet magic or a mainnet
-   updater key fails closed before signing. A TestNet KMS alias is not
-   present today; do not reuse the live mainnet signer env file.
-5. **Signer health.** `GET 127.0.0.1:8789/health` must return the live
+4. **Aligned identity.** Bake `FEED_NETWORK=testnet`,
+   `FEED_MAGIC=894710606` and `MORPHEUS_NETWORK=testnet` into the TestNet
+   image and provision the TestNet custody caller envelope
+   (`SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64`); no Neo N3 signer
+   ciphertext exists since S5. Leftover mainnet magic fails closed before
+   signing. A TestNet KMS alias is not present today; do not reuse the live
+   mainnet signer env file.
+5. **Signer health.** `GET 127.0.0.1:8791/health` must return the live
    enclave body: `ready: true`, `checks.signer: true`, and
-   `key_source.updater` of `kms_attested` or `host_plaintext` (not
-   `none`). On-chain `updater()` must still equal `0xe421999c…`
-   (`NiUs458jFbTH1DA3b9QyeDhMaD282h3iJg`).
+   `key_source.updater` of `custody` (`host_plaintext` is an S5 violation,
+   never an accepted state). On-chain `updater()` must still equal
+   `0xe421999c…` (`NiUs458jFbTH1DA3b9QyeDhMaD282h3iJg`).
 6. **Funded TestNet writer host.** The TestNet updater must hold GAS
    (audit last read ~9026 GAS; re-check). The documented **mainnet**
    writer remains AWS `i-0c52851f134db20ee`. Hetzner `95.216.148.60`
@@ -375,7 +387,7 @@ untouched.
 | TEE refuse                   | mismatched pins refuse before signing; no `pinOverride`                                                                                                                                                      |
 | Compact `/health`            | `{ ready, signer }` without materialized updater is rejected                                                                                                                                                 |
 | Mainnet regression           | default `FEED_NETWORK` still batch `updateFeeds`; `updateFeed`-only ABI still fails closed                                                                                                                   |
-| Topology isolation           | TestNet pusher `Requires=` `morpheus-nitro-signer-testnet`, pins `SIGNER_URL` `:8789`; TestNet env CID 17 / testnet-named EIF; start script refuses to terminate a non-testnet occupant of the requested CID |
+| Topology isolation           | TestNet pusher `Requires=` `morpheus-nitro-signer-testnet`, pins `SIGNER_URL` `:8791`; TestNet env CID 18 / testnet-named EIF; start script refuses to terminate a non-testnet occupant of the requested CID |
 | Writer compatibility posture | TestNet Node pusher/timer have no `[Install]`, require `ENABLE_NODE_FEED_PUSHER_COMPAT`, and `Conflicts=` / `Before=` both Rust relayers; topology discovery fails if a TestNet writer is omitted            |
 | Neo X `ENCLAVE_FEED_SIGN`    | exported boolean; import is defined so Neo X cannot throw `ReferenceError`; production writer remains Rust                                                                                                   |
 | Writer metrics               | Prometheus textfile one-hot states + pair counts; skipped ≠ pending ≠ FAULT; restart rebuilds from status/sidecar; no pair/txid/raw labels                                                                   |

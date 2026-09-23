@@ -163,7 +163,7 @@ export const FEED_UNIT_PINNED_ENV = Object.freeze({
   'morpheus-feed-pusher-testnet.service': Object.freeze({
     FEED_NETWORK: 'testnet',
     FEED_CHAINS: 'neo-n3',
-    SIGNER_URL: 'http://127.0.0.1:8789',
+    SIGNER_URL: 'http://127.0.0.1:8791',
     PUSH_LOG: '/opt/morpheus/nitro/feed-pusher-testnet.log',
     PUSH_STATUS: '/opt/morpheus/nitro/feed-pusher-testnet-status.json',
     MISSING_STATE: '/opt/morpheus/nitro/feed-pusher-testnet-missing.json',

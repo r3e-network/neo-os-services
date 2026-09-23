@@ -1,3 +1,15 @@
+// Renders the two local-only provisioning inputs of a Nitro host:
+//   morpheus-nitro-signer.env — what deploy/nitro/start-nitro-signer.sh reads to
+//     provision the Rust frontier: the frontier bearer token, its KMS-sealed
+//     envelope (MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64) and the KMS-sealed
+//     custody caller envelope (SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64). The
+//     start script refuses to provision without either ciphertext, so this
+//     renderer refuses to render without them (unless --allow-missing).
+//   neo-os-relayer.env — the Rust relayer's custody signer configuration.
+// Neo N3 signing is custody-side (SIGNER_ROLE_*_KEY_ID). The frontier holds no
+// Neo N3 key, so the former MORPHEUS_UPDATER_NEO_N3_KMS_CIPHERTEXT_BASE64 /
+// MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64 inputs are neither required nor
+// rendered; when a source still carries them they are reported by name only.
 import { trimString } from './lib-strings.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -61,6 +73,14 @@ const sources = args.source.filter(Boolean).length
 const env = await readMergedDotEnvFiles(sources.map((entry) => path.resolve(repoRoot, entry)));
 const runtimeToken = pick(env, ['NITRO_SIGNER_TOKEN', 'MORPHEUS_RUNTIME_TOKEN', 'NITRO_API_TOKEN']);
 const runtimeTokenCiphertext = pick(env, ['MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64']);
+const custodyTokenCiphertext = pick(env, ['SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64']);
+const RETIRED_N3_SIGNER_CIPHERTEXTS = [
+  'MORPHEUS_UPDATER_NEO_N3_KMS_CIPHERTEXT_BASE64',
+  'MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64',
+];
+const retiredInputsIgnored = RETIRED_N3_SIGNER_CIPHERTEXTS.filter((key) => pick(env, [key]));
+// start-nitro-signer.sh (neoos_require_base64) refuses anything else.
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 if (!runtimeToken && !args.allowMissing) {
   console.error(
@@ -93,21 +113,15 @@ if (!runtimeTokenCiphertext && !args.allowMissing) {
   process.exit(2);
 }
 
-const signerCiphertexts = {
-  updater: pick(env, ['MORPHEUS_UPDATER_NEO_N3_KMS_CIPHERTEXT_BASE64']),
-  oracle_verifier: pick(env, ['MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64']),
-};
-const missingRoles = Object.entries(signerCiphertexts)
-  .filter(([, ciphertext]) => !ciphertext)
-  .map(([role]) => ({ role, issue: 'missing attestation-gated KMS ciphertext' }));
-
-if (missingRoles.length && !args.allowMissing) {
+if (!custodyTokenCiphertext && !args.allowMissing) {
   console.error(
     JSON.stringify(
       {
         ok: false,
-        reason: 'missing KMS-sealed Nitro signer material',
-        missing_roles: missingRoles,
+        reason: 'missing KMS-sealed custody caller token',
+        required: 'SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64',
+        detail:
+          'start-nitro-signer.sh provisions the frontier with this envelope; without it the frontier has no custody caller and cannot sign',
         checked_sources: sources,
       },
       null,
@@ -116,6 +130,33 @@ if (missingRoles.length && !args.allowMissing) {
   );
   process.exit(2);
 }
+const malformedCiphertexts = Object.entries({
+  MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64: runtimeTokenCiphertext,
+  SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64: custodyTokenCiphertext,
+})
+  .filter(([, value]) => value && !BASE64.test(value))
+  .map(([key]) => key);
+if (malformedCiphertexts.length) {
+  console.error(
+    JSON.stringify(
+      {
+        ok: false,
+        reason: 'KMS ciphertext is not base64',
+        malformed: malformedCiphertexts,
+        checked_sources: sources,
+      },
+      null,
+      2
+    )
+  );
+  process.exit(2);
+}
+const complete = Boolean(runtimeToken && runtimeTokenCiphertext && custodyTokenCiphertext);
+// The frontier's host bridge on this network: the live mainnet frontier is on
+// 8787 (start-nitro-signer.sh's default); the TestNet frontier is on 8791
+// (deploy/nitro/morpheus-nitro-testnet.env.example), off mainnet's and custody's
+// ports, and the relayer on that host must call it there.
+const frontierUrl = network === 'testnet' ? 'http://127.0.0.1:8791' : 'http://127.0.0.1:8787';
 
 const relayerMode = pick(env, ['MORPHEUS_RELAYER_MODE']) || 'requests_only';
 if (!['requests_only', 'feed_only', 'combined'].includes(relayerMode)) {
@@ -156,8 +197,7 @@ const signerEnv =
     line('NITRO_SIGNER_TOKEN', runtimeToken),
     line('MORPHEUS_RUNTIME_TOKEN', runtimeToken),
     line('MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64', runtimeTokenCiphertext),
-    line('MORPHEUS_UPDATER_NEO_N3_KMS_CIPHERTEXT_BASE64', signerCiphertexts.updater),
-    line('MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64', signerCiphertexts.oracle_verifier),
+    line('SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64', custodyTokenCiphertext),
   ].join('\n') + '\n';
 
 const relayerEnv =
@@ -177,9 +217,9 @@ const relayerEnv =
       'MORPHEUS_RELAYER_STATE_FILE',
       `/var/lib/neo-os-relayer/state.${network}.${relayerMode.replaceAll('_', '-')}.json`
     ),
-    line('MORPHEUS_RUNTIME_URL', 'http://127.0.0.1:8787'),
+    line('MORPHEUS_RUNTIME_URL', frontierUrl),
     line('MORPHEUS_RELAYER_ENCLAVE_FULFILL', 'true'),
-    line('MORPHEUS_RELAYER_ENCLAVE_FULFILL_URL', 'http://127.0.0.1:8787'),
+    line('MORPHEUS_RELAYER_ENCLAVE_FULFILL_URL', frontierUrl),
     line('NITRO_USE_DERIVED_KEYS', 'true'),
     line('MORPHEUS_RUNTIME_TOKEN', runtimeToken),
     // Relayer Neo N3 signing is custody-only: the relayer talks to the custody
@@ -270,15 +310,16 @@ await write0600(path.join(outputDir, 'neo-os-relayer.env'), relayerEnv);
 console.log(
   JSON.stringify(
     {
-      ok: missingRoles.length === 0,
+      ok: complete,
       output_dir: outputDir,
       signer_env: path.join(outputDir, 'morpheus-nitro-signer.env'),
       relayer_env: path.join(outputDir, 'neo-os-relayer.env'),
       checked_sources: sources,
-      signer_roles: Object.entries(signerCiphertexts).map(([role, ciphertext]) => ({
-        role,
-        kms_ciphertext_present: Boolean(ciphertext),
-      })),
+      kms_ciphertexts: {
+        MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64: Boolean(runtimeTokenCiphertext),
+        SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64: Boolean(custodyTokenCiphertext),
+      },
+      retired_inputs_ignored: retiredInputsIgnored,
     },
     null,
     2

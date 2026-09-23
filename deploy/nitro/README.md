@@ -63,8 +63,8 @@ also carried in the public path and forwarded request metadata.
 ## Recommended Render Flow
 
 ```bash
-npm run render:nitro-env:mainnet
-npm run render:nitro-env:testnet
+npm run render:nitro-env -- --network mainnet
+npm run render:nitro-env -- --network testnet
 npm run render:nitro-hub-env
 npm run check:signers
 npm run check:nitro-env
@@ -72,7 +72,8 @@ npm run check:nitro-env
 
 Notes:
 
-- `npm run render:nitro-env` aliases mainnet
+- `npm run render:nitro-env` with no `--network` renders mainnet; it refuses to
+  render without the frontier token and both KMS envelopes described below
 - signer identities are pinned in `config/signer-identities.json`
 - generated env files stay local and uncommitted
 

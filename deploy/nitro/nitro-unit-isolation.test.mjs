@@ -24,37 +24,74 @@ const LIVE_MAINNET = Object.freeze({
   signerUnit: 'morpheus-nitro-signer.service',
 });
 
-test('testnet nitro env example does not reuse live CID, host port, EIF, or signer env', () => {
+// The defaults the start scripts actually use, read from the scripts themselves
+// so a changed default cannot leave the TestNet template silently colliding.
+function scriptDefault(script, name) {
+  const match = readRepo(script).match(new RegExp(`\\$\\{${name}:-([0-9]+)\\}`));
+  assert.ok(match, `${script} must default ${name}`);
+  return match[1];
+}
+
+const CUSTODY_DEFAULTS = Object.freeze({
+  cid: scriptDefault('deploy/nitro/start-nitro-custody.sh', 'MORPHEUS_CUSTODY_CID'),
+  hostPort: scriptDefault('deploy/nitro/start-nitro-custody.sh', 'MORPHEUS_CUSTODY_HOST_PORT'),
+});
+
+test('testnet nitro env example reuses neither the live frontier nor custody CID / host port', () => {
   const assigned = parseEnvFileAssignments(
     readRepo('deploy/nitro/morpheus-nitro-testnet.env.example')
   );
   assert.equal(assigned.MORPHEUS_NETWORK, 'testnet');
-  assert.equal(assigned.MORPHEUS_NITRO_CID, '17');
-  assert.equal(assigned.MORPHEUS_NITRO_HOST_PORT, '8789');
+  assert.equal(assigned.MORPHEUS_NITRO_CID, '18');
+  assert.equal(assigned.MORPHEUS_NITRO_HOST_PORT, '8791');
+  assert.equal(assigned.MORPHEUS_NITRO_VSOCK_PORT, '8787');
   assert.equal(assigned.MORPHEUS_NITRO_EIF, '/opt/morpheus/nitro/morpheus-oracle-testnet.eif');
   assert.equal(
     assigned.MORPHEUS_NITRO_SIGNER_ENV,
     '/opt/morpheus/nitro/morpheus-nitro-signer-testnet.env'
   );
-  assert.equal(assigned.MORPHEUS_RUNTIME_URL, 'http://127.0.0.1:8789');
+  assert.equal(assigned.MORPHEUS_RUNTIME_URL, 'http://127.0.0.1:8791');
+  assert.equal(assigned.NITRO_API_URL, 'http://127.0.0.1:8791');
+  // The live frontier (start-nitro-signer.sh defaults)...
+  assert.equal(scriptDefault('deploy/nitro/start-nitro-signer.sh', 'MORPHEUS_NITRO_CID'), '16');
   assert.notEqual(assigned.MORPHEUS_NITRO_CID, LIVE_MAINNET.cid);
   assert.notEqual(assigned.MORPHEUS_NITRO_HOST_PORT, LIVE_MAINNET.hostPort);
+  // ...and custody (start-nitro-custody.sh defaults, CID 17 / 8789): custody
+  // terminates whatever holds its CID, and a shared host port fails the bind.
+  assert.deepEqual(CUSTODY_DEFAULTS, { cid: '17', hostPort: '8789' });
+  assert.notEqual(assigned.MORPHEUS_NITRO_CID, CUSTODY_DEFAULTS.cid);
+  assert.notEqual(assigned.MORPHEUS_NITRO_HOST_PORT, CUSTODY_DEFAULTS.hostPort);
+  assert.notEqual(assigned.MORPHEUS_RUNTIME_URL, `http://127.0.0.1:${CUSTODY_DEFAULTS.hostPort}`);
   assert.notEqual(assigned.MORPHEUS_NITRO_EIF, LIVE_MAINNET.eif);
   assert.notEqual(assigned.MORPHEUS_NITRO_SIGNER_ENV, LIVE_MAINNET.signerEnv);
 });
 
-test('testnet signer env example is network-pinned and does not assign ciphertext values', () => {
-  const assigned = parseEnvFileAssignments(
-    readRepo('deploy/nitro/morpheus-nitro-signer-testnet.env.example')
+test('testnet frontier consumers all target the template host port', () => {
+  const port = parseEnvFileAssignments(
+    readRepo('deploy/nitro/morpheus-nitro-testnet.env.example')
+  ).MORPHEUS_NITRO_HOST_PORT;
+  assert.match(
+    readRepo('deploy/systemd/morpheus-nitro-provision-testnet.service'),
+    new RegExp(`^Environment=MORPHEUS_NITRO_HOST_PORT=${port}$`, 'm')
   );
+  assert.match(
+    readRepo('deploy/feed-pusher/morpheus-feed-pusher-testnet.service'),
+    new RegExp(`SIGNER_URL=http://127\\.0\\.0\\.1:${port} `)
+  );
+});
+
+test('testnet signer env example is network-pinned, assigns no ciphertext, and names no retired N3 input', () => {
+  const source = readRepo('deploy/nitro/morpheus-nitro-signer-testnet.env.example');
+  const assigned = parseEnvFileAssignments(source);
   assert.equal(assigned.MORPHEUS_NETWORK, 'testnet');
   assert.equal(assigned.MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64, '');
-  assert.equal(assigned.MORPHEUS_UPDATER_NEO_N3_KMS_CIPHERTEXT_BASE64, '');
-  assert.equal(assigned.MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64, '');
-  assert.match(
-    readRepo('deploy/nitro/morpheus-nitro-signer-testnet.env.example'),
-    /"network":"testnet"/
-  );
+  // start-nitro-signer.sh requires the custody caller envelope.
+  assert.equal(assigned.SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64, '');
+  assert.equal('MORPHEUS_UPDATER_NEO_N3_KMS_CIPHERTEXT_BASE64' in assigned, false);
+  assert.equal('MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64' in assigned, false);
+  assert.doesNotMatch(source, /_WIF=|_PRIVATE_KEY=/);
+  assert.match(source, /"network":"testnet"/);
+  assert.match(source, /"semantic_token"/);
 });
 
 test('testnet nitro units bind distinct env files and do not PartOf the live signer', () => {
@@ -75,7 +112,7 @@ test('testnet nitro units bind distinct env files and do not PartOf the live sig
   assert.match(liveSigner, /^EnvironmentFile=\/opt\/morpheus\/nitro\/morpheus-nitro\.env$/m);
   assert.match(provision, /^PartOf=morpheus-nitro-signer-testnet\.service$/m);
   assert.doesNotMatch(provision, /^PartOf=morpheus-nitro-signer\.service$/m);
-  assert.match(provision, /^Environment=MORPHEUS_NITRO_HOST_PORT=8789$/m);
+  assert.match(provision, /^Environment=MORPHEUS_NITRO_HOST_PORT=8791$/m);
   assert.match(
     provision,
     /^Environment=MORPHEUS_NITRO_SIGNER_ENV=\/opt\/morpheus\/nitro\/morpheus-nitro-signer-testnet\.env$/m
@@ -109,8 +146,8 @@ test('start-nitro-signer refuses to terminate a non-testnet occupant when testne
 test('docs name the TestNet signer isolation primitive and the live allocator limit', () => {
   const docs = readRepo('docs/TESTNET-FEED-WRITER.md');
   assert.match(docs, /morpheus-nitro-signer-testnet/);
-  assert.match(docs, /SIGNER_URL=http:\/\/127\.0\.0\.1:8789/);
-  assert.match(docs, /CID 17/);
+  assert.match(docs, /SIGNER_URL=http:\/\/127\.0\.0\.1:8791/);
+  assert.match(docs, /CID 18/);
   assert.match(docs, /allocator/);
   assert.match(docs, /i-0c52851f134db20ee/);
   assert.doesNotMatch(docs, /GET 127\.0\.0\.1:8787\/health/);
