@@ -157,13 +157,27 @@ jobs:
         if: matrix.suite == 'nitro-worker'
       - run: npm --prefix workers/morpheus-relayer test
         if: matrix.suite == 'morpheus-relayer'
+      # deploy/nitro/enclave-host.test.mjs builds enclave_host with
+      # `cargo build --offline` so the test itself never touches the network. A
+      # fresh runner has no registry cache, so fetch the locked crates first;
+      # without this the build hook fails and takes every enclave-host test with it.
+      - run: cargo fetch --locked
+        if: matrix.suite == 'ops'
       - run: npm run test:ops
         if: matrix.suite == 'ops'
       - run: npm run test:cloudflare
         if: matrix.suite == 'control-plane'
       - run: npm --prefix apps/web run test:run
         if: matrix.suite == 'web-test'
-      - run: npm --prefix apps/web run build
+      # apps/web/lib/networks.ts refuses to build without an explicit network,
+      # and NEXT_PUBLIC_ values are inlined at build time, so each network is
+      # its own build.
+      - run: |
+          for network in testnet mainnet; do
+            echo "::group::apps/web build for $network"
+            MORPHEUS_NETWORK="$network" npm --prefix apps/web run build
+            echo "::endgroup::"
+          done
         if: matrix.suite == 'web-build'
 
   # The enclave measurement set used to be hand-maintained: nothing built an
