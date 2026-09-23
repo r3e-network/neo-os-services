@@ -48,7 +48,14 @@ jobs:
       - run: npm run lint
       - run: npm --prefix packages/shared test
       - run: npm --prefix apps/web run test:run
-      - run: npm --prefix apps/web run build
+      # Same as ci.yml's web-build: networks.ts refuses to build without an
+      # explicit network, and each network is its own build.
+      - run: |
+          for network in testnet mainnet; do
+            echo "::group::apps/web build for $network"
+            MORPHEUS_NETWORK="$network" npm --prefix apps/web run build
+            echo "::endgroup::"
+          done
 
   deploy:
     needs: [preflight, test]
