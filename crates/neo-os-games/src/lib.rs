@@ -17,8 +17,9 @@
 //!
 //! [`session`] is the generic host: canonical identity and HMAC-bound replay,
 //! bounded in-memory state, descriptor-driven behavioural gates, and the
-//! fixed 79-byte RESULT CODEC. It deliberately stops at an unsigned finalize
-//! body; the Nitro host owns KMS release and custody signing.
+//! fixed 111-byte RESULT CODEC (v2, bound to the on-chain game). It
+//! deliberately stops at an unsigned finalize body; the Nitro host owns KMS
+//! release and custody signing.
 //!
 //! Two representation decisions, both dictated by `engine-parity.goldens.json`:
 //!

@@ -60,13 +60,22 @@ pub fn resolve_compact_callback_bytes(
         return Ok(None);
     }
 
-    // Generic game session finalize: the worker builds the fixed 79-byte
-    // RESULT CODEC and returns it base64 with callback_encoding
-    // 'game_result_v1'. The bytes flow verbatim to the kernel callback; the
-    // fulfillment digest binds SHA256(result) so any tamper breaks the
-    // RUNTIME_VERIFIER signature. Game-agnostic: the same encoding serves
-    // every registered engine.
-    if callback_encoding == "game_result_v1" {
+    // Generic game session finalize: the worker builds the fixed RESULT CODEC
+    // and returns it base64 under its callback_encoding. The bytes flow
+    // verbatim to the kernel callback; the fulfillment digest binds
+    // SHA256(result) so any tamper breaks the RUNTIME_VERIFIER signature.
+    // Game-agnostic: the same encoding serves every registered engine.
+    //   game_result_v1: 79 bytes, tag 0x02 (the JS router's codec; kept for
+    //                   parity with its vectors; PlatformGame refuses it).
+    //   game_result_v2: 111 bytes, tag 0x03 = v1 fields + the 32-byte binding
+    //                   to (appId, gameId, player) that PlatformGame checks
+    //                   (neo-os-games session::build_result_bytes).
+    let game_result_shape = match callback_encoding.as_str() {
+        "game_result_v1" => Some((79, 0x02)),
+        "game_result_v2" => Some((111, 0x03)),
+        _ => None,
+    };
+    if let Some((length, tag)) = game_result_shape {
         let raw = worker_body
             .get("result_bytes_base64")
             .map(|v| v.as_str().unwrap_or(""))
@@ -74,7 +83,7 @@ pub fn resolve_compact_callback_bytes(
             .unwrap_or("");
         if !raw.is_empty() {
             let bytes = base64::decode_lenient(raw);
-            if bytes.len() == 79 && bytes[0] == 0x02 {
+            if bytes.len() == length && bytes[0] == tag {
                 return Ok(Some(bytes));
             }
         }

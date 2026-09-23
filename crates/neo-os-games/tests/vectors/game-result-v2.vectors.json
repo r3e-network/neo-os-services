@@ -1,0 +1,152 @@
+{
+  "schema": "neoos.game-result-codec.v2",
+  "description": "Shared vectors for the PlatformGame RewardGame finalize result, codec v2: the v1 fields plus a binding to the on-chain game record (appId, gameId, player). The contract parses the result and recomputes the binding from its own record; the neo-os-games session crate produces it. Both repositories must encode every vector byte for byte, and neither may accept a rejected vector.",
+  "authority": "neo-os-contracts/contracts/platform/PlatformGame/PlatformGame.RewardGame.Settle.cs",
+  "copies": [
+    "neo-os-contracts/contracts/__tests__/fixtures/game-result-v2.vectors.json",
+    "neo-os-services/crates/neo-os-games/tests/vectors/game-result-v2.vectors.json"
+  ],
+  "layout": {
+    "length": 111,
+    "fields": [
+      {
+        "name": "tag",
+        "offset": 0,
+        "length": 1,
+        "encoding": "the byte 0x03"
+      },
+      {
+        "name": "commitment",
+        "offset": 1,
+        "length": 32,
+        "encoding": "bytes"
+      },
+      {
+        "name": "answerHash",
+        "offset": 33,
+        "length": 32,
+        "encoding": "bytes"
+      },
+      {
+        "name": "elapsedMs",
+        "offset": 65,
+        "length": 8,
+        "encoding": "uint64 big-endian"
+      },
+      {
+        "name": "undos",
+        "offset": 73,
+        "length": 1,
+        "encoding": "uint8"
+      },
+      {
+        "name": "score",
+        "offset": 74,
+        "length": 4,
+        "encoding": "uint32 big-endian"
+      },
+      {
+        "name": "difficulty",
+        "offset": 78,
+        "length": 1,
+        "encoding": "uint8"
+      },
+      {
+        "name": "binding",
+        "offset": 79,
+        "length": 32,
+        "encoding": "bytes"
+      }
+    ]
+  },
+  "binding": {
+    "domain": "neoos-game-result-binding/v1",
+    "definition": "sha256(ascii(domain) || sha256(utf8(appId)) || uint256_be(gameId) || player)",
+    "player": "the 20 bytes of the UInt160 in the order the contract stores it, which is the 0x display hex byte-reversed"
+  },
+  "vectors": [
+    {
+      "name": "golden",
+      "appId": "miniapp-sudoku",
+      "gameId": "42",
+      "player": "0x63cd4ee2b08e54d2df1b5080db56e961df25ceca",
+      "commitment": "abababababababababababababababababababababababababababababababab",
+      "answerHash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "elapsedMs": 123456,
+      "undos": 2,
+      "score": 20,
+      "difficulty": 1,
+      "binding": "02398409d7ee83b54b11b59b1bbf09003b30436af3de684851ca661a4942cb72",
+      "result": "03ababababababababababababababababababababababababababababababababcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd000000000001e24002000000140102398409d7ee83b54b11b59b1bbf09003b30436af3de684851ca661a4942cb72",
+      "resultSha256": "07cddcb54b181e776b0778d6cf424e2dbe940545f790931bf354d001e97feb9c"
+    },
+    {
+      "name": "wide-game-id",
+      "appId": "miniapp-flappy-dash",
+      "gameId": "18446744073709551617",
+      "player": "0x0102030405060708090a0b0c0d0e0f1011121314",
+      "commitment": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "answerHash": "fffefdfcfbfaf9f8f7f6f5f4f3f2f1f0efeeedecebeae9e8e7e6e5e4e3e2e1e0",
+      "elapsedMs": 9007199254740991,
+      "undos": 3,
+      "score": 4294967295,
+      "difficulty": 2,
+      "binding": "a3335b95acf014f8027dc592e49ac3b319eb40b0401eeac1f49d786633f0c53d",
+      "result": "03000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1ffffefdfcfbfaf9f8f7f6f5f4f3f2f1f0efeeedecebeae9e8e7e6e5e4e3e2e1e0001fffffffffffff03ffffffff02a3335b95acf014f8027dc592e49ac3b319eb40b0401eeac1f49d786633f0c53d",
+      "resultSha256": "e3cb6965a907e1752707c36a67c4fa135f178f1cab1dfcc29b2e7f07efb35683"
+    },
+    {
+      "name": "uint256-max-game-id",
+      "appId": "miniapp-aim-master",
+      "gameId": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+      "player": "0xffeeddccbbaa99887766554433221100ffeeddcc",
+      "commitment": "0000000000000000000000000000000000000000000000000000000000000000",
+      "answerHash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "elapsedMs": 0,
+      "undos": 0,
+      "score": 0,
+      "difficulty": 0,
+      "binding": "697fa6a6ca31b2fd947f78959649408d94db879f39e047840d900ca18c4f47f6",
+      "result": "03000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000697fa6a6ca31b2fd947f78959649408d94db879f39e047840d900ca18c4f47f6",
+      "resultSha256": "614f23a3f498a69643daf5bc6426146ae53203cbff08f610f4729d0c85fcff78"
+    },
+    {
+      "name": "session-loss-sudoku",
+      "appId": "miniapp-sudoku",
+      "gameId": "1",
+      "player": "0x63cd4ee2b08e54d2df1b5080db56e961df25ceca",
+      "commitment": "ad0ab82650cfb7fd98480e22dfe105ba8d8664894c4524ff7c5b19455ebf061f",
+      "answerHash": "7a977eaa826acbb901c875c405c30292b227cd464e6050377d2f52d25e9c2d90",
+      "elapsedMs": 41000,
+      "undos": 0,
+      "score": 0,
+      "difficulty": 0,
+      "binding": "7c44ae534e4b48c0174e5bcad8a23f4d711d75e5edefec7c6a57a2b8db318a8e",
+      "result": "03ad0ab82650cfb7fd98480e22dfe105ba8d8664894c4524ff7c5b19455ebf061f7a977eaa826acbb901c875c405c30292b227cd464e6050377d2f52d25e9c2d90000000000000a0280000000000007c44ae534e4b48c0174e5bcad8a23f4d711d75e5edefec7c6a57a2b8db318a8e",
+      "resultSha256": "97bc2e372c0535620de99e868a2d51ae6a6c197b4f8581e4e9136e11e1c12a6b"
+    }
+  ],
+  "rejected": [
+    {
+      "name": "v1-codec",
+      "result": "02ababababababababababababababababababababababababababababababababcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd000000000001e240020000001401",
+      "reason": "bad result length"
+    },
+    {
+      "name": "v1-tag-on-v2-layout",
+      "result": "02ababababababababababababababababababababababababababababababababcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd000000000001e24002000000140102398409d7ee83b54b11b59b1bbf09003b30436af3de684851ca661a4942cb72",
+      "reason": "bad result tag"
+    }
+  ],
+  "sessionLoss": {
+    "vector": "session-loss-sudoku",
+    "producer": "neo-os-games SessionStore kernel lane, sudoku difficulty 0, network testnet, contract 0xaabbccddeeff0011223344556677889900aabbcc, the crate test root [9; 32] and test_player(7); session started at 10000 ms, 41 placements 500 ms apart ending at +41000 ms, finalized at 60000 ms without a preview",
+    "rejection": "solved too fast",
+    "contractDescriptor": {
+      "minSolveMs0": 90000,
+      "limitMs0": 900000
+    },
+    "expectedStatus": 2,
+    "expectedPayout": 0
+  }
+}

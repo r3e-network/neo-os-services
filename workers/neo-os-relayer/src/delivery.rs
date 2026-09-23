@@ -985,8 +985,17 @@ where
         payload = json!({});
     }
     if let Value::Object(payload) = &mut payload {
+        // The requester is chain state: the account that submitted the
+        // request. The payload is bytes that account chose, so its own
+        // `requester` key is never trusted — the enclave binds game sessions
+        // (and their results) to this value.
+        let requester = event_field(event_object, "requester");
+        if requester.is_empty() {
+            payload.remove("requester");
+        } else {
+            payload.insert("requester".to_string(), Value::String(requester));
+        }
         for (wire, event_name) in [
-            ("requester", "requester"),
             ("callback_contract", "callbackContract"),
             ("callback_method", "callbackMethod"),
         ] {
@@ -1855,6 +1864,60 @@ mod tests {
         let mut bytes = vec![0x02];
         bytes.extend_from_slice(&stream.out());
         format!("0x{}", hex::encode(bytes))
+    }
+
+    /// The enclave binds a game session to the account that submitted the
+    /// kernel request. That account is chain state; a `requester` key inside
+    /// the caller-supplied payload must never stand in for it.
+    #[test]
+    fn the_chain_requester_always_replaces_a_payload_requester() {
+        const CHAIN_REQUESTER: &str = "0x63cd4ee2b08e54d2df1b5080db56e961df25ceca";
+        const FORGED: &str = "0x0102030405060708090a0b0c0d0e0f1011121314";
+        let config = config();
+        let nitro = config.raw["nitro"].as_object().unwrap().clone();
+        let posted_payload = |event: Value| -> Value {
+            let transport = ScriptedTransport::new(vec![]);
+            let _ = prepare_in_enclave(
+                &config,
+                "neo_n3",
+                &JsValue::from_json(&event),
+                &nitro,
+                &transport,
+                &FixedNonce(7),
+            );
+            let calls = transport.calls.lock().unwrap();
+            assert_eq!(calls.len(), 1, "exactly one enclave request");
+            let body: Value = serde_json::from_str(&calls[0].1).unwrap();
+            body["payload"].clone()
+        };
+        let payload = json!({
+            "kind": "miniapp.game.session.finalize.v2",
+            "requester": FORGED,
+        })
+        .to_string();
+
+        let delivered = posted_payload(json!({
+            "requestId": "77",
+            "requestType": "session.finalize",
+            "appId": "miniapp-sudoku",
+            "moduleId": "game.session",
+            "operation": "session.finalize",
+            "requester": CHAIN_REQUESTER,
+            "payload": payload,
+        }));
+        assert_eq!(delivered["requester"], CHAIN_REQUESTER);
+
+        // An event that carries no requester leaves none: the forged key is
+        // dropped rather than trusted.
+        let delivered = posted_payload(json!({
+            "requestId": "78",
+            "requestType": "session.finalize",
+            "appId": "miniapp-sudoku",
+            "moduleId": "game.session",
+            "operation": "session.finalize",
+            "payload": payload,
+        }));
+        assert!(delivered.get("requester").is_none(), "{delivered}");
     }
 
     #[test]

@@ -4,9 +4,9 @@
 //! after the 2026-09 game-engine audit. It owns protocol validation, the
 //! player-bound identity, HMAC-authenticated resume records, bounded
 //! ephemeral state, sequencing, behavioural gates, the single replay-based
-//! scoring path and the 79-byte result codec. Secret release, randomness and
-//! result signing remain host responsibilities: callers pass an
-//! already-attested 32-byte HMAC root, fresh OS entropy for new session
+//! scoring path and the 111-byte result codec (v2). Secret release,
+//! randomness and result signing remain host responsibilities: callers pass
+//! an already-attested 32-byte HMAC root, fresh OS entropy for new session
 //! tokens, and add the custody envelope only after a successful kernel-lane
 //! [`SessionStore::finalize`].
 //!
@@ -26,9 +26,20 @@
 //! * **Replay is the only scoring path.** `finalize` re-deals from the
 //!   problem secret and replays the authenticated op-log with its recorded
 //!   timing through the engine ABI, then scores that state — never the cached
-//!   `engine_state`. The kernel lane (sealed op-log decrypted by the host)
-//!   and the direct preview lane share this path; only their failure
-//!   semantics differ (see [`FinalizeLane`]).
+//!   `engine_state`. The kernel lane (the on-chain settlement request) and
+//!   the direct preview lane share this path; only their failure semantics
+//!   differ (see [`FinalizeLane`]).
+//! * **Results are bound to the on-chain game.** Codec v2 appends
+//!   `sha256(domain ‖ sha256(appId) ‖ uint256_be(gameId) ‖ player)` to the
+//!   v1 fields ([`result_binding`]). PlatformGame recomputes it from its own
+//!   game record and refuses any other value (audit: one solved run used to
+//!   settle every game of every player in every RewardGame app).
+//! * **One chain request settles a session.** The kernel lane requires the
+//!   chain requester of its request to be the session player. Its first
+//!   successful finalize consumes the session: a retry of the same request
+//!   recomputes the same bytes, any other request is refused, the HMAC resume
+//!   record cannot rebuild it, and no session older than
+//!   [`MAX_SETTLE_AGE_MS`] can settle or be rebuilt at all.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -52,26 +63,51 @@ pub const MAX_SESSIONS: usize = 4_096;
 /// unauthenticated starts evicted every live session).
 pub const MAX_SESSIONS_PER_PLAYER: usize = 16;
 pub const SESSION_TTL_MS: f64 = 3.0 * 60.0 * 60.0 * 1_000.0;
-pub const RESULT_FINALIZE_TAG: u8 = 0x02;
-pub const RESULT_BYTES_LENGTH: usize = 79;
+/// Codec v2 tag. v1 was `0x02` with 79 bytes and no binding; PlatformGame
+/// refuses it.
+pub const RESULT_FINALIZE_TAG: u8 = 0x03;
+pub const RESULT_BYTES_LENGTH: usize = 111;
+/// The `callback_encoding` that carries codec v2 to the fulfillment builders.
+pub const RESULT_CALLBACK_ENCODING: &str = "game_result_v2";
+/// Domain separator of the result binding (see [`result_binding`]).
+pub const RESULT_BINDING_DOMAIN: &str = "neoos-game-result-binding/v1";
+/// The oldest session that may still settle or be rebuilt. PlatformGame
+/// bounds `limitMs` at 1 h and `settleGraceMs` at 24 h, so no RewardGame is
+/// settleable more than 25 h after it starts; the extra hour covers relayer
+/// latency. Settled-session records are kept exactly this long.
+pub const MAX_SETTLE_AGE_MS: f64 = 26.0 * 60.0 * 60.0 * 1_000.0;
+/// Settled-session records kept after their live session is evicted. When
+/// full, the oldest record goes first; the on-chain binding still refuses any
+/// result for a game other than the one the session was played for.
+pub const MAX_SETTLED_SESSIONS: usize = 65_536;
 /// The exact string the wallet signs (prefix + canonical identity).
 pub const WITNESS_MESSAGE_PREFIX: &str = "neoos-game-session/v1|";
 /// The sealed finalize payload kind the devpack client produces.
 pub const SEALED_FINALIZE_KIND: &str = "miniapp.game.session.finalize.v2";
 
+/// The chain side of a kernel-lane finalize: the Morpheus request id and the
+/// account that submitted the request. Both are read from the on-chain
+/// request by the relayer, never from the payload the player sealed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KernelRequest {
+    pub request_id: String,
+    pub requester: String,
+}
+
 /// Which caller is finalizing. The DIRECT lane is the player's optimistic
 /// preview (`/session/finalize` over the public proxy): a run that does not
 /// qualify is reported as the matching 4xx so the UI can explain it, and the
 /// reply is unsigned (audit: the public proxy used to hand out custody-key
-/// signatures for free). The KERNEL lane is the on-chain settlement request
-/// (sealed op-log decrypted by the host): a deterministic disqualification
-/// (target missed, gate tripped, window violated) is a LOSS result the
-/// contract settles with payout 0, not a failed fulfillment — otherwise every
-/// lost run would refund its entry and skill games would be free to retry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// signatures for free). The KERNEL lane is the on-chain settlement request:
+/// a deterministic disqualification (target missed, gate tripped, window
+/// violated) is a LOSS result the contract settles with payout 0, not a
+/// failed fulfillment — otherwise every lost run would refund its entry and
+/// skill games would be free to retry. It settles one [`KernelRequest`] per
+/// session.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FinalizeLane {
     Direct,
-    Kernel,
+    Kernel(KernelRequest),
 }
 
 /// A protocol-level response. Unlike host runtime failures, session validation
@@ -130,11 +166,25 @@ struct Session {
     /// Elapsed time frozen by a successful DIRECT finalize; the kernel lane
     /// reuses it when the session is still cached.
     finalized_elapsed_ms: Option<f64>,
+    /// The kernel request that consumed this session, if any. Kept on the
+    /// live session as well as in [`SessionStore::settled`], so evicting the
+    /// record never makes a live session settleable again.
+    settled_by: Option<Settlement>,
     /// Absolute enclave clock of every accepted op (parallel to `op_log`).
     op_timestamps: Vec<f64>,
     op_log: Vec<Json>,
     engine_state: Json,
     last_view: Json,
+    generation: u64,
+}
+
+/// What consumed a session: the kernel request and the digest of the result
+/// it settled. A retry of that request must reproduce the same bytes.
+#[derive(Debug, Clone, PartialEq)]
+struct Settlement {
+    request_id: String,
+    result_digest: [u8; 32],
+    started_at_ms: f64,
     generation: u64,
 }
 
@@ -165,11 +215,30 @@ impl Session {
 /// Process-local cache matching the Node Map. It is intentionally injectable
 /// and resettable: persistence authority comes from the HMAC-authenticated
 /// resume record, never from trusting client-provided replay operations.
-#[derive(Debug, Default)]
+/// Settled-session records outlive the live sessions they describe (they are
+/// what stops a resume record from rebuilding a consumed session) but not
+/// the process: a restart forgets them, and from then on only the
+/// [`MAX_SETTLE_AGE_MS`] limit and the on-chain binding apply.
+#[derive(Debug)]
 pub struct SessionStore {
     sessions: HashMap<String, Session>,
+    /// Keyed by `sha256(canonical identity)`.
+    settled: HashMap<[u8; 32], Settlement>,
+    settled_capacity: usize,
     generation: u64,
     target_overrides: HashMap<String, [f64; 3]>,
+}
+
+impl Default for SessionStore {
+    fn default() -> Self {
+        Self {
+            sessions: HashMap::new(),
+            settled: HashMap::new(),
+            settled_capacity: MAX_SETTLED_SESSIONS,
+            generation: 0,
+            target_overrides: HashMap::new(),
+        }
+    }
 }
 
 impl SessionStore {
@@ -177,6 +246,8 @@ impl SessionStore {
         Self::default()
     }
 
+    /// Evict every live session. Settled-session records stay: an eviction
+    /// must not let a resume record rebuild a consumed session.
     pub fn clear(&mut self) {
         self.sessions.clear();
     }
@@ -231,6 +302,9 @@ impl SessionStore {
         }
         if let Err(message) = verify_player_witness(&identity, credential) {
             return SessionReply::error(401, message);
+        }
+        if self.settlement_of(&identity.canonical, now_ms).is_some() {
+            return SessionReply::error(409, "session already settled");
         }
         let problem_secret = problem_secret_for(secret_root, &identity.canonical);
         let commitment = commitment_for(&identity.canonical, &problem_secret);
@@ -331,6 +405,9 @@ impl SessionStore {
         if !seq.is_finite() || seq.fract() != 0.0 || seq < 0.0 {
             return SessionReply::error(400, "seq must be a non-negative integer");
         }
+        if self.settlement_of(&identity.canonical, now_ms).is_some() {
+            return SessionReply::error(409, "session already settled");
+        }
 
         let problem_secret = problem_secret_for(secret_root, &identity.canonical);
         let resumed_now = match self.resolve_session(
@@ -392,13 +469,16 @@ impl SessionStore {
         SessionReply::ok(Json::Object(body))
     }
 
-    /// Produce the unsigned, human-readable result plus the 79-byte codec in
+    /// Produce the unsigned, human-readable result plus the 111-byte codec in
     /// base64 by REPLAYING the authenticated op-log with its recorded timing
     /// through the engine. For the kernel lane the host signs stable JSON
     /// `{ "result_bytes_base64": ... }` through its worker custody role; the
     /// direct lane returns a `finalize_proof` the client seals into the
     /// on-chain finalize payload so the kernel lane settles the same elapsed
-    /// time the player saw.
+    /// time the player saw. The kernel lane settles one chain request per
+    /// session: its requester must be the session player, its first success
+    /// consumes the session, and only a retry of that request is answered
+    /// again, with the same bytes.
     pub fn finalize(
         &mut self,
         payload: &Json,
@@ -410,6 +490,26 @@ impl SessionStore {
             Ok(value) => value,
             Err(message) => return SessionReply::error(400, message),
         };
+        let kernel_request_id = match &lane {
+            FinalizeLane::Direct => None,
+            FinalizeLane::Kernel(request) => match bind_kernel_request(&identity, request) {
+                Ok(request_id) => Some(request_id),
+                Err((status, message)) => return SessionReply::error(status, message),
+            },
+        };
+        let kernel = kernel_request_id.is_some();
+        let settled = self.settlement_of(&identity.canonical, now_ms);
+        if let Some(settled) = &settled {
+            if kernel_request_id.as_deref() != Some(settled.request_id.as_str()) {
+                return SessionReply::error(
+                    409,
+                    format!(
+                        "session already settled by kernel request {}",
+                        settled.request_id
+                    ),
+                );
+            }
+        }
         let problem_secret = problem_secret_for(secret_root, &identity.canonical);
         if let Err((status, message)) = self.resolve_session(
             &identity,
@@ -427,10 +527,13 @@ impl SessionStore {
             .sessions
             .get_mut(&identity.canonical)
             .expect("live or rebuilt session");
+        if kernel && now_ms - session.started_at_ms > MAX_SETTLE_AGE_MS {
+            return SessionReply::error(410, "session is too old to settle");
+        }
 
         // A cached/rebuilt frozen result must not bypass validation of a
         // caller-supplied timing claim. Validate before selecting cached time.
-        if lane == FinalizeLane::Kernel
+        if kernel
             && (payload.get("elapsed_ms").is_some() || payload.get("finalize_proof").is_some())
         {
             let claimed = payload.get("elapsed_ms").map(crate::js::js_to_number);
@@ -454,11 +557,12 @@ impl SessionStore {
             }
         }
 
-        let elapsed_ms = match lane {
-            FinalizeLane::Direct => session
+        let elapsed_ms = if !kernel {
+            session
                 .finalized_elapsed_ms
-                .unwrap_or_else(|| (now_ms - session.started_at_ms).trunc().max(0.0)),
-            FinalizeLane::Kernel => match session.finalized_elapsed_ms {
+                .unwrap_or_else(|| (now_ms - session.started_at_ms).trunc().max(0.0))
+        } else {
+            match session.finalized_elapsed_ms {
                 Some(frozen) => frozen,
                 None => {
                     let claimed = payload.get("elapsed_ms").map(crate::js::js_to_number);
@@ -480,7 +584,7 @@ impl SessionStore {
                         _ => session.last_op_elapsed_ms(),
                     }
                 }
-            },
+            }
         };
         session.last_touched_ms = now_ms;
 
@@ -527,17 +631,17 @@ impl SessionStore {
                 true,
                 None,
             ),
-            Err((status, message)) => match lane {
-                FinalizeLane::Direct => return SessionReply::error(status, message),
-                FinalizeLane::Kernel if status == 403 => {
-                    (loss_answer_hash(session), 0, None, false, Some(message))
-                }
-                // Malformed input / engine bug: the run cannot be judged, so
-                // the fulfillment fails and the contract refunds the entry.
-                FinalizeLane::Kernel => return SessionReply::error(status, message),
-            },
+            Err((status, message)) if !kernel => return SessionReply::error(status, message),
+            Err((403, message)) => (loss_answer_hash(session), 0, None, false, Some(message)),
+            // Malformed input / engine bug: the run cannot be judged, so the
+            // fulfillment fails and the contract refunds the entry.
+            Err((status, message)) => return SessionReply::error(status, message),
         };
 
+        let binding = match result_binding(&identity.app_id, &identity.game_id, &identity.player) {
+            Ok(binding) => binding,
+            Err(message) => return SessionReply::error(500, message),
+        };
         let result_bytes = match build_result_bytes(
             &commitment,
             &answer_hash,
@@ -545,10 +649,38 @@ impl SessionStore {
             session.undos,
             score,
             identity.difficulty,
+            &binding,
         ) {
             Ok(bytes) => bytes,
             Err(message) => return SessionReply::error(500, message),
         };
+
+        // Consume the session for this kernel request. A retry of the same
+        // request must reproduce the settled bytes exactly.
+        let mut settlement = None;
+        if let Some(request_id) = kernel_request_id {
+            let result_digest = super::sha256_digest(&result_bytes);
+            if let Some(settled) = &settled {
+                if settled.result_digest != result_digest {
+                    return SessionReply::error(
+                        409,
+                        format!(
+                            "kernel request {} already settled a different result",
+                            settled.request_id
+                        ),
+                    );
+                }
+            }
+            self.generation = self.generation.wrapping_add(1);
+            let record = Settlement {
+                request_id,
+                result_digest,
+                started_at_ms: session.started_at_ms,
+                generation: self.generation,
+            };
+            session.settled_by = Some(record.clone());
+            settlement = Some(record);
+        }
         let result_bytes_base64 = base64::engine::general_purpose::STANDARD.encode(result_bytes);
 
         let mut body = Map::new();
@@ -558,7 +690,7 @@ impl SessionStore {
         );
         body.insert(
             "callback_encoding".into(),
-            Json::String("game_result_v1".into()),
+            Json::String(RESULT_CALLBACK_ENCODING.into()),
         );
         body.insert(
             "problem_hash".into(),
@@ -568,6 +700,7 @@ impl SessionStore {
             "answer_hash".into(),
             Json::String(super::hex_encode(&answer_hash)),
         );
+        body.insert("binding".into(), Json::String(super::hex_encode(&binding)));
         body.insert("elapsed_ms".into(), crate::js::js_number_value(elapsed_ms));
         body.insert("undos".into(), Json::from(session.undos));
         body.insert("score".into(), Json::from(score));
@@ -582,7 +715,7 @@ impl SessionStore {
                 body.insert(key, value);
             }
         }
-        if lane == FinalizeLane::Direct {
+        if !kernel {
             // Freeze the run: later steps are refused and the kernel lane
             // settles exactly this elapsed time.
             session.finalized_elapsed_ms = Some(elapsed_ms);
@@ -605,7 +738,55 @@ impl SessionStore {
             );
             body.insert("replay_record".into(), session.replay_record());
         }
+        if let Some(record) = settlement {
+            self.record_settlement(&identity.canonical, record, now_ms);
+        }
         SessionReply::ok(Json::Object(body))
+    }
+
+    /// The kernel request that consumed this identity's session, if any —
+    /// from the live session first, then from the settled-session records.
+    /// A record past `MAX_SETTLE_AGE_MS` is spent: its session can neither
+    /// settle nor be rebuilt any more, so it no longer answers.
+    fn settlement_of(&mut self, canonical: &str, now_ms: f64) -> Option<Settlement> {
+        if let Some(settled) = self
+            .sessions
+            .get(canonical)
+            .and_then(|session| session.settled_by.clone())
+        {
+            return Some(settled);
+        }
+        let key = settled_key(canonical);
+        let settled = self.settled.get(&key)?;
+        if now_ms - settled.started_at_ms > MAX_SETTLE_AGE_MS {
+            self.settled.remove(&key);
+            return None;
+        }
+        Some(settled.clone())
+    }
+
+    fn record_settlement(&mut self, canonical: &str, record: Settlement, now_ms: f64) {
+        self.prune_settled(now_ms);
+        let key = settled_key(canonical);
+        while !self.settled.contains_key(&key) && self.settled.len() >= self.settled_capacity {
+            let Some(oldest) = self
+                .settled
+                .iter()
+                .min_by_key(|(_, settled)| settled.generation)
+                .map(|(key, _)| *key)
+            else {
+                break;
+            };
+            self.settled.remove(&oldest);
+        }
+        self.settled.insert(key, record);
+    }
+
+    /// Drop spent records (see [`Self::settlement_of`]). Runs only when a
+    /// record is added, so lookups stay constant-time.
+    fn prune_settled(&mut self, now_ms: f64) {
+        self.settled
+            .retain(|_, settled| now_ms - settled.started_at_ms <= MAX_SETTLE_AGE_MS);
     }
 
     fn effective_targets(&self, engine: &'static EngineHandle) -> [f64; 3] {
@@ -694,6 +875,7 @@ impl SessionStore {
             undos: 0,
             resumed,
             finalized_elapsed_ms: None,
+            settled_by: None,
             op_timestamps: Vec::new(),
             op_log: Vec::new(),
             engine_state,
@@ -753,6 +935,11 @@ impl SessionStore {
         // the host's own earlier output, not on the player.
         if !started_at_ms.is_finite() || started_at_ms < 0.0 || started_at_ms > now_ms {
             return Err((400, "replay record start time is out of range".into()));
+        }
+        // No session older than this can settle, and a consumed one is only
+        // remembered this long: past it the record must not rebuild anything.
+        if now_ms - started_at_ms > MAX_SETTLE_AGE_MS {
+            return Err((410, "session is too old to resume".into()));
         }
         if elapsed.len() != ops.len() {
             return Err((400, "replay record does not match the replay log".into()));
@@ -902,6 +1089,47 @@ fn normalize_hash160(value: Option<&Json>, field_name: &str) -> Result<String, S
         return Err(format!("{field_name} must be 0x-prefixed 40-char hex"));
     }
     Ok(raw.to_lowercase())
+}
+
+/// Bind a kernel-lane finalize to its chain request. The requester must BE
+/// the session player in the same `0x` display spelling: unlike the witness
+/// check, the reversed spelling is refused, because the result binding (and
+/// the contract's record) is computed from exactly this spelling. Returns the
+/// request id in canonical decimal form.
+fn bind_kernel_request(
+    identity: &SessionIdentity,
+    request: &KernelRequest,
+) -> Result<String, (u16, String)> {
+    let request_id = request.request_id.trim();
+    if request_id.is_empty()
+        || request_id.len() > 78
+        || !request_id.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err((400, "kernel request_id must be a decimal string".into()));
+    }
+    let request_id = BigUint::parse_bytes(request_id.as_bytes(), 10)
+        .map(|id| id.to_str_radix(10))
+        .ok_or_else(|| {
+            (
+                400,
+                "kernel request_id must be a decimal string".to_string(),
+            )
+        })?;
+    let requester = request.requester.trim().to_lowercase();
+    let requester = requester.strip_prefix("0x").unwrap_or(&requester);
+    if !is_hex_of_length(requester, 40) {
+        return Err((400, "kernel requester must be a 20-byte script hash".into()));
+    }
+    if identity.player.strip_prefix("0x") != Some(requester) {
+        return Err((403, "kernel requester is not the session player".into()));
+    }
+    Ok(request_id)
+}
+
+/// Settled-session records are keyed by a digest, not the canonical text,
+/// to bound their memory.
+fn settled_key(canonical: &str) -> [u8; 32] {
+    super::sha256_digest(canonical.as_bytes())
 }
 
 // ---------------------------------------------------------------------------
@@ -1335,7 +1563,37 @@ fn behavioral_gate_error(session: &Session, engine: &'static EngineHandle) -> Op
     None
 }
 
-/// Encode the contract's fixed, big-endian `game_result_v1` payload.
+/// The result binding: `sha256(domain ‖ sha256(utf8(app_id)) ‖
+/// uint256_be(game_id) ‖ player)`, where `player` is the 20-byte UInt160 in
+/// the order PlatformGame stores it (the `0x` display hex, byte-reversed).
+/// The contract recomputes it from its own game record, so a result settles
+/// only the game it was played for. `game_id` is the canonical decimal of
+/// [`SessionIdentity::game_id`].
+pub fn result_binding(app_id: &str, game_id: &str, player: &str) -> Result<[u8; 32], String> {
+    let game_id = BigUint::parse_bytes(game_id.as_bytes(), 10)
+        .ok_or_else(|| "game_id must be a decimal string".to_string())?
+        .to_bytes_be();
+    if game_id.len() > 32 {
+        return Err("game_id overflows uint256".into());
+    }
+    let mut game = [0u8; 32];
+    game[32 - game_id.len()..].copy_from_slice(&game_id);
+    let player = player.trim().to_lowercase();
+    let mut player = hex_decode(&player)
+        .filter(|bytes| bytes.len() == 20)
+        .ok_or_else(|| "player must be a 20-byte script hash".to_string())?;
+    player.reverse();
+
+    let mut hasher = Sha256::new();
+    hasher.update(RESULT_BINDING_DOMAIN.as_bytes());
+    hasher.update(super::sha256_digest(app_id.as_bytes()));
+    hasher.update(game);
+    hasher.update(&player);
+    Ok(hasher.finalize().into())
+}
+
+/// Encode the contract's fixed, big-endian result, codec v2: the v1 fields
+/// under tag `0x03`, followed by the 32-byte [`result_binding`].
 pub fn build_result_bytes(
     commitment: &[u8],
     answer_hash: &[u8],
@@ -1343,6 +1601,7 @@ pub fn build_result_bytes(
     undos: u64,
     score: i64,
     difficulty: u8,
+    binding: &[u8],
 ) -> Result<[u8; RESULT_BYTES_LENGTH], String> {
     let commitment: &[u8; 32] = commitment
         .try_into()
@@ -1350,6 +1609,9 @@ pub fn build_result_bytes(
     let answer_hash: &[u8; 32] = answer_hash
         .try_into()
         .map_err(|_| "answerHash must be 32 bytes".to_string())?;
+    let binding: &[u8; 32] = binding
+        .try_into()
+        .map_err(|_| "binding must be 32 bytes".to_string())?;
     let elapsed_ms = elapsed_ms.trunc().max(0.0);
     if !elapsed_ms.is_finite() || elapsed_ms >= (u64::MAX as f64) + 1.0 {
         return Err("elapsedMs overflows uint64".into());
@@ -1369,6 +1631,7 @@ pub fn build_result_bytes(
     out[73] = undos as u8;
     out[74..78].copy_from_slice(&(score as u32).to_be_bytes());
     out[78] = difficulty;
+    out[79..111].copy_from_slice(binding);
     Ok(out)
 }
 
@@ -1455,21 +1718,91 @@ mod tests {
             .collect()
     }
 
+    /// The shared vectors, byte-identical to neo-os-contracts
+    /// `contracts/__tests__/fixtures/game-result-v2.vectors.json`, which the
+    /// PlatformGame suites feed to the contract.
+    fn shared_vectors() -> Json {
+        serde_json::from_str(include_str!("../tests/vectors/game-result-v2.vectors.json"))
+            .expect("game-result-v2 vectors parse")
+    }
+
+    fn vector(name: &str) -> Json {
+        shared_vectors()["vectors"]
+            .as_array()
+            .expect("vectors array")
+            .iter()
+            .find(|vector| vector["name"] == name)
+            .unwrap_or_else(|| panic!("vector {name}"))
+            .clone()
+    }
+
+    fn unhex(value: &Json) -> Vec<u8> {
+        hex_decode(value.as_str().expect("hex string")).expect("valid hex")
+    }
+
+    fn kernel(request_id: &str, requester: &str) -> FinalizeLane {
+        FinalizeLane::Kernel(KernelRequest {
+            request_id: request_id.into(),
+            requester: requester.into(),
+        })
+    }
+
     #[test]
-    fn result_codec_matches_the_node_golden_vector() {
-        let bytes = build_result_bytes(&[0xab; 32], &[0xcd; 32], 123_456.0, 2, 20, 1)
-            .expect("valid vector");
-        let expected = format!(
-            "02{}{}000000000001e240020000001401",
-            "ab".repeat(32),
-            "cd".repeat(32)
-        );
-        assert_eq!(super::super::hex_encode(&bytes), expected);
+    fn game_result_v2_vectors_encode_byte_identically() {
+        let vectors = shared_vectors();
+        assert_eq!(vectors["layout"]["length"], RESULT_BYTES_LENGTH);
+        assert_eq!(vectors["binding"]["domain"], RESULT_BINDING_DOMAIN);
+        let cases = vectors["vectors"].as_array().expect("vectors");
+        assert_eq!(cases.len(), 4);
+        for case in cases {
+            let name = case["name"].as_str().expect("name");
+            let binding = result_binding(
+                case["appId"].as_str().expect("appId"),
+                case["gameId"].as_str().expect("gameId"),
+                case["player"].as_str().expect("player"),
+            )
+            .expect(name);
+            assert_eq!(binding.to_vec(), unhex(&case["binding"]), "{name} binding");
+            let bytes = build_result_bytes(
+                &unhex(&case["commitment"]),
+                &unhex(&case["answerHash"]),
+                case["elapsedMs"].as_u64().expect("elapsedMs") as f64,
+                case["undos"].as_u64().expect("undos"),
+                case["score"].as_i64().expect("score"),
+                case["difficulty"].as_u64().expect("difficulty") as u8,
+                &binding,
+            )
+            .expect(name);
+            assert_eq!(bytes.to_vec(), unhex(&case["result"]), "{name} bytes");
+            assert_eq!(
+                super::super::sha256_hex(&bytes),
+                case["resultSha256"].as_str().expect("sha256"),
+                "{name} digest"
+            );
+            assert_eq!(bytes[0], RESULT_FINALIZE_TAG);
+        }
+        // What the contract refuses is not something this crate can emit.
+        for rejected in vectors["rejected"].as_array().expect("rejected") {
+            let bytes = unhex(&rejected["result"]);
+            assert!(
+                bytes.len() != RESULT_BYTES_LENGTH || bytes[0] != RESULT_FINALIZE_TAG,
+                "{}",
+                rejected["name"]
+            );
+        }
+        // A game id is a uint256; a player is exactly 20 bytes.
+        let too_wide = (BigUint::from(1u8) << 256usize).to_string();
         assert_eq!(
-            super::super::sha256_hex(&bytes),
-            "f8ddd711f6ece1740fd322f71e9cc7407e6820656227bb8c4d0716e7970c2488"
+            result_binding(
+                "miniapp-sudoku",
+                &too_wide,
+                "0x63cd4ee2b08e54d2df1b5080db56e961df25ceca"
+            )
+            .unwrap_err(),
+            "game_id overflows uint256"
         );
-        assert_eq!(bytes.len(), RESULT_BYTES_LENGTH);
+        assert!(result_binding("miniapp-sudoku", "1", "0x63cd").is_err());
+        assert!(build_result_bytes(&[0; 32], &[0; 32], 0.0, 0, 0, 0, &[0; 31]).is_err());
     }
 
     #[test]
@@ -1730,14 +2063,37 @@ mod tests {
         (last, now)
     }
 
+    /// The op-log `solve_sudoku` placed, in order.
+    fn solved_ops(payload: &Json, start: &SessionReply) -> Vec<Json> {
+        let identity = parse_identity(payload).unwrap();
+        let secret = problem_secret_for(&ROOT, &identity.canonical);
+        let engine = resolve_engine("miniapp-sudoku").unwrap();
+        let (state, _) = (engine.deal)(&secret, 0);
+        let solution = state["solution"].as_str().unwrap().to_string();
+        open_cells(start)
+            .into_iter()
+            .map(|cell| serde_json::json!({ "type": "place", "cell": cell, "digit": (solution.as_bytes()[cell] - b'0') as u64 }))
+            .collect()
+    }
+
+    /// The resume fields a sealed payload carries after eviction.
+    fn resume_payload(payload: &Json, token: &Json, ops: Vec<Json>, proven: &Json) -> Json {
+        let mut resume = payload.clone();
+        resume["session_token"] = token.clone();
+        resume["replay"] = Json::Array(ops);
+        resume["replay_record"] = proven["replay_record"].clone();
+        resume["replay_proof"] = proven["replay_proof"].clone();
+        resume
+    }
+
     #[test]
-    fn finalize_scores_the_replayed_run_and_kernel_lane_settles_losses() {
+    fn finalize_scores_the_replayed_run_and_kernel_lane_settles_the_previewed_time() {
         let player = test_player(7);
         let payload = witnessed("miniapp-sudoku", "88", &player);
         let mut store = SessionStore::new();
         let start = store.start(&payload, &ROOT, "03worker", 10_000.0, &TOKEN_A);
         let token = start.body["session_token"].clone();
-        let (last_step, now) = solve_sudoku(&mut store, &payload, &token, &start, 1_000.0);
+        let (_, now) = solve_sudoku(&mut store, &payload, &token, &start, 1_000.0);
 
         // Direct lane: the board derives from the placements (no answer),
         // the reply is a preview with a finalize proof, and the run freezes.
@@ -1764,62 +2120,76 @@ mod tests {
 
         // Kernel lane after eviction: the sealed payload carries the resume
         // record + finalize proof and settles the SAME elapsed time.
-        store.clear();
-        let mut sealed = payload.clone();
-        sealed["session_token"] = token.clone();
-        sealed["replay"] = Json::Array(
-            open_cells(&start)
-                .iter()
-                .map(|_| Json::Null)
-                .collect::<Vec<_>>(),
-        );
-        // Rebuild the exact op-log the session recorded.
-        let identity = parse_identity(&payload).unwrap();
-        let secret = problem_secret_for(&ROOT, &identity.canonical);
-        let engine = resolve_engine("miniapp-sudoku").unwrap();
-        let (state, _) = (engine.deal)(&secret, 0);
-        let solution = state["solution"].as_str().unwrap();
-        sealed["replay"] = Json::Array(
-            open_cells(&start)
-                .into_iter()
-                .map(|cell| serde_json::json!({ "type": "place", "cell": cell, "digit": (solution.as_bytes()[cell] - b'0') as u64 }))
-                .collect(),
-        );
-        sealed["replay_record"] = last_step["replay_record"].clone();
-        sealed["replay_proof"] = direct.body["replay_proof"].clone();
+        let mut sealed =
+            resume_payload(&payload, &token, solved_ops(&payload, &start), &direct.body);
         sealed["elapsed_ms"] = direct.body["elapsed_ms"].clone();
         sealed["finalize_proof"] = direct.body["finalize_proof"].clone();
-        let kernel = store.finalize(&sealed, &ROOT, at + 600_000.0, FinalizeLane::Kernel);
-        assert_eq!(kernel.status, 200, "{}", kernel.body);
-        assert_eq!(kernel.body["solved"], true);
-        assert_eq!(kernel.body["elapsed_ms"], direct.body["elapsed_ms"]);
-        assert_eq!(
-            kernel.body["result_bytes_base64"],
-            direct.body["result_bytes_base64"]
-        );
 
-        // A forged elapsed time is rejected outright.
+        // A forged elapsed time is rejected outright and consumes nothing.
         store.clear();
         let mut forged = sealed.clone();
         forged["elapsed_ms"] = Json::from(95_001);
         assert_eq!(
             store
-                .finalize(&forged, &ROOT, at + 600_000.0, FinalizeLane::Kernel)
+                .finalize(
+                    &forged,
+                    &ROOT,
+                    at + 600_000.0,
+                    kernel("40", &player.player_hex)
+                )
                 .status,
             401
         );
 
-        // Kernel lane without a preview: the last recorded op bounds the
-        // elapsed time; here it is below the 90 s floor, so the run is a
-        // LOSS result (payout 0 on-chain), not a failed fulfillment.
         store.clear();
-        let mut unpreviewed = sealed.clone();
-        unpreviewed.as_object_mut().unwrap().remove("elapsed_ms");
-        unpreviewed
-            .as_object_mut()
-            .unwrap()
-            .remove("finalize_proof");
-        let loss = store.finalize(&unpreviewed, &ROOT, at + 600_000.0, FinalizeLane::Kernel);
+        let settled = store.finalize(
+            &sealed,
+            &ROOT,
+            at + 600_000.0,
+            kernel("41", &player.player_hex),
+        );
+        assert_eq!(settled.status, 200, "{}", settled.body);
+        assert_eq!(settled.body["solved"], true);
+        assert_eq!(settled.body["elapsed_ms"], direct.body["elapsed_ms"]);
+        assert_eq!(
+            settled.body["result_bytes_base64"],
+            direct.body["result_bytes_base64"]
+        );
+        assert_eq!(settled.body["callback_encoding"], RESULT_CALLBACK_ENCODING);
+        assert_eq!(
+            settled.body["binding"],
+            super::super::hex_encode(
+                &result_binding("miniapp-sudoku", "88", &player.player_hex).unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn kernel_lane_without_a_preview_settles_a_loss() {
+        let player = test_player(7);
+        let payload = witnessed("miniapp-sudoku", "87", &player);
+        let mut store = SessionStore::new();
+        let start = store.start(&payload, &ROOT, "03worker", 10_000.0, &TOKEN_A);
+        let token = start.body["session_token"].clone();
+        // Placements 1 s apart: the last one lands well under the 90 s floor.
+        let (last_step, _) = solve_sudoku(&mut store, &payload, &token, &start, 1_000.0);
+        let unpreviewed =
+            resume_payload(&payload, &token, solved_ops(&payload, &start), &last_step);
+        let at = 10_000.0 + 95_000.0;
+
+        // The direct lane measures the enclave clock at finalize, not the last
+        // op, so the same op-log is scored as a solve (200, solved), not
+        // disqualified.
+        store.clear();
+        let direct = store.finalize(&unpreviewed, &ROOT, at, FinalizeLane::Direct);
+        assert_eq!(direct.status, 200, "{}", direct.body);
+        assert_eq!(direct.body["solved"], true);
+
+        // Kernel lane without a preview: the last recorded op bounds the
+        // elapsed time; it is below the floor, so the run is a LOSS result
+        // (the contract settles it with payout 0), not a failed fulfillment.
+        store.clear();
+        let loss = store.finalize(&unpreviewed, &ROOT, at, kernel("51", &player.player_hex));
         assert_eq!(loss.status, 200, "{}", loss.body);
         assert_eq!(loss.body["solved"], false);
         assert_eq!(loss.body["score"], 0);
@@ -1834,11 +2204,324 @@ mod tests {
                 .clone()
         );
 
-        // The direct lane reports the same disqualification as a 403.
+        // Settled: the preview lane is closed too.
+        let after = store.finalize(&unpreviewed, &ROOT, at, FinalizeLane::Direct);
+        assert_eq!(after.status, 409, "{}", after.body);
+    }
+
+    /// Sudoku game 1 for test_player(7): 41 placements 500 ms apart ending at
+    /// +41 000 ms, finalized at 60 000 ms without a preview.
+    fn play_the_shared_loss(store: &mut SessionStore) -> (TestPlayer, Json) {
+        let player = test_player(7);
+        let payload = witnessed("miniapp-sudoku", "1", &player);
+        let start = store.start(&payload, &ROOT, "03worker", 10_000.0, &TOKEN_A);
+        assert_eq!(start.status, 200, "{}", start.body);
+        let token = start.body["session_token"].clone();
+        let ops = solved_ops(&payload, &start);
+        assert_eq!(ops.len(), 41);
+        for (seq, op) in ops.iter().enumerate() {
+            let mut step = payload.clone();
+            step["session_token"] = token.clone();
+            step["seq"] = Json::from(seq);
+            step["op"] = op.clone();
+            let at = 51_000.0 - ((40 - seq) as f64) * 500.0;
+            assert_eq!(store.step(&step, &ROOT, at).status, 200);
+        }
+        let mut finalize = payload.clone();
+        finalize["session_token"] = token;
+        (player, finalize)
+    }
+
+    #[test]
+    fn kernel_lane_loss_matches_the_shared_vector() {
+        let expected = vector("session-loss-sudoku");
+        let mut store = SessionStore::new();
+        let (player, finalize) = play_the_shared_loss(&mut store);
+        assert_eq!(player.player_hex, expected["player"]);
+        let loss = store.finalize(&finalize, &ROOT, 60_000.0, kernel("1", &player.player_hex));
+        assert_eq!(loss.status, 200, "{}", loss.body);
+        assert_eq!(loss.body["rejection"], "solved too fast");
+        assert_eq!(loss.body["elapsed_ms"], expected["elapsedMs"]);
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(loss.body["result_bytes_base64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(bytes, unhex(&expected["result"]));
+        assert_eq!(loss.body["binding"], expected["binding"]);
+    }
+
+    #[test]
+    fn kernel_requests_bind_to_the_session_player() {
+        let mut store = SessionStore::new();
+        let (player, finalize) = play_the_shared_loss(&mut store);
+        let other = test_player(8);
+        let reversed: String = (0..20)
+            .rev()
+            .map(|index| &player.player_hex[2 + index * 2..4 + index * 2])
+            .collect();
+        for (lane, status, message) in [
+            (
+                kernel("1", &other.player_hex),
+                403,
+                "kernel requester is not the session player",
+            ),
+            (
+                kernel("1", &format!("0x{reversed}")),
+                403,
+                "kernel requester is not the session player",
+            ),
+            (
+                kernel("1", ""),
+                400,
+                "kernel requester must be a 20-byte script hash",
+            ),
+            (
+                kernel("1", "0x1234"),
+                400,
+                "kernel requester must be a 20-byte script hash",
+            ),
+            (
+                kernel("", &player.player_hex),
+                400,
+                "kernel request_id must be a decimal string",
+            ),
+            (
+                kernel("0x1", &player.player_hex),
+                400,
+                "kernel request_id must be a decimal string",
+            ),
+            (
+                kernel(&"9".repeat(79), &player.player_hex),
+                400,
+                "kernel request_id must be a decimal string",
+            ),
+        ] {
+            let reply = store.finalize(&finalize, &ROOT, 60_000.0, lane);
+            assert_eq!(reply.status, status, "{}", reply.body);
+            assert_eq!(reply.body["error"], message);
+        }
+        // None of the refusals consumed the session; the bare and upper-case
+        // spellings of the player's own hash are the same account.
+        let bare = player.player_hex.trim_start_matches("0x").to_uppercase();
+        let settled = store.finalize(&finalize, &ROOT, 60_000.0, kernel("0001", &bare));
+        assert_eq!(settled.status, 200, "{}", settled.body);
+        // "0001" and "1" are the same kernel request.
+        let retry = store.finalize(&finalize, &ROOT, 60_000.0, kernel("1", &player.player_hex));
+        assert_eq!(retry.status, 200, "{}", retry.body);
+        assert_eq!(retry.body, settled.body);
+    }
+
+    #[test]
+    fn a_kernel_settlement_consumes_the_session() {
+        let player = test_player(7);
+        let payload = witnessed("miniapp-sudoku", "86", &player);
+        let mut store = SessionStore::new();
+        let start = store.start(&payload, &ROOT, "03worker", 10_000.0, &TOKEN_A);
+        let token = start.body["session_token"].clone();
+        let (last_step, now) = solve_sudoku(&mut store, &payload, &token, &start, 1_000.0);
+        let resume = resume_payload(&payload, &token, solved_ops(&payload, &start), &last_step);
+        let at = now + 1_000.0;
+
+        let first = store.finalize(&resume, &ROOT, at, kernel("11", &player.player_hex));
+        assert_eq!(first.status, 200, "{}", first.body);
+
+        // A retry of the same request answers the same bytes; any other
+        // request, a step, a restart and the preview lane are refused.
+        let retry = store.finalize(&resume, &ROOT, at + 5.0, kernel("11", &player.player_hex));
+        assert_eq!(retry.status, 200, "{}", retry.body);
+        assert_eq!(
+            retry.body["result_bytes_base64"],
+            first.body["result_bytes_base64"]
+        );
+        let other = store.finalize(&resume, &ROOT, at, kernel("12", &player.player_hex));
+        assert_eq!(other.status, 409, "{}", other.body);
+        assert_eq!(
+            other.body["error"],
+            "session already settled by kernel request 11"
+        );
+        let mut step = resume.clone();
+        step["seq"] = Json::from(999);
+        step["op"] = serde_json::json!({ "type": "undo" });
+        assert_eq!(store.step(&step, &ROOT, at).status, 409);
+        assert_eq!(
+            store
+                .start(&payload, &ROOT, "03worker", at, &TOKEN_B)
+                .status,
+            409
+        );
+        assert_eq!(
+            store
+                .finalize(&resume, &ROOT, at, FinalizeLane::Direct)
+                .status,
+            409
+        );
+
+        // Eviction: the resume record cannot rebuild it for another request...
         store.clear();
-        let direct_loss = store.finalize(&unpreviewed, &ROOT, at + 600_000.0, FinalizeLane::Direct);
-        assert_eq!(direct_loss.status, 200, "{}", direct_loss.body);
-        assert_eq!(direct_loss.body["solved"], true);
+        let rebuilt = store.finalize(&resume, &ROOT, at, kernel("12", &player.player_hex));
+        assert_eq!(rebuilt.status, 409, "{}", rebuilt.body);
+        assert_eq!(store.step(&step, &ROOT, at).status, 409);
+        // ...but still answers a retry of the request that consumed it.
+        let rebuilt = store.finalize(&resume, &ROOT, at, kernel("11", &player.player_hex));
+        assert_eq!(rebuilt.status, 200, "{}", rebuilt.body);
+        assert_eq!(
+            rebuilt.body["result_bytes_base64"],
+            first.body["result_bytes_base64"]
+        );
+    }
+
+    #[test]
+    fn a_retry_that_would_settle_different_bytes_is_refused() {
+        let player = test_player(7);
+        let payload = witnessed("miniapp-sudoku", "83", &player);
+        let mut store = SessionStore::new();
+        let start = store.start(&payload, &ROOT, "03worker", 10_000.0, &TOKEN_A);
+        let token = start.body["session_token"].clone();
+        let (last_step, now) = solve_sudoku(&mut store, &payload, &token, &start, 1_000.0);
+        let resume = resume_payload(&payload, &token, solved_ops(&payload, &start), &last_step);
+
+        // A preview proves a later elapsed time (a solve)...
+        let at = 10_000.0 + 95_000.0_f64.max(now - 10_000.0 + 1.0);
+        let preview = store.finalize(&resume, &ROOT, at, FinalizeLane::Direct);
+        assert_eq!(preview.status, 200, "{}", preview.body);
+        assert_eq!(preview.body["solved"], true);
+
+        // ...but the request settles without it: a LOSS at the last op.
+        store.clear();
+        let loss = store.finalize(&resume, &ROOT, at, kernel("61", &player.player_hex));
+        assert_eq!(loss.status, 200, "{}", loss.body);
+        assert_eq!(loss.body["solved"], false);
+
+        // The same request presented again with the proven preview would
+        // settle different bytes (a win): refused.
+        store.clear();
+        let mut previewed = resume.clone();
+        previewed["elapsed_ms"] = preview.body["elapsed_ms"].clone();
+        previewed["finalize_proof"] = preview.body["finalize_proof"].clone();
+        let win = store.finalize(&previewed, &ROOT, at, kernel("61", &player.player_hex));
+        assert_eq!(win.status, 409, "{}", win.body);
+        assert_eq!(
+            win.body["error"],
+            "kernel request 61 already settled a different result"
+        );
+    }
+
+    #[test]
+    fn nothing_older_than_the_settle_age_settles_or_rebuilds() {
+        let player = test_player(7);
+        let payload = witnessed("miniapp-sudoku", "85", &player);
+        let mut store = SessionStore::new();
+        let start = store.start(&payload, &ROOT, "03worker", 10_000.0, &TOKEN_A);
+        let token = start.body["session_token"].clone();
+        let (last_step, now) = solve_sudoku(&mut store, &payload, &token, &start, 1_000.0);
+        let resume = resume_payload(&payload, &token, solved_ops(&payload, &start), &last_step);
+        let settled = store.finalize(&resume, &ROOT, now + 1.0, kernel("21", &player.player_hex));
+        assert_eq!(settled.status, 200, "{}", settled.body);
+
+        // Evicted, just inside the settle age: the record refuses request 22.
+        store.clear();
+        let inside = 10_000.0 + MAX_SETTLE_AGE_MS;
+        assert_eq!(
+            store
+                .finalize(&resume, &ROOT, inside, kernel("22", &player.player_hex))
+                .status,
+            409
+        );
+        // Past it the record is gone, and the resume record rebuilds nothing,
+        // for any request, 30 days later or after a restart.
+        let month = 10_000.0 + 30.0 * 86_400_000.0;
+        for store in [&mut store, &mut SessionStore::new()] {
+            for request in ["21", "22"] {
+                let reply =
+                    store.finalize(&resume, &ROOT, month, kernel(request, &player.player_hex));
+                assert_eq!(reply.status, 410, "{}", reply.body);
+                assert_eq!(reply.body["error"], "session is too old to resume");
+            }
+            let mut step = resume.clone();
+            step["seq"] = Json::from(999);
+            step["op"] = serde_json::json!({ "type": "undo" });
+            assert_eq!(store.step(&step, &ROOT, month).status, 410);
+            assert_eq!(
+                store
+                    .finalize(&resume, &ROOT, month, FinalizeLane::Direct)
+                    .status,
+                410
+            );
+        }
+
+        // A live session kept past the settle age cannot settle either.
+        let live = witnessed("miniapp-sudoku", "84", &player);
+        let mut store = SessionStore::new();
+        let start = store.start(&live, &ROOT, "03worker", 10_000.0, &TOKEN_A);
+        let mut finalize = live.clone();
+        finalize["session_token"] = start.body["session_token"].clone();
+        let late = store.finalize(
+            &finalize,
+            &ROOT,
+            10_000.0 + MAX_SETTLE_AGE_MS + 1.0,
+            kernel("31", &player.player_hex),
+        );
+        assert_eq!(late.status, 410, "{}", late.body);
+        assert_eq!(late.body["error"], "session is too old to settle");
+    }
+
+    #[test]
+    fn settled_records_are_bounded_and_evict_the_oldest() {
+        let player = test_player(7);
+        let mut store = SessionStore::new();
+        store.settled_capacity = 2;
+        let mut resumes = Vec::new();
+        for (index, game) in ["71", "72", "73"].into_iter().enumerate() {
+            let payload = witnessed("miniapp-sudoku", game, &player);
+            let start = store.start(&payload, &ROOT, "03worker", 10_000.0, &TOKEN_A);
+            let token = start.body["session_token"].clone();
+            let (last_step, now) = solve_sudoku(&mut store, &payload, &token, &start, 1_000.0);
+            let resume = resume_payload(&payload, &token, solved_ops(&payload, &start), &last_step);
+            let request = format!("{}", 100 + index);
+            let settled = store.finalize(
+                &resume,
+                &ROOT,
+                now + 1.0,
+                kernel(&request, &player.player_hex),
+            );
+            assert_eq!(settled.status, 200, "{}", settled.body);
+            resumes.push(resume);
+        }
+        assert_eq!(store.settled.len(), 2);
+
+        // Live sessions still carry their settlement; after eviction the two
+        // newest records refuse another request and the oldest is forgotten
+        // (the on-chain binding is what refuses that result for another game).
+        assert_eq!(
+            store
+                .finalize(
+                    &resumes[0],
+                    &ROOT,
+                    200_000.0,
+                    kernel("999", &player.player_hex)
+                )
+                .status,
+            409
+        );
+        store.clear();
+        for resume in &resumes[1..] {
+            assert_eq!(
+                store
+                    .finalize(resume, &ROOT, 200_000.0, kernel("999", &player.player_hex))
+                    .status,
+                409
+            );
+        }
+        assert_eq!(
+            store
+                .finalize(
+                    &resumes[0],
+                    &ROOT,
+                    200_000.0,
+                    kernel("999", &player.player_hex)
+                )
+                .status,
+            200
+        );
     }
 
     #[test]

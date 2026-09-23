@@ -1,9 +1,13 @@
 //! `/session/{start,step,finalize}` — the Rust confidential-game host.
 //!
-//! The keyless state machine and 79-byte codec live in
+//! The keyless state machine and the result codec (v2, 111 bytes) live in
 //! `neo_os_games::session`. This frontier contributes only the two
 //! measured-boundary capabilities: a recipient-attested game-secret HMAC root
 //! and the custody worker signature over the successful finalize payload.
+//! The kernel lane also hands the session machine the chain side of its
+//! request — `request_id` and `requester`, which the `/oracle/fulfill` fold
+//! takes from the relayer's view of the on-chain request — so a result can
+//! only settle the session its requester played, once.
 
 use rand::RngCore;
 use std::sync::{Mutex, OnceLock};
@@ -11,7 +15,8 @@ use std::sync::{Mutex, OnceLock};
 use neo_os_core::js_value::JsValue;
 use neo_os_core::stable_stringify::stable_stringify;
 use neo_os_games::session::{
-    validate_identity_and_engine, FinalizeLane, SessionReply, SessionStore,
+    validate_identity_and_engine, FinalizeLane, KernelRequest, SessionReply, SessionStore,
+    SEALED_FINALIZE_KIND,
 };
 use serde_json::Value as Json;
 
@@ -86,10 +91,26 @@ pub(crate) fn handle_session_finalize_kernel(
     state: &AppState,
     payload: &Json,
 ) -> Result<DispatchOutcome, RuntimeError> {
-    if payload.get("kind").and_then(Json::as_str) != Some("miniapp.game.session.finalize.v2") {
+    if payload.get("kind").and_then(Json::as_str) != Some(SEALED_FINALIZE_KIND) {
         return Ok(protocol_error(400, "SEALED_KIND_UNSUPPORTED"));
     }
-    finalize_session(state, payload, FinalizeLane::Kernel)
+    // On the /oracle/fulfill path `build_worker_payload` sets `request_id` to
+    // the kernel request id, and `requester` is the key the relayer always
+    // sets from the on-chain request. The bearer-gated /session/settle and
+    // automation lanes must supply both themselves.
+    let request = KernelRequest {
+        request_id: kernel_field(payload, "request_id"),
+        requester: kernel_field(payload, "requester"),
+    };
+    finalize_session(state, payload, FinalizeLane::Kernel(request))
+}
+
+fn kernel_field(payload: &Json, name: &str) -> String {
+    match payload.get(name) {
+        Some(Json::String(text)) => text.trim().to_string(),
+        Some(Json::Number(number)) => number.to_string(),
+        _ => String::new(),
+    }
 }
 
 fn finalize_session(
@@ -106,8 +127,9 @@ fn finalize_session(
         None => return Ok(protocol_error(503, "game key material unavailable")),
     };
     let now_ms = state.oracle_io.now_ms() as f64;
+    let direct = lane == FinalizeLane::Direct;
     let reply = session_store()?.finalize(payload, &material.secret_root, now_ms, lane);
-    if reply.status != 200 || lane == FinalizeLane::Direct {
+    if reply.status != 200 || direct {
         return Ok(reply.into());
     }
 
@@ -209,10 +231,12 @@ impl From<SessionReply> for DispatchOutcome {
     }
 }
 
+/// A fresh store, as after a process restart: live sessions and settled
+/// records both go.
 #[cfg(test)]
 fn reset_sessions_for_tests() {
     if let Some(store) = SESSIONS.get() {
-        store.lock().expect("session test lock").clear();
+        *store.lock().expect("session test lock") = SessionStore::new();
     }
 }
 
