@@ -13,12 +13,9 @@ namespace MorpheusOracle.Contracts.Tests
     /// <summary>
     /// VM coverage for kernel -> consumer callback DISPATCH.
     ///
-    /// FulfillRequest now delivers the rich onMiniAppResult callback (carrying the
-    /// real appId + requester) with a fallback to the legacy 5-arg onOracleResult.
-    /// Previously it only ever called onOracleResult, so a consumer routed the dead
-    /// onMiniAppResult ABI silently recorded appId="legacy"/requester=null. This test
-    /// deploys the real OracleCallbackConsumer (which implements onMiniAppResult) and
-    /// asserts the recorded callback carries the real appId + a populated requester.
+    /// FulfillRequest selects the callback from the deployed ABI: it delivers the
+    /// rich onMiniAppResult callback (carrying the real appId + requester) when present,
+    /// and uses the legacy 5-arg onOracleResult only when the rich method is absent.
     ///
     /// Uses the generated artifacts under Generated/ — regenerate after contract changes.
     /// </summary>
@@ -120,10 +117,9 @@ namespace MorpheusOracle.Contracts.Tests
         // OracleCallbackConsumerTest / UserConsumerN3Test) and avoids compiling a second
         // legacy-only consumer contract just to exercise the fallback at the VM level.
         [Fact]
-        public void DispatchCallsRichOnMiniAppResultFirstWithLegacyFallbackOnlyOnCatch()
+        public void DispatchCallsRichOnMiniAppResultWithLegacyAbiSelection()
         {
-            string kernel = ContractSourceAssertions.ReadSource(
-                "contracts", "MorpheusOracle", "MorpheusOracle.cs");
+            string kernel = ReadKernelSources();
             string consumer = ContractSourceAssertions.ReadSource(
                 "contracts", "OracleCallbackConsumer", "OracleCallbackConsumer.cs");
 
@@ -146,11 +142,8 @@ namespace MorpheusOracle.Contracts.Tests
                 @"req\.Requester\s*,\s*req\.Success\s*,\s*req\.Result\s*,\s*req\.Error\s*\)",
                 kernel);
 
-            // (b) The legacy fallback (LEGACY_CALLBACK_METHOD / onOracleResult) must be
-            // nested strictly inside the catch of the rich call. We assert the rich call's
-            // arguments appear BEFORE the legacy call's arguments in source order, and that
-            // the legacy call is reached only via a catch. This locks EITHER/OR semantics:
-            // a consumer whose onMiniAppResult succeeds never reaches the legacy call.
+            // (b) The legacy call is selected by its own ABI probe. The two branches are
+            // mutually exclusive, so a consumer implementing both methods is called once.
             Assert.Contains("LEGACY_CALLBACK_METHOD", kernel);
             Assert.Matches(
                 @"Contract\.Call\(\s*req\.CallbackContract\s*,\s*LEGACY_CALLBACK_METHOD\s*,\s*CallFlags\.All\s*,\s*" +
@@ -160,12 +153,50 @@ namespace MorpheusOracle.Contracts.Tests
             int richCallPos = kernel.IndexOf("CALLBACK_METHOD", StringComparison.Ordinal);
             int legacyCallPos = kernel.IndexOf("LEGACY_CALLBACK_METHOD", StringComparison.Ordinal);
             Assert.True(richCallPos >= 0 && legacyCallPos > richCallPos,
-                "legacy onOracleResult fallback must come after the rich onMiniAppResult call");
+                "legacy onOracleResult branch must remain after the rich branch");
+        }
+
+        [Fact]
+        public void DispatchProbesRichCallbackAbiBeforeCallingIt()
+        {
+            string kernel = ReadKernelSources();
+
+            // A legacy consumer must not be probed by invoking an absent method and
+            // then relying on the VM fault as control flow. The deployed ABI is the
+            // source of truth: rich callback has eight parameters, legacy has five.
+            Assert.Matches(
+                @"ContractManagement\.HasMethod\(\s*req\.CallbackContract,\s*CALLBACK_METHOD,\s*8\s*\)",
+                kernel);
+            Assert.Matches(
+                @"ContractManagement\.HasMethod\(\s*req\.CallbackContract,\s*LEGACY_CALLBACK_METHOD,\s*5\s*\)",
+                kernel);
+
+            System.Text.RegularExpressions.Match richProbeMatch =
+                System.Text.RegularExpressions.Regex.Match(
+                    kernel,
+                    @"ContractManagement\.HasMethod\(\s*req\.CallbackContract,\s*CALLBACK_METHOD,\s*8\s*\)");
+            System.Text.RegularExpressions.Match legacyProbeMatch =
+                System.Text.RegularExpressions.Regex.Match(
+                    kernel,
+                    @"ContractManagement\.HasMethod\(\s*req\.CallbackContract,\s*LEGACY_CALLBACK_METHOD,\s*5\s*\)");
+            int richProbe = richProbeMatch.Index;
+            int richCall = kernel.IndexOf("Contract.Call(", richProbe, StringComparison.Ordinal);
+            int legacyProbe = legacyProbeMatch.Index;
+            int legacyCall = kernel.IndexOf("Contract.Call(", legacyProbe, StringComparison.Ordinal);
+
+            Assert.True(richProbe >= 0 && richCall > richProbe,
+                "rich callback must be called only after the ABI probe");
+            Assert.True(legacyProbe >= 0 && legacyCall > legacyProbe,
+                "legacy callback must be called only after its ABI probe");
         }
 
         // GetCallback returns raw VM stack items; decode a ByteString field to its UTF-8 string.
         private static string Str(object item) =>
             System.Text.Encoding.UTF8.GetString(((Neo.VM.Types.ByteString)item).GetSpan());
+
+        private static string ReadKernelSources() =>
+            ContractSourceAssertions.ReadSource("contracts", "MorpheusOracle", "MorpheusOracle.cs") +
+            ContractSourceAssertions.ReadSource("contracts", "MorpheusOracle", "MorpheusOracle.Callbacks.cs");
 
         // Crypto.Sign occasionally emits a signature the managed verifier rejects; re-sign
         // until it round-trips locally so the suite stays deterministic.

@@ -17,6 +17,13 @@ method diff):
 | Callback-uniqueness assert in `PutMiniApp` (`"callback already registered"`)                | Without it the new O(1) index is last-write-wins: any account could register a fresh appId over an existing app's callback and repoint/brick its legacy request routing (the N3 half of OR-D-03; the EVM half is bytecode-frozen, see `docs/runbooks/callback-monitor.md`). |
 | Upgrade-time index lock + resumable cursor (`isIndexRebuildRequired`, `indexRebuildCursor`) | The reverse index is empty immediately after an upgrade. Registration/configuration is paused until a sequential backfill completes, preventing callback squatting; backfill also repairs a pre-existing poisoned mapping by deriving the earliest registration.            |
 
+Callback delivery is ABI-gated. The kernel checks `ContractManagement.HasMethod` for
+`onMiniAppResult` with 8 parameters before dispatching the rich callback, and checks
+`onOracleResult` with 5 parameters only when the rich method is absent. A missing method
+is never discovered by deliberately invoking it, and a rich callback fault does not trigger
+a second callback with potentially duplicated side effects. Inbox persistence remains the
+canonical delivery record.
+
 ## Tooling
 
 `scripts/upgrade-morpheus-oracle.mjs` - DRY RUN by default (read-only RPC):
