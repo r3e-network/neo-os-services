@@ -291,22 +291,36 @@ test('edge gateway returns 503 for the retired oracle feed-publication lane', as
   assert.equal(calls.length, 0);
 });
 
-// A fetch stub that hangs forever unless its AbortSignal fires (the hung-origin
-// failure mode). It resolves to a rejection only when aborted, so the worker's
-// AbortSignal.timeout is what frees it — never the stub itself.
+// A fetch stub that hangs until its AbortSignal fires (the hung-origin failure
+// mode), so the worker's AbortSignal.timeout is what frees it — never the stub.
+//
+// A real hung origin holds an open socket, which keeps the event loop alive.
+// Node unrefs the AbortSignal.timeout timer, so without a stand-in handle the
+// loop drains while the request is pending and Node 22's test runner cancels
+// this test and every test after it in the file. The stand-in is a ref'd guard
+// that rejects after HANG_GUARD_MS: a worker that never aborts still fails,
+// through the elapsed-time assertions, instead of hanging the run.
+const HANG_GUARD_MS = 10_000;
 function hangingFetch() {
   return (input, init = {}) =>
     new Promise((_resolve, reject) => {
       const signal = init.signal;
-      if (signal) {
-        if (signal.aborted) {
-          reject(signal.reason || new Error('aborted'));
-          return;
-        }
-        signal.addEventListener('abort', () => reject(signal.reason || new Error('aborted')), {
-          once: true,
-        });
+      if (signal?.aborted) {
+        reject(signal.reason || new Error('aborted'));
+        return;
       }
+      const guard = setTimeout(
+        () => reject(new Error('hangingFetch: the worker never aborted the origin request')),
+        HANG_GUARD_MS
+      );
+      signal?.addEventListener(
+        'abort',
+        () => {
+          clearTimeout(guard);
+          reject(signal.reason || new Error('aborted'));
+        },
+        { once: true }
+      );
       // No resolve path: the origin "hangs".
     });
 }
