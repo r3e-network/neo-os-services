@@ -64,64 +64,11 @@ jobs:
 
           echo "✅ Network validation passed"
 
-      - name: Validate TypeScript Configuration
-        run: |
-          echo "🔍 Checking networks.ts implementation..."
-
-          if [[ ! -f "apps/web/lib/networks.ts" ]]; then
-            echo "❌ ERROR: networks.ts not found"
-            exit 1
-          fi
-
-          # Verify the error throwing logic is in place
-          grep -q "MORPHEUS_NETWORK/NEXT_PUBLIC_MORPHEUS_NETWORK is required but not set" apps/web/lib/networks.ts || {
-            echo "❌ ERROR: Error message not found in networks.ts"
-            exit 1
-          }
-
-          grep -q 'throw new Error(' apps/web/lib/networks.ts || {
-            echo "❌ ERROR: Error throwing logic not found"
-            exit 1
-          }
-
-          echo "✅ TypeScript validation passed"
-
-      - name: Generate Validation Report
-        run: |
-          REPORT_FILE="build/env-validation-report-$(date +%Y%m%d-%H%M%S).txt"
-
-          cat > "$REPORT_FILE" << EOF
-          ========================================
-          Environment Validation Report
-          Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          ========================================
-
-          Network Variables:
-          - MORPHEUS_NETWORK: Required
-          - NEXT_PUBLIC_MORPHEUS_NETWORK: Required (alternative)
-
-          Validation Results:
-          ✅ Script validation passed
-          ✅ Error handling implemented
-          ✅ Type safety maintained
-
-          Recommendations:
-          1. Always deploy with explicit MORPHEUS_NETWORK
-          2. Use separate configs for testnet/mainnet
-          3. Enable monitoring for network mismatch errors
-          ========================================
-          EOF
-
-          echo "Report generated: $REPORT_FILE"
-          cat "$REPORT_FILE"
-
-      - name: Upload Validation Artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: env-validation-report
-          path: build/env-validation-report-*.txt
-          retention-days: 7
+      # Behaviour, not source text: the test fails if networks.ts stops failing
+      # closed on a missing or misspelt network (a grep for the message passed
+      # as long as the string existed anywhere in the file).
+      - name: networks.ts fails closed without an explicit network
+        run: npm --prefix apps/web run test:run -- __tests__/networks.test.ts
 
   validate-web-app-env:
     runs-on: ubuntu-latest
@@ -139,25 +86,13 @@ jobs:
       - name: Install web app dependencies
         run: cd apps/web && npm ci --ignore-scripts
 
-      - name: Check Web App Cron Environment
+      # Advisory: CI holds no deployment secrets, so --fail-on-missing always
+      # reports missing variables here. The output lists what a deployment
+      # must provide; it is not a pass/fail gate and does not claim one.
+      - name: Report web cron environment (advisory)
         run: |
-          echo "🔍 Validating web app deployment requirements..."
-
-          # This should exist and verify critical variables
-          npm run check:web-cron-env -- --fail-on-missing || {
-            echo "❌ Web app environment validation warning (may be expected in CI)"
-            echo "Proceeding with other validations..."
-          }
-
-      - name: Verify Production Requirements
-        run: |
-          echo "✅ Web app dependency validation complete"
-          echo "Recommended production variables:"
-          echo "  - UPSTASH_REDIS_REST_URL (required for rate limiting)"
-          echo "  - SUPABASE_SECRET_KEY"
-          echo "  - MORPHEUS_RUNTIME_TOKEN"
-          echo "  - CRON_SECRET"
-          echo "  - TWELVEDATA_API_KEY"
+          npm run check:web-cron-env -- --fail-on-missing || \
+            echo "::notice::check:web-cron-env reported missing variables (expected without deployment secrets)"
 
   validate-signers:
     runs-on: ubuntu-latest
@@ -175,21 +110,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Check Signer Files
+      # Advisory for the same reason: no signer configuration exists in CI.
+      - name: Report signer configuration (advisory)
         run: |
-          echo "🔍 Validating signer configuration..."
-
-          # Check that signer identity generation is possible
-          npm run check:signers || {
-            echo "⚠️ Signer validation skipped (keys may not be configured in CI)"
-            echo "This is normal for PR builds without secrets"
-          }
-
-      - name: Validate Network-Specific Signers
-        run: |
-          echo "✅ Signer configuration check complete"
-          echo "Reminder: Never commit private keys!"
-          echo "Use custody service via SIGNER_ROLE_*_KEY_ID variables"
+          npm run check:signers || \
+            echo "::notice::check:signers could not validate signers (expected without deployment configuration)"
 
   summary:
     needs: [validate-network-env, validate-web-app-env, validate-signers]
@@ -206,17 +131,7 @@ jobs:
           if [[ "${{ needs.validate-network-env.result }}" == "success" ]] && \
              [[ "${{ needs.validate-web-app-env.result }}" == "success" || "${{ needs.validate-web-app-env.result }}" == "skipped" ]] && \
              [[ "${{ needs.validate-signers.result }}" == "success" || "${{ needs.validate-signers.result }}" == "skipped" ]]; then
-            echo "✅ All environment validation checks PASSED"
-            echo ""
-            echo "Key findings:"
-            echo "✓ Networks.ts now throws errors for missing MORPHEUS_NETWORK"
-            echo "✓ Deployment checklist created at docs/DEPLOYMENT_CHECKLIST.md"
-            echo "✓ Pre-deployment validation commands available"
-            echo ""
-            echo "Next steps:"
-            echo "1. Review any warnings above"
-            echo "2. Deploy with correct environment variables"
-            echo "3. Monitor for runtime_network_mismatch errors"
+            echo "All environment validation jobs succeeded (the web cron and signer reports are advisory)."
           else
             echo "❌ Environment validation FAILED or had issues"
             echo "Please review the failures above before deploying."
