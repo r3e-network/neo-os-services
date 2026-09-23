@@ -31,6 +31,9 @@
 #   --no-eif               build (and optionally verify) the docker image only;
 #                          skip nitro-cli build-enclave (for boxes without it)
 #
+# A manifest is written only for a clean checkout of a commit some remote
+# branch reaches (see the check below); anything else exits 2 before building.
+#
 # The reproducibility rebuild runs by DEFAULT. A PCR0 that was never re-derived
 # from an independent build is a number only this machine can produce, and the
 # KMS RecipientAttestation condition and the remote verifier are both built on
@@ -89,6 +92,29 @@ for arg in "$@"; do
 done
 
 git_commit="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo unknown)"
+
+# This script is the only writer of morpheus-oracle manifests, and a manifest is
+# only as checkable as its git_commit. The eight written before this check name
+# commits no branch or tag reaches, so nobody can rebuild them and the verifier
+# pins none of them. Refuse, before spending the build, to measure a tree that is
+# not a published commit. --no-eif writes no manifest and is not refused.
+if [ "$build_eif" -eq 1 ]; then
+  if [ "$git_commit" = "unknown" ]; then
+    echo "ERROR: $repo_root is not a git checkout, so the manifest could name no commit" >&2
+    exit 2
+  fi
+  if [ -n "$(git -C "$repo_root" status --porcelain --untracked-files=normal)" ]; then
+    echo "ERROR: the working tree has uncommitted changes, so git_commit $git_commit does not" >&2
+    echo "       describe what would be measured. Commit and push them first." >&2
+    exit 2
+  fi
+  if [ -z "$(git -C "$repo_root" for-each-ref --contains "$git_commit" --format='%(refname)' refs/remotes)" ]; then
+    echo "ERROR: no remote branch reaches git_commit $git_commit. Push it and fetch first:" >&2
+    echo "       a manifest naming a commit nobody else can check out measures a tree" >&2
+    echo "       nobody else can rebuild." >&2
+    exit 2
+  fi
+fi
 
 # Extract a Measurements field (PCR0/PCR1/PCR2/HashAlgorithm) from a captured
 # `nitro-cli build-enclave` JSON blob. jq is already a Nitro host prerequisite;
@@ -263,4 +289,6 @@ jq -n '
 echo "==> measurements captured:"
 cat "$manifest"
 echo
-echo "==> DONE. Commit $manifest (review the PCRs) and ship it to the verifier."
+echo "==> DONE. Commit $manifest (review the PCRs) and, in the same change, list"
+echo "    $release in REPRODUCIBLE_NITRO_RELEASES (apps/web/lib/nitro-measurements.ts);"
+echo "    npm run check:nitro-measurements refuses a reachable manifest the pin leaves out."

@@ -18,9 +18,16 @@
  * a dated, owned, expiring record saying so. Absence is a finding; an
  * undocumented absence is a hard failure.
  *
+ * The verifier pins, per network, the newest release it lists in
+ * REPRODUCIBLE_NITRO_RELEASES. A deployed verifier has no git history, so that
+ * list is the only place reachability can live, and rule 5 is what keeps it
+ * true: it must name exactly the committed morpheus-oracle manifests whose
+ * git_commit HEAD descends from, each of them committed.
+ *
  * Exported as functions so the suite can drive each rule against a throwaway
  * tree; run as a CLI it audits the repository it lives in.
  */
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,6 +65,15 @@ const NON_MANIFEST_FILES = new Set(['manifest.schema.json']);
 const HEX96 = /^[0-9a-f]{96}$/;
 const ZERO_PCR = '0'.repeat(96);
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+/** Only a full object id names a commit; `HEAD` or a branch name would resolve to anything. */
+const FULL_COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+/** Where the verifier declares which releases it may pin (rule 5). */
+const VERIFIER_PIN_FILE = 'apps/web/lib/nitro-measurements.ts';
+const VERIFIER_PIN_NAME = 'REPRODUCIBLE_NITRO_RELEASES';
+const VERIFIER_PIN_DECLARATION =
+  /^export const REPRODUCIBLE_NITRO_RELEASES: readonly string\[\] = \[([^\]]*)\];/m;
+const VERIFIER_APP_ID = 'morpheus-oracle';
 
 /** Enclaves launched in debug mode report all-zero PCRs; see CL-29. */
 const DEBUG_LAUNCH_FLAGS = Object.freeze([`--debug${'-'}mode`, `--attach${'-'}console`]);
@@ -509,12 +525,144 @@ export function auditBuildInputManifests({
   return problems;
 }
 
+/**
+ * The release list the verifier derives its pin from, read only in a form the
+ * gate can trust: one declaration, a literal list of string literals. Anything
+ * the gate would have to evaluate is a finding, not a pass.
+ */
+export function readVerifierPin(root = REPO_ROOT) {
+  const file = join(root, VERIFIER_PIN_FILE);
+  if (!existsSync(file)) {
+    return {
+      releases: null,
+      problems: [
+        `${VERIFIER_PIN_FILE} is missing, so nothing says which measurement the verifier pins`,
+      ],
+    };
+  }
+  const source = readFileSync(file, 'utf8');
+  const declarations = source.match(/^export const REPRODUCIBLE_NITRO_RELEASES\b/gm) ?? [];
+  const declaration = VERIFIER_PIN_DECLARATION.exec(source);
+  if (declarations.length !== 1 || !declaration) {
+    return {
+      releases: null,
+      problems: [
+        `${VERIFIER_PIN_FILE}: ${VERIFIER_PIN_NAME} must be declared once as a literal list of release ids (found ${declarations.length} declaration(s) in a form the gate cannot read)`,
+      ],
+    };
+  }
+  const releases = [];
+  let rest = declaration[1].replace(/\/\/[^\n]*/g, '');
+  const literal = /^\s*(['"])([^'"\\\n]+)\1\s*(?:,|$)/;
+  while (rest.trim() !== '') {
+    const next = literal.exec(rest);
+    if (!next) {
+      return {
+        releases: null,
+        problems: [
+          `${VERIFIER_PIN_FILE}: ${VERIFIER_PIN_NAME} holds ${JSON.stringify(rest.trim().slice(0, 40))}, which is not a string literal the gate can read`,
+        ],
+      };
+    }
+    releases.push(next[2]);
+    rest = rest.slice(next[0].length);
+  }
+  return { releases, problems: [] };
+}
+
+/**
+ * Which commits HEAD descends from. Refuses to answer without the history: a
+ * shallow clone reports a reachable commit as missing, which would let a stale
+ * pin pass.
+ */
+function gitReachability(root) {
+  const git = (args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+  const inside = git(['rev-parse', '--is-inside-work-tree']);
+  if (inside.status !== 0 || inside.stdout.trim() !== 'true') {
+    return {
+      problem: `cannot tell which manifests have a reachable git_commit: ${root} is not a git work tree`,
+      isReachable: null,
+    };
+  }
+  const shallow = git(['rev-parse', '--is-shallow-repository']);
+  if (shallow.status !== 0 || shallow.stdout.trim() !== 'false') {
+    return {
+      problem:
+        'cannot tell which manifests have a reachable git_commit in a shallow clone; fetch the full history (CI: fetch-depth: 0)',
+      isReachable: null,
+    };
+  }
+  return {
+    problem: null,
+    isReachable: (commit) =>
+      FULL_COMMIT.test(commit) && git(['merge-base', '--is-ancestor', commit, 'HEAD']).status === 0,
+  };
+}
+
+/**
+ * Rule 5: the verifier pin. REPRODUCIBLE_NITRO_RELEASES must name exactly the
+ * committed morpheus-oracle manifests whose git_commit HEAD descends from, and
+ * each of them must be committed. The verifier pins the newest listed release
+ * per network, so an extra entry pins a measurement nobody can re-derive and a
+ * missing one pins an older release than anybody can rebuild.
+ */
+export function auditVerifierPin(root = REPO_ROOT) {
+  const { releases, problems } = readVerifierPin(root);
+  if (!releases) return problems;
+  const label = `${VERIFIER_PIN_FILE} ${VERIFIER_PIN_NAME}`;
+  const committed = new Map();
+  for (const entry of loadManifests(root).manifests.values()) {
+    if (!entry.fixture && isPlainObject(entry.data)) committed.set(entry.data.release, entry.data);
+  }
+  const reachability = gitReachability(root);
+  if (reachability.problem) problems.push(`${label}: ${reachability.problem}`);
+
+  const listed = new Set();
+  for (const release of releases) {
+    if (listed.has(release)) {
+      problems.push(`${label} lists ${release} twice`);
+      continue;
+    }
+    listed.add(release);
+    const manifest = committed.get(release);
+    if (!manifest) {
+      problems.push(
+        `${label} names ${release}, which has no committed manifest under ${MEASUREMENTS_DIR}/ — the verifier would pin a measurement nobody can read`
+      );
+      continue;
+    }
+    if (manifest.app_id !== VERIFIER_APP_ID) {
+      problems.push(
+        `${label} names ${release}, a ${manifest.app_id} manifest; the verifier pins ${VERIFIER_APP_ID} releases only`
+      );
+      continue;
+    }
+    if (reachability.isReachable && !reachability.isReachable(String(manifest.git_commit))) {
+      problems.push(
+        `${label} names ${release}, but its git_commit ${manifest.git_commit} is not reachable from HEAD, so nobody holding this tree can check it out, rebuild the image and re-derive its PCRs`
+      );
+    }
+  }
+  if (reachability.isReachable) {
+    for (const [release, manifest] of committed) {
+      if (manifest.app_id !== VERIFIER_APP_ID || listed.has(release)) continue;
+      if (reachability.isReachable(String(manifest.git_commit))) {
+        problems.push(
+          `${release} names a reachable git_commit ${manifest.git_commit}, so anybody can rebuild it, but ${label} does not list it — the verifier would pin an older release, or nothing`
+        );
+      }
+    }
+  }
+  return problems;
+}
+
 /** Every rule, in the order a reviewer reads them. */
 export function auditNitroMeasurements(root = REPO_ROOT, options = {}) {
   const problems = [
     ...auditManifests(root),
     ...auditAttestationPins(root, options),
     ...auditDebugFlags(root),
+    ...auditVerifierPin(root),
   ];
   const pinsPath = join(root, PINS_FILE);
   if (existsSync(pinsPath)) {
@@ -571,6 +719,7 @@ async function diffAgainst(root, base) {
     }
   }
   const isCommitReachable = (commit) => {
+    if (!FULL_COMMIT.test(commit)) return false;
     try {
       git(['merge-base', '--is-ancestor', commit, 'HEAD']);
       return true;

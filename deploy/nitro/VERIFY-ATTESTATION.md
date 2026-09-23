@@ -1,17 +1,24 @@
 # Verifying the Morpheus Oracle TEE enclave
 
-> **⚠️ SUPERSEDED (2026-06-15).** The live mainnet enclave now runs the
-> **exec release `oracle-enclave-exec-2026-06-15.9`** with
-> **PCR0 `842f4f531d2f62d588556ed2b1823a328d33d6059cc1bc97ae6e6ed7d0194cbfd6cbcd8569f7ebdcc1ea7840cbbb3d78`**
-> (commit `e38c9d6`,
-> `deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.9.json`). It is a strict
-> superset of the original exec release (adds the public `GET /oracle/public-key`
-> route + the fix that makes attestation-gated `nsm-attest kms-decrypt` actually
-> succeed in-TEE — see "KMS in-TEE" below; PCR1 unchanged). **Pin this PCR0.** The
-> CMK key policy (`alias/morpheus-enclave-master`) `EnclaveAttestedDecrypt`
-> condition is trimmed to this single PCR0. The procedure (reproducible build,
-> COSE/cert-chain/PCR verification) is identical — substitute the exec release's
-> commit + measurements.
+> **⚠️ What runs today cannot be rebuilt (2026-09-23).** The live mainnet enclave
+> attests the PCRs of **`oracle-enclave-exec-2026-06-15.10`**
+> (PCR0 `39fad73b3d3c528b2a176b0bdf6a6761810a0c5e1a548b5fe589e98feb448b38016bbe56939d52db873086f294dcba7c`,
+> `git_commit` `1218f7c`,
+> `deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.10.json`), measured from the
+> public runtime endpoint on 2026-09-23 and recorded in
+> `apps/web/lib/attestation/recorded-mainnet-attestation-2026-09-23.json`. No fetched
+> branch of this repository reaches `1218f7c`, or the `git_commit` of any other committed
+> manifest, so path A below cannot be carried out for any committed release: there is no
+> tree to check out. The verifier (`/api/attestation/verify`, `/verifier`) therefore pins
+> nothing and reports the running enclave as `measured-but-unreproducible`
+> (`measurements/README.md`). The fix is a new EIF built by `build-enclave-eif.sh` from a
+> pushed commit, not pinning `.10`.
+>
+> Until 2026-09-23 this banner named `oracle-enclave-exec-2026-06-15.9` (PCR0 `842f4f53…`,
+> commit `e38c9d6`) as live and told readers to pin it, and the verifier did. `.9` added the
+> public `GET /oracle/public-key` route and the fix that makes attestation-gated
+> `nsm-attest kms-decrypt` succeed in-TEE (see "KMS in-TEE" below). Its commit is no more
+> reachable than `.10`'s.
 >
 > **KMS in-TEE (2026-06-15).** The attestation-gated KMS decrypt that materializes
 > the oracle X25519 key in-TEE was silently failing: `nsm-attest` parsed the KMS
@@ -159,11 +166,14 @@ not just that the build is reproducible.
 ```bash
 # 1. Ask the live enclave for a fresh attestation document (bind it to a nonce
 #    you choose so the response cannot be replayed):
-curl -s "https://<oracle-host>/api/attestation/verify?nonce=$(openssl rand -hex 16)" | tee att.json
+curl -s "https://runtime.meshmini.app/mainnet/attestation?nonce=$(openssl rand -hex 32)" | tee att.json
 ```
 
-The endpoint returns the enclave's NSM attestation document and the server-side
-verification result. To verify it **yourself** rather than trusting the server:
+The endpoint returns the enclave's NSM attestation document
+(`attestation_document`, COSE_Sign1, base64). `POST` that JSON to
+`/api/attestation/verify` for the server-side result, including the
+`measurement_verdict` described in `measurements/README.md`. To verify it
+**yourself** rather than trusting the server:
 
 1. Decode the COSE_Sign1 attestation document.
 2. Verify its certificate chain terminates at the **AWS Nitro Enclaves Root G1**
@@ -234,7 +244,9 @@ same measurements) or request it from the operator.
 
 ## 7. Status
 
-- Reproducible build + measurements: **published and independently verifiable.**
+- Reproducible build + measurements: the recipe is reproducible, but **no committed
+  release is independently verifiable** — none of the eight manifests names a commit a
+  branch reaches (2026-09-23; see the banner at the top).
 - **Deployed live on Neo N3 mainnet (2026-06-14):** the merged compute+sign
   enclave replaced the signer-only enclave; the relayer computes+signs
   fulfilments via the enclave (`MORPHEUS_RELAYER_ENCLAVE_FULFILL`) and the

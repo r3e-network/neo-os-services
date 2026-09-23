@@ -17,8 +17,8 @@
 > The historical Node/Go rollout notes below explain the incident and CMS-BER
 > discovery; they are not the current runtime implementation or IAM contract.
 
-> **✅ DEPLOYED + END-TO-END VALIDATED (2026-06-15).** The X25519 oracle decryption key is
-> released ONLY to the attested enclave via KMS. Live: EIF `oracle-enclave-exec-2026-06-15.9`
+> **As recorded on 2026-06-15 (not what runs now; see below).** The X25519 oracle decryption key is
+> released ONLY to the attested enclave via KMS. Live then: EIF `oracle-enclave-exec-2026-06-15.9`
 > (PCR0 `842f4f53…`); CMK `alias/morpheus-enclave-master` gates `kms:Decrypt` on
 > `kms:RecipientAttestation:ImageSha384 = 842f4f53…` (trimmed to this single PCR0); the host
 > provisions only the CMK CIPHERTEXT (`/var/lib/morpheus/oracle-key-kms.b64`), and the enclave
@@ -92,6 +92,14 @@ Secrets-Manager master access.
 > `morpheus-custody` are currently recorded as unpublished in
 > `deploy/nitro/kms/attestation-pins.json`, with `required_by` dates. Exporting the policy
 > resolves this contradiction; until then, treat the banner as unverified.
+>
+> **What runs now (2026-09-23).** The live mainnet enclave attests the PCRs of
+> `oracle-enclave-exec-2026-06-15.10` (PCR0 `39fad73b…`, `git_commit` `1218f7c`), not `.9`.
+> No fetched branch of this repository reaches `1218f7c`, so nobody can rebuild that image,
+> and the attestation verifier reports it as `measured-but-unreproducible`
+> (`measurements/README.md`). A condition still equal to `842f4f53…` would refuse that
+> enclave's attestation; one moved to `39fad73b…` releases the key to an image nobody can
+> rebuild. Only the exported policy says which.
 
 > 🔴 The supplied access key is in chat history — **deactivate/rotate it** after this work.
 

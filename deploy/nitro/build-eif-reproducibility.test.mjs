@@ -19,12 +19,13 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { validateManifestSchema } from '../../scripts/check-nitro-measurements.mjs';
@@ -98,8 +99,36 @@ printf '{"Measurements":{"HashAlgorithm":"Sha384 { ... }","PCR0":"%s","PCR1":"%s
   return dir;
 }
 
-/** A throwaway tree holding just the script under test and its inputs. */
-function workspace(script) {
+// The stubs are stateless (they read their inputs from the environment), so one
+// copy serves every workspace. It lives outside them, so it is never an
+// uncommitted change in the checkout under test.
+const STUB_BIN = stubBin(mkdtempSync(join(tmpdir(), 'eif-stub-bin-')));
+after(() => rmSync(STUB_BIN, { recursive: true, force: true }));
+
+function git(root, ...args) {
+  const result = spawnSync(
+    'git',
+    [
+      '-c',
+      'user.email=t@example.invalid',
+      '-c',
+      'user.name=t',
+      '-c',
+      'commit.gpgsign=false',
+      ...args,
+    ],
+    { cwd: root, encoding: 'utf8' }
+  );
+  assert.equal(result.status, 0, `git ${args.join(' ')}: ${result.stderr}`);
+  return result.stdout.trim();
+}
+
+/**
+ * A throwaway checkout holding just the script under test and its inputs,
+ * committed. `pushed` adds a remote-tracking branch at that commit, which is
+ * what a clone of the published repository has and a local-only commit lacks.
+ */
+function workspace(script, { pushed = true, checkout = true } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'eif-build-'));
   const nitro = join(root, 'deploy', 'nitro');
   mkdirSync(join(nitro, 'measurements'), { recursive: true });
@@ -112,8 +141,14 @@ function workspace(script) {
   const profileBody = `${JSON.stringify(PROFILE, null, 2)}\n`;
   writeFileSync(join(nitro, 'custody-vault-profile.json'), profileBody);
   const profileSha = createHash('sha256').update(profileBody).digest('hex');
-  const bin = stubBin(join(root, 'stub-bin'));
-  return { root, nitro, bin, profileSha };
+  const bin = STUB_BIN;
+  if (!checkout) return { root, nitro, bin, profileSha, commit: null };
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'release candidate');
+  const commit = git(root, 'rev-parse', 'HEAD');
+  if (pushed) git(root, 'update-ref', 'refs/remotes/origin/main', commit);
+  return { root, nitro, bin, profileSha, commit };
 }
 
 const ORACLE_ENV = {
@@ -126,8 +161,12 @@ const ORACLE_ENV = {
   SIGNER_ROLE_NEOX_VERIFIER_KEY_ID: 'role-neox-verifier',
 };
 
-function runBuild(script, { args = [], env = {}, release }) {
-  const ws = workspace(script);
+function runBuild(
+  script,
+  { args = [], env = {}, release, pushed = true, checkout = true, prepare = null }
+) {
+  const ws = workspace(script, { pushed, checkout });
+  if (prepare) prepare(ws);
   const eifDir = join(ws.root, 'eif');
   const result = spawnSync('bash', [join(ws.nitro, script), ...args], {
     cwd: ws.root,
@@ -220,6 +259,62 @@ for (const [script, env, appId] of [
     assert.equal(run.manifest.reproducible_verified, true);
   });
 }
+
+// build-enclave-eif.sh is the only writer of morpheus-oracle manifests, and a
+// manifest is only checkable if its git_commit can be checked out by somebody
+// else. All eight committed before this rule name commits no branch or tag
+// reaches, so none of them can be rebuilt.
+
+test('build-enclave-eif.sh records the pushed commit it measured', () => {
+  const run = runBuild('build-enclave-eif.sh', { env: ORACLE_ENV, release: 'oracle-pushed' });
+  assert.equal(run.status, 0, run.output);
+  assert.equal(run.manifest.git_commit, run.ws.commit);
+});
+
+test('build-enclave-eif.sh refuses a commit no remote branch reaches, and writes no manifest', () => {
+  const run = runBuild('build-enclave-eif.sh', {
+    env: ORACLE_ENV,
+    release: 'oracle-unpushed',
+    pushed: false,
+  });
+  assert.equal(run.status, 2, run.output);
+  assert.match(run.output, /no remote branch reaches/);
+  assert.doesNotMatch(run.output, /building enclave image/, 'refuse before spending the build');
+  assert.equal(run.manifest, null, 'an unreachable git_commit must not reach a manifest');
+});
+
+test('build-enclave-eif.sh refuses a working tree that differs from the commit it would record', () => {
+  const run = runBuild('build-enclave-eif.sh', {
+    env: ORACLE_ENV,
+    release: 'oracle-dirty',
+    prepare: (ws) => writeFileSync(join(ws.nitro, 'Dockerfile.enclave'), '# not committed\n'),
+  });
+  assert.equal(run.status, 2, run.output);
+  assert.match(run.output, /uncommitted/);
+  assert.equal(run.manifest, null);
+});
+
+test('build-enclave-eif.sh refuses a tree that is not a git checkout at all', () => {
+  const run = runBuild('build-enclave-eif.sh', {
+    env: ORACLE_ENV,
+    release: 'oracle-tarball',
+    checkout: false,
+  });
+  assert.equal(run.status, 2, run.output);
+  assert.match(run.output, /not a git checkout/);
+  assert.equal(run.manifest, null);
+});
+
+test('build-enclave-eif.sh --no-eif writes no manifest, so it needs no pushed commit', () => {
+  const run = runBuild('build-enclave-eif.sh', {
+    env: ORACLE_ENV,
+    args: ['--no-eif'],
+    release: 'oracle-local-check',
+    pushed: false,
+  });
+  assert.equal(run.status, 0, run.output);
+  assert.equal(run.manifest, null);
+});
 
 test('build-enclave-eif.sh still refuses to build without the custody trust anchors', () => {
   const run = runBuild('build-enclave-eif.sh', { release: 'oracle-no-anchors' });

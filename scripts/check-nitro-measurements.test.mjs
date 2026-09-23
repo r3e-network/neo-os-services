@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -427,6 +427,279 @@ test('--base drives the build-input rule off a real diff', () => {
   const withManifest = run(['--base', base]);
   assert.doesNotMatch(withManifest.stderr, /no new manifest was added/);
   assert.doesNotMatch(withManifest.stderr, /not reachable from this branch/);
+});
+
+// ---------------------------------------------------------------------------
+// The verifier pin (apps/web/lib/nitro-measurements.ts). The verifier pins, per
+// network, the newest release in REPRODUCIBLE_NITRO_RELEASES; the gate is what
+// makes that list the truth: exactly the committed morpheus-oracle manifests
+// whose git_commit HEAD descends from.
+// ---------------------------------------------------------------------------
+
+const PIN_FILE = join('apps', 'web', 'lib', 'nitro-measurements.ts');
+
+function verifierPinSource(releases) {
+  const entries = releases.map((release) => `  '${release}',\n`).join('');
+  return [
+    "import manifest from './manifest.json';",
+    '',
+    `export const REPRODUCIBLE_NITRO_RELEASES: readonly string[] = [${entries ? `\n${entries}` : ''}];`,
+    '',
+  ].join('\n');
+}
+
+function git(root, ...args) {
+  const result = spawnSync(
+    'git',
+    [
+      '-c',
+      'user.email=t@example.invalid',
+      '-c',
+      'user.name=t',
+      '-c',
+      'commit.gpgsign=false',
+      ...args,
+    ],
+    { cwd: root, encoding: 'utf8' }
+  );
+  assert.equal(result.status, 0, `git ${args.join(' ')}: ${result.stderr}`);
+  return result.stdout.trim();
+}
+
+/**
+ * A committed tree for the pin rule. Manifests in `reachable` name a commit
+ * that HEAD descends from; manifests in `unreachable` name one the repository
+ * has never seen, which is what all eight committed manifests do today.
+ */
+function pinFixture({
+  listed = [],
+  reachable = [],
+  unreachable = [],
+  custody = [],
+  pinSource = null,
+} = {}) {
+  const base = manifest();
+  // Every other rule satisfied, so a finding can only come from the pin.
+  const root = fixture({
+    manifests: [base],
+    pins: {
+      required_app_ids: ['morpheus-oracle', 'morpheus-custody'],
+      pins: [
+        {
+          app_id: 'morpheus-oracle',
+          key_alias: 'alias/morpheus-enclave-master',
+          key_arn: 'arn:aws:kms:us-east-1:736326664265:key/5d9b6835',
+          policy_file: 'morpheus-enclave-master.policy.json',
+          pinned_release: base.release,
+        },
+      ],
+      unpublished: [
+        {
+          app_id: 'morpheus-custody',
+          reason: 'fixture',
+          blocked_on: 'fixture',
+          required_by: '2099-12-31',
+          owner: 'fixture',
+        },
+      ],
+    },
+  });
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'the tree the enclave was built from');
+  const built = git(root, 'rev-parse', 'HEAD');
+  const write = (entry) =>
+    writeFileSync(
+      join(root, 'deploy', 'nitro', 'measurements', `${entry.release}.json`),
+      `${JSON.stringify(entry, null, 2)}\n`
+    );
+  reachable.forEach((release, index) =>
+    write(manifest({ release, git_commit: built, pcr0: PCR(String(4 + index)) }))
+  );
+  unreachable.forEach((release, index) =>
+    write(manifest({ release, git_commit: 'd'.repeat(40), pcr0: PCR(String(7 + index)) }))
+  );
+  custody.forEach((release) =>
+    write(manifest({ release, app_id: 'morpheus-custody', git_commit: built }))
+  );
+  mkdirSync(join(root, 'apps', 'web', 'lib'), { recursive: true });
+  writeFileSync(join(root, PIN_FILE), pinSource ?? verifierPinSource(listed));
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'publish the measurements');
+  return root;
+}
+
+const pinProblems = (root) =>
+  auditNitroMeasurements(root, { today: TODAY }).filter((problem) =>
+    problem.includes('REPRODUCIBLE_NITRO_RELEASES')
+  );
+
+test('pointing the verifier pin at a release with no committed manifest fails the gate', () => {
+  const root = pinFixture({ listed: ['oracle-enclave-exec-2026-06-15.11'] });
+  const problems = auditNitroMeasurements(root, { today: TODAY });
+  assert.ok(
+    problems.some(
+      (problem) =>
+        problem.includes('oracle-enclave-exec-2026-06-15.11') &&
+        problem.includes('no committed manifest')
+    ),
+    problems.join('; ')
+  );
+  const cli = spawnSync(process.execPath, [script, '--root', root], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+  assert.equal(cli.status, 1, cli.stdout + cli.stderr);
+  assert.match(cli.stderr, /oracle-enclave-exec-2026-06-15\.11/);
+});
+
+test('the verifier pin passes when it lists exactly the reachable manifests', () => {
+  const root = pinFixture({
+    listed: ['oracle-fixture-2026-09-22.1'],
+    reachable: ['oracle-fixture-2026-09-22.1'],
+    unreachable: ['oracle-fixture-2026-09-22.2'],
+  });
+  assert.deepEqual(auditNitroMeasurements(root, { today: TODAY }), []);
+});
+
+test('listing a release whose git_commit no ref reaches fails the gate', () => {
+  const root = pinFixture({
+    listed: ['oracle-fixture-2026-09-22.2'],
+    unreachable: ['oracle-fixture-2026-09-22.2'],
+  });
+  const problems = pinProblems(root);
+  assert.ok(
+    problems.some(
+      (problem) => problem.includes('oracle-fixture-2026-09-22.2') && problem.includes('reach')
+    ),
+    problems.join('; ')
+  );
+});
+
+test('a git_commit that is a ref name is never taken as reachable', () => {
+  const root = pinFixture({ listed: ['oracle-fixture-2026-09-22.3'] });
+  writeFileSync(
+    join(root, 'deploy', 'nitro', 'measurements', 'oracle-fixture-2026-09-22.3.json'),
+    `${JSON.stringify(manifest({ release: 'oracle-fixture-2026-09-22.3', git_commit: 'HEAD' }), null, 2)}\n`
+  );
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'a manifest naming HEAD');
+  const problems = pinProblems(root);
+  assert.ok(
+    problems.some(
+      (problem) => problem.includes('oracle-fixture-2026-09-22.3') && problem.includes('reach')
+    ),
+    problems.join('; ')
+  );
+});
+
+test('a reachable manifest the verifier pin leaves out fails the gate', () => {
+  const root = pinFixture({ listed: [], reachable: ['oracle-fixture-2026-09-22.1'] });
+  const problems = pinProblems(root);
+  assert.ok(
+    problems.some(
+      (problem) => problem.includes('oracle-fixture-2026-09-22.1') && problem.includes('reachable')
+    ),
+    problems.join('; ')
+  );
+});
+
+test('a custody manifest cannot stand in for the oracle pin', () => {
+  const root = pinFixture({ listed: ['custody-2026-09-22'], custody: ['custody-2026-09-22'] });
+  const problems = pinProblems(root);
+  assert.ok(
+    problems.some(
+      (problem) => problem.includes('custody-2026-09-22') && problem.includes('morpheus-oracle')
+    ),
+    problems.join('; ')
+  );
+});
+
+test('a release listed twice is refused', () => {
+  const root = pinFixture({
+    listed: ['oracle-fixture-2026-09-22.1', 'oracle-fixture-2026-09-22.1'],
+    reachable: ['oracle-fixture-2026-09-22.1'],
+  });
+  assert.ok(
+    pinProblems(root).some((problem) => problem.includes('twice')),
+    pinProblems(root).join('; ')
+  );
+});
+
+test('a verifier pin the gate cannot read is a finding, not a pass', () => {
+  for (const [label, pinSource] of [
+    ['no declaration', 'export const SOMETHING_ELSE = [];\n'],
+    ['a computed value', 'export const REPRODUCIBLE_NITRO_RELEASES: readonly string[] = pick();\n'],
+    [
+      'two declarations',
+      `${verifierPinSource([])}export const REPRODUCIBLE_NITRO_RELEASES: readonly string[] = [];\n`,
+    ],
+    [
+      'a non-literal entry',
+      'export const REPRODUCIBLE_NITRO_RELEASES: readonly string[] = [NEWEST];\n',
+    ],
+  ]) {
+    const root = pinFixture({ pinSource });
+    assert.ok(
+      auditNitroMeasurements(root, { today: TODAY }).some((problem) =>
+        problem.includes('REPRODUCIBLE_NITRO_RELEASES')
+      ),
+      `${label}: the gate must refuse a pin it cannot read`
+    );
+  }
+  const missing = pinFixture();
+  rmSync(join(missing, PIN_FILE));
+  assert.ok(
+    auditNitroMeasurements(missing, { today: TODAY }).some((problem) =>
+      problem.includes('nitro-measurements.ts')
+    ),
+    'a missing pin file must be a finding'
+  );
+});
+
+test('reachability is refused, not guessed, without the full history', () => {
+  const plain = fixture();
+  mkdirSync(join(plain, 'apps', 'web', 'lib'), { recursive: true });
+  writeFileSync(join(plain, PIN_FILE), verifierPinSource([]));
+  assert.ok(
+    auditNitroMeasurements(plain, { today: TODAY }).some((problem) =>
+      /not a git work tree/.test(problem)
+    ),
+    'a tree with no git history cannot say which commits are reachable'
+  );
+
+  const full = pinFixture({ reachable: ['oracle-fixture-2026-09-22.1'] });
+  const shallow = mkdtempSync(join(tmpdir(), 'nitro-shallow-'));
+  const clone = spawnSync('git', ['clone', '-q', '--depth', '1', `file://${full}`, shallow], {
+    encoding: 'utf8',
+  });
+  assert.equal(clone.status, 0, clone.stderr);
+  assert.ok(
+    auditNitroMeasurements(shallow, { today: TODAY }).some((problem) => /shallow/.test(problem)),
+    'a shallow clone hides reachable commits and must not pass'
+  );
+});
+
+test('--base refuses a new manifest whose git_commit is a ref name, not a commit', () => {
+  const root = fixture();
+  git(root, 'init', '-q', '-b', 'main');
+  writeFileSync(join(root, 'Cargo.lock'), '# base\n');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'base');
+  const base = git(root, 'rev-parse', 'HEAD');
+  writeFileSync(join(root, 'Cargo.lock'), '# moved\n');
+  writeFileSync(
+    join(root, 'deploy', 'nitro', 'measurements', 'oracle-by-name.json'),
+    `${JSON.stringify(manifest({ release: 'oracle-by-name', git_commit: 'HEAD' }), null, 2)}\n`
+  );
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'measure');
+  const run = spawnSync(process.execPath, [script, '--root', root, '--base', base], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+  assert.equal(run.status, 1, run.stdout + run.stderr);
+  assert.match(run.stderr, /git_commit HEAD is not reachable/);
 });
 
 test('the CLI exits 0 on the committed tree and non-zero on a broken one', () => {

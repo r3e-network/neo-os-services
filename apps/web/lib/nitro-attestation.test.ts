@@ -26,7 +26,7 @@ import { webcrypto, X509Certificate, createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   verifyNitroAttestationDocument,
@@ -36,7 +36,12 @@ import {
   __setPinnedRootsForTest,
   __internals,
 } from './nitro-attestation';
-import { ACTIVE_NITRO_MEASUREMENT } from './nitro-measurements';
+import {
+  COMMITTED_NITRO_MEASUREMENTS,
+  __setNitroMeasurementSetForTest,
+  type NitroMeasurement,
+} from './nitro-measurements';
+import { resetRateLimitMap } from './rate-limit';
 
 // ===========================================================================
 // Minimal DER + X.509 cert builder (TEST ONLY)
@@ -907,20 +912,124 @@ describe('attestation route integration', () => {
 });
 
 // ===========================================================================
+// W1.4: the committed measurement set pins nothing, because no committed
+// manifest names a commit anybody can check out (nitro-measurements.test.ts).
+// Every authentic document therefore reports measured-but-unreproducible when
+// it carries a committed manifest's PCRs, and mismatch otherwise. The documents
+// here are synthetic but authentic: signed by the pinned test root.
+// ===========================================================================
+
+describe('attestation route — nothing committed is reproducible (W1.4)', () => {
+  beforeEach(() => {
+    resetRateLimitMap();
+    __setPinnedRootsForTest(fx.testRootPem, [fx.testRootFingerprint]);
+  });
+
+  /** A fresh document bound to its result, so only the measurement can refuse it. */
+  async function postDocument(pcrs: Record<number, Buffer>) {
+    const { POST } = await import('@/app/api/attestation/verify/route');
+    const outputHash = createHash('sha256').update('w1.4-bound-result').digest('hex');
+    const document = await buildValidDocB64({
+      pcrs,
+      userData: undefined,
+      nonce: Buffer.from(outputHash, 'hex'),
+    });
+    const res = await POST(
+      new Request('http://x/api/attestation/verify', {
+        method: 'POST',
+        body: JSON.stringify({
+          verification: {
+            output_hash: `0x${outputHash}`,
+            attestation_hash: `0x${outputHash}`,
+            tee_attestation: { report_data: `0x${outputHash}`, quote: 'present', event_log: [] },
+          },
+          attestation_document: document,
+          expected_output_hash: outputHash,
+        }),
+      })
+    );
+    return { res, json: (await res.json()) as Record<string, unknown> };
+  }
+
+  it('reports every committed measurement as measured-but-unreproducible', async () => {
+    expect(COMMITTED_NITRO_MEASUREMENTS.length).toBeGreaterThan(0);
+    for (const entry of COMMITTED_NITRO_MEASUREMENTS) {
+      const { res, json } = await postDocument({
+        0: Buffer.from(entry.pcr0, 'hex'),
+        1: Buffer.from(entry.pcr1, 'hex'),
+        2: Buffer.from(entry.pcr2, 'hex'),
+      });
+      expect((json.nitro_attestation as Record<string, unknown>).cose_signature_ok).toBe(true);
+      expect(json.measurement_verdict, entry.release).toBe('measured-but-unreproducible');
+      expect((json.measurement as Record<string, unknown>).release).toBe(entry.release);
+      expect(json.full_attestation_ok).toBe(false);
+      expect(res.status).toBe(400);
+    }
+
+    // Control: the same bound request passes once its release is reproducible,
+    // so the refusals above come from the measurement and nothing else.
+    const [first] = COMMITTED_NITRO_MEASUREMENTS;
+    __setNitroMeasurementSetForTest({
+      measurements: COMMITTED_NITRO_MEASUREMENTS,
+      reproducible: [first.release],
+    });
+    try {
+      const { res, json } = await postDocument({
+        0: Buffer.from(first.pcr0, 'hex'),
+        1: Buffer.from(first.pcr1, 'hex'),
+        2: Buffer.from(first.pcr2, 'hex'),
+      });
+      expect(json.measurement_verdict).toBe('reproducible-match');
+      expect(json.full_attestation_ok).toBe(true);
+      expect(res.status).toBe(200);
+    } finally {
+      __setNitroMeasurementSetForTest(null);
+    }
+  });
+
+  it('reports PCRs no committed manifest carries as a mismatch', async () => {
+    const { json } = await postDocument({ 0: PCR0, 1: PCR1, 2: PCR2 });
+    expect((json.nitro_attestation as Record<string, unknown>).cose_signature_ok).toBe(true);
+    expect(json.measurement_verdict).toBe('mismatch');
+    expect(json.full_attestation_ok).toBe(false);
+  });
+});
+
+// ===========================================================================
 // SVC-A-2: a GENUINE attestation document must not verify an envelope it was
 // never issued for. The document below is real in every cryptographic sense —
-// correct COSE signature, chain to the pinned test root, the pinned production
-// PCRs, a fresh timestamp. The only thing wrong with it is that it belongs to
-// a DIFFERENT result. Before the fix the route asked for no binding at all, so
-// it happily reported full_attestation_ok over a harvested document.
+// correct COSE signature, chain to the pinned test root, the pinned PCRs, a
+// fresh timestamp. The only thing wrong with it is that it belongs to a
+// DIFFERENT result. Before the fix the route asked for no binding at all, so it
+// happily reported full_attestation_ok over a harvested document.
 // ===========================================================================
 
 describe('attestation route — harvested-document replay (SVC-A-2)', () => {
-  const PINNED_PCRS = {
-    0: Buffer.from(ACTIVE_NITRO_MEASUREMENT.pcr0, 'hex'),
-    1: Buffer.from(ACTIVE_NITRO_MEASUREMENT.pcr1, 'hex'),
-    2: Buffer.from(ACTIVE_NITRO_MEASUREMENT.pcr2, 'hex'),
+  // The committed set pins nothing (W1.4), so these tests supply a reproducible
+  // release of their own for the verifier to pin.
+  const PINNED: NitroMeasurement = {
+    release: 'oracle-fixture-2026-09-23.1',
+    network: 'mainnet',
+    git_commit: 'f'.repeat(40),
+    built_at: '2026-09-23T00:00:00Z',
+    superseded_by: null,
+    pcr0: 'a1'.repeat(48),
+    pcr1: 'b2'.repeat(48),
+    pcr2: 'c3'.repeat(48),
   };
+  const PINNED_PCRS = {
+    0: Buffer.from(PINNED.pcr0, 'hex'),
+    1: Buffer.from(PINNED.pcr1, 'hex'),
+    2: Buffer.from(PINNED.pcr2, 'hex'),
+  };
+
+  beforeEach(() => {
+    __setNitroMeasurementSetForTest({ measurements: [PINNED], reproducible: [PINNED.release] });
+  });
+
+  afterEach(() => {
+    __setNitroMeasurementSetForTest(null);
+  });
 
   /** The enclave commits `output_hash` into the NSM document's nonce field. */
   async function genuineLaneDocument(outputHashHex: string): Promise<string> {
@@ -997,6 +1106,8 @@ describe('attestation route — harvested-document replay (SVC-A-2)', () => {
     expect(json.result_binding_source).toBe('report_data');
     expect(json.result_binding_verified).toBe(true);
     expect(json.measurement_chain_verified).toBe(true);
+    expect(json.measurement_verdict).toBe('reproducible-match');
+    expect(json.pinned_nitro_release).toBe(PINNED.release);
     expect(json.full_attestation_ok).toBe(true);
     expect(String(json.attestation_scope)).toContain('result binding');
     expect(res.status).toBe(200);

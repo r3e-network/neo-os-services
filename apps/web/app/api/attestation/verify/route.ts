@@ -4,13 +4,21 @@ import {
   type DerivedDocumentBindings,
 } from '@/lib/attestation';
 import {
+  decodeNitroAttestationDocument,
   verifyNitroAttestationDocument,
   type NitroVerificationResult,
 } from '@/lib/nitro-attestation';
 import { recordOperationLog } from '@/lib/operation-logs';
 import { badRequest } from '@/lib/api-helpers';
 import { createRateLimitedHandler } from '@/lib/rate-limit';
-import { ACTIVE_NITRO_MEASUREMENT } from '@/lib/nitro-measurements';
+import {
+  UNVERIFIED_NITRO_MEASUREMENT,
+  classifyNitroMeasurement,
+  nitroMeasurementPins,
+  type NitroMeasurement,
+  type NitroMeasurementClassification,
+  type NitroPcrs,
+} from '@/lib/nitro-measurements';
 
 const MAX_ATTESTATION_REQUEST_BYTES = 256 * 1024;
 
@@ -77,6 +85,35 @@ function normalizeBindingInput(value: unknown) {
     .toLowerCase();
 }
 
+/**
+ * The PCRs a document claims, read without verifying it. Used only to pick
+ * which pin to verify it against; the verifier then proves AWS signed them.
+ */
+function claimedPcrs(documentB64: string): NitroPcrs | null {
+  try {
+    const pcrs = decodeNitroAttestationDocument(documentB64).pcrs;
+    return {
+      pcr0: pcrs.get(0)?.toString('hex') ?? null,
+      pcr1: pcrs.get(1)?.toString('hex') ?? null,
+      pcr2: pcrs.get(2)?.toString('hex') ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** A document proves its PCRs only once its signature and AWS chain verify. */
+function measurementOf(nitro: NitroVerificationResult | null): NitroMeasurementClassification {
+  const authentic =
+    nitro !== null &&
+    nitro.cose_signature_ok &&
+    nitro.cert_chain_ok &&
+    nitro.root_pinned_ok &&
+    nitro.document?.digest === 'SHA384' &&
+    Boolean(nitro.document?.module_id);
+  return authentic ? classifyNitroMeasurement(nitro.document ?? {}) : UNVERIFIED_NITRO_MEASUREMENT;
+}
+
 const handlePost = createRateLimitedHandler(
   async function POST(request: Request) {
     const declaredLength = Number(request.headers.get('content-length') || 0);
@@ -112,23 +149,34 @@ const handlePost = createRateLimitedHandler(
     // Run first so its verified flag feeds the layer-1 verifier's redefined
     // `full_attestation_ok` / `measurement_chain_verified`.
     const attestationDocument = extractAttestationDocument(body as Record<string, unknown>);
+    // The pin per network is the newest committed release whose git_commit a ref
+    // reaches (lib/nitro-measurements.ts). It may be empty: then nothing verifies.
+    const pins = nitroMeasurementPins();
+    const pinnedReleases = {
+      mainnet: pins.mainnet?.release ?? null,
+      testnet: pins.testnet?.release ?? null,
+    };
     // Never trust PCR values supplied by the caller. They are only useful as a
     // stale-client consistency check; the cryptographic verifier always compares
-    // against this reviewed, committed manifest.
+    // against a reviewed, committed pin.
     const callerPcrs = {
       pcr0: optionalString(body.expected_pcr0),
       pcr1: optionalString(body.expected_pcr1),
       pcr2: optionalString(body.expected_pcr2),
     };
-    const callerPcrMismatch = Object.entries(callerPcrs).some(
-      ([key, value]) =>
-        value &&
-        value.replace(/^0x/i, '').toLowerCase() !==
-          ACTIVE_NITRO_MEASUREMENT[key as 'pcr0' | 'pcr1' | 'pcr2']
-    );
+    const statedPcrs = (['pcr0', 'pcr1', 'pcr2'] as const).filter((key) => callerPcrs[key]);
+    const callerPcrMismatch =
+      statedPcrs.length > 0 &&
+      !Object.values(pins).some(
+        (pin) =>
+          pin &&
+          statedPcrs.every(
+            (key) => String(callerPcrs[key]).replace(/^0x/i, '').toLowerCase() === pin[key]
+          )
+      );
     if (callerPcrMismatch) {
       const response = badRequest(
-        'requested PCRs do not match the active Nitro manifest',
+        'requested PCRs do not match a pinned Nitro release',
         400,
         'PCR_PIN_MISMATCH'
       );
@@ -142,17 +190,21 @@ const handlePost = createRateLimitedHandler(
           expected_pcr1: '[redacted]',
           expected_pcr2: '[redacted]',
         },
-        responsePayload: { error: 'PCR_PIN_MISMATCH', release: ACTIVE_NITRO_MEASUREMENT.release },
+        responsePayload: { error: 'PCR_PIN_MISMATCH', pinned_releases: pinnedReleases },
         httpStatus: 400,
-        error: 'requested PCRs do not match active manifest',
+        error: 'requested PCRs do not match a pinned release',
       });
       return response;
     }
-    const expectedPcrs = {
-      pcr0: ACTIVE_NITRO_MEASUREMENT.pcr0,
-      pcr1: ACTIVE_NITRO_MEASUREMENT.pcr1,
-      pcr2: ACTIVE_NITRO_MEASUREMENT.pcr2,
-    };
+    // Verify against the pin of the network whose committed manifest carries the
+    // document's claimed PCRs. A document matching no manifest, or a network
+    // with nothing pinned, is verified against no PCRs and cannot pass.
+    const claimed = attestationDocument ? claimedPcrs(attestationDocument) : null;
+    const claimedNetwork = claimed ? classifyNitroMeasurement(claimed).network : null;
+    const comparedPin: NitroMeasurement | null = claimedNetwork ? pins[claimedNetwork] : null;
+    const expectedPcrs = comparedPin
+      ? { pcr0: comparedPin.pcr0, pcr1: comparedPin.pcr1, pcr2: comparedPin.pcr2 }
+      : {};
 
     // ----- SECURITY (SVC-A-2): document <-> envelope binding, derived. -----
     // The bindings that tie the attestation document to the envelope in front
@@ -205,6 +257,10 @@ const handlePost = createRateLimitedHandler(
         nitroError = error instanceof Error ? error.message : String(error);
       }
     }
+    // What the verified document says about the image that produced it. Freshness
+    // and bindings do not enter into it; they decide acceptance below. The chain
+    // can only verify against a pin, so only a reproducible-match is accepted.
+    const measurement = attestationDocument ? measurementOf(nitro) : null;
     const nitroChainVerified = Boolean(nitro?.measurement_chain_verified);
     // A verified chain over a document that is not bound to THIS result proves
     // an enclave ran, not that it produced the result being verified.
@@ -265,11 +321,16 @@ const handlePost = createRateLimitedHandler(
             measurement_chain_verified: nitro.measurement_chain_verified,
             errors: nitro.errors,
             document: nitro.document,
-            pinned_release: ACTIVE_NITRO_MEASUREMENT.release,
+            pinned_release: comparedPin?.release ?? null,
           }
         : null,
       nitro_attestation_error: nitroError,
-      pinned_nitro_release: ACTIVE_NITRO_MEASUREMENT.release,
+      // reproducible-match | measured-but-unreproducible | mismatch; null when
+      // the request carried no document to measure.
+      measurement_verdict: measurement?.verdict ?? null,
+      measurement,
+      pinned_nitro_release: comparedPin?.release ?? null,
+      pinned_nitro_releases: pinnedReleases,
     };
 
     const status = result.full_attestation_ok ? 200 : 400;

@@ -26,6 +26,32 @@ function isValidLookupHash(value: string): boolean {
   return /^0x[0-9a-fA-F]{64}$/.test(value.trim());
 }
 
+/** What /api/attestation/verify says about the enclave image behind a document. */
+interface MeasurementReport {
+  verdict: 'reproducible-match' | 'measured-but-unreproducible' | 'mismatch';
+  detail: string;
+}
+
+const MEASUREMENT_LABELS: Record<MeasurementReport['verdict'], { label: string; color: string }> = {
+  'reproducible-match': { label: 'Reproducible match', color: 'var(--neo-green)' },
+  'measured-but-unreproducible': {
+    label: 'Measured but unreproducible',
+    color: 'var(--warning)',
+  },
+  mismatch: { label: 'Mismatch', color: 'var(--error)' },
+};
+
+function readMeasurement(body: unknown): MeasurementReport | null {
+  const measurement = (body as { measurement?: unknown } | null)?.measurement;
+  if (!measurement || typeof measurement !== 'object') return null;
+  const { verdict, detail } = measurement as { verdict?: unknown; detail?: unknown };
+  if (typeof verdict !== 'string' || !Object.hasOwn(MEASUREMENT_LABELS, verdict)) return null;
+  return {
+    verdict: verdict as MeasurementReport['verdict'],
+    detail: typeof detail === 'string' ? detail : '',
+  };
+}
+
 function VerifierPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -38,6 +64,7 @@ function VerifierPageClient() {
   const [expectedAppId, setExpectedAppId] = useState('');
   const [expectedInstanceId, setExpectedInstanceId] = useState('');
   const [result, setResult] = useState<string>('');
+  const [measurement, setMeasurement] = useState<MeasurementReport | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [lookupHash, setLookupHash] = useState(initialLookupHash);
   const [isLookingUp, setIsLookuping] = useState(false);
@@ -74,6 +101,7 @@ function VerifierPageClient() {
     async (hash: string, updateUrl = true) => {
       const value = hash.trim();
       if (!value) return;
+      setMeasurement(null);
       if (!isValidLookupHash(value)) {
         setExpectedAttestationHash(value);
         setResult(
@@ -129,6 +157,7 @@ function VerifierPageClient() {
           expectedInstanceId: String(verifierInput.expected_instance_id || ''),
         });
 
+        setMeasurement(readMeasurement(verification));
         setResult(JSON.stringify({ lookup: body, verification }, null, 2));
       } catch (error) {
         setResult(
@@ -200,7 +229,8 @@ function VerifierPageClient() {
               </h1>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
                 Paste a worker response, on-chain callback envelope, or raw TEE attestation JSON and
-                verify hash binding, report-data prefix, compose hash, app id, and instance id.
+                verify hash binding, report-data prefix, compose hash, app id, instance id, and the
+                Nitro enclave measurement.
               </p>
             </div>
             <ShieldCheck size={48} color="var(--neo-green)" />
@@ -436,6 +466,7 @@ function VerifierPageClient() {
                 disabled={isVerifying}
                 onClick={async () => {
                   setIsVerifying(true);
+                  setMeasurement(null);
                   try {
                     let parsedAttestation: unknown;
                     let parsedPayload: unknown;
@@ -460,6 +491,7 @@ function VerifierPageClient() {
                       expectedAppId,
                       expectedInstanceId,
                     });
+                    setMeasurement(readMeasurement(body));
                     setResult(JSON.stringify(body, null, 2));
                   } catch (error) {
                     setResult(
@@ -494,12 +526,30 @@ function VerifierPageClient() {
             <div>
               <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800 }}>Verification Result</h3>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-                Application-level checks for output_hash, attestation_hash, and report_data. Quote
-                is checked for presence only — not validated against a Nitro/TDX root of trust.
+                Hash binding for output_hash, attestation_hash, and report_data. A Nitro attestation
+                document is also checked against the AWS Nitro root, and its PCRs against the newest
+                committed release that anybody can rebuild from source.
               </p>
             </div>
             <CheckCircle2 size={20} color="var(--neo-green)" />
           </div>
+          {measurement ? (
+            <p
+              data-testid="measurement-verdict"
+              style={{
+                margin: '0 0 1rem',
+                padding: '0.75rem 1rem',
+                borderLeft: `3px solid ${MEASUREMENT_LABELS[measurement.verdict].color}`,
+                background: 'var(--bg-panel)',
+                fontSize: '0.85rem',
+              }}
+            >
+              <strong style={{ color: MEASUREMENT_LABELS[measurement.verdict].color }}>
+                Measurement: {MEASUREMENT_LABELS[measurement.verdict].label}.
+              </strong>{' '}
+              {measurement.detail}
+            </p>
+          ) : null}
           {result ? (
             <pre
               aria-live="polite"
