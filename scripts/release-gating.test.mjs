@@ -12,7 +12,9 @@ import {
   runsTests,
 } from './lib-workflow-graph.mjs';
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = process.env.NEOOS_WORKFLOW_POLICY_ROOT
+  ? path.resolve(process.env.NEOOS_WORKFLOW_POLICY_ROOT)
+  : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workflowDir = path.join(repoRoot, '.github', 'workflows');
 
 async function readWorkflows() {
@@ -25,6 +27,11 @@ async function readWorkflows() {
       source: await fs.readFile(path.join(workflowDir, name), 'utf8'),
     }))
   );
+}
+
+function hasDependencyCache(source) {
+  return /^\s*cache:\s*(?:['"])?(?:npm|yarn|pnpm|true)(?:['"])?\s*$/mu.test(source)
+    || /^\s*-\s*uses:\s*actions\/cache@/mu.test(source);
 }
 
 test('every workflow in this repo parses into a job graph', async () => {
@@ -306,4 +313,26 @@ test('the gate reports the exact shapes this repo shipped before the fix', () =>
   assert.deepEqual(findUngatedReleaseJobs(ungated), [
     { job: 'build-and-push', reason: 'declares no needs:, so nothing gates it' },
   ]);
+});
+
+test('release and publish workflows do not restore dependency caches', async () => {
+  const violations = [];
+  for (const { name, source } of await readWorkflows()) {
+    if (/(?:^|[-_])(publish|deploy|release)(?:[-_.]|$)/iu.test(name) && hasDependencyCache(source)) {
+      violations.push(`${name}: release and publish workflows must install from the lockfile without a cache`);
+    }
+  }
+  assert.deepEqual(violations, [], violations.join('\n'));
+});
+
+test('release cache policy detects quoted setup-node caches and explicit cache actions', () => {
+  for (const source of [
+    'with:\n  cache: "npm"\n',
+    "with:\n  cache: 'pnpm'\n",
+    'with:\n  cache: true\n',
+    '- uses: actions/cache@v4\n',
+  ]) {
+    assert.equal(hasDependencyCache(source), true, source);
+  }
+  assert.equal(hasDependencyCache('with:\n  node-version-file: .nvmrc\n'), false);
 });
