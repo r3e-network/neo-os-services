@@ -13,6 +13,12 @@ use serde_json::json;
 mod support;
 use support::*;
 
+const VALID_UNSIGNED_N3: &str = "0001000000000000000000000000000000000000006400000001cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd01002dc21f0c0e66756c66696c6c526571756573740c1467452301efcdab8967452301efcdab896745230141627d5b52";
+
+fn valid_payload_preimage() -> String {
+    format!("4e335435{VALID_UNSIGNED_N3}")
+}
+
 fn plain() -> http::HeaderMap {
     let mut headers = http::HeaderMap::new();
     headers.insert(
@@ -467,19 +473,19 @@ fn sign_payload_passes_the_custody_body_through() {
         "POST",
         "/sign/payload",
         &bearer("s3cret"),
-        &body_json(&json!({ "key_role": "verifier", "data_hex": "0xCAFE" })),
+        &body_json(
+            &json!({ "key_role": "verifier", "data_hex": format!("0x{}", valid_payload_preimage().to_ascii_uppercase()) }),
+        ),
     );
     assert_eq!(outcome.status, 200);
     assert_eq!(outcome.body["role"], "oracle_verifier");
-    let calls = harness.signer.sign_calls();
-    assert_eq!(
-        calls,
-        vec![(
-            "testnet".to_string(),
-            "oracle_verifier".to_string(),
-            "cafe".to_string()
-        )]
-    );
+    let calls = harness.signer.n3_transaction_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "testnet");
+    assert_eq!(calls[0].1, "oracle_verifier");
+    assert_eq!(calls[0].2, VALID_UNSIGNED_N3);
+    assert!(calls[0].3.starts_with("n3-payload:testnet:"));
+    assert!(harness.signer.sign_calls().is_empty());
 }
 
 #[test]

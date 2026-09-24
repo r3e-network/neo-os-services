@@ -1,19 +1,14 @@
-//! The sign shims — `/sign/payload` and `/keys/derived`, the blind-sign and
+//! The sign shims — `/sign/payload` and `/keys/derived`, the legacy transaction and
 //! identity surfaces the flag-OFF relayer path uses during cutover. In the
 //! merged Node server they signed with the in-process pinned role key; in the
 //! split, both translate the intent into a custody call over the signer plane
 //! and pass the custody body through. The host still does the input shaping
 //! and the refusals, because that is the part the outside world can probe.
 //!
-//! `/sign/payload` is a BLIND-SIGN lane: the caller chooses the digest and the
-//! enclave signs it with a measured role key. That is the exact shape CL-14
-//! rules out, and it contradicts the property the fulfilment lane beside it
-//! claims ("the signer never sees a caller-supplied `data_hex` for this
-//! route": `fulfill.rs`). It exists only for the flag-OFF relayer cutover,
-//! which `deploy/nitro/enclave-server.mjs` already describes as retired once
-//! `MORPHEUS_RELAYER_ENCLAVE_FULFILL` is on — and that flag is on in
-//! `deploy/nitro/neo-os-relayer.env.example`. So the lane is now OFF unless
-//! the measured image opts in with [`BLIND_SIGN_OPT_IN_ENV`]`=1`.
+//! `/sign/payload` is an opt-in legacy wire adapter. It accepts only network
+//! magic followed by a serialized unsigned N3 transaction, then calls custody's
+//! semantic transaction route. It never forwards caller-chosen bytes to raw
+//! signing. Custody parses the complete transaction and enforces policy.
 //!
 //! One deliberate divergence from `normalizeSignerRole`
 //! (enclave-server.mjs:405): the Node helper SILENTLY DEFAULTS an unknown
@@ -25,6 +20,7 @@ use crate::attestation::{normalize_hex, truthy_string};
 use crate::http_error;
 use crate::state::AppState;
 use crate::RuntimeError;
+use sha2::{Digest, Sha256};
 
 /// The roles a sign intent may name — the exact set `normalizeSignerRole`
 /// mapped, without its silent fallback.
@@ -61,7 +57,7 @@ fn blind_sign_disabled_error() -> RuntimeError {
     http_error(
         503,
         "blind payload signing is retired; set ENCLAVE_ALLOW_BLIND_SIGN=1 in the measured \
-         image to re-open it, or use the semantic fulfillment lane",
+         image only for legacy unsigned-transaction translation, or use the semantic fulfillment lane",
     )
 }
 
@@ -72,9 +68,10 @@ fn unconfigured_error(role: &str) -> RuntimeError {
     )
 }
 
-/// POST /sign/payload — sign caller-supplied `data_hex` with the role's key.
-/// The custody service signs and owns the response body (signature, public
-/// key, address, script hash, key source); the shim has enforced the shape.
+/// POST /sign/payload — translate network-magic + unsigned N3 transaction to
+/// custody's semantic transaction route. A bare digest or other caller bytes
+/// never reach signing. Custody owns the authoritative transaction parser and
+/// policy decision; its response is verified again by `sign_n3_transaction`.
 pub fn handle_sign_payload(
     state: &AppState,
     payload: &serde_json::Value,
@@ -110,7 +107,40 @@ pub fn handle_sign_payload(
     if !blind_sign_enabled(state) {
         return Err(blind_sign_disabled_error());
     }
-    state.signer.sign_payload(&network, role, &data_hex)
+    let bytes = hex::decode(&data_hex).map_err(|_| http_error(400, "data_hex is required"))?;
+    if bytes.len() == 36 {
+        return Err(http_error(
+            400,
+            "legacy magic+txid preimage cannot be policy-checked; provide a complete unsigned transaction",
+        ));
+    }
+    if bytes.len() < 30 {
+        return Err(http_error(
+            400,
+            "data_hex is not a translatable Neo N3 transaction preimage",
+        ));
+    }
+    let magic = match network.as_str() {
+        "mainnet" => 860_833_102_u32,
+        "testnet" => 894_710_606_u32,
+        _ => return Err(http_error(503, "Neo N3 network is not configured")),
+    };
+    if bytes[..4] != magic.to_le_bytes() {
+        return Err(http_error(
+            400,
+            "data_hex does not start with the measured network magic",
+        ));
+    }
+    // The custody service parses the entire unsigned serialization, checks
+    // intent/fees/scopes, and independently verifies its returned witness.
+    let unsigned = &bytes[4..];
+    let request_id = format!(
+        "n3-payload:{network}:{}",
+        hex::encode(Sha256::digest(unsigned))
+    );
+    state
+        .signer
+        .sign_n3_transaction(&network, role, &hex::encode(unsigned), &request_id)
 }
 
 /// POST /keys/derived — report a pinned role's public Neo identity, no secret.

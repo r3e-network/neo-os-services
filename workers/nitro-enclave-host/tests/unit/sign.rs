@@ -19,6 +19,12 @@ fn blind_sign_overlay() -> Vec<(&'static str, &'static str)> {
     pairs
 }
 
+const VALID_UNSIGNED_N3: &str = "0001000000000000000000000000000000000000006400000001cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd01002dc21f0c0e66756c66696c6c526571756573740c1467452301efcdab8967452301efcdab896745230141627d5b52";
+
+fn valid_payload_preimage() -> String {
+    format!("4e335435{VALID_UNSIGNED_N3}")
+}
+
 #[test]
 fn the_strict_role_mapper_accepts_exactly_the_node_vocabulary() {
     assert_eq!(
@@ -68,16 +74,17 @@ fn sign_payload_role_aliases_resolve_in_the_node_order() {
         FakeKms::default(),
     );
     // key_role beats dstack_key_role beats role — first truthy wins.
+    let data_hex = valid_payload_preimage();
     let value = handle_sign_payload(
         &harness.state,
-        &serde_json::json!({ "role": "worker", "key_role": "updater", "data_hex": "cafe" }),
+        &serde_json::json!({ "role": "worker", "key_role": "updater", "data_hex": data_hex }),
     )
     .expect("sign");
     assert_eq!(value["role"], "updater");
 
     let value = handle_sign_payload(
         &harness.state,
-        &serde_json::json!({ "role": "worker", "data_hex": "cafe" }),
+        &serde_json::json!({ "role": "worker", "data_hex": valid_payload_preimage() }),
     )
     .expect("sign");
     assert_eq!(value["role"], "worker");
@@ -102,13 +109,18 @@ fn sign_payload_requires_even_lowercase_hex_data() {
         assert_eq!(error.message, "data_hex is required", "{data}");
     }
     // Uppercase and 0x-prefixed input is normalized, not rejected.
+    let data_hex = format!("0x{}", valid_payload_preimage().to_ascii_uppercase());
     let value = handle_sign_payload(
         &harness.state,
-        &serde_json::json!({ "key_role": "updater", "message_hex": "0xDEADBEEF" }),
+        &serde_json::json!({ "key_role": "updater", "message_hex": data_hex }),
     )
     .expect("sign");
     assert_eq!(value["status"], "ok");
-    assert_eq!(harness.signer.sign_calls()[0].2, "deadbeef".to_string());
+    assert!(harness.signer.sign_calls().is_empty());
+    assert_eq!(
+        harness.signer.n3_transaction_calls()[0].2,
+        VALID_UNSIGNED_N3
+    );
 }
 
 #[test]
@@ -122,11 +134,12 @@ fn sign_payload_passes_the_custody_response_through_verbatim() {
     );
     let value = handle_sign_payload(
         &harness.state,
-        &serde_json::json!({ "key_role": "oracle_verifier", "data_hex": "cafe" }),
+        &serde_json::json!({ "key_role": "oracle_verifier", "data_hex": valid_payload_preimage() }),
     )
     .expect("sign");
-    assert_eq!(value["key_source"], "vault_sealed");
+    assert_eq!(value["key_source"], "custody");
     assert_eq!(value["network"], "testnet");
+    assert_eq!(value["chain_family"], "neo-n3");
 }
 
 #[test]
@@ -269,9 +282,14 @@ fn only_the_exact_opt_in_value_reopens_the_lane() {
             FakeBridge::new(),
             FakeKms::default(),
         );
+        let data_hex = if expect_signed {
+            valid_payload_preimage()
+        } else {
+            "cafe".to_string()
+        };
         let outcome = handle_sign_payload(
             &harness.state,
-            &serde_json::json!({ "key_role": "updater", "data_hex": "cafe" }),
+            &serde_json::json!({ "key_role": "updater", "data_hex": data_hex }),
         );
         assert_eq!(
             outcome.is_ok(),
@@ -298,4 +316,102 @@ fn the_opt_in_does_not_gate_the_semantic_signing_plane() {
         .signer
         .sign_payload("testnet", "oracle_verifier", "cafe")
         .expect("the plane itself still signs the fold's own digest");
+}
+
+// W2.9: `/sign/payload` is a compatibility envelope for a complete N3
+// transaction preimage only. It must translate to the semantic transaction
+// capability; the image-owned opt-in must never reopen raw signing.
+#[test]
+fn payload_preimage_uses_the_n3_transaction_capability() {
+    let harness = test_state(
+        &blind_sign_overlay(),
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let unsigned = VALID_UNSIGNED_N3;
+    let data_hex = valid_payload_preimage();
+    let value = handle_sign_payload(
+        &harness.state,
+        &serde_json::json!({ "key_role": "updater", "data_hex": data_hex }),
+    )
+    .expect("semantic transaction signing");
+    assert_eq!(value["chain_family"], "neo-n3");
+    assert_eq!(harness.signer.sign_calls().len(), 0);
+    let calls = harness.signer.n3_transaction_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "testnet");
+    assert_eq!(calls[0].1, "updater");
+    assert_eq!(calls[0].2, unsigned);
+}
+
+#[test]
+fn payload_refuses_arbitrary_bytes_even_when_the_legacy_opt_in_is_present() {
+    let harness = test_state(
+        &blind_sign_overlay(),
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let error = handle_sign_payload(
+        &harness.state,
+        &serde_json::json!({ "key_role": "updater", "data_hex": "cafe" }),
+    )
+    .expect_err("arbitrary bytes must not be signed");
+    assert_eq!(error.status, 400);
+    assert!(error.message.contains("transaction"), "{}", error.message);
+    assert!(harness.signer.sign_calls().is_empty());
+    assert!(harness.signer.n3_transaction_calls().is_empty());
+}
+
+#[test]
+fn payload_refuses_legacy_txid_and_foreign_magic_before_custody() {
+    let harness = test_state(
+        &blind_sign_overlay(),
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let legacy_txid = format!("4e335435{}", "ab".repeat(32));
+    let foreign_magic = format!("00403633{VALID_UNSIGNED_N3}");
+    for (data_hex, expected) in [
+        (legacy_txid, "legacy magic+txid"),
+        (foreign_magic, "measured network magic"),
+    ] {
+        let error = handle_sign_payload(
+            &harness.state,
+            &serde_json::json!({ "key_role": "updater", "data_hex": data_hex }),
+        )
+        .expect_err("the preimage is not a valid transaction for this network");
+        assert_eq!(error.status, 400);
+        assert!(error.message.contains(expected), "{}", error.message);
+    }
+    assert!(harness.signer.sign_calls().is_empty());
+    assert!(harness.signer.n3_transaction_calls().is_empty());
+}
+
+#[test]
+fn payload_request_id_is_stable_for_the_same_unsigned_transaction() {
+    let harness = test_state(
+        &blind_sign_overlay(),
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    for _ in 0..2 {
+        handle_sign_payload(
+            &harness.state,
+            &serde_json::json!({ "key_role": "updater", "data_hex": valid_payload_preimage() }),
+        )
+        .expect("idempotent semantic intent");
+    }
+    let calls = harness.signer.n3_transaction_calls();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].3, calls[1].3);
+    assert!(calls[0].3.starts_with("n3-payload:testnet:"));
+    assert!(harness.signer.sign_calls().is_empty());
 }
