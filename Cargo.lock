@@ -1896,6 +1896,7 @@ dependencies = [
  "axum 0.8.9",
  "base64",
  "hex",
+ "hmac",
  "http",
  "k256",
  "neo-os-chain-evm",

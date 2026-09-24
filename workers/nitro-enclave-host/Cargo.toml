@@ -26,6 +26,7 @@ path = "src/lib.rs"
 axum = "0.8"
 base64 = "0.22"
 hex = "0.4"
+hmac = "0.12"
 http = "1"
 k256 = { version = "0.13", features = ["ecdsa"] }
 p256 = { version = "0.13", features = ["ecdsa"] }

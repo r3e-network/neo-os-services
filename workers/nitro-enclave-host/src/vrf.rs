@@ -1,15 +1,16 @@
-//! The `/vrf/random` fold: generate 256 bits from the enclave OS CSPRNG,
-//! bind them into the same custody-signed result envelope as every other
-//! fulfillment lane, and return the legacy request/timestamp metadata.
+//! The `/vrf/random` fold derives stable, domain-bound bytes from a
+//! recipient-attested KMS root and signs the result envelope through custody.
 
+use hmac::{Hmac, Mac};
 use rand::RngCore;
+use sha2::Sha256;
 
 use crate::compute_execute::{
     build_lane_signed_envelope, build_tee_attestation, reject_caller_supplied_signing_key,
     resolve_payload_network, sign_worker_bytes,
 };
 use crate::state::AppState;
-use crate::RuntimeError;
+use crate::{http_error, RuntimeError};
 
 pub fn handle_vrf_random(
     state: &AppState,
@@ -17,24 +18,58 @@ pub fn handle_vrf_random(
 ) -> Result<serde_json::Value, RuntimeError> {
     reject_caller_supplied_signing_key(payload)?;
 
-    let mut random = [0_u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut random);
-    let randomness = hex::encode(random);
+    let request_id = payload
+        .get("request_id")
+        .filter(|value| js_truthy(value))
+        .cloned()
+        .ok_or_else(|| http_error(400, "request_id is required for deterministic VRF"))?;
+    let module_id = match payload.get("module_id") {
+        None => "random.generate",
+        Some(serde_json::Value::String(value)) if value == "random.generate" => value.as_str(),
+        Some(_) => return Err(http_error(400, "module_id must be random.generate")),
+    };
+    if module_id != "random.generate" {
+        return Err(http_error(400, "module_id must be random.generate"));
+    }
+    let network = resolve_payload_network(state, payload);
+    let root = {
+        let overlay = state.overlay.read().expect("overlay lock");
+        if overlay
+            .get_trimmed("MORPHEUS_GAME_SECRET_ROOT_SOURCE")
+            .as_deref()
+            != Some("nitro-recipient-kms")
+        {
+            return Err(http_error(503, "VRF key is not KMS materialized"));
+        }
+        let root = overlay
+            .get_trimmed("MORPHEUS_GAME_SECRET_ROOT_HEX")
+            .ok_or_else(|| http_error(503, "VRF key is not KMS materialized"))?;
+        let bytes = hex::decode(root).map_err(|_| http_error(503, "VRF key is invalid"))?;
+        <[u8; 32]>::try_from(bytes).map_err(|_| http_error(503, "VRF key is invalid"))?
+    };
+    let request_id_bytes =
+        serde_json::to_vec(&request_id).map_err(|_| http_error(400, "request_id is invalid"))?;
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(&root).map_err(|_| http_error(503, "VRF key is invalid"))?;
+    for part in [
+        b"neoos-vrf-random-v1".as_slice(),
+        network.as_bytes(),
+        request_id_bytes.as_slice(),
+        module_id.as_bytes(),
+    ] {
+        mac.update(&(part.len() as u32).to_be_bytes());
+        mac.update(part);
+    }
+    let randomness = hex::encode(mac.finalize().into_bytes());
     let result = serde_json::json!({ "randomness": randomness });
     let payload_bytes = neo_os_core::stable_stringify::stable_stringify(
         &neo_os_core::js_value::JsValue::from_json(&result),
     )
     .into_bytes();
     let output_hash = neo_os_core::sha256_hex(&payload_bytes);
-    let network = resolve_payload_network(state, payload);
     let signed = sign_worker_bytes(state, &network, &payload_bytes)?;
     let tee_attestation = build_tee_attestation(state, payload, "custody", &output_hash)?;
 
-    let request_id = payload
-        .get("request_id")
-        .filter(|value| js_truthy(value))
-        .cloned()
-        .unwrap_or_else(|| serde_json::Value::String(random_uuid_v4()));
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs())
@@ -47,7 +82,7 @@ pub fn handle_vrf_random(
         response.insert(key, value);
     }
     response.insert("timestamp".to_string(), timestamp.into());
-    response.insert("vrf_method".to_string(), "csprng-signed".into());
+    response.insert("vrf_method".to_string(), "hmac-sha256-signed".into());
     Ok(serde_json::Value::Object(response))
 }
 

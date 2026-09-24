@@ -520,6 +520,12 @@ fn migrated_decrypt_fulfillment_executes_in_process() {
 fn random_fulfillment_executes_in_process_without_a_bridge() {
     let mut harness = fulfill_harness(vrf_reply());
     use_production_compute(&mut harness);
+    harness
+        .state
+        .overlay
+        .write()
+        .expect("overlay lock")
+        .set_game_secret_root(&"11".repeat(32));
     let body = json!({
         "chain": "neo_n3",
         "request_type": "random",
