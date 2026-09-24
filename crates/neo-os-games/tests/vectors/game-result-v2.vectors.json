@@ -1,7 +1,7 @@
 {
   "schema": "neoos.game-result-codec.v2",
   "description": "Shared vectors for the PlatformGame RewardGame finalize result, codec v2: the v1 fields plus a binding to the on-chain game record (appId, gameId, player). The contract parses the result and recomputes the binding from its own record; the neo-os-games session crate produces it. Both repositories must encode every vector byte for byte, and neither may accept a rejected vector.",
-  "authority": "neo-os-contracts/contracts/platform/PlatformGame/PlatformGame.RewardGame.Settle.cs",
+  "authority": "neo-os-contracts/contracts/platform/PlatformGame/PlatformGame.RewardGame.Codec.cs",
   "copies": [
     "neo-os-contracts/contracts/__tests__/fixtures/game-result-v2.vectors.json",
     "neo-os-services/crates/neo-os-games/tests/vectors/game-result-v2.vectors.json"
