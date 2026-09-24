@@ -86,12 +86,12 @@ parse() {
 
     # list item at 2-space indent opens a new entry
     line ~ /^  - / {
-      if (line !~ /^  - package-ecosystem: *"?[a-z-]+"?[[:space:]]*$/) {
+      if (line !~ /^  - package-ecosystem: *([a-z-]+|[\047][a-z-]+[\047]|"[a-z-]+")[[:space:]]*$/) {
         print "BAD unrecognised update entry: " line; next
       }
       eco = line
-      sub(/^  - package-ecosystem: *"?/, "", eco)
-      sub(/"?[[:space:]]*$/, "", eco)
+      sub(/^  - package-ecosystem: *[\047"]?/, "", eco)
+      sub(/[\047"]?[[:space:]]*$/, "", eco)
       print "ENTRY " eco
       in_dirs = 0
       next
@@ -107,7 +107,16 @@ parse() {
       if (line ~ /^    groups:/)      { print "GROUPS"; next }
       if (line ~ /^    directories:/) { in_dirs = 1; next }
       if (line ~ /^    directory:/) {
-        v = line; sub(/^.*: *"?/, "", v); sub(/"?[[:space:]]*$/, "", v)
+        v = line; sub(/^.*: */, "", v); sub(/[[:space:]]*$/, "", v)
+        if (v ~ /^[\047]/) {
+          if (v !~ /^[\047][^\047]+[\047]$/) { print "BAD unrecognised directory: " line; next }
+          sub(/^[\047]/, "", v); sub(/[\047]$/, "", v)
+        } else if (v ~ /^"/) {
+          if (v !~ /^"[^"]+"$/) { print "BAD unrecognised directory: " line; next }
+          sub(/^"/, "", v); sub(/"$/, "", v)
+        } else if (v == "" || v ~ /[\047"]/) {
+          print "BAD unrecognised directory: " line; next
+        }
         print "PATH " v; next
       }
       next
@@ -115,7 +124,16 @@ parse() {
 
     # list items under directories:
     in_dirs && line ~ /^      - / {
-      v = line; sub(/^      - *"?/, "", v); sub(/"?[[:space:]]*$/, "", v)
+      v = line; sub(/^      - */, "", v); sub(/[[:space:]]*$/, "", v)
+      if (v ~ /^[\047]/) {
+        if (v !~ /^[\047][^\047]+[\047]$/) { print "BAD unrecognised directory: " line; next }
+        sub(/^[\047]/, "", v); sub(/[\047]$/, "", v)
+      } else if (v ~ /^"/) {
+        if (v !~ /^"[^"]+"$/) { print "BAD unrecognised directory: " line; next }
+        sub(/^"/, "", v); sub(/"$/, "", v)
+      } else if (v == "" || v ~ /[\047"]/) {
+        print "BAD unrecognised directory: " line; next
+      }
       print "PATH " v; next
     }
 
