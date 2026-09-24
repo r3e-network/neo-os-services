@@ -1,5 +1,9 @@
 name: ci
 
+concurrency:
+  group: neoos-local-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
@@ -13,7 +17,7 @@ jobs:
   # Always reports 'yes' on main pushes (full coverage is preserved there) and on PRs that
   # touch workflow/config code (a ci.yml change could affect any job). Round-2 R2-4.1.
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
     outputs:
       code: ${{ steps.filter.outputs.code }}
       evm: ${{ steps.filter.outputs.evm }}
@@ -43,7 +47,7 @@ jobs:
               - '.github/workflows/**'
 
   lint-and-format:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -80,7 +84,7 @@ jobs:
   rust:
     needs: changes
     if: ${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
     steps:
       # This job builds and tests the whole workspace and then builds neo-nexus
       # for the cross-repository signer contract; together they exhausted the
@@ -140,7 +144,7 @@ jobs:
   web-and-worker:
     needs: changes
     if: ${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -200,7 +204,7 @@ jobs:
   measurements:
     needs: changes
     if: ${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -230,7 +234,7 @@ jobs:
   contracts:
     needs: changes
     if: ${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
@@ -271,7 +275,7 @@ jobs:
   contracts-evm:
     needs: changes
     if: ${{ github.event_name == 'push' || needs.changes.outputs.evm == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Install Foundry

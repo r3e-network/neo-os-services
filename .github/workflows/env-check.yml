@@ -1,5 +1,9 @@
 name: Environment Variable Validation
 
+concurrency:
+  group: neoos-local-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   # Run on every push to main branches
   push:
@@ -21,7 +25,7 @@ on:
 
 jobs:
   validate-network-env:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
     name: Validate Network Configuration
 
     steps:
@@ -71,7 +75,7 @@ jobs:
         run: npm --prefix apps/web run test:run -- __tests__/networks.test.ts
 
   validate-web-app-env:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
     name: Validate Web App Environment
 
     steps:
@@ -95,7 +99,7 @@ jobs:
             echo "::notice::check:web-cron-env reported missing variables (expected without deployment secrets)"
 
   validate-signers:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
     name: Validate Signer Configuration
 
     steps:
@@ -118,7 +122,7 @@ jobs:
 
   summary:
     needs: [validate-network-env, validate-web-app-env, validate-signers]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
     if: always()
 
     steps:

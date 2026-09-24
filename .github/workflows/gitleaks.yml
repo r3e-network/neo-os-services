@@ -15,7 +15,7 @@ concurrency:
 jobs:
   scan:
     name: Secret scan
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - name: Check out repository history
@@ -30,14 +30,22 @@ jobs:
           GITLEAKS_VERSION: 8.30.1
         run: |
           set -euo pipefail
-          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          case "$(uname -s):$(uname -m)" in
+            Linux:x86_64) asset_arch="x64" ;;
+            Linux:aarch64|Linux:arm64) asset_arch="arm64" ;;
+            *) echo "unsupported runner platform: $(uname -s):$(uname -m)" >&2; exit 1 ;;
+          esac
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_${asset_arch}.tar.gz"
           checksums="gitleaks_${GITLEAKS_VERSION}_checksums.txt"
           release="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
-          curl -fsSLO "${release}/${archive}"
-          curl -fsSLO "${release}/${checksums}"
+          curl -fsSL --retry 3 --proto '=https' --proto-redir '=https' -o "${archive}" "${release}/${archive}"
+          curl -fsSL --retry 3 --proto '=https' --proto-redir '=https' -o "${checksums}" "${release}/${checksums}"
           grep " ${archive}$" "${checksums}" | sha256sum --check --strict
-          tar -xzf "${archive}" gitleaks
-          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          bin_dir="${RUNNER_TEMP:-$PWD}/gitleaks-bin"
+          mkdir -p "${bin_dir}"
+          tar -xzf "${archive}" -C "${bin_dir}" gitleaks
+          chmod 0755 "${bin_dir}/gitleaks"
+          echo "${bin_dir}" >> "${GITHUB_PATH}"
 
       - name: Scan commits introduced by this event
         shell: bash
