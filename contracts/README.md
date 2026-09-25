@@ -159,3 +159,14 @@ write from an attested one. New storage prefixes `0x09`/`0x0A`; next free byte i
 
 No deploy tooling calls the removed methods; the change is ABI-breaking only for a caller that
 used them directly. As with the signature migration above, no live deployment is claimed here.
+
+### Live MorpheusOracle key-admin boundary
+
+The reviewed source contract routes runtime encryption and verification key
+changes through 24-hour propose/cancel/execute methods. The live N3 kernel at
+`0xf54d8584` still exposes a 64-method legacy ABI without those methods, so its
+admin-only `setOracleEncryptionKey` and `setOracleVerificationPublicKey`
+operations remain immediate single-signature paths. Publisher scripts must
+read the deployed ABI and refuse to propose or claim a delayed activation until
+the governed contract update is deployed and read back. No live update is
+claimed by this repository state.

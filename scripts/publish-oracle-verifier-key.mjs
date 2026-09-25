@@ -2,9 +2,13 @@ import { experimental, sc, wallet } from '@cityofzion/neon-js';
 import { loadDotEnv } from './lib-env.mjs';
 import {
   normalizeMorpheusNetwork,
-  resolvePinnedNeoN3Role,
   resolvePinnedNeoN3VerifierPublicKey,
 } from './lib-neo-signers.mjs';
+import {
+  assertOracleKeyTimelockAbi,
+  readOracleContractState,
+  resolveOracleAdminWif,
+} from './lib-oracle-timelock.mjs';
 
 async function main() {
   const requestedNetwork = normalizeMorpheusNetwork(process.env.MORPHEUS_NETWORK || 'testnet');
@@ -28,14 +32,15 @@ async function main() {
     process.env.NEO_NETWORK_MAGIC || (network === 'mainnet' ? 860833102 : 894710606)
   );
   const oracleHash = process.env.CONTRACT_MORPHEUS_ORACLE_HASH || '';
-  const signer = resolvePinnedNeoN3Role(network, 'updater', { env: process.env });
-  const wif = signer.materialized?.wif || signer.materialized?.private_key || '';
+  const wif = resolveOracleAdminWif(process.env);
 
   if (!nitroUrl || !oracleHash || !wif) {
     throw new Error(
-      'MORPHEUS_RUNTIME_URL, CONTRACT_MORPHEUS_ORACLE_HASH, and NEO_N3_WIF are required'
+      'MORPHEUS_RUNTIME_URL, CONTRACT_MORPHEUS_ORACLE_HASH, and the kernel admin key are required'
     );
   }
+
+  assertOracleKeyTimelockAbi(await readOracleContractState(rpcUrl, oracleHash), 'verification');
 
   const headers = nitroToken ? { authorization: `Bearer ${nitroToken}` } : {};
   let publicKey = resolvePinnedNeoN3VerifierPublicKey(network, process.env);
@@ -54,9 +59,9 @@ async function main() {
     account,
   });
 
-  // P0-07 governance timelock: the set* aliases now PROPOSE only. The key
-  // takes effect when executeRuntimeVerificationPublicKey is invoked after
-  // the 24h delay. Run this script again with MODE=execute to finalize.
+  // P0-07 governance timelock: proposeRuntimeVerificationPublicKey records the
+  // change; it takes effect when executeRuntimeVerificationPublicKey is invoked
+  // after the 24h delay. Run this script again with MODE=execute to finalize.
   const mode = (process.env.MODE || 'propose').toLowerCase();
   if (mode === 'execute') {
     console.log('Executing matured verifier-key change...');
@@ -66,10 +71,10 @@ async function main() {
   }
 
   console.log('Proposing NeoOS Oracle verifier public key (24h timelock)...');
-  const txHash = await contract.invoke('setOracleVerificationPublicKey', [
+  const txHash = await contract.invoke('proposeRuntimeVerificationPublicKey', [
     sc.ContractParam.publicKey(publicKey),
   ]);
-  console.log(`setOracleVerificationPublicKey (PROPOSE) tx: ${txHash}`);
+  console.log(`proposeRuntimeVerificationPublicKey tx: ${txHash}`);
   console.log('NOT LIVE YET: re-run with MODE=execute after the 24h timelock matures.');
 }
 

@@ -56,3 +56,11 @@ edits alone.
     feed-pusher once custody URL/token/role key IDs are live.
 16. No commit/push was performed for this remediation wave; operators must
     review and land changes deliberately across sibling repositories.
+
+17. Deploy and read back the reviewed MorpheusOracle update before enabling
+    runtime encryption or verification key publication. The recorded live N3
+    kernel at `0xf54d8584` has no 24-hour key timelock and its admin-only key
+    setters are immediate single-signature paths. Until the deployed ABI
+    contains the complete propose/cancel/execute/pending method sets, the
+    publisher scripts intentionally fail closed. Do not run a key write as a
+    workaround.

@@ -90,6 +90,22 @@ Proposed v2 binding: in `neo-os-web/docs/workspace/neoos-target-architecture.v2.
 - `OracleCallbackConsumer` is now an optional external adapter for advanced integrations, not a mandatory per-miniapp primitive.
 - The intended integration model is `miniapp-os + miniapps`: generic concerns stay in the system, while miniapps focus on business logic and configuration.
 
+### Oracle key publication safety
+
+The source contract now defines a 24-hour propose, cancel, and execute lane for
+runtime encryption and verification public keys. The publisher scripts first
+read the deployed `getcontractstate` ABI and fail closed unless all four
+timelock methods for the selected key are present. They therefore cannot print
+`PROPOSE` or submit a key transaction against the legacy live kernel by
+mistake. The scripts perform no deployment or upgrade; an operator must first
+roll out the reviewed contract update through its governed path.
+
+The currently recorded live N3 MorpheusOracle (`0xf54d8584`) has a 64-method
+ABI without the timelock methods. Its admin-only `setOracleEncryptionKey` and
+`setOracleVerificationPublicKey` paths remain immediate single-signature
+operations until the contract update is deployed and read back. This source
+change does not claim that live deployment has occurred.
+
 ## Network Registry
 
 - `config/networks/mainnet.json` is the canonical mainnet registry.
