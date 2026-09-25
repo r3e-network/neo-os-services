@@ -15,6 +15,11 @@ const webManifest = JSON.parse(fs.readFileSync(path.join(web, 'package.json'), '
 const webLock = JSON.parse(fs.readFileSync(path.join(web, 'package-lock.json'), 'utf8'));
 const rootLock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
 const rootManifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const cargoLock = fs.readFileSync(path.join(root, 'Cargo.lock'), 'utf8');
+const signerCargoManifest = fs.readFileSync(
+  path.join(root, 'workers', 'neo-signer', 'Cargo.toml'),
+  'utf8'
+);
 const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
 const apiGatewayRedis = fs.readFileSync(
   path.join(neoSwap, 'api-gateway', 'src', 'lib', 'redis.ts'),
@@ -54,6 +59,18 @@ function versionAtLeast(version, expectedMajor, expectedMinor, expectedPatch = 0
     (actual[0] === expected[0] &&
       (actual[1] > expected[1] || (actual[1] === expected[1] && actual[2] >= expected[2])))
   );
+}
+
+function cargoLockVersion(name) {
+  const entries = cargoLock
+    .split(/^\[\[package\]\]\s*$/m)
+    .filter((entry) => new RegExp(`^name = "${escapeRegExp(name)}"$`, 'm').test(entry));
+  assert.equal(entries.length, 1, `Cargo.lock must contain exactly one ${name} package`);
+  const entry = entries[0];
+  const version = /^version = "([^"]+)"$/m.exec(entry)?.[1];
+  assert.match(entry, /^source = "registry\+https:\/\/github\.com\/rust-lang\/crates\.io-index"$/m);
+  assert.match(entry, /^checksum = "[a-f0-9]{64}"$/m);
+  return version ?? null;
 }
 
 function lockVersions(name) {
@@ -365,6 +382,18 @@ test('services web lockfile pins all currently vulnerable packages to patched ve
       );
     }
   }
+});
+
+test('Rust lockfile pins patched protobuf and rustls releases', () => {
+  assert.match(signerCargoManifest, /^prometheus = "0\.14"$/m);
+  assert.ok(
+    versionAtLeast(cargoLockVersion('protobuf'), 3, 7, 2),
+    `Cargo.lock must use protobuf >= 3.7.2; found ${cargoLockVersion('protobuf')}`
+  );
+  assert.ok(
+    versionAtLeast(cargoLockVersion('rustls'), 0, 23, 45),
+    `Cargo.lock must use rustls >= 0.23.45; found ${cargoLockVersion('rustls')}`
+  );
 });
 
 test('CI runs the NeoSwap security and production build gates', () => {

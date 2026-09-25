@@ -70,7 +70,7 @@ uuid = { version = "1", features = ["v4"] }
 zeroize = "1"
 
 # Metrics and observability
-prometheus = "0.13"
+prometheus = "0.14"
 
 [build-dependencies]
 # Keep the checked-in Neo SignClient protocol reproducible on developer and CI

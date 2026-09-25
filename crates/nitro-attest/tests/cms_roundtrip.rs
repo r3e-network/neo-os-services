@@ -39,6 +39,15 @@ fn wrong_key() -> RsaPrivateKey {
     RsaPrivateKey::from_pkcs8_der(&hex::decode(WRONG_KEY_HEX).unwrap()).unwrap()
 }
 
+#[test]
+fn kms_cms_private_rsa_decrypt_is_blinded() {
+    let source = include_str!("../src/cms.rs");
+    assert!(
+        source.contains(".decrypt_blinded(&mut OsRng, Oaep::new::<Sha256>(), encrypted_key)"),
+        "KMS CMS private RSA decrypt must use blinding"
+    );
+}
+
 // --- minimal DER encoding helpers ---
 
 fn tlv(tag: u8, content: &[u8]) -> Vec<u8> {

@@ -17,7 +17,7 @@
 
 use aes::cipher::{generic_array::GenericArray, BlockDecrypt, KeyInit};
 use aes_gcm::{aead::Aead, Aes256Gcm};
-use rsa::{Oaep, RsaPrivateKey};
+use rsa::{rand_core::OsRng, Oaep, RsaPrivateKey};
 use sha2::Sha256;
 
 use crate::asn1::{self, Tlv};
@@ -147,9 +147,11 @@ pub fn decrypt_cms_enveloped_data(cms: &[u8], priv_key: &RsaPrivateKey) -> Attes
     }
 
     // Unwrap the content-encryption key with RSA-OAEP / SHA-256 (no label —
-    // same as Go's rsa.DecryptOAEP(sha256.New(), ..., nil)).
+    // same as Go's rsa.DecryptOAEP(sha256.New(), ..., nil)). Use the blinded
+    // private operation because this input is supplied by the KMS response and
+    // the key is held inside the enclave.
     let cek = priv_key
-        .decrypt(Oaep::new::<Sha256>(), encrypted_key)
+        .decrypt_blinded(&mut OsRng, Oaep::new::<Sha256>(), encrypted_key)
         .map_err(|e| format!("cms: RSA-OAEP unwrap CEK: {e}"))?;
 
     let eci_kids =
