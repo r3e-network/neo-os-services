@@ -36,6 +36,14 @@ edits alone.
 9. Complete enumerated v1→v2 storage migration (or Registry rebind to fresh v2
    contracts) for any live MiniApp estates that still lack a v2 marker.
 
+The deployed MorpheusOracle kernel is also an external blocker: its 64-method
+live ABI currently has **no runtime-key timelock**, so the live admin paths are
+not equivalent to the timelocked source implementation. A reviewed
+`ContractManagement.Update` and post-update ABI read-back are required before
+claiming runtime-key rotation is delayed. Publication scripts must fail closed
+when that ABI is absent; this document records the gap without performing a
+chain write.
+
 ## Fura
 
 10. Host install of Prometheus blackbox-exporter and prove live public-readiness

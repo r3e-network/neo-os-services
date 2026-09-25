@@ -137,6 +137,16 @@ claimed by this source change.
 
 ### DataFeed verification-key timelock and admin-reset provenance (SVC-E-3)
 
+The deployed MorpheusOracle does not expose the 24-hour runtime-key timelock.
+A read-only `getcontractstate` probe of `0xf54d8584` on 2026-09-25 returned
+64 ABI methods and none of `proposeRuntimeEncryptionKey`,
+`executeRuntimeEncryptionKey`, `cancelRuntimeEncryptionKey`,
+`pendingRuntimeEncryptionKeyEta`, or their runtime-verification counterparts.
+Until an owner-approved `ContractManagement.Update` is executed and read back,
+runtime-key changes on the deployed kernel must be treated as immediate,
+admin-gated compatibility calls. The publisher scripts refuse to proceed unless
+the complete four-method timelock ABI is present.
+
 `SetOracleVerificationKey` / `ClearOracleVerificationKey` were admin-gated but immediate, so a
 stolen admin key could remove the feed's signature second factor and anchor an arbitrary price
 in the same transaction — while the sibling contracts already timelock exactly this authority

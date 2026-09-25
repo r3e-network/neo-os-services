@@ -118,10 +118,6 @@ This repository owns the NeoOS confidential services stack, and with it **key cu
 the signer service, its key policy, its caller registry, and its audit trail. The
 contract and ownership rules are in `docs/SIGNER_SERVICE.md`.
 
-Today signing is split across `deploy/nitro/nitro-signer-server.mjs` and the workers, and
-none of those paths can evaluate a policy; `docs/SIGNER_SERVICE.md` §7 is the order in
-which they move behind the service.
-
 | Repository               | Responsibility                                                                                                                                                     |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `neo-os-services`        | Oracle, DataFeed, VRF, Compute, Paymaster, confidential runtimes, **the signer service**                                                                           |

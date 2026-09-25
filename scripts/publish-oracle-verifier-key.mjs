@@ -5,6 +5,7 @@ import {
   resolvePinnedNeoN3Role,
   resolvePinnedNeoN3VerifierPublicKey,
 } from './lib-neo-signers.mjs';
+import { assertOracleKeyTimelockAbi, readOracleContractState } from './lib-oracle-timelock.mjs';
 
 async function main() {
   const requestedNetwork = normalizeMorpheusNetwork(process.env.MORPHEUS_NETWORK || 'testnet');
@@ -36,6 +37,8 @@ async function main() {
       'MORPHEUS_RUNTIME_URL, CONTRACT_MORPHEUS_ORACLE_HASH, and NEO_N3_WIF are required'
     );
   }
+
+  assertOracleKeyTimelockAbi(await readOracleContractState(rpcUrl, oracleHash), 'verification');
 
   const headers = nitroToken ? { authorization: `Bearer ${nitroToken}` } : {};
   let publicKey = resolvePinnedNeoN3VerifierPublicKey(network, process.env);
