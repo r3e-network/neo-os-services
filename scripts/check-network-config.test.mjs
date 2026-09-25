@@ -1,16 +1,52 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { loadNetworkMagics } from './lib-network-config.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const script = fileURLToPath(new URL('./check-network-config.mjs', import.meta.url));
-const networks = ['mainnet', 'testnet'].map(
-  (name) =>
-    JSON.parse(readFileSync(new URL(`../config/networks/${name}.json`, import.meta.url), 'utf8'))
-      .network
-);
+const EXPECTED_NETWORK_MAGICS = Object.freeze({
+  mainnet: '860833102',
+  testnet: '894710606',
+});
+const networkConfigs = ['mainnet', 'testnet'].map((name) => {
+  const config = JSON.parse(
+    readFileSync(new URL(`../config/networks/${name}.json`, import.meta.url), 'utf8')
+  );
+  return { name: config.network, magic: String(config.neo_n3.network_magic) };
+});
+const networks = networkConfigs.map(({ name }) => name);
+
+test('network registry retains the canonical Neo N3 magic values', () => {
+  assert.deepEqual(loadNetworkMagics(root), EXPECTED_NETWORK_MAGICS);
+  for (const { name, magic } of networkConfigs) {
+    assert.equal(magic, EXPECTED_NETWORK_MAGICS[name], `${name} network magic drifted`);
+  }
+});
+
+test('network registry loader rejects malformed magic fields', () => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'neoos-network-config-'));
+  try {
+    const fixtureDirectory = join(fixtureRoot, 'config', 'networks');
+    mkdirSync(fixtureDirectory, { recursive: true });
+    writeFileSync(
+      join(fixtureDirectory, 'mainnet.json'),
+      JSON.stringify({ neo_n3: { network_magic: 860833102 } })
+    );
+    writeFileSync(
+      join(fixtureDirectory, 'testnet.json'),
+      JSON.stringify({ neo_n3: { network_magic: '894710606' } })
+    );
+    assert.throws(() => loadNetworkMagics(fixtureRoot), /invalid network_magic.*testnet/i);
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
 
 function run(args = [], env = {}) {
   const result = spawnSync(process.execPath, [script, ...args], {
@@ -45,6 +81,18 @@ for (const network of networks) {
       assert.match(mismatch.stdout, /Network mismatch/);
     });
   }
+
+  test(`${network}: configured network magic must match the canonical registry`, () => {
+    const expectedMagic = networkConfigs.find(({ name }) => name === network).magic;
+    const valid = run([], { MORPHEUS_NETWORK: network, NEO_NETWORK_MAGIC: expectedMagic });
+    assert.equal(valid.status, 0, valid.stdout + valid.stderr);
+    const otherMagic = networkConfigs.find(({ name }) => name !== network).magic;
+    for (const invalidMagic of [otherMagic, `${expectedMagic}x`]) {
+      const invalid = run([], { MORPHEUS_NETWORK: network, NEO_NETWORK_MAGIC: invalidMagic });
+      assert.equal(invalid.status, 1, invalid.stdout + invalid.stderr);
+      assert.match(invalid.stdout + invalid.stderr, /network magic mismatch/i);
+    }
+  });
 }
 
 test('missing, blank and invalid network labels fail with and without the compatibility flag', () => {
@@ -54,6 +102,14 @@ test('missing, blank and invalid network labels fail with and without the compat
       assert.equal(result.status, 1);
       assert.match(result.stdout, /VALIDATION FAILED/);
     }
+  }
+});
+
+test('missing network magic retains an explicit deployment warning', () => {
+  for (const { name, magic } of networkConfigs) {
+    const result = run([], { MORPHEUS_NETWORK: name });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout + result.stderr, new RegExp(`NEO_NETWORK_MAGIC=${magic}`));
   }
 });
 

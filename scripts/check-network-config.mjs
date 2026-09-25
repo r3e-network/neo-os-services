@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { loadNetworkMagics } from './lib-network-config.mjs';
+
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const NETWORK_MAGICS = loadNetworkMagics(repositoryRoot);
+
 /**
  * @fileoverview Network Configuration Validator
  *
@@ -138,6 +145,17 @@ function validateMorpheusNetworkConfig() {
     }
   } else {
     result.warnings.push(`✓ Network detected: "${selectedEnv}"`);
+  }
+
+  const configuredMagic = trimString(process.env.NEO_NETWORK_MAGIC);
+  const expectedMagic = NETWORK_MAGICS[normalized];
+  if (!configuredMagic) {
+    result.warnings.push(`Consider setting NEO_NETWORK_MAGIC=${expectedMagic} for ${normalized}`);
+  } else if (configuredMagic !== expectedMagic) {
+    result.ok = false;
+    result.errors.push(
+      `Network magic mismatch: ${normalized} requires NEO_NETWORK_MAGIC=${expectedMagic}`
+    );
   }
 
   // Check for mixed configuration scenarios
