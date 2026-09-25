@@ -241,7 +241,6 @@ const MAINNET_STATE = JSON.parse(
     'utf8'
   )
 );
-
 test('parseContractUpdateMethods requires exact captured ABI arity and types', () => {
   const testnet = parseContractUpdateMethods(TESTNET_STATE.manifest);
   assert.deepEqual(
@@ -314,6 +313,10 @@ test('resolveFeedWriteMode is testnet-only for updateFeed and never downgrades m
     resolveFeedWriteMode('mainnet', parseContractUpdateMethods(MAINNET_STATE.manifest)),
     FEED_WRITE_MODE_BATCH
   );
+  assert.equal(
+    resolveFeedWriteMode('mainnet', parseContractUpdateMethods(MAINNET_STATE.manifest)),
+    FEED_WRITE_MODE_BATCH
+  );
   assert.throws(
     () => resolveFeedWriteMode('mainnet', parseContractUpdateMethods(TESTNET_STATE.manifest)),
     /Refusing silent downgrade/
@@ -342,7 +345,7 @@ test('assertBatchUpdateFeedsSupported fails closed on the live testnet ABI', () 
     /has no updateFeeds/
   );
   assert.doesNotThrow(() =>
-    assertBatchUpdateFeedsSupported(MAINNET_STATE.manifest, {
+      assertBatchUpdateFeedsSupported(MAINNET_STATE.manifest, {
       feed: '03013f49c42a14546c8bbe58f9d434c3517fccab',
       network: 'mainnet',
     })

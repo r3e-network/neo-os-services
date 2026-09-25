@@ -430,6 +430,21 @@ export function assertWriterAbiExact(abi, { network } = {}) {
       );
     }
   }
+  // The deployed mainnet MorpheusDataFeed intentionally retains the legacy
+  // singular entry point alongside the canonical batch entry point. Both
+  // signatures must still be exact; mainnet is deterministic because it
+  // always selects updateFeeds. Testnet and unknown networks must reject a
+  // mixed ABI rather than inheriting that mainnet compatibility rule.
+  if (
+    abi.has_update_feed === true &&
+    abi.has_update_feeds === true &&
+    network !== 'mainnet'
+  ) {
+    throw new Error(
+      `[neo-n3] ${network || 'unknown'} ABI exposes multiple supported writer ABIs: ` +
+        'refusing mixed write-mode dispatch outside the explicit mainnet batch policy'
+    );
+  }
   return abi;
 }
 
@@ -464,11 +479,11 @@ export function resolveFeedWriteMode(network, abi) {
     );
   }
   assertWriterAbiExact(abi, { network: net });
-  if (abi.has_update_feeds === true) {
-    return FEED_WRITE_MODE_BATCH;
-  }
   if (net === 'testnet' && abi.has_update_feed === true) {
     return FEED_WRITE_MODE_PER_PAIR;
+  }
+  if (net === 'mainnet' && abi.has_update_feeds === true) {
+    return FEED_WRITE_MODE_BATCH;
   }
   if (net === 'mainnet') {
     throw new Error(

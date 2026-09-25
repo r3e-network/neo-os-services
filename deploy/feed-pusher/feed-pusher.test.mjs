@@ -51,7 +51,6 @@ const MAINNET_STATE = JSON.parse(
     'utf8'
   )
 );
-
 __setSignerHealthForTests(async () => ({
   ready: true,
   checks: { compute: true, signer: true },
@@ -71,6 +70,16 @@ function provenWriteRpc(method, params) {
   }
   return undefined;
 }
+
+test('mainnet pusher probe uses the raw dual writer ABI snapshot', () => {
+  const methods = provenWriteRpc('getcontractstate', [])?.manifest?.abi?.methods;
+  assert.deepEqual(
+    methods
+      .filter((method) => method.name === 'updateFeed' || method.name === 'updateFeeds')
+      .map((method) => method.name),
+    ['updateFeed', 'updateFeeds']
+  );
+});
 
 const PUSHER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'feed-pusher.mjs');
 const OPTS = { thresholdBps: 10, maxStaleSec: 1800 };
@@ -685,6 +694,8 @@ function buildEnclaveFeedSignResponse({ symbol, price, round, ts }, txParams, si
   return {
     status: 'ok',
     chain: 'neo_n3',
+    write_mode: 'updateFeeds',
+    operation: 'updateFeeds',
     ...plan,
     tx_message_hex: message,
     tx_nonce: txParams.nonce,
@@ -990,6 +1001,8 @@ test('pushNeoN3 delegates compute+sign to mandatory enclave /feed/sign and broad
     // tx_params (the reproducibility key) the host read.
     assert.ok(enclaveRequest, 'enclave /feed/sign must be called in flag-on mode');
     assert.equal(enclaveRequest.chain, 'neo_n3');
+    assert.equal(enclaveRequest.write_mode, 'updateFeeds');
+    assert.equal(enclaveRequest.operation, 'updateFeeds');
     assert.deepEqual(enclaveRequest.symbols, ['NEO-USD']);
     assert.equal(Number.isInteger(enclaveRequest.tx_params.nonce), true);
     assert.equal(enclaveRequest.tx_params.block_count, blockCount);
@@ -1027,6 +1040,68 @@ test('pushNeoN3 delegates compute+sign to mandatory enclave /feed/sign and broad
       true,
       'enclave signature verifies over the broadcast tx signing message'
     );
+  } finally {
+    __resetEnclaveFeedSignForTests();
+    __resetN3RpcForTests();
+    __resetConfirmSleepForTests();
+  }
+});
+
+test('pushNeoN3 refuses a batch enclave response without explicit mode fields', async () => {
+  const signer = new wallet.Account();
+  const blockCount = 5_000_000;
+  const now = 1_780_000_000;
+  const broadcast = [];
+  __setN3RpcForTests(async (method, params) => {
+    const proven = provenWriteRpc(method, params);
+    if (proven !== undefined) return proven;
+    switch (method) {
+      case 'invokefunction':
+        if (params[1] === 'getAllFeedRecords') {
+          return haltAllRecords([
+            { pair: 'TWELVEDATA:NEO-USD', round: 1, price: 5.0, ts: now - 3600 },
+          ]);
+        }
+        if (params[1] === 'balanceOf') {
+          return { state: 'HALT', stack: [{ type: 'Integer', value: String(20 * 1e8) }] };
+        }
+        throw new Error('unexpected invokefunction ' + params[1]);
+      case 'getblockcount':
+        return blockCount;
+      case 'invokescript':
+        return { state: 'HALT', gasconsumed: '1234567' };
+      case 'calculatenetworkfee':
+        return { networkfee: '234567' };
+      case 'sendrawtransaction':
+        broadcast.push(params[0]);
+        return { hash: '0xunexpected' };
+      default:
+        throw new Error('unexpected rpc ' + method);
+    }
+  });
+  __setEnclaveFeedSignForTests(async (requestBody) => {
+    const p = requestBody.tx_params;
+    const response = buildEnclaveFeedSignResponse(
+      { symbol: 'NEO-USD', price: 5.25, round: now, ts: now },
+      {
+        nonce: p.nonce,
+        validUntilBlock: p.block_count + 500,
+        systemFee: p.system_fee,
+        networkFee: p.network_fee,
+      },
+      signer
+    );
+    delete response.write_mode;
+    delete response.operation;
+    return response;
+  });
+  __setConfirmSleepForTests(async () => {});
+  try {
+    await assert.rejects(
+      () => pushNeoN3({ 'NEO-USD': 5.25 }, now),
+      /write_mode and operation must both be updateFeeds/
+    );
+    assert.equal(broadcast.length, 0, 'missing mode fields must stop before broadcast');
   } finally {
     __resetEnclaveFeedSignForTests();
     __resetN3RpcForTests();

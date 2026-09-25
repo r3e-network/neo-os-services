@@ -1007,6 +1007,7 @@ async function signOneUpdateFeed({
   const resp = await enclaveFeedSignImpl({
     chain: 'neo_n3',
     write_mode: 'updateFeed',
+    operation: 'updateFeed',
     symbols: [symbol],
     onchain_state: onchainState,
     now,
@@ -1018,13 +1019,13 @@ async function signOneUpdateFeed({
     },
     signal_timeout_ms: PER_PAIR_TIMEOUT_MS,
   });
-  if (resp.status === 'no-update' || !Array.isArray(resp.pairs) || resp.pairs.length !== 1) {
-    throw new Error(`[neo-n3] enclave returned no single-pair updateFeed for ${pair}`);
-  }
   if (resp.write_mode !== 'updateFeed' || resp.operation !== 'updateFeed') {
     throw new Error(
       '[neo-n3] enclave write_mode and operation must both be updateFeed — refusing to broadcast'
     );
+  }
+  if (resp.status === 'no-update' || !Array.isArray(resp.pairs) || resp.pairs.length !== 1) {
+    throw new Error(`[neo-n3] enclave returned no single-pair updateFeed for ${pair}`);
   }
   if (resp.pairs[0] !== pair) {
     throw new Error(`[neo-n3] enclave pair ${resp.pairs[0]} != planned ${pair}`);
@@ -1090,6 +1091,7 @@ async function signBatchUpdateFeeds({
   const resp = await enclaveFeedSignImpl({
     chain: 'neo_n3',
     write_mode: 'updateFeeds',
+    operation: 'updateFeeds',
     symbols: SYMBOLS.filter((s) => s in prices),
     onchain_state: onchainState,
     now,
@@ -1100,6 +1102,11 @@ async function signBatchUpdateFeeds({
       network_fee: txParams.networkFee,
     },
   });
+  if (resp.write_mode !== 'updateFeeds' || resp.operation !== 'updateFeeds') {
+    throw new Error(
+      '[neo-n3] enclave write_mode and operation must both be updateFeeds — refusing to broadcast'
+    );
+  }
   if (resp.status === 'no-update' || !Array.isArray(resp.pairs) || !resp.pairs.length) {
     log(`[neo-n3] enclave reported no updates (skipped ${skipped}, missing ${missing})`);
     return { noUpdate: true, extra: { resp, hostPairs: P } };
