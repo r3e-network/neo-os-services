@@ -41,6 +41,7 @@ jobs:
               - '.github/workflows/**'
             services:
               - 'services/**'
+              - 'apps/web/**'
               - 'package.json'
               - 'package-lock.json'
               - 'scripts/dependency-security.test.mjs'
@@ -95,6 +96,14 @@ jobs:
         run: node --test scripts/dependency-security.test.mjs
       - name: Audit root dependencies
         run: npx --yes npm@10.9.2 audit --audit-level=moderate
+      - name: Install services web dependencies with pinned npm
+        run: npx --yes npm@10.9.2 ci --prefix apps/web --no-audit --no-fund
+      - name: Audit services web dependencies
+        run: npx --yes npm@10.9.2 audit --prefix apps/web --audit-level=moderate
+      - name: Guard services web lockfile drift
+        run: |
+          npx --yes npm@10.9.2 install --package-lock-only --ignore-scripts --no-audit --no-fund --prefix apps/web
+          git diff --exit-code -- apps/web/package-lock.json
       - name: Install NeoSwap dependencies with pinned npm
         run: cd services/neoswap && npx --yes npm@10.9.2 ci --no-audit --no-fund
       - name: Audit NeoSwap dependencies
