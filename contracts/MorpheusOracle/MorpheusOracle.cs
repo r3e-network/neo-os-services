@@ -23,7 +23,7 @@ namespace MorpheusOracle.Contracts
     public delegate void SystemModuleUpdatedHandler(string moduleId, string endpoint, string schemaHash, bool active);
     public delegate void MiniAppCapabilityGrantedHandler(string appId, string moduleId);
     public delegate void MiniAppCapabilityRevokedHandler(string appId, string moduleId);
-    public delegate void MiniAppRequestQueuedHandler(BigInteger requestId, string appId, string moduleId, string operation, UInt160 requester, UInt160 sponsor, ByteString payload);
+    public delegate void MiniAppRequestQueuedHandler(BigInteger requestId, string appId, string moduleId, string operation, UInt160 requester, UInt160 sponsor, ByteString payload, ByteString payloadHash);
     public delegate void MiniAppRequestCompletedHandler(BigInteger requestId, string appId, string moduleId, string operation, bool success, ByteString resultHash, BigInteger resultSize, string error);
     public delegate void MiniAppInboxStoredHandler(string appId, BigInteger requestId, UInt160 requester, bool success);
     public delegate void MiniAppStateChangedHandler(string appId, ByteString stateKey, BigInteger valueSize);

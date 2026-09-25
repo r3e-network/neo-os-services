@@ -1893,9 +1893,12 @@ dependencies = [
 name = "nitro-enclave-host"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "axum 0.8.9",
  "base64",
+ "curve25519-dalek 4.1.3",
  "hex",
+ "hkdf",
  "http",
  "k256",
  "neo-os-chain-evm",

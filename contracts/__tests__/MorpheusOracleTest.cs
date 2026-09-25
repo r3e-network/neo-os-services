@@ -104,6 +104,23 @@ namespace MorpheusOracle.Contracts.Tests
         }
 
         [Fact]
+        public void QueuedKernelEventBindsPayloadHashToTheRequestBytes()
+        {
+            string code = ContractSourceAssertions.ReadSource(
+                "contracts",
+                "MorpheusOracle",
+                "MorpheusOracle.cs");
+            string requests = ContractSourceAssertions.ReadSource(
+                "contracts",
+                "MorpheusOracle",
+                "MorpheusOracle.Requests.cs");
+
+            Assert.Contains("ByteString payloadHash", code);
+            Assert.Contains("CryptoLib.Sha256(req.Payload)", requests);
+            Assert.Contains("payloadHash", requests);
+        }
+
+        [Fact]
         public void MorpheusOracleGrantKeyFitsNeoStorageLimit()
         {
             string code = ContractSourceAssertions.ReadSource(

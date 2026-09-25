@@ -46,6 +46,10 @@ function idOf(appId, difficulty = 0, overrides = {}) {
     contract_hash: '0x00112233445566778899aabbccddeeff00112233',
     game_id: '42',
     player: '0x0102030405060708090a0b0c0d0e0f1011121314',
+    player_witness: {
+      public_key: `02${'00'.repeat(32)}`,
+      signature: '00'.repeat(64),
+    },
     difficulty,
     ...overrides,
   };
@@ -187,6 +191,13 @@ test('start: an unregistered app_id is rejected', async () => {
     400
   );
   assert.match(rejected.error, /app_id must be one of/);
+});
+
+test('start: the compatibility worker rejects the historical unsigned shape', async () => {
+  const id = idOf('miniapp-sudoku');
+  delete id.player_witness;
+  const rejected = await body(handleSessionStart(id), 400);
+  assert.equal(rejected.error, 'player_witness is required');
 });
 
 // ── Sudoku happy path (solution never leaves the enclave) ────────────────────

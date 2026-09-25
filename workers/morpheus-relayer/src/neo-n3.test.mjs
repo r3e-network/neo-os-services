@@ -337,7 +337,7 @@ test('scanNeoN3OracleRequestsById still aborts the scan on a FAULTed getRequest'
 const ORACLE_CONTRACT = '0xaabbccddeeff00112233445566778899aabbccdd';
 
 // MiniAppRequestQueued state layout:
-// [requestId, appId, moduleId, operation, requester, sponsor, payload].
+// [requestId, appId, moduleId, operation, requester, sponsor, payload, payloadHash].
 function queuedNotification(requestId) {
   return {
     contract: ORACLE_CONTRACT,
@@ -352,6 +352,7 @@ function queuedNotification(requestId) {
         byteString('NScanner1111111111111111111111111'),
         byteString(''),
         byteString('{"url":"https://example.test"}'),
+        byteString('payload-hash'),
       ],
     },
   };
@@ -449,6 +450,7 @@ test('scanNeoN3OracleRequests batched scan is equivalent to the sequential path'
       batched.map((event) => `${event.blockNumber}:${event.requestId}`),
       ['100:1', '100:2', '103:3', '103:4']
     );
+    assert.equal(batched[0].payloadHash, 'payload-hash');
     // Both paths issue one getblock per height (4) plus one getapplicationlog
     // per tx (2 + 0 + 1 + 1 = 4) = 8 calls.
     assert.equal(sequentialCalls.length, 8);

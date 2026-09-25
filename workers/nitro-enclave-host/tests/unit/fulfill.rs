@@ -12,7 +12,6 @@
 
 use super::*;
 use crate::state::BridgeReply;
-use base64::Engine as _;
 use neo_os_chain_evm::{
     build_neox_digest, resolve_result_bytes_hex, Fulfillment as EvmFulfillment,
 };
@@ -49,8 +48,8 @@ fn fixed_price_body() -> serde_json::Value {
 }
 const FIXED_VRF_RANDOMNESS: &str =
     "1111111111111111111111111111111111111111111111111111111111111111";
-const GOLDEN_PUBLIC_KEY_RAW_B64: &str = "vAB/ripK5xzT1PT+KGbSvEEPfGQoxQliNWjSFjDfuhU=";
-const GOLDEN_PRIVATE_KEY_PKCS8_B64: &str =
+pub(crate) const GOLDEN_PUBLIC_KEY_RAW_B64: &str = "vAB/ripK5xzT1PT+KGbSvEEPfGQoxQliNWjSFjDfuhU=";
+pub(crate) const GOLDEN_PRIVATE_KEY_PKCS8_B64: &str =
     "MC4CAQAwBQYDK2VuBCIEIEgdmKz6RqTG40pP8SVY+7XPGOUXAIbmI4alIH3uMYZ8";
 const GOLDEN_ENVELOPE_JSON: &str = r#"{"v":2,"alg":"X25519-HKDF-SHA256-AES-256-GCM","epk":"1C44axNdzHDw2XVn2U7/uPmX+BfTgq9H4CltjiCRGWQ=","iv":"SOSWOZ3iY82CUNz6","ct":"x4/R3xIpzySVd55wSZFWh1HnCh7nmtYIAEhT","tag":"OUAJuhSWkVm/A0rWJSkFHQ=="}"#;
 
@@ -349,10 +348,45 @@ fn session_finalize_fulfillment_uses_the_session_handler() {
         response["error"]
             .as_str()
             .expect("session error")
-            .contains("SEALED_KIND_UNSUPPORTED"),
+            .contains("sealed session envelope required"),
         "{response}"
     );
     assert!(harness.bridge.forwards().is_empty());
+}
+
+#[test]
+fn sealed_session_payload_is_decrypted_before_kernel_dispatch() {
+    let key_env = golden_key_env();
+    let mut harness = test_state(
+        &[
+            ("MORPHEUS_NETWORK", TEST_NETWORK),
+            ("NITRO_API_TOKEN", "s3cret"),
+            ("MORPHEUS_ORACLE_KEY_MATERIAL_JSON", key_env.as_str()),
+            ("MORPHEUS_ORACLE_DECRYPT_REQUIRE_BINDING", "0"),
+        ],
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    use_production_compute(&mut harness);
+    let body = json!({
+        "chain": "neo_n3",
+        "request_type": "session.finalize",
+        "request_id": "907",
+        "payload": {
+            "requester": format!("0x{}", "cc".repeat(20)),
+        },
+        "payload_text": "eyJ2IjoyLCJhbGciOiJYMjU1MTktSEtERi1TSEEyNTYtQUVTLTI1Ni1HQ00iLCJlcGsiOiJrc3dmUTFYcjU1bDVNOHhpY0RGQm16Yms1OUhPMnVtKzdMQjR3SGJRaEJFPSIsIml2IjoiSG11alhpOXh0S1FyYmVyRyIsImN0IjoiKzlUbHZ1cHcvNTF2ZFQxbVdzQXppWTJoV2tIWVRGYjljMWl5b0Y1TkZrc09KMjVNN3JzbWh0cXgyWFFHeUo4dVBNK1Jxb3RKV004L3RhNmd5TkpLLzJUOXBxWGFCOVVtME0wdDBsZXNsOW9rTVExOHRQZElwRnNuRzdCa0lkbWp0Z0J4dmZINFNUUXM3NEg5S1N4czE0Tk02MXFxdUMwSEFQSEx6dWlZQXNrVGZwaFdiUVUrMkVRdUtnZUNIZitXUFl0MmhESk4rVk5Gb3BxUyt3M2R3R1ZJZUNmcHNFTDFPUmVhOTVlZGpOUW05NlU1UzNmSW85eENCT0doU3VMSkxDbFFqNzhrYUx5bWtiRU81dHlTb09vc29HQ2ZlODNKREtTNit6Y0kzc05XRWZZWEYyemlXVjZva1RreVNDRFR1dHQxT1NONHZNYTg3a3lHSTFiSzh0NXpyZ1NxekRiUm9mVXBCNUxqNTlUMExkRklaNTdHREhPMEgwaFdlTURGa2xVcmZPcWgzVVV6VFJEamxhQnlSYzRvL1NEWDZ6b3FVRVBqM1F6eldKcEVkQVdYSGJnVWpiVmkwM2pPVDlYNDRqNkFLRkR5Qk5GVE1wQmsiLCJ0YWciOiJLK0VhM0pGK3ZIb1BkRStkV2VnL1BnPT0ifQ==",
+        "fulfillment_context": {},
+    });
+
+    let response = handle_oracle_fulfill(&harness.state, &body).expect("signed rejection");
+    assert_eq!(response["status"], "ok");
+    assert_eq!(response["success"], false);
+    let error = response["error"].as_str().unwrap_or_default();
+    assert!(!error.contains("SEALED_KIND_UNSUPPORTED"), "{response}");
+    assert!(error.contains("app_id must be one of"), "{response}");
 }
 
 #[test]

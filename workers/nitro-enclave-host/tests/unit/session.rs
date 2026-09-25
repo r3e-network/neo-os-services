@@ -334,12 +334,19 @@ fn witnessed_start(identity: &Json, player: &Player) -> Json {
 }
 
 fn kernel_harness() -> TestState {
+    let oracle_key_env = format!(
+        r#"{{"algorithm":"X25519-HKDF-SHA256","public_key_raw":"{}","private_key_pkcs8":"{}"}}"#,
+        crate::fulfill::tests::GOLDEN_PUBLIC_KEY_RAW_B64,
+        crate::fulfill::tests::GOLDEN_PRIVATE_KEY_PKCS8_B64,
+    );
     let mut harness = test_state(
         &[
             ("MORPHEUS_NETWORK", "testnet"),
             ("NITRO_API_TOKEN", "s3cret"),
             ("MORPHEUS_GAME_SECRET_ROOT_HEX", GAME_ROOT_HEX),
             ("MORPHEUS_GAME_SECRET_ROOT_SOURCE", "nitro-recipient-kms"),
+            ("MORPHEUS_ORACLE_KEY_MATERIAL_JSON", oracle_key_env.as_str()),
+            ("MORPHEUS_ORACLE_DECRYPT_REQUIRE_BINDING", "0"),
         ],
         FakeAttest::with_document(b"attestation"),
         FakeSigner::healthy(),
@@ -349,6 +356,43 @@ fn kernel_harness() -> TestState {
     // Run the real in-process session handler behind /oracle/fulfill.
     harness.state.fulfillment_compute_override = None;
     harness
+}
+
+fn seal_kernel_payload(payload: &Json) -> String {
+    use aes_gcm::aead::{Aead, KeyInit};
+    use curve25519_dalek::constants::X25519_BASEPOINT;
+    use curve25519_dalek::montgomery::MontgomeryPoint;
+    use hkdf::Hkdf;
+
+    let recipient_public = BASE64
+        .decode("vAB/ripK5xzT1PT+KGbSvEEPfGQoxQliNWjSFjDfuhU=")
+        .expect("oracle public key");
+    let mut recipient = [0u8; 32];
+    recipient.copy_from_slice(&recipient_public);
+    let scalar = [42u8; 32];
+    let epk = X25519_BASEPOINT.mul_clamped(scalar);
+    let shared = MontgomeryPoint(recipient).mul_clamped(scalar);
+    let mut info = b"morpheus-confidential-payload-v2".to_vec();
+    info.extend_from_slice(epk.as_bytes());
+    info.extend_from_slice(&recipient_public);
+    let hkdf = Hkdf::<Sha256>::new(Some(&recipient_public), shared.as_bytes());
+    let mut aes_key = [0u8; 32];
+    hkdf.expand(&info, &mut aes_key).expect("HKDF");
+    let cipher = aes_gcm::Aes256Gcm::new_from_slice(&aes_key).expect("AES key");
+    let iv = [7u8, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+    let sealed = cipher
+        .encrypt(iv.as_slice().into(), payload.to_string().as_bytes())
+        .expect("seal payload");
+    let (ciphertext, tag) = sealed.split_at(sealed.len() - 16);
+    let envelope = json!({
+        "v": 2,
+        "alg": "X25519-HKDF-SHA256-AES-256-GCM",
+        "epk": BASE64.encode(epk.as_bytes()),
+        "iv": BASE64.encode(iv),
+        "ct": BASE64.encode(ciphertext),
+        "tag": BASE64.encode(tag),
+    });
+    BASE64.encode(envelope.to_string().as_bytes())
 }
 
 /// A played Sudoku session: the token, the op-log and the last step's
@@ -447,13 +491,14 @@ fn previewed_payload(harness: &TestState, played: &Played, at_ms: u64) -> Json {
 /// One kernel request as the relayer delivers it: the requester and the ids
 /// come from the chain request, the rest from the payload.
 fn kernel_fulfill(harness: &TestState, request_id: &str, requester: &str, payload: &Json) -> Json {
-    let mut delivered = payload.clone();
-    delivered["requester"] = Json::String(requester.to_string());
+    let delivered = json!({ "requester": requester });
+    let sealed = seal_kernel_payload(payload);
     let body = json!({
         "chain": "neo_n3",
         "request_type": "session.finalize",
         "request_id": request_id,
         "payload": delivered,
+        "payload_text": sealed,
         "fulfillment_context": {
             "app_id": payload["app_id"],
             "module_id": "game.session",

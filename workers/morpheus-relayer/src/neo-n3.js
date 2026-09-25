@@ -327,6 +327,8 @@ export function buildNeoN3EventFromRequestRecord(decoded, requestId) {
 
     return {
       chain: 'neo_n3',
+      eventName,
+      eventName,
       requestId: String(requestIdValue || requestId),
       requestType: String(requestType || ''),
       requester: String(requester || ''),
@@ -355,7 +357,7 @@ const NEO_N3_REQUEST_EVENT_NAMES = new Set(['MiniAppRequestQueued', 'OracleReque
  * the fulfillment pipeline. The two supported events have different state
  * layouts:
  *   - MiniAppRequestQueued: [requestId, appId, moduleId, operation, requester,
- *       sponsor, payload] (kernel contract). `requestType` is the operation so
+ *       sponsor, payload, payloadHash] (kernel contract). `requestType` is the operation so
  *       it matches the working `request_cursor` path which derives the kernel
  *       intent from `operation`.
  *   - OracleRequested: [requestId, requestType, requester, callbackContract,
@@ -365,10 +367,11 @@ const NEO_N3_REQUEST_EVENT_NAMES = new Set(['MiniAppRequestQueued', 'OracleReque
 function buildNeoN3EventFromNotificationState(eventName, decodedState, meta = {}) {
   const state = Array.isArray(decodedState) ? decodedState : [];
   if (eventName === 'MiniAppRequestQueued') {
-    const [requestId, appId, moduleId, operation, requester, , payload] = state;
+    const [requestId, appId, moduleId, operation, requester, , payload, payloadHash] = state;
     if (!asEventString(operation)) return null;
     return {
       chain: 'neo_n3',
+      eventName,
       requestId: String(requestId || '0'),
       requestType: String(operation || ''),
       appId: String(appId || ''),
@@ -378,6 +381,7 @@ function buildNeoN3EventFromNotificationState(eventName, decodedState, meta = {}
       callbackContract: '',
       callbackMethod: LEGACY_CALLBACK_METHOD,
       payloadText: String(payload || ''),
+      payloadHash: String(payloadHash || ''),
       blockNumber: Number(meta.blockNumber ?? 0),
       txHash: String(meta.txHash || ''),
       ...(meta.logIndex !== undefined ? { logIndex: Number(meta.logIndex) } : {}),
@@ -388,6 +392,7 @@ function buildNeoN3EventFromNotificationState(eventName, decodedState, meta = {}
     if (!asEventString(requestType)) return null;
     return {
       chain: 'neo_n3',
+      eventName,
       requestId: String(requestId || '0'),
       requestType: String(requestType || ''),
       requester: String(requester || ''),

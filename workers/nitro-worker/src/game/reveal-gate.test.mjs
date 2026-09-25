@@ -63,6 +63,10 @@ function idOf(appId, difficulty = 0) {
     contract_hash: '0x00112233445566778899aabbccddeeff00112233',
     game_id: '77',
     player: '0x0102030405060708090a0b0c0d0e0f1011121314',
+    player_witness: {
+      public_key: `02${'00'.repeat(32)}`,
+      signature: '00'.repeat(64),
+    },
     difficulty,
   };
 }

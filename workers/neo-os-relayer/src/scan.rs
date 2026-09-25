@@ -498,6 +498,7 @@ pub fn process_chain_neo_n3(
                                         .map(|event| {
                                             JsValue::from_json(&serde_json::json!({
                                                 "chain": "neo_n3",
+                                                "eventName": event.event_name.clone(),
                                                 "requestId": event.request_id,
                                                 "requestType": event.request_type,
                                                 "appId": event.app_id,
@@ -507,6 +508,7 @@ pub fn process_chain_neo_n3(
                                                 "callbackContract": event.callback_contract,
                                                 "callbackMethod": event.callback_method,
                                                 "payload": event.payload_text,
+                                                "payloadHash": event.payload_hash,
                                                 "createdAtMs": event.created_at_ms,
                                                 "fulfilledAtMs": event.fulfilled_at_ms,
                                                 "blockNumber": event.block_number,

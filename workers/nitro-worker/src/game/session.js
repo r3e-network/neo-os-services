@@ -110,6 +110,29 @@ function parseIdentity(payload = {}) {
   return { appId, network, contractHash, player, gameId: gameIdCanonical, difficulty, canonical };
 }
 
+// The authoritative Rust session lane verifies the secp256r1 signature and
+// account binding. The compatibility worker must still refuse the historical
+// unsigned shape so it cannot accidentally become a usable session endpoint.
+// Keep this boundary structural here; cryptographic verification remains in the
+// measured Rust host that is allowed to settle requests.
+function requirePlayerWitness(payload = {}) {
+  const witness = payload.player_witness;
+  if (!witness || typeof witness !== 'object' || Array.isArray(witness)) {
+    throw new Error('player_witness is required');
+  }
+  const publicKey = trimString(witness.public_key).replace(/^0x/i, '');
+  const signature = trimString(witness.signature ?? witness.data).replace(/^0x/i, '');
+  if (!/^(02|03)[0-9a-f]{64}$/i.test(publicKey)) {
+    throw new Error('player_witness.public_key must be a compressed secp256r1 key');
+  }
+  if (!/^[0-9a-f]{128}$/i.test(signature)) {
+    throw new Error('player_witness.signature must be 64 bytes of hex');
+  }
+  if (witness.salt !== undefined && typeof witness.salt !== 'string') {
+    throw new Error('player_witness.salt must be a string');
+  }
+}
+
 const signingAccountCache = new Map();
 
 function accountFor(privateKeyHex) {
@@ -372,6 +395,7 @@ export function buildResultBytes({ commitment, answerHash, elapsedMs, undos, sco
 
 async function loadIdentityAndEngine(payload) {
   const identity = parseIdentity(payload);
+  requirePlayerWitness(payload);
   const engineHash = trimString(payload.engine_hash);
   const engine = resolveEngineByHash(identity.appId, engineHash);
   return { identity, engine };

@@ -48,6 +48,9 @@ fn is_printable_text(text: &str) -> bool {
 
 fn decode_byte_string_from_hex(raw: &str) -> String {
     let bytes = hex_bytes(raw);
+    if bytes.len() == 32 {
+        return format!("0x{}", hex(&bytes));
+    }
     if let Some(text) = try_decode_utf8(&bytes) {
         if is_printable_text(&text) {
             return text;
@@ -63,6 +66,9 @@ fn decode_byte_string_from_hex(raw: &str) -> String {
 
 fn decode_byte_string_from_base64(raw: &str) -> String {
     let bytes = neo_os_core::base64::decode_lenient(raw);
+    if bytes.len() == 32 {
+        return format!("0x{}", hex(&bytes));
+    }
     if let Some(text) = try_decode_utf8(&bytes) {
         if is_printable_text(&text) {
             return text;
@@ -166,6 +172,7 @@ fn js_value_to_string(value: &Value) -> String {
 /// literal in buildNeoN3EventFromNotificationState / FromRequestRecord).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NeoN3Event {
+    pub event_name: String,
     pub request_id: String,
     pub request_type: String,
     pub app_id: String,
@@ -175,6 +182,9 @@ pub struct NeoN3Event {
     pub callback_contract: String,
     pub callback_method: String,
     pub payload_text: String,
+    /// Optional SHA-256 emitted by the current MiniAppRequestQueued event.
+    /// Legacy event/record shapes leave this empty.
+    pub payload_hash: String,
     pub created_at_ms: i64,
     pub fulfilled_at_ms: i64,
     pub block_number: i64,
@@ -214,6 +224,7 @@ pub fn build_event_from_notification_state(
             return None;
         }
         return Some(NeoN3Event {
+            event_name: event_name.to_string(),
             request_id: if !decoded_state.is_empty() {
                 string_at(0)
             } else {
@@ -227,6 +238,7 @@ pub fn build_event_from_notification_state(
             callback_contract: String::new(),
             callback_method: LEGACY_CALLBACK_METHOD.to_string(),
             payload_text: string_at(6),
+            payload_hash: string_at(7),
             created_at_ms: 0,
             fulfilled_at_ms: 0,
             block_number,
@@ -241,6 +253,7 @@ pub fn build_event_from_notification_state(
             return None;
         }
         return Some(NeoN3Event {
+            event_name: event_name.to_string(),
             request_id: if !decoded_state.is_empty() {
                 string_at(0)
             } else {
@@ -251,6 +264,7 @@ pub fn build_event_from_notification_state(
             callback_contract: string_at(3),
             callback_method: string_at(4),
             payload_text: string_at(5),
+            payload_hash: String::new(),
             app_id: String::new(),
             module_id: String::new(),
             operation: String::new(),
@@ -288,6 +302,7 @@ pub fn build_event_from_request_record(decoded: &[Value], request_id: &str) -> O
         let created_at_ms: i64 = trim(9).parse().unwrap_or(0);
         let fulfilled_at_ms: i64 = trim(10).parse().unwrap_or(0);
         return Some(NeoN3Event {
+            event_name: "MiniAppRequestQueued".to_string(),
             request_id: {
                 let first = as_string(0);
                 if first.is_empty() {
@@ -304,6 +319,7 @@ pub fn build_event_from_request_record(decoded: &[Value], request_id: &str) -> O
             callback_contract: as_string(7),
             callback_method: LEGACY_CALLBACK_METHOD.to_string(),
             payload_text: as_string(4),
+            payload_hash: String::new(),
             created_at_ms,
             fulfilled_at_ms,
             block_number: created_at_ms,
@@ -324,6 +340,7 @@ pub fn build_event_from_request_record(decoded: &[Value], request_id: &str) -> O
         let created_at_ms: i64 = trim(7).parse().unwrap_or(0);
         let fulfilled_at_ms: i64 = trim(8).parse().unwrap_or(0);
         return Some(NeoN3Event {
+            event_name: "OracleRequested".to_string(),
             request_id: {
                 let first = as_string(0);
                 if first.is_empty() {
@@ -337,6 +354,7 @@ pub fn build_event_from_request_record(decoded: &[Value], request_id: &str) -> O
             callback_contract: as_string(3),
             callback_method: as_string(4),
             payload_text: as_string(2),
+            payload_hash: String::new(),
             app_id: String::new(),
             module_id: String::new(),
             operation: String::new(),
@@ -694,7 +712,8 @@ mod tests {
             { "type": "String", "value": "fetch" },
             { "type": "String", "value": "NbrXdur6FV9bx33ME1jxjoKyQMBLZCWtDL" },
             { "type": "String", "value": "NVVqfbA31We3H39aQvNAPoCvUwoNooXdL4" },
-            { "type": "ByteArray", "value": "e30=" }
+            { "type": "ByteArray", "value": "e30=" },
+            { "type": "ByteArray", "value": "aGFzaA==" }
         ]);
         let decoded: Vec<Value> = state
             .as_array()
@@ -715,6 +734,7 @@ mod tests {
         assert_eq!(event.app_id, "demo.app");
         assert_eq!(event.callback_method, "onOracleResult");
         assert_eq!(event.payload_text, "{}");
+        assert_eq!(event.payload_hash, "hash");
         assert_eq!(event.block_number, 100);
         assert_eq!(event.tx_hash, "0xhash");
         assert_eq!(event.log_index, 2);

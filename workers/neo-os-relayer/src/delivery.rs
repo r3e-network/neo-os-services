@@ -32,6 +32,7 @@ use neo_os_core::js_value::{JsObject, JsValue};
 use neo_os_core::n3_tx::{create_invoke_script, ContractParam};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::Digest;
 
 use crate::config::RelayerConfig;
 
@@ -952,10 +953,10 @@ where
         .as_object()
         .ok_or_else(|| "oracle request event must be an object".to_string())?;
     let request_id = event_field(event_object, "requestId");
-    let request_type = event_field(event_object, "requestType");
-    let app_id = event_field(event_object, "appId");
-    let module_id = event_field(event_object, "moduleId");
-    let operation = event_field(event_object, "operation");
+    let mut request_type = event_field(event_object, "requestType");
+    let mut app_id = event_field(event_object, "appId");
+    let mut module_id = event_field(event_object, "moduleId");
+    let mut operation = event_field(event_object, "operation");
     if request_id.trim().is_empty() || request_type.trim().is_empty() {
         return Err("oracle request event is missing requestId or requestType".to_string());
     }
@@ -972,7 +973,7 @@ where
         }
     }
 
-    let payload_text = {
+    let mut payload_text = {
         let direct = event_field(event_object, "payloadText");
         if direct.is_empty() {
             event_field(event_object, "payload")
@@ -980,6 +981,44 @@ where
             direct
         }
     };
+    // The current MiniAppRequestQueued shape has app/module fields. For that
+    // shape, do not let the relayer's event decoder become the authority for
+    // bytes, requester, or operation: require its payload hash, re-read the
+    // immutable request record, and compare the hash before asking the enclave
+    // to sign. Legacy OracleRequested events have no app/module fields and
+    // remain on the explicitly compatible path below.
+    let payload_hash = event_field(event_object, "payloadHash");
+    let current_n3_event =
+        chain == "neo_n3" && event_field(event_object, "eventName") == "MiniAppRequestQueued";
+    let canonical_record = if current_n3_event {
+        if payload_hash.trim().is_empty() {
+            return Err("current MiniAppRequestQueued event is missing payload hash".into());
+        }
+        let record = read_n3_request_record(config, &request_id, transport)?;
+        let expected_hash = format!(
+            "0x{}",
+            hex::encode(sha2::Sha256::digest(&record.payload_bytes))
+        );
+        if normalize_payload_hash(&payload_hash) != normalize_payload_hash(&expected_hash) {
+            return Err("current MiniAppRequestQueued payload hash mismatch".into());
+        }
+        Some(record)
+    } else {
+        None
+    };
+    let canonical_requester = canonical_record
+        .as_ref()
+        .map(|record| record.requester.clone());
+    let canonical_callback_contract = canonical_record
+        .as_ref()
+        .map(|record| record.callback_contract.clone());
+    if let Some(record) = canonical_record {
+        request_type = record.operation.clone();
+        app_id = record.app_id;
+        module_id = record.module_id;
+        operation = record.operation;
+        payload_text = record.payload_text;
+    }
     let mut payload = serde_json::from_str::<Value>(&payload_text).unwrap_or_else(|_| json!({}));
     if !payload.is_object() {
         payload = json!({});
@@ -989,7 +1028,9 @@ where
         // request. The payload is bytes that account chose, so its own
         // `requester` key is never trusted — the enclave binds game sessions
         // (and their results) to this value.
-        let requester = event_field(event_object, "requester");
+        let requester = canonical_requester
+            .clone()
+            .unwrap_or_else(|| event_field(event_object, "requester"));
         if requester.is_empty() {
             payload.remove("requester");
         } else {
@@ -999,7 +1040,14 @@ where
             ("callback_contract", "callbackContract"),
             ("callback_method", "callbackMethod"),
         ] {
-            let value = event_field(event_object, event_name);
+            let value = if event_name == "callbackContract" {
+                canonical_callback_contract
+                    .clone()
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| event_field(event_object, event_name))
+            } else {
+                event_field(event_object, event_name)
+            };
             if !value.is_empty() && !payload.contains_key(wire) {
                 payload.insert(wire.to_string(), Value::String(value));
             }
@@ -1237,6 +1285,99 @@ where
     }
 
     Ok(prepared)
+}
+
+struct N3RequestRecord {
+    app_id: String,
+    module_id: String,
+    operation: String,
+    requester: String,
+    callback_contract: String,
+    payload_text: String,
+    payload_bytes: Vec<u8>,
+}
+
+fn normalize_payload_hash(value: &str) -> String {
+    value.trim().trim_start_matches("0x").to_ascii_lowercase()
+}
+
+fn read_n3_request_record<T: N3HttpTransport + EvmHttpTransport>(
+    config: &RelayerConfig,
+    request_id: &str,
+    transport: &T,
+) -> Result<N3RequestRecord, String> {
+    let lane = object_at(&config.raw, "neo_n3")?;
+    let contract = required_string(lane, "oracleContract", "oracle contract")?;
+    let rpc = NeoRpcClient::new(transport, string_array(lane.get("rpcUrls")), !cfg!(test))?;
+    let result = rpc
+        .invoke_function(
+            &contract,
+            "getRequest",
+            json!([{"type":"Integer","value":request_id}]),
+        )
+        .map_err(|error| error.to_string())?;
+    if result.get("state").and_then(Value::as_str) != Some("HALT") {
+        return Err("request state lookup did not HALT".into());
+    }
+    let first = result
+        .pointer("/stack/0")
+        .ok_or("request lookup omitted stack")?;
+    let decoded =
+        neo_os_chain_n3::scan::decode_neo_item(first, neo_os_chain_n3::scan::Encoding::Base64);
+    let fields = decoded.as_array().ok_or("request state is not an array")?;
+    if fields.len() < 8 {
+        return Err("request state tuple truncated".into());
+    }
+    let text_at = |index: usize| -> String {
+        fields
+            .get(index)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| fields.get(index).map(Value::to_string).unwrap_or_default())
+    };
+    if text_at(0) != request_id {
+        return Err("request state identity mismatch".into());
+    }
+    let raw_fields = first
+        .get("value")
+        .and_then(Value::as_array)
+        .ok_or("request state omitted raw fields")?;
+    let payload_bytes = raw_stack_bytes(
+        raw_fields
+            .get(4)
+            .ok_or("request state omitted payload bytes")?,
+    )?;
+    let payload_text = String::from_utf8(payload_bytes.clone())
+        .map_err(|_| "request payload is not valid UTF-8 JSON bytes")?;
+    Ok(N3RequestRecord {
+        app_id: text_at(1),
+        module_id: text_at(2),
+        operation: text_at(3),
+        payload_text,
+        requester: text_at(5),
+        callback_contract: text_at(7),
+        payload_bytes,
+    })
+}
+
+fn raw_stack_bytes(item: &Value) -> Result<Vec<u8>, String> {
+    let item_type = item
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let value = item.get("value");
+    match item_type.as_str() {
+        "bytestring" | "bytearray" => value
+            .and_then(Value::as_str)
+            .map(neo_os_core::base64::decode_lenient)
+            .ok_or_else(|| "request payload omitted ByteArray value".into()),
+        "string" => value
+            .and_then(Value::as_str)
+            .map(|text| text.as_bytes().to_vec())
+            .ok_or_else(|| "request payload omitted String value".into()),
+        _ => Err("request payload has unsupported VM type".into()),
+    }
 }
 
 fn object_at<'a>(
@@ -1816,6 +1957,198 @@ mod tests {
         )
     }
 
+    #[test]
+    fn session_finalize_with_payload_hash_reads_canonical_n3_request() {
+        let config = config();
+        let nitro = config.raw["nitro"].as_object().unwrap().clone();
+        let fields = vec![
+            json!({"type":"String","value":"77"}),
+            json!({"type":"String","value":"miniapp-sudoku"}),
+            json!({"type":"String","value":"game.session"}),
+            json!({"type":"String","value":"session.finalize"}),
+            json!({"type":"ByteArray","value":neo_os_core::base64::encode_standard(r#"{"kind":"miniapp.game.session.finalize.v2"}"#.as_bytes())}),
+            json!({"type":"String","value":"0x".to_owned() + &"aa".repeat(20)}),
+            json!({"type":"String","value":"sponsor"}),
+            json!({"type":"String","value":"0x".to_owned() + &"bb".repeat(20)}),
+            json!({"type":"String","value":"onOracleResult"}),
+            json!({"type":"Integer","value":"0"}),
+            json!({"type":"Integer","value":"0"}),
+            json!({"type":"ByteArray","value":""}),
+            json!({"type":"ByteArray","value":""}),
+            json!({"type":"ByteArray","value":""}),
+        ];
+        let digest = hex::encode(
+            build_fulfillment_digest_bytes(
+                &JsValue::Str("77".into()),
+                "session.finalize",
+                true,
+                "ok",
+                "",
+                "",
+                &FulfillmentOptions {
+                    chain: Some("neo_n3".into()),
+                    app_id: "miniapp-sudoku".into(),
+                    module_id: "game.session".into(),
+                    operation: "session.finalize".into(),
+                    contract_script_hash: "0xf54d8584ef82315c1800373272ab08ae0db2d5ef".into(),
+                    network_magic: Some(894_710_606.0),
+                },
+            )
+            .unwrap(),
+        );
+        let transport = ScriptedTransport::new(vec![
+            (
+                200,
+                json!({"result":{"state":"HALT","stack":[{"type":"Array","value":fields}]}}),
+            ),
+            (
+                200,
+                json!({
+                    "nonce":"00000007000000070000000700000007",
+                    "success":true,
+                    "result":"ok",
+                    "error":"",
+                    "signature":"sig",
+                    "public_key":"pk",
+                    "fulfillment_digest_hex":digest,
+                }),
+            ),
+        ]);
+        let event = json!({
+            "eventName":"MiniAppRequestQueued",
+            "requestId":"77",
+            "requestType":"session.finalize",
+            "appId":"event-app",
+            "moduleId":"game.session",
+            "operation":"session.finalize",
+            "requester":"0x".to_owned() + &"cc".repeat(20),
+            "payloadHash":format!(
+                "0x{}",
+                hex::encode(sha2::Sha256::digest(
+                    r#"{"kind":"miniapp.game.session.finalize.v2"}"#.as_bytes()
+                ))
+            ),
+            "payload":r#"{"kind":"forged"}"#,
+        });
+        let prepared = prepare_in_enclave(
+            &config,
+            "neo_n3",
+            &JsValue::from_json(&event),
+            &nitro,
+            &transport,
+            &FixedNonce(7),
+        )
+        .expect("canonical request read and enclave preparation");
+        assert_eq!(prepared.app_id, "miniapp-sudoku");
+        let calls = transport.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        let enclave_body: Value = serde_json::from_str(&calls[1].1).unwrap();
+        assert_eq!(
+            enclave_body["payload_text"],
+            r#"{"kind":"miniapp.game.session.finalize.v2"}"#
+        );
+        assert_eq!(
+            enclave_body["payload"]["requester"],
+            "0x".to_owned() + &"aa".repeat(20)
+        );
+    }
+
+    #[test]
+    fn current_n3_event_with_blank_payload_hash_fails_closed() {
+        let config = config();
+        let nitro = config.raw["nitro"].as_object().unwrap().clone();
+        let transport = ScriptedTransport::new(vec![]);
+        let error = prepare_in_enclave(
+            &config,
+            "neo_n3",
+            &JsValue::from_json(&json!({
+                "eventName":"MiniAppRequestQueued",
+                "requestId":"77",
+                "requestType":"session.finalize",
+                "appId":"miniapp-sudoku",
+                "moduleId":"game.session",
+                "operation":"session.finalize",
+                "requester":"0x".to_owned() + &"aa".repeat(20),
+                "payloadHash":"",
+                "payload":"{}"
+            })),
+            &nitro,
+            &transport,
+            &FixedNonce(7),
+        )
+        .expect_err("a current event without a payload hash must not use event bytes");
+        assert!(error.contains("missing payload hash"), "{error}");
+        assert!(transport.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn current_n3_event_with_omitted_payload_hash_fails_closed() {
+        let config = config();
+        let nitro = config.raw["nitro"].as_object().unwrap().clone();
+        let transport = ScriptedTransport::new(vec![]);
+        let error = prepare_in_enclave(
+            &config,
+            "neo_n3",
+            &JsValue::from_json(&json!({
+                "eventName":"MiniAppRequestQueued",
+                "requestId":"77",
+                "requestType":"session.finalize",
+                "appId":"miniapp-sudoku",
+                "moduleId":"game.session",
+                "operation":"session.finalize",
+                "requester":"0x".to_owned() + &"aa".repeat(20),
+                "payload":"{}"
+            })),
+            &nitro,
+            &transport,
+            &FixedNonce(7),
+        )
+        .expect_err("a current event without a hash field must not use event bytes");
+        assert!(error.contains("missing payload hash"), "{error}");
+        assert!(transport.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn current_n3_event_with_tampered_payload_hash_fails_before_enclave() {
+        let config = config();
+        let nitro = config.raw["nitro"].as_object().unwrap().clone();
+        let payload = r#"{"kind":"miniapp.game.session.finalize.v2"}"#;
+        let fields = vec![
+            json!({"type":"String","value":"77"}),
+            json!({"type":"String","value":"miniapp-sudoku"}),
+            json!({"type":"String","value":"game.session"}),
+            json!({"type":"String","value":"session.finalize"}),
+            json!({"type":"ByteArray","value":neo_os_core::base64::encode_standard(payload.as_bytes())}),
+            json!({"type":"String","value":"0x".to_owned() + &"aa".repeat(20)}),
+            json!({"type":"String","value":"sponsor"}),
+            json!({"type":"String","value":"0x".to_owned() + &"bb".repeat(20)}),
+        ];
+        let transport = ScriptedTransport::new(vec![(
+            200,
+            json!({"result":{"state":"HALT","stack":[{"type":"Array","value":fields}]}}),
+        )]);
+        let error = prepare_in_enclave(
+            &config,
+            "neo_n3",
+            &JsValue::from_json(&json!({
+                "eventName":"MiniAppRequestQueued",
+                "requestId":"77",
+                "requestType":"session.finalize",
+                "appId":"miniapp-sudoku",
+                "moduleId":"game.session",
+                "operation":"session.finalize",
+                "payloadHash":"0x00",
+                "payload":payload,
+            })),
+            &nitro,
+            &transport,
+            &FixedNonce(7),
+        )
+        .expect_err("event hash must bind the canonical request bytes");
+        assert!(error.contains("payload hash mismatch"), "{error}");
+        assert_eq!(transport.calls.lock().unwrap().len(), 1);
+    }
+
     fn evm_address(key: &SigningKey) -> String {
         let public_key = key.verifying_key().to_encoded_point(false);
         let hash = neo_os_chain_evm::keccak256(&public_key.as_bytes()[1..]);
@@ -1899,7 +2232,7 @@ mod tests {
         let delivered = posted_payload(json!({
             "requestId": "77",
             "requestType": "session.finalize",
-            "appId": "miniapp-sudoku",
+            "appId": "",
             "moduleId": "game.session",
             "operation": "session.finalize",
             "requester": CHAIN_REQUESTER,
@@ -1912,7 +2245,7 @@ mod tests {
         let delivered = posted_payload(json!({
             "requestId": "78",
             "requestType": "session.finalize",
-            "appId": "miniapp-sudoku",
+            "appId": "",
             "moduleId": "game.session",
             "operation": "session.finalize",
             "payload": payload,

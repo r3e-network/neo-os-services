@@ -53,7 +53,8 @@ namespace MorpheusOracle.Contracts
             RequestMap().Put(requestId.ToByteArray(), StdLib.Serialize(req));
             IncrementTotalRequests();
             IncrementMiniAppRequests(appId);
-            OnMiniAppRequestQueued(requestId, appId, moduleId, operation, requester, sponsor, req.Payload);
+            ByteString payloadHash = CryptoLib.Sha256(req.Payload);
+            OnMiniAppRequestQueued(requestId, appId, moduleId, operation, requester, sponsor, req.Payload, payloadHash);
             return requestId;
         }
 

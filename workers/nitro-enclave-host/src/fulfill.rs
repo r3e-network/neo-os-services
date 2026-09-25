@@ -18,6 +18,7 @@
 //!   - `BigInt` values in a JsValue (the builders never put one in these
 //!     envelopes) serialize to their decimal string, not `null`.
 
+use base64::Engine as _;
 use neo_os_chain_evm::{
     build_neox_digest, resolve_result_bytes_hex, Fulfillment as EvmFulfillment,
 };
@@ -587,6 +588,87 @@ fn compute_worker_response(
         return execute_fulfillment_route(state, "/oracle/decrypt", &decrypted);
     }
 
+    if intent_module_id == "game.session" || request_type == "session.finalize" {
+        let envelope = sealed_session_envelope(payload_text_value, payload);
+        if envelope.is_empty() {
+            return crate::state::BridgeReply {
+                ok: false,
+                status: 400,
+                body: serde_json::json!({ "error": "sealed session envelope required" }),
+            };
+        }
+        let decrypted = execute_fulfillment_route(
+            state,
+            "/oracle/decrypt",
+            &serde_json::json!({ "envelope": envelope }),
+        );
+        if !decrypted.ok {
+            return decrypted;
+        }
+        let plaintext = match decrypted
+            .body
+            .get("plaintext")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some(value) => value,
+            None => {
+                return crate::state::BridgeReply {
+                    ok: false,
+                    status: 400,
+                    body: serde_json::json!({ "error": "sealed session plaintext missing" }),
+                };
+            }
+        };
+        let mut sealed_payload = match serde_json::from_str::<serde_json::Value>(plaintext) {
+            Ok(serde_json::Value::Object(value)) => serde_json::Value::Object(value),
+            _ => {
+                return crate::state::BridgeReply {
+                    ok: false,
+                    status: 400,
+                    body: serde_json::json!({ "error": "sealed session payload must be an object" }),
+                };
+            }
+        };
+        if sealed_payload
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            != Some("miniapp.game.session.finalize.v2")
+        {
+            return crate::state::BridgeReply {
+                ok: false,
+                status: 400,
+                body: serde_json::json!({ "error": "SEALED_KIND_UNSUPPORTED" }),
+            };
+        }
+        // The event payload is decorated by the relayer only after it has
+        // read the canonical chain request. Bind the decrypted session to
+        // that request id and requester before entering the kernel handler.
+        if let serde_json::Value::Object(object) = &mut sealed_payload {
+            object.insert(
+                "request_id".to_string(),
+                serde_json::Value::String(request_id.to_string()),
+            );
+            let requester = truthy_trimmed(payload, &["requester"]);
+            if !requester.is_empty() {
+                object.insert(
+                    "requester".to_string(),
+                    serde_json::Value::String(requester),
+                );
+            }
+        }
+        let payload_js = JsValue::from_json(&sealed_payload);
+        let context = fulfillment_context_object(payload);
+        let worker_payload = build_worker_payload(
+            chain,
+            request_type,
+            &payload_js,
+            &JsValue::Str(request_id.to_string()),
+            &JsValue::from_json(&context),
+        );
+        let worker_payload_json = js_to_json(&JsValue::Object(worker_payload));
+        return execute_fulfillment_route(state, "/session/finalize", &worker_payload_json);
+    }
+
     let intent = resolve_kernel_intent(request_type);
     let payload_js = JsValue::from_json(payload);
     let context = fulfillment_context_object(payload);
@@ -599,6 +681,24 @@ fn compute_worker_response(
     );
     let worker_payload_json = js_to_json(&JsValue::Object(worker_payload));
     execute_fulfillment_route(state, intent.worker_route, &worker_payload_json)
+}
+
+/// On-chain N3 ByteString values arrive as either the base64 envelope used by
+/// the private-transfer lane or the raw UTF-8 JSON envelope emitted by the
+/// game SDK's `base64ToHex` contract argument. Normalize both representations
+/// before routing through the one audited oracle decrypt implementation.
+fn sealed_session_envelope(
+    payload_text_value: &serde_json::Value,
+    payload: &serde_json::Value,
+) -> String {
+    let candidate = match payload_text_value {
+        serde_json::Value::String(value) if !value.trim().is_empty() => value.trim().to_string(),
+        _ => truthy_trimmed(payload, &["envelope", "ciphertext", "sealed"]),
+    };
+    if candidate.starts_with('{') {
+        return base64::engine::general_purpose::STANDARD.encode(candidate.as_bytes());
+    }
+    candidate
 }
 
 fn execute_fulfillment_route(
@@ -684,4 +784,4 @@ fn outcome_reply(
 
 #[cfg(test)]
 #[path = "../tests/unit/fulfill.rs"]
-mod tests;
+pub(crate) mod tests;
