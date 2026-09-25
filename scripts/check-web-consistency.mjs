@@ -118,7 +118,7 @@ const [
   read('apps/web/app/docs/neodid/page.tsx'),
   read('apps/web/app/docs/layout.tsx'),
   read('apps/web/lib/docs-navigation.ts'),
-  read('docs/NEODID_DID_METHOD.md'),
+  read('vendor/neo-os-did/docs/NEODID_DID_METHOD.md'),
   read('apps/web/app/docs/page.tsx'),
   read('apps/web/app/docs/architecture/page.tsx'),
   read('apps/web/app/docs/networks/page.tsx'),

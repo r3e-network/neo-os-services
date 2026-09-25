@@ -22,9 +22,6 @@ The design goal is:
 - `OracleCallbackConsumer`
   - optional external callback adapter
   - no longer required for normal miniapp integrations because the kernel inbox is canonical
-- `NeoDIDRegistry`
-  - specialized identity / nullifier verifier module
-  - remains separate because its signature verification and replay constraints are domain-specific
 
 ## Kernel Model
 
@@ -140,7 +137,7 @@ claimed by this source change.
 `SetOracleVerificationKey` / `ClearOracleVerificationKey` were admin-gated but immediate, so a
 stolen admin key could remove the feed's signature second factor and anchor an arbitrary price
 in the same transaction — while the sibling contracts already timelock exactly this authority
-(`MorpheusOracle.ProposeRuntimeVerificationPublicKey`, `NeoDIDRegistry.ProposeVerifier`). Those
+(`MorpheusOracle.ProposeRuntimeVerificationPublicKey`, `neo-os-did NeoDIDRegistry.ProposeVerifier`). Those
 two methods are **replaced** (not shimmed) by the 24h propose/wait/execute lane in
 `MorpheusDataFeed.Verifier.cs`:
 

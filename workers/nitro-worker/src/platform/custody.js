@@ -8,6 +8,7 @@ import { env, trimString } from './core.js';
 const CUSTODY_API = '/signer/api/v1';
 
 let custodyTransportForTests = null;
+const CUSTODY_TEST_TRANSPORT = Symbol.for('neoos.custody.transport');
 
 export function custodyKeyId(role) {
   const envName = `SIGNER_ROLE_${String(role).toUpperCase()}_KEY_ID`;
@@ -35,9 +36,10 @@ export function custodyConnection() {
 
 async function custodyRequest(method, pathname, body) {
   let parsed;
-  if (custodyTransportForTests) {
+  const testTransport = custodyTransportForTests || globalThis[CUSTODY_TEST_TRANSPORT];
+  if (testTransport) {
     try {
-      parsed = await custodyTransportForTests(method, pathname, body);
+      parsed = await testTransport(method, pathname, body);
     } catch (error) {
       const unavailable = new Error(
         `custody signer service unreachable: ${error?.message || error}`
@@ -123,8 +125,10 @@ export function custodySignTransaction(keyId, unsignedHex) {
 // platform test pattern, like __setSecretsProviderForTests).
 export function __setCustodyTransportForTests(transport) {
   custodyTransportForTests = transport;
+  globalThis[CUSTODY_TEST_TRANSPORT] = transport;
 }
 
 export function __resetCustodyTransportForTests() {
   custodyTransportForTests = null;
+  delete globalThis[CUSTODY_TEST_TRANSPORT];
 }

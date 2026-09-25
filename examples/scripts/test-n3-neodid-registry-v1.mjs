@@ -145,7 +145,7 @@ function ensureRegistryArtifacts() {
   const manifestPath = path.join(REGISTRY_BUILD_DIR, `${REGISTRY_ARTIFACT}.manifest.json`);
   if (existsSync(nefPath) && existsSync(manifestPath)) return;
   const compile = spawnSync('nccs', ['NeoDIDRegistry.csproj', '-o', '../build'], {
-    cwd: path.resolve(repoRoot, 'contracts/NeoDIDRegistry'),
+    cwd: path.resolve(repoRoot, 'vendor/neo-os-did/contracts/NeoDIDRegistry'),
     stdio: 'inherit',
   });
   if (compile.status !== 0) {

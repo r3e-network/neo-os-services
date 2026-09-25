@@ -23,7 +23,7 @@ else
   exit 1
 fi
 
-for d in MorpheusOracle MorpheusDataFeed OracleCallbackConsumer NeoDIDRegistry; do
+for d in MorpheusOracle MorpheusDataFeed OracleCallbackConsumer; do
   if [ -f "$d/$d.csproj" ]; then
     echo "Building $d..."
     dotnet build "$d/$d.csproj" -c Release

@@ -641,6 +641,8 @@ export async function decryptEncryptedToken(ciphertext, payload = {}) {
 }
 
 export async function resolveConfidentialPayload(payload = {}) {
+  const bridge = globalThis[Symbol.for('neoos.resolveConfidentialPayload')];
+  if (bridge && bridge !== resolveConfidentialPayload) return bridge(payload);
   let ciphertext = resolveEncryptedConfidentialPayload(payload);
   const encryptedRef = resolveEncryptedConfidentialRef(payload);
   if (!ciphertext && encryptedRef) {
@@ -681,6 +683,8 @@ export async function resolveConfidentialPayload(payload = {}) {
 
   return mergeConfidentialValue(mergedPayload, parsed);
 }
+
+globalThis[Symbol.for('neoos.resolveConfidentialPayload')] = resolveConfidentialPayload;
 
 export async function executeProgrammableOracle(payload, context) {
   const maxScriptInputBytes = resolveMaxBytes(

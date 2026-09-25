@@ -139,7 +139,8 @@
     "test:workspace:live": "bash scripts/run_workspace_live_validation.sh",
     "test:workspace:full": "bash scripts/run_workspace_full_validation.sh",
     "test:scripts": "node --test scripts/*.test.mjs",
-    "test:web": "npm --prefix apps/web run test:run"
+    "test:web": "npm --prefix apps/web run test:run",
+    "check:neodid-vendor": "node scripts/check-neodid-vendor.mjs"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.57.1",

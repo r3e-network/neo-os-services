@@ -9,7 +9,7 @@ const cwd = fileURLToPath(new URL('../', import.meta.url));
 const eslint = new ESLint({ cwd });
 
 for (const path of [
-  'contracts/__tests__/Generated/NeoDIDRegistry.manifest.json',
+  'vendor/neo-os-did/contracts/build/NeoDIDRegistry.manifest.json',
   'crates/neo-os-games/src/engine-parity.goldens.json',
   'workers/nitro-worker/src/game/engine-parity.goldens.json',
 ]) {

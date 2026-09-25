@@ -28,8 +28,7 @@ namespace MorpheusOracle.Contracts.Tests
                 300,
                 "contracts/MorpheusOracle/MorpheusOracle.cs=1461",
                 "contracts/MorpheusDataFeed/MorpheusDataFeed.cs=518",
-                "contracts/MorpheusOracle/MorpheusOracle.Storage.cs=479",
-                "contracts/NeoDIDRegistry/NeoDIDRegistry.cs=429");
+                "contracts/MorpheusOracle/MorpheusOracle.Storage.cs=479");
         }
     }
 }

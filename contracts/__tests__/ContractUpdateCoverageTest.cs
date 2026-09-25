@@ -7,7 +7,6 @@ namespace MorpheusOracle.Contracts.Tests
         [Theory]
         [InlineData("MorpheusOracle", "MorpheusOracle.cs")]
         [InlineData("MorpheusDataFeed", "MorpheusDataFeed.cs")]
-        [InlineData("NeoDIDRegistry", "NeoDIDRegistry.cs")]
         [InlineData("OracleCallbackConsumer", "OracleCallbackConsumer.cs")]
         public void ProductionContractsExposeAdminGatedUpdate(string directory, string fileName)
         {
