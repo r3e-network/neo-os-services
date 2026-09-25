@@ -2,6 +2,7 @@
   "name": "@r3e-network/neo-os-services-web",
   "private": true,
   "version": "0.1.0",
+  "packageManager": "npm@10.9.2",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -39,6 +40,7 @@
     "@typescript-eslint/parser": "^8.57.1",
     "eslint": "^8.57.0",
     "eslint-config-next": "^15.5.21",
+    "js-yaml": "^3.15.2",
     "typescript": "^5.8.2",
     "vitest": "^4.1.11"
   },
@@ -69,7 +71,9 @@
         "picomatch": "4.0.4"
       }
     },
-    "fast-uri": "3.1.5",
+    "fast-uri": "3.1.6",
+    "browserslist": "4.28.7",
+    "js-yaml@>=4": "4.3.2",
     "sharp": "0.35.4",
     "next": {
       "postcss": "8.5.26"
