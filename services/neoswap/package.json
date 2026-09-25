@@ -13,11 +13,19 @@
   "scripts": {
     "test": "vitest run",
     "test:all": "vitest run",
-    "build:all": "npm run build --prefix analytics-api && npm run build --prefix oracle-aggregator && npm run build --prefix order-matcher && npm run build --prefix price-feed && npm run build --prefix routing-engine",
+    "audit:security": "npm audit --audit-level=moderate",
+    "build:all": "npm run build --prefix analytics-api && npm run build --prefix oracle-aggregator && npm run build --prefix order-matcher && npm run build --prefix price-feed && npm run build --prefix routing-engine && npm run build --prefix api-gateway",
     "check": "npm run test:all && npm run build:all"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.4",
-    "vitest": "^4.1.4"
+    "@vitest/coverage-v8": "^4.1.11",
+    "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "next": "^16.3.6",
+    "tar": "^7.5.22",
+    "wasm-pack": "^0.15.0",
+    "vitest": "^4.1.11",
+    "vite": "^8.3.0"
   }
 }

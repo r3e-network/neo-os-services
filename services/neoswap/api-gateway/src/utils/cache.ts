@@ -1,4 +1,4 @@
-import { redis } from '@/lib/redis';
+import { getRedis } from '@/lib/redis';
 import { CACHE_CONFIG } from '@/utils/metrics';
 
 const cacheKeyPrefix = 'neoswap:quote:';
@@ -9,7 +9,7 @@ export function cacheKeyFromRequest(tokenIn: string, tokenOut: string, amount: s
 
 export async function getCached(key: string): Promise<any | null> {
   try {
-    const data = await redis.get(key);
+    const data = await (await getRedis()).get(key);
     if (data) {
       return JSON.parse(data);
     }
@@ -25,7 +25,7 @@ export async function setCache(
   ttlSeconds: number = CACHE_CONFIG.ROUTE_CACHE_TTL
 ): Promise<void> {
   try {
-    await redis.setex(key, ttlSeconds, JSON.stringify(data));
+    await (await getRedis()).setEx(key, ttlSeconds, JSON.stringify(data));
   } catch (error) {
     console.error('Cache write failed:', error);
   }
@@ -33,7 +33,7 @@ export async function setCache(
 
 export async function deleteCache(key: string): Promise<boolean> {
   try {
-    const deleted = await redis.del(key);
+    const deleted = await (await getRedis()).del(key);
     return deleted > 0;
   } catch (error) {
     console.error('Cache delete failed:', error);

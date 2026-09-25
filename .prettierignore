@@ -1,6 +1,7 @@
 node_modules/
 .claude/
 .next/
+**/next-env.d.ts
 .vercel/
 .serena/
 coverage/

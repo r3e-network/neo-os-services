@@ -1,16 +1,5 @@
+import { getRedis } from '@/lib/redis';
 import { TENANT_CONFIG } from '@/utils/metrics';
-import { createClient } from 'redis';
-
-let redisClient: any = null;
-
-async function getRedis() {
-  if (!redisClient) {
-    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-    redisClient = createClient({ url: redisUrl });
-    await redisClient.connect();
-  }
-  return redisClient;
-}
 
 export function generateRateLimitKey(tenantId: string): string {
   return `ratelimit:${tenantId}`;

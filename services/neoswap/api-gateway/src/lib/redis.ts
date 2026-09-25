@@ -5,7 +5,8 @@ let redis: any = null;
 
 export async function getRedis(): Promise<any> {
   if (!redis) {
-    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+    const redisUrl = process.env.REDIS_URL;
+    if (!redisUrl) throw new Error('REDIS_URL is required for API Gateway cache');
     redis = createClient({ url: redisUrl });
 
     await redis.connect();
@@ -14,9 +15,6 @@ export async function getRedis(): Promise<any> {
 
   return redis;
 }
-
-// Initialize at startup
-getRedis().catch(console.error);
 
 // Default export for import convenience
 export { getRedis as default };

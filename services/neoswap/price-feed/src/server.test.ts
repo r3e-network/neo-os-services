@@ -2,6 +2,24 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { WebSocketServer, WebSocket } from 'ws';
 import { PriceFeedServer } from './server';
 
+vi.mock('ioredis', () => ({
+  default: class MockRedis {
+    status = 'wait';
+
+    on = vi.fn();
+
+    async connect(): Promise<void> {
+      throw new Error('redis connection refused');
+    }
+
+    async publish(): Promise<number> {
+      return 0;
+    }
+
+    async quit(): Promise<void> {}
+  },
+}));
+
 describe('PriceFeedServer', () => {
   let server: PriceFeedServer;
   let wsServer: WebSocketServer;
@@ -62,6 +80,39 @@ describe('PriceFeedServer', () => {
     });
 
     server = new PriceFeedServer(wsServer, { redis: mockRedis });
+  });
+
+  it('requires REDIS_URL for a production server', async () => {
+    const previousRedisUrl = process.env.REDIS_URL;
+    delete process.env.REDIS_URL;
+    const productionWsServer = new WebSocketServer({ port: 0 });
+    try {
+      expect(() => new PriceFeedServer(productionWsServer)).toThrow(
+        'REDIS_URL is required for Price Feed Server'
+      );
+    } finally {
+      await new Promise<void>((resolve) => productionWsServer.close(() => resolve()));
+      if (previousRedisUrl === undefined) delete process.env.REDIS_URL;
+      else process.env.REDIS_URL = previousRedisUrl;
+    }
+  });
+
+  it('rejects Redis operations after a production connection failure', async () => {
+    const previousRedisUrl = process.env.REDIS_URL;
+    process.env.REDIS_URL = 'redis://unit-test.invalid:6379';
+    const productionWsServer = new WebSocketServer({ port: 0 });
+    const productionServer = new PriceFeedServer(productionWsServer);
+    try {
+      await vi.waitFor(() => expect((productionServer as any).redisFailure).toBeInstanceOf(Error));
+      await expect(
+        productionServer.broadcastPriceUpdate('NEO/USDT', { price: '25.0' })
+      ).rejects.toThrow('Redis backend is unavailable');
+    } finally {
+      await productionServer.shutdown();
+      await new Promise<void>((resolve) => productionWsServer.close(() => resolve()));
+      if (previousRedisUrl === undefined) delete process.env.REDIS_URL;
+      else process.env.REDIS_URL = previousRedisUrl;
+    }
   });
 
   afterEach(async () => {

@@ -182,5 +182,6 @@
   },
   "dependencies": {
     "ethers": "^6.13.0"
-  }
+  },
+  "packageManager": "npm@10.9.2"
 }
