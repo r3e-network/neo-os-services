@@ -34,7 +34,7 @@ Before deploying Morpheus services, verify all required environment variables ar
 | Aspect                 | Testnet                          | Mainnet                           |
 | ---------------------- | -------------------------------- | --------------------------------- |
 | **Purpose**            | Development, testing, staging    | Production, live users            |
-| **Network Magic**      | Different value (`1268474290`)   | Different value (`860834051`)     |
+| **Network Magic**      | `894710606`                       | `860833102`                        |
 | **Contract Addresses** | Testnet-specific hashes          | Production contract hashes        |
 | **Token Value**        | Zero-value test tokens           | Real-value assets                 |
 | **Security**           | Lower threshold, more permissive | Strict security, production-ready |
@@ -47,7 +47,7 @@ Before deploying Morpheus services, verify all required environment variables ar
 #### Testnet Deployment Checklist / Testnet 部署检查清单
 
 - [ ] `MORPHEUS_NETWORK=testnet` set
-- [ ] `NEO_NETWORK_MAGIC=1268474290` (testnet magic)
+- [ ] `NEO_NETWORK_MAGIC=894710606` (testnet magic)
 - [ ] Contract addresses from `config/networks/testnet.json`
 - [ ] Testnet signer keys and private keys
 - [ ] `MORPHEUS_PAYMASTER_TESTNET_ENABLED=true` (if needed)
@@ -59,7 +59,7 @@ Before deploying Morpheus services, verify all required environment variables ar
 #### Mainnet Deployment Checklist / Mainnet 部署检查清单
 
 - [ ] `MORPHEUS_NETWORK=mainnet` set
-- [ ] `NEO_NETWORK_MAGIC=860834051` (mainnet magic)
+- [ ] `NEO_NETWORK_MAGIC=860833102` (mainnet magic)
 - [ ] Contract addresses from `config/networks/mainnet.json`
 - [ ] Production signer keys (custody service configured)
 - [ ] `MORPHEUS_MAINNET_RUNTIME_URL` configured

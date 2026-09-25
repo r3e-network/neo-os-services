@@ -51,7 +51,7 @@ Environment: production-preview
 ```powershell
 # PowerShell
 $env:MORPHEUS_NETWORK="testnet"
-$env:NEO_NETWORK_MAGIC="1268474290"
+$env:NEO_NETWORK_MAGIC="894710606"
 $env:SIGNER_ROLE_WORKER_KEY_ID="worker-testnet-key"
 
 # Verify
@@ -63,7 +63,7 @@ npm run check:network-config -- --expected testnet
 ```powershell
 # PowerShell
 $env:MORPHEUS_NETWORK="mainnet"
-$env:NEO_NETWORK_MAGIC="860834051"
+$env:NEO_NETWORK_MAGIC="860833102"
 $env:MORPHEUS_MAINNET_RUNTIME_URL="https://oracle.meshmini.app/mainnet"
 $env:UPSTASH_REDIS_REST_URL="redis://prod-instance"
 
