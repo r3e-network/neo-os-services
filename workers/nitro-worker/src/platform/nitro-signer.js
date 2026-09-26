@@ -11,7 +11,6 @@ const MAX_DERIVED_KEY_CACHE_SIZE = 64;
 const secretCache = new Map(); // secretId -> Promise<Buffer>
 let secretsClientPromise;
 let secretsFactoryForTests = null;
-const SECRETS_FACTORY_TEST = Symbol.for('neoos.secrets.factory');
 
 // Secret IDs (overridable via env); created on the box: 32 random bytes, base64.
 function x25519SecretId() {
@@ -60,12 +59,10 @@ function resetCaches() {
 // Test seam: inject a fake { getSecret(id) -> base64 } provider.
 export function __setSecretsProviderForTests(factory) {
   secretsFactoryForTests = factory;
-  globalThis[SECRETS_FACTORY_TEST] = factory;
   resetCaches();
 }
 export function __resetSecretsProviderStateForTests() {
   secretsFactoryForTests = null;
-  delete globalThis[SECRETS_FACTORY_TEST];
   resetCaches();
 }
 // Back-compat aliases for the prior dstack test seams.
@@ -73,8 +70,7 @@ export const __setDstackClientFactoryForTests = __setSecretsProviderForTests;
 export const __resetDstackClientStateForTests = __resetSecretsProviderStateForTests;
 
 async function getSecretsClient() {
-  const testFactory = secretsFactoryForTests || globalThis[SECRETS_FACTORY_TEST];
-  if (testFactory) return testFactory();
+  if (secretsFactoryForTests) return secretsFactoryForTests();
   if (!secretsClientPromise) {
     secretsClientPromise = (async () => {
       const region = trimString(env('AWS_REGION', 'NITRO_AWS_REGION')) || 'us-east-1';
