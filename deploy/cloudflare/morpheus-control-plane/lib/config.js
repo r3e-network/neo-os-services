@@ -1,4 +1,5 @@
 import { trimString, parseTimestampMs } from '@r3e-network/neo-os-services-shared/utils';
+import { JOB_ROUTE_CONFIG } from './health.js';
 
 const DEFAULT_REQUEUE_LIMIT = 50;
 const DEFAULT_STALE_PROCESSING_MS = 10 * 60_000;
@@ -77,26 +78,45 @@ function computeRetryDelaySeconds(attempt, env) {
   return Math.max(1, Math.round(jittered));
 }
 
+const SERVED_NETWORKS = new Set(['mainnet', 'testnet']);
+
+// The first path segments this Worker serves without a network label: every job
+// route of JOB_ROUTE_CONFIG plus the health and job status/recovery routes.
+const UNPREFIXED_ROUTE_SEGMENTS = new Set([
+  'health',
+  'jobs',
+  ...Object.keys(JOB_ROUTE_CONFIG).map((route) => route.split('/')[1]),
+]);
+
+/**
+ * Split a request path into its network and route. `/<network>/<route>` names
+ * the network, and a route without one (`/oracle/query`, `/health`) keeps the
+ * documented TestNet default. A first segment that is neither is never mapped
+ * to a network: in front of a served route it is an unsupported network label
+ * (`{ ok: false, status: 400 }`), and anything else is an unknown path
+ * (`{ ok: false, status: 404 }`).
+ */
 function resolveNetworkRoute(url) {
   const path = trimString(url.pathname || '/');
   const rawSegments = path.replace(/^\/+/, '').split('/');
   const segments =
     trimString(rawSegments[0]).toLowerCase() === 'control' ? rawSegments.slice(1) : rawSegments;
-  const maybeNetwork = trimString(segments[0]).toLowerCase();
-  const knownRoutePrefixes = new Set(['health', 'jobs', 'feeds', 'callbacks', 'automation']);
-  const hasNetworkPrefix = maybeNetwork === 'mainnet' || maybeNetwork === 'testnet';
-  if (!hasNetworkPrefix && maybeNetwork && !knownRoutePrefixes.has(maybeNetwork)) {
-    throw new Error(`unsupported Neo network: ${maybeNetwork}`);
+  const first = trimString(segments[0]).toLowerCase();
+  if (SERVED_NETWORKS.has(first)) {
+    return {
+      ok: true,
+      network: first,
+      routePath: `/${segments.slice(1).join('/')}`.replace(/\/+$/, '') || '/',
+    };
   }
-  const network = maybeNetwork === 'mainnet' ? 'mainnet' : 'testnet';
-  const routePath =
-    maybeNetwork === 'mainnet' || maybeNetwork === 'testnet'
-      ? `/${segments.slice(1).join('/')}`.replace(/\/+$/, '') || '/'
-      : path.replace(/\/+$/, '') || '/';
-  return {
-    network,
-    routePath,
-  };
+  const routePath = path.replace(/\/+$/, '') || '/';
+  if (!first || UNPREFIXED_ROUTE_SEGMENTS.has(first)) {
+    return { ok: true, network: 'testnet', routePath };
+  }
+  if (UNPREFIXED_ROUTE_SEGMENTS.has(trimString(segments[1]).toLowerCase())) {
+    return { ok: false, status: 400, network: first, routePath };
+  }
+  return { ok: false, status: 404, routePath };
 }
 
 function normalizeWorkflowVersion(value) {

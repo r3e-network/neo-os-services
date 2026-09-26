@@ -7,7 +7,8 @@ import {
   getAppBackendConfig,
   getExecutionPlaneConfig,
 } from './lib/execution-plane.js';
-import { resolveControlPlaneNetwork } from './lib/config.js';
+import { resolveControlPlaneNetwork, resolveNetworkRoute } from './lib/config.js';
+import { JOB_ROUTE_CONFIG } from './lib/health.js';
 import { resolveWorkflowDispatch } from './lib/workflow-dispatch.js';
 
 function createEnv(overrides = {}) {
@@ -71,17 +72,112 @@ test('control-plane network resolution rejects unknown queue and workflow labels
   );
 });
 
-test('control-plane route resolution rejects an unknown network prefix', async () => {
-  await assert.rejects(
-    () =>
-      worker.fetch(
-        new Request('https://control-plane.test/staging/jobs/recover', {
-          method: 'POST',
-          headers: { authorization: 'Bearer control-plane-key' },
-        }),
-        createEnv()
-      ),
-    /unsupported Neo network: staging/
+test('control-plane route resolution serves every job route with and without a network label', () => {
+  for (const route of Object.keys(JOB_ROUTE_CONFIG)) {
+    assert.deepEqual(resolveNetworkRoute(new URL(`https://cp.test${route}`)), {
+      ok: true,
+      network: 'testnet',
+      routePath: route,
+    });
+    for (const network of ['mainnet', 'testnet']) {
+      assert.deepEqual(resolveNetworkRoute(new URL(`https://cp.test/${network}${route}`)), {
+        ok: true,
+        network,
+        routePath: route,
+      });
+    }
+  }
+  assert.deepEqual(resolveNetworkRoute(new URL('https://cp.test/Mainnet/health')), {
+    ok: true,
+    network: 'mainnet',
+    routePath: '/health',
+  });
+  assert.deepEqual(resolveNetworkRoute(new URL('https://cp.test/control/mainnet/jobs/recover')), {
+    ok: true,
+    network: 'mainnet',
+    routePath: '/jobs/recover',
+  });
+  assert.deepEqual(resolveNetworkRoute(new URL('https://cp.test/')), {
+    ok: true,
+    network: 'testnet',
+    routePath: '/',
+  });
+});
+
+test('control-plane route resolution never maps an unknown first segment to a network', () => {
+  for (const path of ['/staging/jobs/recover', '/staging/oracle/query', '/control/Devnet/health']) {
+    const routing = resolveNetworkRoute(new URL(`https://cp.test${path}`));
+    assert.equal(routing.ok, false, path);
+    assert.equal(routing.status, 400, path);
+  }
+  for (const path of ['/foo', '/staging', '/staging/unknown', '/foo/bar/baz']) {
+    const routing = resolveNetworkRoute(new URL(`https://cp.test${path}`));
+    assert.equal(routing.ok, false, path);
+    assert.equal(routing.status, 404, path);
+  }
+});
+
+test('control plane answers an unsupported network label with 400 and an unknown path with 404', async () => {
+  const requests = [];
+  global.fetch = async (url) => {
+    requests.push(String(url));
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const call = (path, method = 'POST') =>
+    worker.fetch(
+      new Request(`https://control-plane.test${path}`, {
+        method,
+        headers: { authorization: 'Bearer control-plane-key' },
+      }),
+      createEnv()
+    );
+
+  for (const [path, network] of [
+    ['/staging/jobs/recover', 'staging'],
+    ['/staging/oracle/query', 'staging'],
+    ['/control/devnet/neodid/bind', 'devnet'],
+  ]) {
+    const response = await call(path);
+    assert.equal(response.status, 400, path);
+    assert.deepEqual(await response.json(), { error: 'unsupported Neo network', network });
+  }
+  for (const path of ['/foo', '/staging']) {
+    const response = await call(path, 'GET');
+    assert.equal(response.status, 404, path);
+    assert.deepEqual(await response.json(), { error: 'not found', path });
+  }
+  assert.deepEqual(requests, [], 'a refused route must not reach Supabase or a queue');
+});
+
+test('control plane enqueues an unprefixed job route on the TestNet default', async () => {
+  const env = createEnv();
+  const state = createState();
+  global.fetch = createFetchMock(state);
+
+  for (const route of ['/oracle/query', '/compute/execute', '/neodid/bind']) {
+    const response = await worker.fetch(
+      new Request(`https://control-plane.test${route}`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer control-plane-key',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ target_chain: 'neo_n3' }),
+      }),
+      env
+    );
+    assert.equal(response.status, 202, route);
+    const body = await response.json();
+    assert.equal(body.network, 'testnet', route);
+    assert.equal(body.route, route);
+  }
+  assert.deepEqual(
+    env.MORPHEUS_ORACLE_REQUEST_QUEUE.sent.map((message) => [message.route, message.network]),
+    [
+      ['/oracle/query', 'testnet'],
+      ['/compute/execute', 'testnet'],
+      ['/neodid/bind', 'testnet'],
+    ]
   );
 });
 

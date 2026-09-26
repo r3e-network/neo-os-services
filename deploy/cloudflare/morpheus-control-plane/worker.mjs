@@ -85,6 +85,12 @@ export default {
 
     const url = new URL(request.url);
     const routing = resolveNetworkRoute(url);
+    if (!routing.ok) {
+      if (routing.status === 400) {
+        return json(400, { error: 'unsupported Neo network', network: routing.network }, rid);
+      }
+      return json(404, { error: 'not found', path: routing.routePath }, rid);
+    }
 
     if (routing.routePath === '/' || routing.routePath === '') {
       return handleRootRoute(routing.network);
