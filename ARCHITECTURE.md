@@ -8,12 +8,12 @@ its design is `neo-os/claudedocs/NEOOS-TARGET-ARCHITECTURE-V2-20260921.md`.
 
 ## v1 binding (enforced)
 
-| Component                  | Plane          | Published interfaces                                                |
-| -------------------------- | -------------- | ------------------------------------------------------------------- |
-| `protocol-did-registry`    | protocol plane | owned by `neo-os-did`; services consumes the pinned vendor snapshot |
-| `gateway-network-identity` | gateway plane  | interfaces: NetworkIdentity, NetworkPolicy                          |
-| `gateway-signer`           | gateway plane  | interfaces: ScopedSigner, SubmissionReceipt, SignerPolicy           |
-| `gateway-service-kernel`   | gateway plane  | interfaces: DurableJob, CallbackEnvelope, RelayerPolicy             |
+| Component                  | Plane          | Published interfaces                                                                                |
+| -------------------------- | -------------- | --------------------------------------------------------------------------------------------------- |
+| `protocol-did-registry`    | protocol plane | owned by `neo-os-did`; services runs pinned copies at consumer paths (`vendor/neo-os-did.pin.json`) |
+| `gateway-network-identity` | gateway plane  | interfaces: NetworkIdentity, NetworkPolicy                                                          |
+| `gateway-signer`           | gateway plane  | interfaces: ScopedSigner, SubmissionReceipt, SignerPolicy                                           |
+| `gateway-service-kernel`   | gateway plane  | interfaces: DurableJob, CallbackEnvelope, RelayerPolicy                                             |
 
 ## v2 binding (proposed)
 
@@ -31,17 +31,19 @@ Repository layer: `L3` (gateway).
 
 ### Declared moves out of this repository
 
-| Path                                         | Destination |
-| -------------------------------------------- | ----------- |
-| `vendor/neo-os-did/contracts/NeoDIDRegistry` | C04         |
-| `contracts`                                  | C05         |
-| `apps/web`                                   | C20         |
-| `services/neoswap`                           | delete      |
-| `workers/morpheus-relayer`                   | delete      |
-| `workers/morpheus-relater-rs`                | delete      |
-| `contracts-evm`                              | archive     |
-| `workers/nitro-worker/src/game`              | retire      |
-| `config/networks`                            | C08         |
+| Path                            | Destination |
+| ------------------------------- | ----------- |
+| `contracts`                     | C05         |
+| `apps/web`                      | C20         |
+| `services/neoswap`              | delete      |
+| `workers/morpheus-relayer`      | delete      |
+| `workers/morpheus-relater-rs`   | delete      |
+| `contracts-evm`                 | archive     |
+| `workers/nitro-worker/src/game` | retire      |
+| `config/networks`               | C08         |
+
+C04's `NeoDIDRegistry` has already moved to `neo-os-did`; this repository keeps only the pinned NEF and manifest
+under `vendor/neo-os-did/contracts/build/`, which its testnet registry probes deploy.
 
 No deployment or production status is asserted here. Status is generated, never written:
 see `neo-os-web/docs/workspace/ARCHITECTURE-STATUS.generated.md`.

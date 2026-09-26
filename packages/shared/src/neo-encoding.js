@@ -2,8 +2,8 @@
 //
 // These primitives feed the fulfillment / NeoDID signing digests, so their byte
 // output is consensus-adjacent: it MUST match, byte-for-byte, what the on-chain
-// contracts hash (contracts/MorpheusOracle/MorpheusOracle.Fulfillment.cs and
-// contracts/NeoDIDRegistry/NeoDIDRegistry.cs). They were previously reimplemented
+// contracts hash (contracts/MorpheusOracle/MorpheusOracle.Fulfillment.cs here and
+// contracts/NeoDIDRegistry/NeoDIDRegistry.cs in neo-os-did). They were previously reimplemented
 // in workers/nitro-worker (neodid) and workers/morpheus-relayer (router), plus a
 // third divergent copy in the worker test suite. This module is the single JS
 // source of truth; packages/shared/src/neo-encoding.test.mjs pins the golden

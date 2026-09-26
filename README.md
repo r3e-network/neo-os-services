@@ -14,9 +14,16 @@ after validating the canonical checkout and refuses to overwrite existing data.
 ## Architecture authority
 
 `neo-os-did` owns the NeoDID registry (`protocol-did-registry`) and the complete C04/C16 protocol/runtime surface.
-`neo-os-services` consumes that surface only from `vendor/neo-os-did` at the commit recorded in
-`vendor/neo-os-did.pin.json`; enclave builds remain offline and reproducible. Eligibility is an independent proof that the
-operation-policy layer composes with AA authorization; the registry never grants
+`neo-os-services` runs the NeoDID consumer files — the worker ticket lane, the `did:morpheus` resolver and its
+test, the seven `/api/neodid/*` handlers, and the Rust protocol and enclave-host modules — as byte-identical
+copies of `neo-os-did` sources placed at their consumer paths, so they import this repository's own platform
+modules and every security primitive exists once. `vendor/neo-os-did.pin.json` records the `neo-os-did` commit
+and each copy's source, destination and SHA-256. `vendor/neo-os-did/` holds only NeoDID data read as data: the
+DID method text and the registry NEF and manifest. `npm run check:neodid-vendor` fails on drift, on an undeclared
+file under `vendor/neo-os-did/`, on a pinned copy of a module this repository owns, and, with a sibling
+`neo-os-did` checkout, on a checkout that is not at the pinned commit. A change to a pinned file is made in
+`neo-os-did` and arrives by moving the pin; enclave builds remain offline and reproducible. Eligibility is an
+independent proof that the operation-policy layer composes with AA authorization; the registry never grants
 authorization, and an indexer never grants eligibility.
 
 `config/networks` in this repository is the sole source of network identity
@@ -34,7 +41,7 @@ authorization or chain finality.
 The binding is declared in `neo-os-web/docs/workspace/neoos-target-architecture.v1.json` and
 checked by the architecture source-coverage gate.
 
-Proposed v2 binding: in `neo-os-web/docs/workspace/neoos-target-architecture.v2.json` (status `PROPOSED`, validated by `npm run check:architecture:v2` in `neo-os-web`) this repository is v2 layer L3 (gateway) and owns C14 deliver, C15 compute, C16 identity-service and C17 ingress; it hosts C05 oracle; C04 identity and C16 identity-service are owned by the canonical `neo-os-did` repository; C12 sign is bound in `workers/neo-signer/README.md`. The v1 binding above remains the enforced contract until the v2 adoption procedure completes.
+Proposed v2 binding: in `neo-os-web/docs/workspace/neoos-target-architecture.v2.json` (status `PROPOSED`, validated by `npm run check:architecture:v2` in `neo-os-web`) this repository is v2 layer L3 (gateway) and owns C14 deliver, C15 compute and C17 ingress; it hosts C05 oracle; C04 identity and C16 identity-service are owned by the canonical `neo-os-did` repository, whose C16 consumer files this repository runs as pinned copies; C12 sign is bound in `workers/neo-signer/README.md`. The v1 binding above remains the enforced contract until the v2 adoption procedure completes.
 
 ## Current Design
 

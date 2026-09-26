@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { experimental, rpc as neoRpc, sc, tx, u, wallet } from '@cityofzion/neon-js';
 import {
@@ -20,7 +19,7 @@ import {
 const GAS_HASH = '0xd2a4cff31913016155e38e474a2c06d08be276cf';
 const EXAMPLE_BUILD_DIR = path.resolve(repoRoot, 'examples/build/n3');
 const EXAMPLE_CONSUMER_ARTIFACT = 'UserConsumerN3OracleExample';
-const REGISTRY_BUILD_DIR = path.resolve(repoRoot, 'contracts/build');
+const REGISTRY_BUILD_DIR = path.resolve(repoRoot, 'vendor/neo-os-did/contracts/build');
 const REGISTRY_ARTIFACT = 'NeoDIDRegistry';
 const NEODID_MATRIX_LATEST = path.resolve(
   repoRoot,
@@ -140,17 +139,16 @@ function decodeDeployHash(appLog) {
   return `0x${Buffer.from(bytes).reverse().toString('hex')}`;
 }
 
+// NeoDIDRegistry is built and tested in neo-os-did; this probe deploys the NEF
+// and manifest pinned from it (vendor/neo-os-did.pin.json) rather than
+// compiling a second copy here.
 function ensureRegistryArtifacts() {
   const nefPath = path.join(REGISTRY_BUILD_DIR, `${REGISTRY_ARTIFACT}.nef`);
   const manifestPath = path.join(REGISTRY_BUILD_DIR, `${REGISTRY_ARTIFACT}.manifest.json`);
   if (existsSync(nefPath) && existsSync(manifestPath)) return;
-  const compile = spawnSync('nccs', ['NeoDIDRegistry.csproj', '-o', '../build'], {
-    cwd: path.resolve(repoRoot, 'vendor/neo-os-did/contracts/NeoDIDRegistry'),
-    stdio: 'inherit',
-  });
-  if (compile.status !== 0) {
-    throw new Error(`failed to compile ${REGISTRY_ARTIFACT}`);
-  }
+  throw new Error(
+    `pinned ${REGISTRY_ARTIFACT} artifacts are missing under ${path.relative(repoRoot, REGISTRY_BUILD_DIR)}; run npm run check:neodid-vendor`
+  );
 }
 
 async function deployRegistry(rpcClient, account, rpcUrl, networkMagic) {

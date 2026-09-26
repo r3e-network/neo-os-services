@@ -8,14 +8,24 @@
  * repository (`dest`) and its SHA-256. A pinned file is a byte-identical copy:
  * a change it needs is made in neo-os-did and arrives by moving the pin.
  *
+ * Consumer code (the worker lane, the resolver and its test, the API handlers,
+ * the Rust protocol and enclave-host modules) sits at its consumer path, so its
+ * relative imports resolve to this repository's own modules and every platform
+ * primitive exists once. vendor/neo-os-did/ holds only NeoDID data this
+ * repository reads as data.
+ *
  * The gate fails when:
  *   1. the pin is not schema 2: a repository, a full commit id, and a
  *      non-empty list of {source, dest, sha256} entries whose paths are
  *      normalized and repository-relative and whose destinations are unique;
- *   2. a dest is missing, is not a regular file, or does not hash to its
+ *   2. an entry pins one of neo-os-did's local stand-ins for a module or data
+ *      file this repository owns, or places source code under
+ *      vendor/neo-os-did/, where its imports would resolve to a second copy of
+ *      this repository's modules;
+ *   3. a dest is missing, is not a regular file, or does not hash to its
  *      sha256;
- *   3. a file under vendor/neo-os-did/ is not a declared dest (an orphan);
- *   4. a sibling neo-os-did checkout is found (NEOOS_DID_CHECKOUT, else
+ *   4. a file under vendor/neo-os-did/ is not a declared dest (an orphan);
+ *   5. a sibling neo-os-did checkout is found (NEOOS_DID_CHECKOUT, else
  *      ../neo-os-did or ../../neo-os-did) and its HEAD is not the pin commit,
  *      or a source at the pin commit does not hash to its sha256.
  *      NEOOS_DID_CHECKOUT naming anything but a git checkout is a failure, not
@@ -33,12 +43,53 @@ import { fileURLToPath } from 'node:url';
 export const PIN_FILE = 'vendor/neo-os-did.pin.json';
 export const VENDOR_DIR = 'vendor/neo-os-did';
 
+/**
+ * neo-os-did's local stand-ins for modules and data this repository owns (its
+ * README, "Local stand-ins, never vendored"). Entries ending in `/` are
+ * directories. Pinning one would bring a second copy of a services-owned
+ * module or of the network registry back into this repository.
+ */
+export const NEVER_VENDORED_SOURCES = Object.freeze([
+  'config/networks/',
+  'runtime/nitro-worker/src/platform/',
+  'runtime/nitro-worker/src/chain/',
+  'runtime/nitro-worker/src/oracle/',
+  'packages/web/src/config.ts',
+  'packages/web/src/networks.ts',
+  'packages/web/src/public-config.ts',
+  'packages/web/src/onchain-data.ts',
+  'packages/web/src/feed-defaults.ts',
+  'crates/neo-os-did/src/core.rs',
+  'crates/neo-os-did/src/js.rs',
+  'crates/neo-os-did/src/stable_stringify.rs',
+  'runtime/nitro-enclave-host/tests/unit/support.rs',
+]);
+
+/** Extensions of files that run or compile; none of them belongs under vendor/neo-os-did/. */
+const CODE_EXTENSIONS = new Set([
+  '.js',
+  '.mjs',
+  '.cjs',
+  '.jsx',
+  '.ts',
+  '.mts',
+  '.cts',
+  '.tsx',
+  '.rs',
+]);
+
 const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const ENTRY_KEYS = new Set(['source', 'dest', 'sha256']);
 const FULL_COMMIT = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+export function isNeverVendoredSource(source) {
+  return NEVER_VENDORED_SOURCES.some((entry) =>
+    entry.endsWith('/') ? source.startsWith(entry) : source === entry
+  );
+}
 
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -84,6 +135,10 @@ function auditPinShape(pin) {
     }
     if (!isRepoRelativePath(entry.source)) {
       problems.push(`${label}: source must be a normalized repository-relative path`);
+    } else if (isNeverVendoredSource(entry.source)) {
+      problems.push(
+        `${label}: ${entry.source} is a neo-os-did stand-in for a module or data file this repository owns; it is never vendored`
+      );
     }
     if (!isRepoRelativePath(entry.dest)) {
       problems.push(`${label}: dest must be a normalized repository-relative path`);
@@ -93,6 +148,14 @@ function auditPinShape(pin) {
       problems.push(`${label}: dest ${entry.dest} is declared more than once`);
     } else {
       dests.add(entry.dest);
+      if (
+        entry.dest.startsWith(`${VENDOR_DIR}/`) &&
+        CODE_EXTENSIONS.has(posix.extname(entry.dest))
+      ) {
+        problems.push(
+          `${label}: ${entry.dest} is code; place it at its consumer path, where its imports resolve to this repository's modules, not under ${VENDOR_DIR}/`
+        );
+      }
     }
     if (typeof entry.sha256 !== 'string' || !SHA256.test(entry.sha256)) {
       problems.push(`${label}: sha256 must be 64 lowercase hex characters`);

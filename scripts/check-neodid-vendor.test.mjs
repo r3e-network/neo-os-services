@@ -221,3 +221,52 @@ test('rejects escaping, absolute, duplicate and malformed entries', (t) => {
   assert.ok(problems.some((problem) => /files\[4\]: dest must be a normalized/.test(problem)));
   assert.ok(problems.some((problem) => /files\[5\]: dest must be a normalized/.test(problem)));
 });
+
+test('refuses consumer code pinned under vendor/neo-os-did', (t) => {
+  const { root, commit } = makeTree(t);
+  const lane = {
+    source: 'runtime/nitro-worker/src/neodid/index.js',
+    dest: 'vendor/neo-os-did/runtime/nitro-worker/src/neodid/index.js',
+    body: 'export const lane = 1;\n',
+  };
+  write(join(root, lane.dest), lane.body);
+  writePin(root, pinFor(commit, [FILES[1], lane]));
+  const { problems } = audit(root);
+  assert.equal(problems.length, 1);
+  assert.match(
+    problems[0],
+    /files\[1\]: vendor\/neo-os-did\/runtime\/nitro-worker\/src\/neodid\/index\.js is code; place it at its consumer path/
+  );
+});
+
+test('refuses to pin a neo-os-did stand-in for a module or data file this repository owns', (t) => {
+  const { root, commit } = makeTree(t);
+  const standIns = [
+    {
+      source: 'runtime/nitro-worker/src/platform/custody.js',
+      dest: 'workers/nitro-worker/src/platform/custody.js',
+      body: '// custody\n',
+    },
+    {
+      source: 'config/networks/testnet.json',
+      dest: 'config/networks/testnet.json',
+      body: '{}\n',
+    },
+    {
+      source: 'crates/neo-os-did/src/core.rs',
+      dest: 'crates/neo-os-compute/src/core.rs',
+      body: '// core\n',
+    },
+  ];
+  for (const entry of standIns) write(join(root, entry.dest), entry.body);
+  writePin(root, pinFor(commit, [...FILES, ...standIns]));
+  const { problems } = audit(root);
+  assert.deepEqual(
+    problems.map((problem) => problem.replace(/ is a neo-os-did stand-in.*$/, '')),
+    [
+      `${PIN_FILE}: files[2]: runtime/nitro-worker/src/platform/custody.js`,
+      `${PIN_FILE}: files[3]: config/networks/testnet.json`,
+      `${PIN_FILE}: files[4]: crates/neo-os-did/src/core.rs`,
+    ]
+  );
+});
