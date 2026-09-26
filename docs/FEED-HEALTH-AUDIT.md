@@ -228,7 +228,11 @@ with the mainnet topup files.
 2. **ABI is probed before a testnet write is attempted.** Write mode is chosen
    only after magic-pinned `FEED_NETWORK` and a proven public ABI. Testnet with
    `updateFeed` and no `updateFeeds` selects `per_pair_update_feed`. Mainnet
-   and unknown networks never silently downgrade from batch to per-pair.
+   and unknown networks never silently downgrade from batch to per-pair. The
+   deployed mainnet ABI may expose both exact `updateFeed` (legacy) and exact
+   `updateFeeds` (canonical); that combination has one explicit outcome,
+   `updateFeeds`. A mixed ABI on TestNet or an unknown network remains a hard
+   failure, as does any duplicate, wrong-arity, or wrong-type method.
 3. **No host-key N3 signing path is reintroduced.** Per-pair TestNet writes still
    go through enclave `/feed/sign` (`write_mode` and `operation` both
    `updateFeed`) and the host rebuild guard. Mainnet stays batch `updateFeeds`.

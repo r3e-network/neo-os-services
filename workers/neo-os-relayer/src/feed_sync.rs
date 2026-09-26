@@ -636,6 +636,7 @@ fn deliver_n3_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter + Sync, N: N
         .ok_or_else(|| "Neo N3 network magic is not configured".to_string())?;
     let contract = required_string(n3, "datafeedContract", "Neo N3 datafeed contract")?;
     let contract_bytes = parse_hash160_display(&contract)?;
+    let write_mode = probe_n3_feed_write_mode(&rpc, &contract, network_magic)?;
     let key_id = n3
         .get("custodyKeyIds")
         .and_then(Value::as_object)
@@ -683,8 +684,9 @@ fn deliver_n3_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter + Sync, N: N
         0,
         0,
         timeout_ms,
+        write_mode,
     )?;
-    if first.get("status").and_then(Value::as_str) == Some("no-update") {
+    if validate_n3_no_update_response(&first, write_mode)? {
         if let Some(j) = journal {
             j.persist("prepared", json!({"no_update":true,"feed_response":first}))?;
         }
@@ -701,6 +703,7 @@ fn deliver_n3_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter + Sync, N: N
         tx_nonce,
         expected_valid_until_block,
         &freshness_nonce,
+        write_mode,
     )?;
     let zero_tx = FeedTx {
         nonce: first_plan.tx_nonce,
@@ -744,8 +747,9 @@ fn deliver_n3_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter + Sync, N: N
         system_fee,
         0,
         timeout_ms,
+        write_mode,
     )?;
-    if fee_plan.get("status").and_then(Value::as_str) == Some("no-update") {
+    if validate_n3_no_update_response(&fee_plan, write_mode)? {
         if let Some(j) = journal {
             j.persist(
                 "prepared",
@@ -765,6 +769,7 @@ fn deliver_n3_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter + Sync, N: N
         tx_nonce,
         expected_valid_until_block,
         &freshness_nonce,
+        write_mode,
     )?;
     let fee_tx = FeedTx {
         nonce: fee_plan.tx_nonce,
@@ -804,8 +809,9 @@ fn deliver_n3_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter + Sync, N: N
             system_fee,
             network_fee,
             timeout_ms,
+            write_mode,
         )?;
-        if response.get("status").and_then(Value::as_str) == Some("no-update") {
+        if validate_n3_no_update_response(&response, write_mode)? {
             if let Some(j) = journal {
                 j.persist(
                     "prepared",
@@ -825,6 +831,7 @@ fn deliver_n3_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter + Sync, N: N
             tx_nonce,
             expected_valid_until_block,
             &freshness_nonce,
+            write_mode,
         )?;
         let (needed_system, needed_network, signed, tx_hash) = {
             let tx = FeedTx {
@@ -936,6 +943,7 @@ fn call_n3_feed_host<T: HttpTransport + N3HttpTransport>(
     system_fee: u128,
     network_fee: u128,
     timeout_ms: u64,
+    write_mode: &str,
 ) -> Result<Value, String> {
     let endpoint = service_endpoint(
         nitro
@@ -949,6 +957,8 @@ fn call_n3_feed_host<T: HttpTransport + N3HttpTransport>(
     let body = json!({
         "chain": "neo_n3",
         "network": config.network,
+        "write_mode": write_mode,
+        "operation": write_mode,
         "symbols": symbols,
         "onchain_state": baseline,
         "now": (now_ms / 1000.0).floor(),
@@ -984,7 +994,132 @@ fn call_n3_feed_host<T: HttpTransport + N3HttpTransport>(
             "Rust enclave Neo N3 feed signing answered {status}: {detail}"
         ));
     }
+    if response.get("status").and_then(Value::as_str) == Some("no-update") {
+        validate_n3_no_update_response(&response, write_mode)?;
+    }
     Ok(response)
+}
+
+fn probe_n3_feed_write_mode<T: N3HttpTransport>(
+    rpc: &NeoRpcClient<T>,
+    contract: &str,
+    network_magic: u32,
+) -> Result<&'static str, String> {
+    let state = rpc
+        .get_contract_state(contract)
+        .map_err(|error| format!("Neo N3 datafeed ABI probe failed: {error}"))?;
+    let network = match network_magic {
+        860_833_102 => "mainnet",
+        894_710_606 => "testnet",
+        other => return Err(format!("unsupported Neo N3 network magic {other}")),
+    };
+    resolve_n3_feed_write_mode(&state, network)
+}
+
+fn validate_n3_no_update_response(
+    response: &Value,
+    expected_operation: &str,
+) -> Result<bool, String> {
+    if response.get("status").and_then(Value::as_str) != Some("no-update") {
+        return Ok(false);
+    }
+    let operation = response
+        .get("operation")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Rust enclave Neo N3 no-update response omitted operation".to_string())?;
+    let write_mode = response
+        .get("write_mode")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Rust enclave Neo N3 no-update response omitted write_mode".to_string())?;
+    if write_mode != operation {
+        return Err("Rust enclave Neo N3 no-update response has mismatched write mode".to_string());
+    }
+    if operation != expected_operation {
+        return Err(format!(
+            "Rust enclave Neo N3 no-update operation {operation} did not match probed ABI {expected_operation}"
+        ));
+    }
+    Ok(true)
+}
+
+fn resolve_n3_feed_write_mode(state: &Value, network: &str) -> Result<&'static str, String> {
+    let methods = state
+        .pointer("/manifest/abi/methods")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Neo N3 datafeed ABI probe omitted manifest.abi.methods".to_string())?;
+    let inspect_method = |name: &str, expected: &[&str]| -> Result<bool, String> {
+        let matches = methods
+            .iter()
+            .filter(|method| method.get("name").and_then(Value::as_str) == Some(name))
+            .collect::<Vec<_>>();
+        if matches.len() > 1 {
+            return Err(format!(
+                "Neo N3 {network} datafeed ABI method {name} is ambiguous ({})",
+                matches.len()
+            ));
+        }
+        let Some(method) = matches.first() else {
+            return Ok(false);
+        };
+        let parameters = method
+            .get("parameters")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                format!("Neo N3 {network} datafeed ABI method {name} has no parameters")
+            })?;
+        if parameters.len() != expected.len() {
+            return Err(format!(
+                "Neo N3 {network} datafeed ABI method {name} has wrong arity ({})",
+                parameters.len()
+            ));
+        }
+        if !parameters.iter().zip(expected).all(|(parameter, ty)| {
+            parameter
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|actual| actual == *ty)
+        }) {
+            return Err(format!(
+                "Neo N3 {network} datafeed ABI method {name} has wrong parameter types"
+            ));
+        }
+        Ok(true)
+    };
+    let has_update_feed = inspect_method(
+        "updateFeed",
+        &[
+            "String",
+            "Integer",
+            "Integer",
+            "Integer",
+            "ByteArray",
+            "Integer",
+        ],
+    )?;
+    let has_update_feeds = inspect_method(
+        "updateFeeds",
+        &["Array", "Array", "Array", "Array", "Array", "Array"],
+    )?;
+    // The deployed mainnet MorpheusDataFeed retains the exact legacy
+    // updateFeed entry point alongside canonical updateFeeds. Mainnet is
+    // deterministic because it always selects updateFeeds; testnet and
+    // unknown networks must reject a mixed ABI instead of inheriting that
+    // compatibility rule.
+    if has_update_feed && has_update_feeds && network != "mainnet" {
+        return Err(format!(
+            "Neo N3 {network} datafeed ABI exposes multiple supported writer ABIs; refusing mixed selection outside the explicit mainnet batch policy"
+        ));
+    }
+    match (network, has_update_feed, has_update_feeds) {
+        ("testnet", true, false) => Ok("updateFeed"),
+        ("mainnet", _, true) => Ok("updateFeeds"),
+        ("mainnet", _, _) => Err(format!(
+            "Neo N3 mainnet datafeed has no exact updateFeeds ABI (updateFeed={has_update_feed})"
+        )),
+        _ => Err(format!(
+            "Neo N3 {network} datafeed has no exact supported writer ABI (updateFeeds={has_update_feeds}, updateFeed={has_update_feed})"
+        )),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -999,6 +1134,7 @@ fn parse_n3_signed_plan(
     expected_tx_nonce: u32,
     expected_valid_until_block: u32,
     freshness_nonce: &str,
+    expected_operation: &str,
 ) -> Result<N3SignedPlan, String> {
     if response.get("status").and_then(Value::as_str) != Some("ok")
         || response.get("chain").and_then(Value::as_str) != Some("neo_n3")
@@ -1053,18 +1189,62 @@ fn parse_n3_signed_plan(
                 .ok_or_else(|| "Neo N3 feed attestation hash is not text".to_string())
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let script = create_invoke_script(
-        contract,
-        "updateFeeds",
-        &[
-            ContractParam::Array(strings(pairs, "pairs")?),
-            ContractParam::Array(integers(rounds, "rounds")?),
-            ContractParam::Array(integers(prices, "prices")?),
-            ContractParam::Array(integers(timestamps, "timestamps")?),
-            ContractParam::Array(hash_params),
-            ContractParam::Array(integers(sources, "source ids")?),
-        ],
-    )
+    let operation = response
+        .get("operation")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Rust enclave Neo N3 feed response omitted operation".to_string())?;
+    let write_mode = response
+        .get("write_mode")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Rust enclave Neo N3 feed response omitted write_mode".to_string())?;
+    if write_mode != operation {
+        return Err("Rust enclave Neo N3 feed response has mismatched write mode".to_string());
+    }
+    if operation != expected_operation {
+        return Err(format!(
+            "Rust enclave Neo N3 feed operation {operation} did not match probed ABI {expected_operation}"
+        ));
+    }
+    let script = match operation {
+        "updateFeeds" => create_invoke_script(
+            contract,
+            "updateFeeds",
+            &[
+                ContractParam::Array(strings(pairs, "pairs")?),
+                ContractParam::Array(integers(rounds, "rounds")?),
+                ContractParam::Array(integers(prices, "prices")?),
+                ContractParam::Array(integers(timestamps, "timestamps")?),
+                ContractParam::Array(hash_params),
+                ContractParam::Array(integers(sources, "source ids")?),
+            ],
+        ),
+        "updateFeed" => {
+            if pairs.len() != 1
+                || rounds.len() != 1
+                || prices.len() != 1
+                || timestamps.len() != 1
+                || hashes.len() != 1
+                || sources.len() != 1
+            {
+                return Err(
+                    "Rust enclave updateFeed response must contain exactly one plan".to_string(),
+                );
+            }
+            create_invoke_script(
+                contract,
+                "updateFeed",
+                &[
+                    strings(&pairs[..1], "pairs")?.remove(0),
+                    integers(&rounds[..1], "rounds")?.remove(0),
+                    integers(&prices[..1], "prices")?.remove(0),
+                    integers(&timestamps[..1], "timestamps")?.remove(0),
+                    hash_params.into_iter().next().expect("one hash"),
+                    integers(&sources[..1], "source ids")?.remove(0),
+                ],
+            )
+        }
+        other => return Err(format!("unsupported Neo N3 feed operation {other}")),
+    }
     .map_err(|error| error.to_string())?;
     let tx_nonce = response
         .get("tx_nonce")
@@ -1637,11 +1817,26 @@ mod tests {
         signing_key: SigningKey,
         public_key: Vec<u8>,
         script_hash: [u8; 20],
+        singular_abi: bool,
+        include_mode_fields: bool,
+        no_update_mode: Option<&'static str>,
         calls: Mutex<Vec<(String, String)>>,
     }
 
     impl N3FeedTransport {
         fn new() -> Self {
+            Self::with_options(false, true)
+        }
+
+        fn without_mode_fields() -> Self {
+            Self::with_options(false, false)
+        }
+
+        fn testnet_per_pair() -> Self {
+            Self::with_options(true, true)
+        }
+
+        fn with_options(singular_abi: bool, include_mode_fields: bool) -> Self {
             let signing_key = SigningKey::from_slice(&[7u8; 32]).expect("test key");
             let public_key = signing_key
                 .verifying_key()
@@ -1655,8 +1850,23 @@ mod tests {
                 signing_key,
                 public_key,
                 script_hash,
+                singular_abi,
+                include_mode_fields,
+                no_update_mode: None,
                 calls: Mutex::new(Vec::new()),
             }
+        }
+
+        fn no_update_without_mode_fields() -> Self {
+            let mut transport = Self::with_options(false, true);
+            transport.no_update_mode = Some("");
+            transport
+        }
+
+        fn no_update_with_mode(operation: &'static str) -> Self {
+            let mut transport = Self::with_options(false, true);
+            transport.no_update_mode = Some(operation);
+            transport
         }
 
         fn answer(&self, url: &str, body: &str) -> Result<(u16, String), String> {
@@ -1680,6 +1890,17 @@ mod tests {
             }
             if url.ends_with("/feed/sign") {
                 let request: serde_json::Value = serde_json::from_str(body).unwrap();
+                if let Some(operation) = self.no_update_mode {
+                    let mut response = json!({
+                        "status": "no-update",
+                        "chain": "neo_n3",
+                    });
+                    if !operation.is_empty() {
+                        response["write_mode"] = json!(operation);
+                        response["operation"] = json!(operation);
+                    }
+                    return Ok((200, response.to_string()));
+                }
                 let tx_params = request["tx_params"].as_object().unwrap();
                 let quantity = |field: &str| -> u64 {
                     tx_params[field]
@@ -1691,10 +1912,20 @@ mod tests {
                 let tx_nonce = quantity("nonce") as u32;
                 let system_fee = quantity("system_fee");
                 let network_fee = quantity("network_fee");
-                let contract = hex::decode("03013f49c42a14546c8bbe58f9d434c3517fccab")
-                    .unwrap()
-                    .try_into()
-                    .unwrap();
+                let operation = request["write_mode"].as_str().unwrap_or("updateFeeds");
+                let network_magic = if self.singular_abi {
+                    894_710_606
+                } else {
+                    860_833_102
+                };
+                let contract = hex::decode(if self.singular_abi {
+                    "9bea75cf702f6afc09125aa6d22f082bfd2ee064"
+                } else {
+                    "03013f49c42a14546c8bbe58f9d434c3517fccab"
+                })
+                .unwrap()
+                .try_into()
+                .unwrap();
                 let pairs = vec![ContractParam::String("TWELVEDATA:NEO-USD".into())];
                 let rounds = vec![ContractParam::Integer(1)];
                 let prices = vec![ContractParam::Integer(123_000_000)];
@@ -1703,19 +1934,35 @@ mod tests {
                     "0123456789abcdef0123456789abcdef".into(),
                 )];
                 let sources = vec![ContractParam::Integer(0)];
-                let script = create_invoke_script(
-                    &contract,
-                    "updateFeeds",
-                    &[
-                        ContractParam::Array(pairs),
-                        ContractParam::Array(rounds),
-                        ContractParam::Array(prices),
-                        ContractParam::Array(timestamps),
-                        ContractParam::Array(hashes),
-                        ContractParam::Array(sources),
-                    ],
-                )
-                .unwrap();
+                let script = if operation == "updateFeed" {
+                    create_invoke_script(
+                        &contract,
+                        "updateFeed",
+                        &[
+                            pairs.into_iter().next().unwrap(),
+                            rounds.into_iter().next().unwrap(),
+                            prices.into_iter().next().unwrap(),
+                            timestamps.into_iter().next().unwrap(),
+                            hashes.into_iter().next().unwrap(),
+                            sources.into_iter().next().unwrap(),
+                        ],
+                    )
+                    .unwrap()
+                } else {
+                    create_invoke_script(
+                        &contract,
+                        "updateFeeds",
+                        &[
+                            ContractParam::Array(pairs),
+                            ContractParam::Array(rounds),
+                            ContractParam::Array(prices),
+                            ContractParam::Array(timestamps),
+                            ContractParam::Array(hashes),
+                            ContractParam::Array(sources),
+                        ],
+                    )
+                    .unwrap()
+                };
                 let tx = FeedTx {
                     nonce: tx_nonce,
                     valid_until_block: 1_500,
@@ -1726,36 +1973,59 @@ mod tests {
                     },
                     script: &script,
                 };
-                let message = tx.message_for_signing(860_833_102);
+                let message = tx.message_for_signing(network_magic);
                 let signature: P256Signature = self.signing_key.sign(&message);
                 let signature = signature.normalize_s().unwrap_or(signature);
-                return Ok((
-                    200,
-                    json!({
-                        "status": "ok",
-                        "chain": "neo_n3",
-                        "pairs": ["TWELVEDATA:NEO-USD"],
-                        "rounds": [1],
-                        "prices_scaled": [123_000_000],
-                        "timestamps": [1_700_000_000],
-                        "attestation_hashes": ["0123456789abcdef0123456789abcdef"],
-                        "source_set_ids": [0],
-                        "tx_message_hex": hex::encode(message),
-                        "tx_nonce": tx_nonce,
-                        "valid_until_block": 1_500,
-                        "signature": hex::encode(signature.to_bytes()),
-                        "public_key": hex::encode(&self.public_key),
-                        "trust_tier": "enclave-attested",
-                        "nonce": request["nonce"],
-                    })
-                    .to_string(),
-                ));
+                let mut response = json!({
+                    "status": "ok",
+                    "chain": "neo_n3",
+                    "pairs": ["TWELVEDATA:NEO-USD"],
+                    "rounds": [1],
+                    "prices_scaled": [123_000_000],
+                    "timestamps": [1_700_000_000],
+                    "attestation_hashes": ["0123456789abcdef0123456789abcdef"],
+                    "source_set_ids": [0],
+                    "tx_message_hex": hex::encode(message),
+                    "tx_nonce": tx_nonce,
+                    "valid_until_block": 1_500,
+                    "signature": hex::encode(signature.to_bytes()),
+                    "public_key": hex::encode(&self.public_key),
+                    "trust_tier": "enclave-attested",
+                    "nonce": request["nonce"],
+                });
+                if self.include_mode_fields {
+                    response["write_mode"] = json!(operation);
+                    response["operation"] = json!(operation);
+                }
+                return Ok((200, response.to_string()));
             }
 
             let request: serde_json::Value = serde_json::from_str(body)
                 .map_err(|error| format!("invalid test RPC request: {error}"))?;
             let result = match request["method"].as_str().unwrap_or_default() {
                 "getblockcount" => json!(1_000),
+                "getcontractstate" => {
+                    let method = if self.singular_abi {
+                        json!({
+                            "name": "updateFeed",
+                            "parameters": [
+                                {"type": "String"}, {"type": "Integer"},
+                                {"type": "Integer"}, {"type": "Integer"},
+                                {"type": "ByteArray"}, {"type": "Integer"}
+                            ]
+                        })
+                    } else {
+                        json!({
+                            "name": "updateFeeds",
+                            "parameters": [
+                                {"type": "Array"}, {"type": "Array"},
+                                {"type": "Array"}, {"type": "Array"},
+                                {"type": "Array"}, {"type": "Array"}
+                            ]
+                        })
+                    };
+                    json!({"manifest": {"abi": {"methods": [method]}}})
+                }
                 "invokescript" => json!({"state":"HALT", "gasconsumed":"100000"}),
                 "calculatenetworkfee" => json!({"networkfee":"123456"}),
                 "sendrawtransaction" => json!(true),
@@ -1918,6 +2188,21 @@ mod tests {
         }
     }
 
+    fn testnet_per_pair_config() -> RelayerConfig {
+        let mut config = config("neo_n3");
+        let n3 = config
+            .raw
+            .get_mut("neo_n3")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("neo_n3 config");
+        n3.insert("networkMagic".into(), json!(894_710_606u32));
+        n3.insert(
+            "datafeedContract".into(),
+            json!("0x9bea75cf702f6afc09125aa6d22f082bfd2ee064"),
+        );
+        config
+    }
+
     #[test]
     fn neo_n3_feed_reconstructs_verifies_broadcasts_confirms_and_persists() {
         let mut state = create_empty_relayer_state();
@@ -1935,8 +2220,11 @@ mod tests {
         assert!(!result.skipped);
         assert!(result.error.is_none(), "{result:?}");
         let calls = transport.calls.lock().unwrap();
-        assert_eq!(calls.len(), 11);
+        assert_eq!(calls.len(), 12);
         assert!(calls.iter().any(|(_, body)| body.contains("getblockcount")));
+        assert!(calls
+            .iter()
+            .any(|(_, body)| body.contains("getcontractstate")));
         assert!(
             calls
                 .iter()
@@ -1954,6 +2242,209 @@ mod tests {
         assert_eq!(
             super::feed_baseline(&state, "neo_n3")["NEO-USD"]["price"],
             123.0
+        );
+    }
+
+    #[test]
+    fn neo_n3_feed_rejects_a_signed_response_without_explicit_mode_fields() {
+        let mut state = create_empty_relayer_state();
+        let transport = N3FeedTransport::without_mode_fields();
+        let result = process_feed_sync_with(
+            &config("neo_n3"),
+            &mut state,
+            1_700_000_000_000.0,
+            &transport,
+            &NoWait(Mutex::new(1_700_000_000_000)),
+            &FixedNonce(1),
+        );
+        assert!(result
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("operation")));
+        assert!(state.get("last_feed_delivery").is_none());
+    }
+
+    #[test]
+    fn neo_n3_feed_rejects_a_no_update_response_without_explicit_mode_fields() {
+        let mut state = create_empty_relayer_state();
+        let transport = N3FeedTransport::no_update_without_mode_fields();
+        let result = process_feed_sync_with(
+            &config("neo_n3"),
+            &mut state,
+            1_700_000_000_000.0,
+            &transport,
+            &NoWait(Mutex::new(1_700_000_000_000)),
+            &FixedNonce(1),
+        );
+        assert!(result
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("no-update response omitted operation")));
+        assert!(state.get("last_feed_delivery").is_none());
+    }
+
+    #[test]
+    fn neo_n3_feed_rejects_a_no_update_response_for_the_wrong_probed_mode() {
+        let mut state = create_empty_relayer_state();
+        let transport = N3FeedTransport::no_update_with_mode("updateFeed");
+        let result = process_feed_sync_with(
+            &config("neo_n3"),
+            &mut state,
+            1_700_000_000_000.0,
+            &transport,
+            &NoWait(Mutex::new(1_700_000_000_000)),
+            &FixedNonce(1),
+        );
+        assert!(result
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("did not match probed ABI")));
+        assert!(state.get("last_feed_delivery").is_none());
+    }
+
+    #[test]
+    fn neo_n3_feed_accepts_a_no_update_response_for_the_probed_mode() {
+        let mut state = create_empty_relayer_state();
+        let transport = N3FeedTransport::no_update_with_mode("updateFeeds");
+        let result = process_feed_sync_with(
+            &config("neo_n3"),
+            &mut state,
+            1_700_000_000_000.0,
+            &transport,
+            &NoWait(Mutex::new(1_700_000_000_000)),
+            &FixedNonce(1),
+        );
+        assert!(result.error.is_none(), "{result:?}");
+        assert_eq!(result.reason.as_deref(), Some("no_update"));
+        assert!(state.get("last_feed_delivery").is_none());
+    }
+
+    #[test]
+    fn neo_n3_testnet_feed_runs_the_probed_per_pair_path_end_to_end() {
+        let mut state = create_empty_relayer_state();
+        let transport = N3FeedTransport::testnet_per_pair();
+        let result = process_feed_sync_with(
+            &testnet_per_pair_config(),
+            &mut state,
+            1_700_000_000_000.0,
+            &transport,
+            &NoWait(Mutex::new(1_700_000_000_000)),
+            &FixedNonce(1),
+        );
+        assert!(result.error.is_none(), "{result:?}");
+        assert!(state.get("last_feed_delivery").is_some());
+        let calls = transport.calls.lock().unwrap();
+        let sign_requests = calls
+            .iter()
+            .filter(|(url, _)| url.ends_with("/feed/sign"))
+            .map(|(_, body)| body)
+            .collect::<Vec<_>>();
+        assert_eq!(sign_requests.len(), 3);
+        assert!(sign_requests
+            .iter()
+            .all(|body| body.contains("\"write_mode\":\"updateFeed\"")));
+        assert!(sign_requests
+            .iter()
+            .all(|body| body.contains("\"operation\":\"updateFeed\"")));
+    }
+
+    #[test]
+    fn n3_abi_probe_selects_testnet_per_pair_and_rejects_mainnet_downgrade() {
+        let singular = json!({
+            "manifest": {"abi": {"methods": [{
+                "name": "updateFeed",
+                "parameters": [
+                    {"type": "String"}, {"type": "Integer"},
+                    {"type": "Integer"}, {"type": "Integer"},
+                    {"type": "ByteArray"}, {"type": "Integer"}
+                ]
+            }]}}
+        });
+        assert_eq!(
+            super::resolve_n3_feed_write_mode(&singular, "testnet").unwrap(),
+            "updateFeed"
+        );
+        assert!(super::resolve_n3_feed_write_mode(&singular, "mainnet")
+            .unwrap_err()
+            .contains("mainnet"));
+
+        let batch = json!({
+            "manifest": {"abi": {"methods": [{
+                "name": "updateFeeds",
+                "parameters": [
+                    {"type": "Array"}, {"type": "Array"},
+                    {"type": "Array"}, {"type": "Array"},
+                    {"type": "Array"}, {"type": "Array"}
+                ]
+            }]}}
+        });
+        assert!(super::resolve_n3_feed_write_mode(&batch, "testnet")
+            .unwrap_err()
+            .contains("no exact supported writer ABI"));
+
+        let mixed = json!({
+            "manifest": {"abi": {"methods": [
+                {"name": "updateFeed", "parameters": [
+                    {"type": "String"}, {"type": "Integer"},
+                    {"type": "Integer"}, {"type": "Integer"},
+                    {"type": "ByteArray"}, {"type": "Integer"}
+                ]},
+                {"name": "updateFeeds", "parameters": [
+                    {"type": "Array"}, {"type": "Array"},
+                    {"type": "Array"}, {"type": "Array"},
+                    {"type": "Array"}, {"type": "Array"}
+                ]}
+            ]}}
+        });
+        assert!(super::resolve_n3_feed_write_mode(&mixed, "testnet")
+            .unwrap_err()
+            .contains("multiple supported writer ABIs"));
+        assert_eq!(
+            super::resolve_n3_feed_write_mode(&mixed, "mainnet").unwrap(),
+            "updateFeeds"
+        );
+
+        let duplicate = json!({
+            "manifest": {"abi": {"methods": [
+                {"name": "updateFeeds", "parameters": [
+                    {"type": "Array"}, {"type": "Array"}, {"type": "Array"},
+                    {"type": "Array"}, {"type": "Array"}, {"type": "Array"}
+                ]},
+                {"name": "updateFeeds", "parameters": [
+                    {"type": "Array"}, {"type": "Array"}, {"type": "Array"},
+                    {"type": "Array"}, {"type": "Array"}, {"type": "Array"}
+                ]}
+            ]}}
+        });
+        assert!(super::resolve_n3_feed_write_mode(&duplicate, "mainnet")
+            .unwrap_err()
+            .contains("ambiguous"));
+
+        let wrong_shape = json!({
+            "manifest": {"abi": {"methods": [
+                {"name": "updateFeeds", "parameters": [
+                    {"type": "Array"}, {"type": "Array"}, {"type": "Array"}
+                ]}
+            ]}}
+        });
+        assert!(super::resolve_n3_feed_write_mode(&wrong_shape, "mainnet")
+            .unwrap_err()
+            .contains("wrong"));
+
+        let wrong_type_case = json!({
+            "manifest": {"abi": {"methods": [{
+                "name": "updateFeeds",
+                "parameters": [
+                    {"type": "array"}, {"type": "Array"},
+                    {"type": "Array"}, {"type": "Array"},
+                    {"type": "Array"}, {"type": "Array"}
+                ]
+            }]}}
+        });
+        assert!(
+            super::resolve_n3_feed_write_mode(&wrong_type_case, "mainnet")
+                .unwrap_err()
+                .contains("wrong parameter types")
         );
     }
 

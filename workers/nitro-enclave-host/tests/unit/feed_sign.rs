@@ -24,7 +24,7 @@ const GOLDEN_MESSAGE_ZERO_FIELDS: &str =
 /// The same one-symbol transaction under Testnet T5's magic and deployed
 /// MorpheusDataFeed contract.
 const TESTNET_MESSAGE_1SYM: &str =
-    "4e335435c557f35dc509d0a26c529dd3cddc72fbfb24e8159e982f858c9d02a2d4072954";
+    "4e3354358e46b48cf7dabfbfdd40af856ca28bbe98127e194f50c24efc25539d7710e0ee";
 
 fn plain() -> http::HeaderMap {
     let mut headers = http::HeaderMap::new();
@@ -75,6 +75,31 @@ fn harness_with_signer(signer: FakeSigner) -> TestState {
 }
 
 fn post_feed(harness: &TestState, body: &serde_json::Value) -> DispatchOutcome {
+    let mut compatible_body = body.clone();
+    let object = compatible_body
+        .as_object_mut()
+        .expect("feed test body must be a JSON object");
+    let default_mode = if harness.state.resolve_network() == "testnet" {
+        "updateFeed"
+    } else {
+        "updateFeeds"
+    };
+    object
+        .entry("write_mode")
+        .or_insert_with(|| json!(default_mode));
+    let default_operation = object
+        .get("write_mode")
+        .or_else(|| object.get("writeMode"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(default_mode)
+        .to_string();
+    object
+        .entry("operation")
+        .or_insert_with(|| json!(default_operation));
+    post_raw_feed(harness, &compatible_body)
+}
+
+fn post_raw_feed(harness: &TestState, body: &serde_json::Value) -> DispatchOutcome {
     dispatch(
         &harness.state,
         "POST",
@@ -179,6 +204,8 @@ fn testnet_selects_its_measured_magic_and_contract_despite_a_legacy_override() {
     let outcome = post_feed(
         &harness,
         &json!({
+            "write_mode": "updateFeed",
+            "operation": "updateFeed",
             "symbols": ["NEO-USD"],
             "onchain_state": { "NEO-USD": { "round": 1000, "price": 0, "ts": 1718352000 } },
             "now": 1001,
@@ -196,6 +223,215 @@ fn testnet_selects_its_measured_magic_and_contract_despite_a_legacy_override() {
         hex::encode(Sha256::digest(unsigned)),
         &TESTNET_MESSAGE_1SYM[8..]
     );
+}
+
+#[test]
+fn testnet_per_pair_write_mode_returns_the_singular_update_feed_operation() {
+    let harness = test_state(
+        &[
+            ("MORPHEUS_NETWORK", "testnet"),
+            ("NITRO_API_TOKEN", "s3cret"),
+        ],
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    harness.price.set_price("NEO-USD", 2.0);
+    let outcome = post_feed(
+        &harness,
+        &json!({
+            "chain": "neo_n3",
+            "write_mode": "updateFeed",
+            "symbols": ["NEO-USD"],
+            "onchain_state": { "NEO-USD": { "round": 1000, "price": 0, "ts": 1718352000 } },
+            "now": 1001,
+            "tx_params": { "nonce": 424242, "blockCount": 100000, "systemFee": 1000000000, "networkFee": 1234567 },
+        }),
+    );
+    assert_eq!(outcome.status, 200, "{}", outcome.body);
+    assert_eq!(outcome.body["status"], "ok");
+    assert_eq!(outcome.body["write_mode"], "updateFeed");
+    assert_eq!(outcome.body["operation"], "updateFeed");
+    assert_eq!(outcome.body["pairs"], json!(["TWELVEDATA:NEO-USD"]));
+
+    let per_pair_unsigned = harness.signer.n3_transaction_calls()[0].2.clone();
+    let batch_harness = test_state(
+        &[
+            ("MORPHEUS_NETWORK", "mainnet"),
+            ("NITRO_API_TOKEN", "s3cret"),
+        ],
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    batch_harness.price.set_price("NEO-USD", 2.0);
+    let batch_outcome = post_feed(
+        &batch_harness,
+        &json!({
+            "chain": "neo_n3",
+            "symbols": ["NEO-USD"],
+            "onchain_state": { "NEO-USD": { "round": 1000, "price": 0, "ts": 1718352000 } },
+            "now": 1001,
+            "tx_params": { "nonce": 424242, "blockCount": 100000, "systemFee": 1000000000, "networkFee": 1234567 },
+        }),
+    );
+    assert_eq!(batch_outcome.status, 200, "{}", batch_outcome.body);
+    let batch_unsigned = batch_harness.signer.n3_transaction_calls()[0].2.clone();
+    assert_ne!(per_pair_unsigned, batch_unsigned);
+}
+
+#[test]
+fn mainnet_rejects_a_per_pair_write_mode_downgrade() {
+    let harness = mainnet_harness();
+    harness.price.set_price("NEO-USD", 2.0);
+    let outcome = post_feed(
+        &harness,
+        &json!({
+            "chain": "neo_n3",
+            "write_mode": "updateFeed",
+            "symbols": ["NEO-USD"],
+            "now": 1001,
+            "tx_params": { "nonce": 1, "blockCount": 100, "systemFee": 1, "networkFee": 1 },
+        }),
+    );
+    assert_eq!(outcome.status, 400);
+    assert_eq!(
+        outcome.body,
+        error_body("Neo N3 updateFeed write mode is testnet-only; refusing mainnet downgrade")
+    );
+    assert!(harness.signer.n3_transaction_calls().is_empty());
+}
+
+#[test]
+fn testnet_rejects_a_batch_write_mode() {
+    let harness = test_state(
+        &[
+            ("MORPHEUS_NETWORK", "testnet"),
+            ("NITRO_API_TOKEN", "s3cret"),
+        ],
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    harness.price.set_price("NEO-USD", 2.0);
+    let outcome = post_raw_feed(
+        &harness,
+        &json!({
+            "chain": "neo_n3",
+            "write_mode": "updateFeeds",
+            "operation": "updateFeeds",
+            "symbols": ["NEO-USD"],
+            "now": 1001,
+            "tx_params": { "nonce": 1, "blockCount": 100, "systemFee": 1, "networkFee": 1 },
+        }),
+    );
+    assert_eq!(outcome.status, 400);
+    assert_eq!(
+        outcome.body,
+        error_body("Neo N3 updateFeeds write mode is mainnet-only; refusing TestNet batch")
+    );
+    assert!(harness.signer.n3_transaction_calls().is_empty());
+}
+
+#[test]
+fn mismatched_request_operation_is_rejected_before_signing() {
+    let harness = test_state(
+        &[
+            ("MORPHEUS_NETWORK", "testnet"),
+            ("NITRO_API_TOKEN", "s3cret"),
+        ],
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    harness.price.set_price("NEO-USD", 2.0);
+    let outcome = post_feed(
+        &harness,
+        &json!({
+            "chain": "neo_n3",
+            "write_mode": "updateFeed",
+            "operation": "updateFeeds",
+            "symbols": ["NEO-USD"],
+            "now": 1001,
+            "tx_params": { "nonce": 1, "blockCount": 100, "systemFee": 1, "networkFee": 1 },
+        }),
+    );
+    assert_eq!(outcome.status, 400);
+    assert_eq!(
+        outcome.body,
+        error_body("Neo N3 write mode and operation must match")
+    );
+    assert!(harness.signer.n3_transaction_calls().is_empty());
+}
+
+#[test]
+fn missing_n3_mode_fields_are_rejected_before_signing() {
+    let harness = harness();
+    harness.price.set_price("NEO-USD", 2.0);
+    let outcome = post_raw_feed(
+        &harness,
+        &json!({
+            "chain": "neo_n3",
+            "symbols": ["NEO-USD"],
+            "now": 1001,
+            "tx_params": { "nonce": 1, "blockCount": 100, "systemFee": 1, "networkFee": 1 },
+        }),
+    );
+    assert_eq!(outcome.status, 400);
+    assert_eq!(outcome.body, error_body("Neo N3 write_mode is required"));
+    assert!(harness.signer.n3_transaction_calls().is_empty());
+}
+
+#[test]
+fn conflicting_write_mode_aliases_are_rejected_before_signing() {
+    let harness = harness();
+    harness.price.set_price("NEO-USD", 2.0);
+    let outcome = post_raw_feed(
+        &harness,
+        &json!({
+            "chain": "neo_n3",
+            "write_mode": "updateFeed",
+            "writeMode": "updateFeeds",
+            "operation": "updateFeed",
+            "symbols": ["NEO-USD"],
+            "now": 1001,
+            "tx_params": { "nonce": 1, "blockCount": 100, "systemFee": 1, "networkFee": 1 },
+        }),
+    );
+    assert_eq!(outcome.status, 400);
+    assert_eq!(
+        outcome.body,
+        error_body("Neo N3 write_mode aliases conflict")
+    );
+    assert!(harness.signer.n3_transaction_calls().is_empty());
+}
+
+#[test]
+fn conflicting_operation_aliases_are_rejected_before_signing() {
+    let harness = harness();
+    harness.price.set_price("NEO-USD", 2.0);
+    let outcome = post_raw_feed(
+        &harness,
+        &json!({
+            "chain": "neo_n3",
+            "write_mode": "updateFeed",
+            "operation": "updateFeed",
+            "op": "updateFeeds",
+            "symbols": ["NEO-USD"],
+            "now": 1001,
+            "tx_params": { "nonce": 1, "blockCount": 100, "systemFee": 1, "networkFee": 1 },
+        }),
+    );
+    assert_eq!(outcome.status, 400);
+    assert_eq!(
+        outcome.body,
+        error_body("Neo N3 operation aliases conflict")
+    );
+    assert!(harness.signer.n3_transaction_calls().is_empty());
 }
 
 /// `legacy` is an alias of the N3 lane (the mjs treats it identically) and

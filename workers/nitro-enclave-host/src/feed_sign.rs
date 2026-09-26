@@ -63,6 +63,40 @@ const NEOX_FEED_PRICE_SCALE: f64 = 1e6;
 const NEOX_UPDATE_FEEDS_SIGNATURE: &str = "updateFeeds(string[],uint256[],uint256[],uint256[])";
 const MAX_NEOX_FEED_SYMBOLS: usize = 128;
 
+fn read_n3_control_field<'a>(
+    body: &'a serde_json::Value,
+    name: &str,
+    label: &str,
+) -> Result<Option<&'a str>, RuntimeError> {
+    match body.get(name) {
+        None => Ok(None),
+        Some(serde_json::Value::String(value)) if !value.trim().is_empty() => {
+            Ok(Some(value.trim()))
+        }
+        Some(_) => Err(http_error(
+            400,
+            format!("Neo N3 {label} must be a non-empty string"),
+        )),
+    }
+}
+
+fn read_n3_control_aliases<'a>(
+    body: &'a serde_json::Value,
+    canonical: &str,
+    alias: &str,
+    label: &str,
+) -> Result<Option<&'a str>, RuntimeError> {
+    let canonical_value = read_n3_control_field(body, canonical, label)?;
+    let alias_value = read_n3_control_field(body, alias, label)?;
+    match (canonical_value, alias_value) {
+        (Some(left), Some(right)) if left != right => {
+            Err(http_error(400, format!("Neo N3 {label} aliases conflict")))
+        }
+        (Some(value), _) | (_, Some(value)) => Ok(Some(value)),
+        (None, None) => Ok(None),
+    }
+}
+
 pub fn handle_feed_sign(
     state: &AppState,
     body: &serde_json::Value,
@@ -85,6 +119,42 @@ pub fn handle_feed_sign(
     };
     if symbols.is_empty() {
         return Err(http_error(400, "symbols[] is required"));
+    }
+    let write_mode = match read_n3_control_aliases(body, "write_mode", "writeMode", "write_mode")? {
+        Some(value) => value,
+        None => return Err(http_error(400, "Neo N3 write_mode is required")),
+    };
+    let write_mode = match write_mode {
+        "updateFeed" => "updateFeed",
+        "updateFeeds" => "updateFeeds",
+        other => {
+            return Err(http_error(
+                400,
+                format!("unsupported Neo N3 feed write mode: {other}"),
+            ))
+        }
+    };
+    if write_mode == "updateFeed" && state.resolve_network() != "testnet" {
+        return Err(http_error(
+            400,
+            "Neo N3 updateFeed write mode is testnet-only; refusing mainnet downgrade",
+        ));
+    }
+    if write_mode == "updateFeeds" && state.resolve_network() == "testnet" {
+        return Err(http_error(
+            400,
+            "Neo N3 updateFeeds write mode is mainnet-only; refusing TestNet batch",
+        ));
+    }
+    let operation = match read_n3_control_aliases(body, "operation", "op", "operation")? {
+        Some(value) => value,
+        None => return Err(http_error(400, "Neo N3 operation is required")),
+    };
+    if operation != write_mode {
+        return Err(http_error(
+            400,
+            "Neo N3 write mode and operation must match",
+        ));
     }
 
     let raw_state = match body.get("onchain_state") {
@@ -179,6 +249,8 @@ pub fn handle_feed_sign(
         let mut response = serde_json::Map::new();
         response.insert("status".into(), serde_json::json!("no-update"));
         response.insert("chain".into(), serde_json::json!("neo_n3"));
+        response.insert("write_mode".into(), serde_json::json!(write_mode));
+        response.insert("operation".into(), serde_json::json!(write_mode));
         response.insert("pairs".into(), serde_json::Value::Array(Vec::new()));
         response.insert("rounds".into(), serde_json::Value::Array(Vec::new()));
         response.insert("prices_scaled".into(), serde_json::Value::Array(Vec::new()));
@@ -245,22 +317,61 @@ pub fn handle_feed_sign(
         None => derived_tx_nonce(&nonce),
     };
 
-    // (4) BUILD the EXACT updateFeeds tx + SIGN its message with the updater key.
-    // The updateFeeds args are fixed-shape feed data — encoding is infallible
-    // for this domain, so a failure here is a bug, not a runtime condition.
-    let script = create_invoke_script(
-        feed_n3_contract(&network),
-        "updateFeeds",
-        &[
-            ContractParam::Array(planned_pairs),
-            ContractParam::Array(planned_rounds),
-            ContractParam::Array(planned_prices),
-            ContractParam::Array(planned_timestamps),
-            ContractParam::Array(planned_hashes),
-            ContractParam::Array(planned_sources),
-        ],
-    )
-    .expect("updateFeeds args are always encodable");
+    // (4) BUILD the exact ABI selected by the caller's already-probed write
+    // mode, then sign its message with the updater key. TestNet's deployed
+    // 0x9bea feed exposes only the six-argument updateFeed method; treating it
+    // as updateFeeds produces a valid transaction envelope whose VM execution
+    // can never succeed.
+    let script = if write_mode == "updateFeed" {
+        if planned_pairs.len() != 1 {
+            return Err(http_error(
+                400,
+                "updateFeed write mode requires exactly one planned pair",
+            ));
+        }
+        create_invoke_script(
+            feed_n3_contract(&network),
+            "updateFeed",
+            &[
+                planned_pairs.into_iter().next().expect("one planned pair"),
+                planned_rounds
+                    .into_iter()
+                    .next()
+                    .expect("one planned round"),
+                planned_prices
+                    .into_iter()
+                    .next()
+                    .expect("one planned price"),
+                planned_timestamps
+                    .into_iter()
+                    .next()
+                    .expect("one planned timestamp"),
+                planned_hashes
+                    .into_iter()
+                    .next()
+                    .expect("one planned attestation hash"),
+                planned_sources
+                    .into_iter()
+                    .next()
+                    .expect("one planned source id"),
+            ],
+        )
+        .expect("updateFeed args are always encodable")
+    } else {
+        create_invoke_script(
+            feed_n3_contract(&network),
+            "updateFeeds",
+            &[
+                ContractParam::Array(planned_pairs),
+                ContractParam::Array(planned_rounds),
+                ContractParam::Array(planned_prices),
+                ContractParam::Array(planned_timestamps),
+                ContractParam::Array(planned_hashes),
+                ContractParam::Array(planned_sources),
+            ],
+        )
+        .expect("updateFeeds args are always encodable")
+    };
     let valid_until_block = block_count + FEED_VALID_UNTIL_OFFSET;
     let tx = FeedTx {
         nonce: tx_nonce as u32,
@@ -283,6 +394,8 @@ pub fn handle_feed_sign(
     let mut response = serde_json::Map::new();
     response.insert("status".into(), serde_json::json!("ok"));
     response.insert("chain".into(), serde_json::json!("neo_n3"));
+    response.insert("write_mode".into(), serde_json::json!(write_mode));
+    response.insert("operation".into(), serde_json::json!(write_mode));
     response.insert("pairs".into(), serde_json::Value::Array(pairs));
     response.insert("rounds".into(), serde_json::Value::Array(rounds));
     response.insert(

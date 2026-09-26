@@ -241,7 +241,6 @@ const MAINNET_STATE = JSON.parse(
     'utf8'
   )
 );
-
 test('parseContractUpdateMethods requires exact captured ABI arity and types', () => {
   const testnet = parseContractUpdateMethods(TESTNET_STATE.manifest);
   assert.deepEqual(
@@ -309,6 +308,10 @@ test('resolveFeedWriteMode is testnet-only for updateFeed and never downgrades m
   assert.equal(
     resolveFeedWriteMode('testnet', parseContractUpdateMethods(TESTNET_STATE.manifest)),
     FEED_WRITE_MODE_PER_PAIR
+  );
+  assert.equal(
+    resolveFeedWriteMode('mainnet', parseContractUpdateMethods(MAINNET_STATE.manifest)),
+    FEED_WRITE_MODE_BATCH
   );
   assert.equal(
     resolveFeedWriteMode('mainnet', parseContractUpdateMethods(MAINNET_STATE.manifest)),

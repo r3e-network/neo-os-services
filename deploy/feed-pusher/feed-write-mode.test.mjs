@@ -82,6 +82,14 @@ const MAINNET_STATE = JSON.parse(
 );
 const TESTNET_ABI = parseContractUpdateMethods(TESTNET_STATE.manifest);
 const MAINNET_ABI = parseContractUpdateMethods(MAINNET_STATE.manifest);
+const MAINNET_BATCH_MANIFEST = {
+  ...MAINNET_STATE.manifest,
+  abi: {
+    ...MAINNET_STATE.manifest.abi,
+    methods: MAINNET_STATE.manifest.abi.methods.filter((method) => method.name !== 'updateFeed'),
+  },
+};
+const MAINNET_BATCH_ABI = parseContractUpdateMethods(MAINNET_BATCH_MANIFEST);
 
 function liveSignerHealth() {
   return {
@@ -156,13 +164,36 @@ function decodeBroadcast(rawBase64) {
   return { txn, hash, nonce: txn.nonce, raw: rawBase64 };
 }
 
-test('ABI mode dispatch: testnet updateFeed-only is per-pair; any updateFeeds is batch', () => {
+test('ABI mode dispatch selects the exact network-specific writer ABI', () => {
   assert.equal(resolveFeedWriteMode('testnet', TESTNET_ABI), FEED_WRITE_MODE_PER_PAIR);
-  assert.equal(resolveFeedWriteMode('testnet', MAINNET_ABI), FEED_WRITE_MODE_BATCH);
-  assert.equal(resolveFeedWriteMode('mainnet', MAINNET_ABI), FEED_WRITE_MODE_BATCH);
+  assert.equal(resolveFeedWriteMode('mainnet', MAINNET_BATCH_ABI), FEED_WRITE_MODE_BATCH);
   assert.equal(PER_PAIR_ATTEMPTS, 2);
   assert.equal(PER_PAIR_TIMEOUT_MS, 20_000);
   assert.equal(MAX_PER_PAIR_FEED_UPDATES, 64);
+});
+
+test('ABI mode dispatch rejects a TestNet batch or a mixed writer ABI', () => {
+  assert.throws(
+    () => resolveFeedWriteMode('testnet', MAINNET_ABI),
+    /multiple supported writer ABIs/
+  );
+  const mixed = {
+    ...TESTNET_ABI,
+    has_update_feeds: true,
+    update_feeds: {
+      name: 'updateFeeds',
+      present: true,
+      ok: true,
+      reason: null,
+      parameters: MAINNET_ABI.update_feeds.parameters,
+    },
+  };
+  assert.throws(() => resolveFeedWriteMode('testnet', mixed), /multiple supported writer ABIs/);
+  assert.equal(resolveFeedWriteMode('mainnet', mixed), FEED_WRITE_MODE_BATCH);
+});
+
+test('mainnet explicitly prefers the exact batch ABI when the legacy singular ABI remains exposed', () => {
+  assert.equal(resolveFeedWriteMode('mainnet', MAINNET_ABI), FEED_WRITE_MODE_BATCH);
 });
 
 test('testnet-only guard: mainnet, unknown, and unprobed ABI cannot enter per-pair', () => {
