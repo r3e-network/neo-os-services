@@ -254,23 +254,6 @@ pub fn resolve_relayer_mode(value: &JsValue) -> String {
     }
 }
 
-/// Port of shared neo-signers-core `normalizeMorpheusNetwork`: exactly
-/// 'mainnet' (after trim+lowercase) selects mainnet, everything else —
-/// including empty — is testnet.
-pub fn normalize_morpheus_network(value: &JsValue) -> String {
-    let raw = if value.truthy() {
-        display(value)
-    } else {
-        String::new()
-    };
-    match js_trim(&raw).to_lowercase().as_str() {
-        "" => "testnet".to_string(),
-        "mainnet" => "mainnet".to_string(),
-        "testnet" => "testnet".to_string(),
-        other => panic!("unsupported Neo network: {other}"),
-    }
-}
-
 /// `Math.max(a, b)` with JS NaN semantics (Rust's f64::max swallows NaN —
 /// Math.max(NaN, x) is NaN).
 fn js_max(a: f64, b: f64) -> f64 {
@@ -1970,22 +1953,6 @@ mod tests {
             parse_active_chains(&JsValue::Str("bogus".to_string())),
             vec!["neo_n3"]
         );
-    }
-
-    #[test]
-    fn normalize_morpheus_network_accepts_only_reviewed_labels() {
-        assert_eq!(
-            normalize_morpheus_network(&JsValue::Str("MAINNET".to_string())),
-            "mainnet"
-        );
-        assert_eq!(
-            normalize_morpheus_network(&JsValue::Str("".to_string())),
-            "testnet"
-        );
-        assert!(std::panic::catch_unwind(|| {
-            normalize_morpheus_network(&JsValue::Str("test-net".to_string()))
-        })
-        .is_err());
     }
 
     #[test]

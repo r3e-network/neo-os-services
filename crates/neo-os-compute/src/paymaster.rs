@@ -109,13 +109,16 @@ pub fn resolve_paymaster_network(payload: &Json, env: EnvReader<'_>) -> Result<S
     resolve_payload_network_strict(payload, &fallback)
 }
 
-/// `resolvePaymasterPolicy(network)` — the per-network env set.
-pub fn resolve_paymaster_policy(network: &str, env: EnvReader<'_>) -> PaymasterPolicy {
-    let upper = if network == "mainnet" {
-        "MAINNET"
-    } else {
-        "TESTNET"
-    };
+/// `resolvePaymasterPolicy(network)` — the per-network env set. `network` is
+/// already resolved by [`resolve_paymaster_network`]; any other label is
+/// returned as an error instead of reading the TestNet policy.
+pub fn resolve_paymaster_policy(
+    network: &str,
+    env: EnvReader<'_>,
+) -> Result<PaymasterPolicy, String> {
+    let network = normalize_morpheus_network_strict(network, "testnet")?;
+    let network = network.as_str();
+    let upper = network.to_uppercase();
     let name = |suffix: &str| format!("MORPHEUS_PAYMASTER_{upper}_{suffix}");
     let env_value = |suffix: &str| read_env(env, &[&name(suffix)]);
 
@@ -144,14 +147,14 @@ pub fn resolve_paymaster_policy(network: &str, env: EnvReader<'_>) -> PaymasterP
 
     let aa_core_raw = env_value("AA_CORE_HASH");
     let aa_core_hash = if aa_core_raw.is_empty() {
-        env_for_network(network, &["AA_CORE_HASH"], env)
+        env_for_network(network, &["AA_CORE_HASH"], env)?
     } else {
         aa_core_raw
     };
 
     let neo_rpc_raw = env_value("NEO_RPC_URL");
     let neo_rpc_url = if neo_rpc_raw.is_empty() {
-        env_for_network(network, &["NEO_RPC_URL"], env)
+        env_for_network(network, &["NEO_RPC_URL"], env)?
     } else {
         neo_rpc_raw
     };
@@ -163,7 +166,7 @@ pub fn resolve_paymaster_policy(network: &str, env: EnvReader<'_>) -> PaymasterP
         ttl_raw
     };
 
-    PaymasterPolicy {
+    Ok(PaymasterPolicy {
         network: network.to_string(),
         enabled,
         policy_id: js_trim(&policy_id).to_string(),
@@ -180,7 +183,7 @@ pub fn resolve_paymaster_policy(network: &str, env: EnvReader<'_>) -> PaymasterP
         multi_hook_hash: normalize_hex_hash(Some(&Json::String(env_value("MULTI_HOOK_HASH")))),
         neo_rpc_url,
         ttl_ms: parse_duration_ms(Some(&Json::String(ttl_value)), 15 * 60_000),
-    }
+    })
 }
 
 /// `trimString(a || b || c || '')` chains — first truthy operand wins, the
@@ -487,7 +490,7 @@ pub fn evaluate_paymaster_authorization(
     random_uuid: impl Fn() -> String,
 ) -> Result<PaymasterEvaluation, String> {
     let network = resolve_paymaster_network(payload, env)?;
-    let policy = resolve_paymaster_policy(&network, env);
+    let policy = resolve_paymaster_policy(&network, env)?;
     let normalized = normalize_verdict_payload(payload)?;
 
     // Number(payload.estimated_gas_units) — the direct field only, NOT the
@@ -734,7 +737,7 @@ mod tests {
                 "AB".repeat(20).as_str(),
             ),
         ]);
-        let policy = resolve_paymaster_policy("testnet", &env);
+        let policy = resolve_paymaster_policy("testnet", &env).unwrap();
         assert!(policy.enabled);
         assert_eq!(policy.policy_id, "fed-policy");
         assert_eq!(policy.max_gas_units, 1500.0);
@@ -747,7 +750,7 @@ mod tests {
 
     #[test]
     fn policy_defaults_and_network_fallbacks() {
-        let policy = resolve_paymaster_policy("testnet", &no_env);
+        let policy = resolve_paymaster_policy("testnet", &no_env).unwrap();
         assert!(!policy.enabled);
         assert_eq!(policy.policy_id, "testnet-default");
         assert_eq!(policy.max_gas_units, 0.0);
@@ -757,8 +760,14 @@ mod tests {
 
         // AA core hash falls back through envForNetwork: scoped name first.
         let env = env_from(&[("AA_CORE_HASH_TESTNET", &"cd".repeat(20))]);
-        let policy = resolve_paymaster_policy("testnet", &env);
+        let policy = resolve_paymaster_policy("testnet", &env).unwrap();
         assert_eq!(policy.aa_core_hash, format!("0x{}", "cd".repeat(20)));
+
+        // A label that is not a reviewed network reads no policy at all.
+        assert_eq!(
+            resolve_paymaster_policy("staging", &env).unwrap_err(),
+            "unsupported Neo network: staging"
+        );
     }
 
     #[test]

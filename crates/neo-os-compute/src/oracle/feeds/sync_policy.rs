@@ -13,7 +13,7 @@ use crate::oracle::decimal::decimal_to_integer_string;
 use crate::oracle::feed_registry::get_feed_pair_config;
 
 use super::shared::{
-    normalize_boolean_like, resolve_feed_network, resolve_feed_scope,
+    normalize_boolean_like, resolve_feed_network_strict, resolve_feed_scope_strict,
     DEFAULT_FEED_SUBMISSION_WAIT_TIMEOUT_MS, MAINNET_FEED_CHANGE_THRESHOLD_BPS,
     MAINNET_FEED_MIN_UPDATE_INTERVAL_MS, MAINNET_FEED_STALE_AFTER_MS,
 };
@@ -101,23 +101,28 @@ fn source_or_default(candidate: Json, default: &str) -> Json {
 /// through `Number(source || 0)` (so a truthy non-numeric string becomes NaN
 /// → 0, and a falsy source becomes 0). The JS `targetChain` argument is
 /// threaded into `resolveFeedScope` and then ignored, so the port keeps the
-/// parameter only for call-site parity.
-pub fn build_sync_policy(_target_chain: &str, payload: &Json, env: EnvReader<'_>) -> SyncPolicy {
-    let network = resolve_feed_scope(payload, env).network;
+/// parameter only for call-site parity. The policy is read per network, so an
+/// unknown network label is returned as an error.
+pub fn build_sync_policy(
+    _target_chain: &str,
+    payload: &Json,
+    env: EnvReader<'_>,
+) -> Result<SyncPolicy, String> {
+    let network = resolve_feed_scope_strict(payload, env)?.network;
     let threshold_candidate = payload_candidate(
         payload,
         "feed_change_threshold_bps",
-        env_for_network(&network, &["MORPHEUS_FEED_CHANGE_THRESHOLD_BPS"], env),
+        env_for_network(&network, &["MORPHEUS_FEED_CHANGE_THRESHOLD_BPS"], env)?,
     );
     let interval_candidate = payload_candidate(
         payload,
         "feed_min_update_interval_ms",
-        env_for_network(&network, &["MORPHEUS_FEED_MIN_UPDATE_INTERVAL_MS"], env),
+        env_for_network(&network, &["MORPHEUS_FEED_MIN_UPDATE_INTERVAL_MS"], env)?,
     );
     let stale_candidate = payload_candidate(
         payload,
         "feed_stale_after_ms",
-        env_for_network(&network, &["MORPHEUS_FEED_STALE_AFTER_MS"], env),
+        env_for_network(&network, &["MORPHEUS_FEED_STALE_AFTER_MS"], env)?,
     );
     let threshold_source = source_or_default(
         threshold_candidate,
@@ -140,36 +145,43 @@ pub fn build_sync_policy(_target_chain: &str, payload: &Json, env: EnvReader<'_>
     } else {
         0.0
     };
-    SyncPolicy {
+    Ok(SyncPolicy {
         threshold_bps,
         min_update_interval_ms: parse_duration_ms(
             Some(&interval_source),
             MAINNET_FEED_MIN_UPDATE_INTERVAL_MS,
         ),
         stale_after_ms: parse_duration_ms(Some(&stale_source), MAINNET_FEED_STALE_AFTER_MS),
-    }
+    })
 }
 
 pub fn resolve_feed_submission_wait(payload: &Json) -> bool {
     normalize_boolean_like(payload.get("wait"), false)
 }
 
-pub fn resolve_feed_submission_wait_timeout_ms(payload: &Json, env: EnvReader<'_>) -> u64 {
-    let network = resolve_feed_network(payload, env);
-    let source = non_null(payload.get("timeout_ms"))
+/// The wait timeout falls back to a per-network env value, so an unknown
+/// network label is returned as an error.
+pub fn resolve_feed_submission_wait_timeout_ms(
+    payload: &Json,
+    env: EnvReader<'_>,
+) -> Result<u64, String> {
+    let network = resolve_feed_network_strict(payload, env)?;
+    let source = match non_null(payload.get("timeout_ms"))
         .or_else(|| non_null(payload.get("timeoutMs")))
         .or_else(|| non_null(payload.get("feed_submission_wait_timeout_ms")))
         .or_else(|| non_null(payload.get("feedSubmissionWaitTimeoutMs")))
-        .cloned()
-        .unwrap_or_else(|| {
-            Json::String(env_for_network(
-                &network,
-                &["MORPHEUS_FEED_SUBMISSION_WAIT_TIMEOUT_MS"],
-                env,
-            ))
-        });
-    parse_duration_ms(Some(&source), DEFAULT_FEED_SUBMISSION_WAIT_TIMEOUT_MS)
-        .min(DEFAULT_FEED_SUBMISSION_WAIT_TIMEOUT_MS)
+    {
+        Some(value) => value.clone(),
+        None => Json::String(env_for_network(
+            &network,
+            &["MORPHEUS_FEED_SUBMISSION_WAIT_TIMEOUT_MS"],
+            env,
+        )?),
+    };
+    Ok(
+        parse_duration_ms(Some(&source), DEFAULT_FEED_SUBMISSION_WAIT_TIMEOUT_MS)
+            .min(DEFAULT_FEED_SUBMISSION_WAIT_TIMEOUT_MS),
+    )
 }
 
 /// `resolveFeedSubmissionIssue(targetChain, { hasNeoN3DataFeedTarget, neoContext })`
@@ -575,7 +587,8 @@ mod tests {
 
     #[test]
     fn default_feed_sync_policy_checks_once_per_minute_with_a_0_1_percent_threshold() {
-        let built = build_sync_policy("neo_n3", &json!({ "network": "mainnet" }), &env_from(&[]));
+        let built =
+            build_sync_policy("neo_n3", &json!({ "network": "mainnet" }), &env_from(&[])).unwrap();
         assert_eq!(built.threshold_bps, 10.0);
         assert_eq!(built.min_update_interval_ms, 60_000);
         assert_eq!(built.stale_after_ms, 300_000);
@@ -589,7 +602,7 @@ mod tests {
     fn sync_policy_reads_network_scoped_env_and_payload_candidates() {
         // network-scoped env beats the payload-less default
         let env = env_from(&[("MORPHEUS_FEED_CHANGE_THRESHOLD_BPS_MAINNET", "25")]);
-        let built = build_sync_policy("neo_n3", &json!({ "network": "mainnet" }), &env);
+        let built = build_sync_policy("neo_n3", &json!({ "network": "mainnet" }), &env).unwrap();
         assert_eq!(built.threshold_bps, 25.0);
 
         // a payload value beats env
@@ -597,7 +610,8 @@ mod tests {
             "neo_n3",
             &json!({ "network": "mainnet", "feed_change_threshold_bps": 7 }),
             &env,
-        );
+        )
+        .unwrap();
         assert_eq!(built.threshold_bps, 7.0);
 
         // a payload '' is NOT nullish — it wins the ?? chain, hits the
@@ -606,7 +620,8 @@ mod tests {
             "neo_n3",
             &json!({ "network": "mainnet", "feed_change_threshold_bps": "" }),
             &env,
-        );
+        )
+        .unwrap();
         assert_eq!(built.threshold_bps, 10.0);
 
         // a payload 0 survives ?? and Number(0 || 0) → 0
@@ -614,7 +629,8 @@ mod tests {
             "neo_n3",
             &json!({ "network": "mainnet", "feed_change_threshold_bps": 0 }),
             &env,
-        );
+        )
+        .unwrap();
         assert_eq!(built.threshold_bps, 0.0);
 
         // intervals parse through parseDurationMs ('90s' → 90000)
@@ -622,8 +638,15 @@ mod tests {
             "neo_n3",
             &json!({ "network": "mainnet", "feed_min_update_interval_ms": "90s" }),
             &env,
-        );
+        )
+        .unwrap();
         assert_eq!(built.min_update_interval_ms, 90_000);
+
+        // the policy is per network: an unknown label reads none
+        assert_eq!(
+            build_sync_policy("neo_n3", &json!({ "network": "staging" }), &env).unwrap_err(),
+            "unsupported Neo network: staging"
+        );
     }
 
     #[test]
@@ -634,21 +657,28 @@ mod tests {
 
         let empty = env_from(&[]);
         assert_eq!(
-            resolve_feed_submission_wait_timeout_ms(&json!({}), &empty),
+            resolve_feed_submission_wait_timeout_ms(&json!({}), &empty).unwrap(),
             8_000
         );
         assert_eq!(
-            resolve_feed_submission_wait_timeout_ms(&json!({ "timeout_ms": "2500" }), &empty),
+            resolve_feed_submission_wait_timeout_ms(&json!({ "timeout_ms": "2500" }), &empty)
+                .unwrap(),
             2_500
         );
         assert_eq!(
-            resolve_feed_submission_wait_timeout_ms(&json!({ "timeout_ms": "30s" }), &empty),
+            resolve_feed_submission_wait_timeout_ms(&json!({ "timeout_ms": "30s" }), &empty)
+                .unwrap(),
             8_000
         );
         // camelCase and dedicated keys participate in the same ?? chain
         assert_eq!(
-            resolve_feed_submission_wait_timeout_ms(&json!({ "timeoutMs": 1_500 }), &empty),
+            resolve_feed_submission_wait_timeout_ms(&json!({ "timeoutMs": 1_500 }), &empty)
+                .unwrap(),
             1_500
+        );
+        assert!(
+            resolve_feed_submission_wait_timeout_ms(&json!({ "network": "staging" }), &empty)
+                .is_err()
         );
     }
 

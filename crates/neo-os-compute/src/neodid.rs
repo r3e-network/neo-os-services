@@ -484,7 +484,7 @@ fn neo_n3_network_magic_le4(network: &str, env: EnvReader<'_>) -> Result<[u8; 4]
     let reviewed = known_neo_n3_identity(network)
         .ok_or_else(|| format!("unsupported Neo N3 network: {network}"))?
         .magic;
-    let raw_env = env_for_network(network, &["NEO_NETWORK_MAGIC"], env);
+    let raw_env = env_for_network(network, &["NEO_NETWORK_MAGIC"], env)?;
     if !raw_env.is_empty() {
         let raw = js_number(&raw_env);
         if !raw.is_finite() || raw.fract() != 0.0 || raw <= 0.0 || raw > u32::MAX as f64 {

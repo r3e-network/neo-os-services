@@ -5,8 +5,7 @@
 use serde_json::Value as Json;
 
 use crate::core::{
-    normalize_morpheus_network, normalize_morpheus_network_strict, read_env,
-    resolve_payload_network, resolve_payload_network_strict, EnvReader,
+    normalize_morpheus_network_strict, read_env, resolve_payload_network_strict, EnvReader,
 };
 use crate::js::{js_number, js_number_to_string, js_trim, js_trim_string};
 
@@ -18,20 +17,6 @@ pub const DEFAULT_FEED_PROVIDER_TIMEOUT_MS: u64 = 8_000;
 pub const MAX_FEED_PROVIDER_TIMEOUT_MS: u64 = 10_000;
 pub const DEFAULT_FEED_SUBMISSION_WAIT_TIMEOUT_MS: u64 = 8_000;
 pub const FEED_PRICE_DECIMALS: usize = 6;
-
-/// `resolveFeedNetwork(input)` — `resolvePayloadNetwork(input, env-fallback)`.
-pub fn resolve_feed_network(input: &Json, env: EnvReader<'_>) -> String {
-    let from_env = read_env(env, &["MORPHEUS_NETWORK", "NEXT_PUBLIC_MORPHEUS_NETWORK"]);
-    let fallback = normalize_morpheus_network(
-        if from_env.is_empty() {
-            "testnet"
-        } else {
-            &from_env
-        },
-        "testnet",
-    );
-    resolve_payload_network(input, &fallback)
-}
 
 /// `resolveFeedTargetChain()` — every value threaded into it is ignored; the
 /// feed lane only ever targets `neo_n3`.
@@ -47,16 +32,9 @@ pub struct FeedScope {
     pub target_chain: String,
 }
 
-pub fn resolve_feed_scope(input: &Json, env: EnvReader<'_>) -> FeedScope {
-    FeedScope {
-        network: resolve_feed_network(input, env),
-        target_chain: resolve_feed_target_chain(),
-    }
-}
-
-/// Strict feed scope used by the host's signing and publication observation
-/// lane. Empty values use the already reviewed environment fallback; an
-/// explicit unknown label is a request error and cannot select another chain.
+/// The feed scope. Empty values use the already reviewed environment fallback;
+/// an explicit unknown label is a request error and cannot select another
+/// chain. There is no lenient variant, so no feed lane can panic on a label.
 pub fn resolve_feed_scope_strict(input: &Json, env: EnvReader<'_>) -> Result<FeedScope, String> {
     Ok(FeedScope {
         network: resolve_feed_network_strict(input, env)?,
@@ -64,6 +42,8 @@ pub fn resolve_feed_scope_strict(input: &Json, env: EnvReader<'_>) -> Result<Fee
     })
 }
 
+/// `resolveFeedNetwork(input)` — `resolvePayloadNetwork(input, env-fallback)`,
+/// with the env fallback and the payload label both parsed strictly.
 pub fn resolve_feed_network_strict(input: &Json, env: EnvReader<'_>) -> Result<String, String> {
     let from_env = read_env(env, &["MORPHEUS_NETWORK", "NEXT_PUBLIC_MORPHEUS_NETWORK"]);
     let fallback = normalize_morpheus_network_strict(
@@ -273,21 +253,34 @@ mod tests {
     #[test]
     fn resolve_feed_network_prefers_the_payload_then_the_env() {
         let env = env_from(&[("MORPHEUS_NETWORK", "mainnet")]);
-        assert_eq!(resolve_feed_network(&json!({}), &env), "mainnet");
         assert_eq!(
-            resolve_feed_network(&json!({ "network": "testnet" }), &env),
+            resolve_feed_network_strict(&json!({}), &env).unwrap(),
+            "mainnet"
+        );
+        assert_eq!(
+            resolve_feed_network_strict(&json!({ "network": "testnet" }), &env).unwrap(),
             "testnet"
         );
-        assert!(std::panic::catch_unwind(|| {
-            resolve_feed_network(&json!({ "network": "bogus" }), &env)
-        })
-        .is_err());
+        assert_eq!(
+            resolve_feed_network_strict(&json!({ "network": "bogus" }), &env).unwrap_err(),
+            "unsupported Neo network: bogus"
+        );
 
         let public_env = env_from(&[("NEXT_PUBLIC_MORPHEUS_NETWORK", "mainnet")]);
-        assert_eq!(resolve_feed_network(&json!({}), &public_env), "mainnet");
+        assert_eq!(
+            resolve_feed_network_strict(&json!({}), &public_env).unwrap(),
+            "mainnet"
+        );
 
         let empty = env_from(&[]);
-        assert_eq!(resolve_feed_network(&json!({}), &empty), "testnet");
+        assert_eq!(
+            resolve_feed_network_strict(&json!({}), &empty).unwrap(),
+            "testnet"
+        );
+
+        // An unreviewed environment network is an error, not the TestNet default.
+        let staging = env_from(&[("MORPHEUS_NETWORK", "staging")]);
+        assert!(resolve_feed_network_strict(&json!({}), &staging).is_err());
     }
 
     #[test]
@@ -308,7 +301,7 @@ mod tests {
     #[test]
     fn resolve_feed_scope_always_targets_neo_n3() {
         let env = env_from(&[("MORPHEUS_NETWORK", "mainnet")]);
-        let scope = resolve_feed_scope(&json!({ "target_chain": "neo_x" }), &env);
+        let scope = resolve_feed_scope_strict(&json!({ "target_chain": "neo_x" }), &env).unwrap();
         assert_eq!(scope.network, "mainnet");
         assert_eq!(scope.target_chain, "neo_n3");
     }

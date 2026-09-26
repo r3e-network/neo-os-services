@@ -87,8 +87,15 @@ pub fn read_env(env: EnvReader<'_>, names: &[&str]) -> String {
 /// `envForNetwork(networkInput, ...names)` (platform/core.js:100) — per-name
 /// resolution chain: `${name}_${UPPER}` env, the network-scoped runtime config,
 /// the plain env name, the global runtime config; first trim-non-empty wins.
-pub fn env_for_network(network_input: &str, names: &[&str], env: EnvReader<'_>) -> String {
-    let network = normalize_morpheus_network(network_input, "testnet");
+/// An empty `network_input` reads the TestNet scope; a label that is not a
+/// reviewed network is an error, returned rather than raised, so no request
+/// lane can turn it into a panic or into another network's configuration.
+pub fn env_for_network(
+    network_input: &str,
+    names: &[&str],
+    env: EnvReader<'_>,
+) -> Result<String, String> {
+    let network = normalize_morpheus_network_strict(network_input, "testnet")?;
     let upper = network.to_uppercase();
     let scoped = get_runtime_config_for_network(&network, env);
     let global = get_runtime_config(env);
@@ -105,32 +112,16 @@ pub fn env_for_network(network_input: &str, names: &[&str], env: EnvReader<'_>) 
         };
         let value = js_trim(&raw).to_string();
         if !value.is_empty() {
-            return value;
+            return Ok(value);
         }
     }
-    String::new()
+    Ok(String::new())
 }
 
-/// `normalizeMorpheusNetwork(value, fallback)` (platform/core.js:82) —
-/// 'mainnet'/'testnet' pass through, anything else resolves to the fallback
-/// ('mainnet' or else 'testnet').
-pub fn normalize_morpheus_network(value: &str, fallback: &str) -> String {
-    let normalized = js_trim(value).to_lowercase();
-    if normalized == "mainnet" || normalized == "testnet" {
-        return normalized;
-    }
-    if normalized.is_empty() {
-        let fallback = js_trim(fallback).to_lowercase();
-        if fallback == "mainnet" || fallback == "testnet" {
-            return fallback;
-        }
-    }
-    panic!("unsupported Neo network: {value}");
-}
-
-/// Strict network normalization for signing and identity-bound lanes. Empty
-/// input means "use the already reviewed fallback"; a non-empty unknown label
-/// is an input error and must never be mapped to a different network.
+/// `normalizeMorpheusNetwork(value, fallback)` (platform/core.js:104).
+/// Empty input means "use the already reviewed fallback"; a non-empty unknown
+/// label is an input error and must never be mapped to a different network.
+/// There is no lenient variant: every caller gets the error as a value.
 pub fn normalize_morpheus_network_strict(value: &str, fallback: &str) -> Result<String, String> {
     let normalized = js_trim(value).to_lowercase();
     if normalized == "mainnet" || normalized == "testnet" {
@@ -145,28 +136,11 @@ pub fn normalize_morpheus_network_strict(value: &str, fallback: &str) -> Result<
     Err(format!("unsupported Neo network: {value}"))
 }
 
-/// `resolvePayloadNetwork(payload, fallback)` (platform/core.js:90) — the
-/// first truthy of network / morpheus_network / runtime_network / environment,
-/// then normalized as a network name.
-pub fn resolve_payload_network(payload: &Json, fallback: &str) -> String {
-    let raw = [
-        "network",
-        "morpheus_network",
-        "runtime_network",
-        "environment",
-    ]
-    .iter()
-    .find_map(|key| match payload.get(*key) {
-        Some(Json::Null) | None => None,
-        Some(Json::String(value)) if value.is_empty() => None,
-        Some(value) => Some(js_stringify(value)),
-    })
-    .unwrap_or_default();
-    normalize_morpheus_network(&raw, fallback)
-}
-
-/// Strict counterpart used by NeoDID ticket digests. It preserves the
-/// JavaScript empty-value fallback while refusing an explicit unknown network.
+/// `resolvePayloadNetwork(payload, fallback)` (platform/core.js:118) — the
+/// first of network / morpheus_network / runtime_network / environment that is
+/// not missing, `null` or an empty string, normalized strictly. It preserves
+/// the JavaScript empty-value fallback while refusing an explicit unknown
+/// network, `false` and `0` included.
 pub fn resolve_payload_network_strict(payload: &Json, fallback: &str) -> Result<String, String> {
     let raw = [
         "network",
@@ -762,7 +736,10 @@ mod tests {
             ("MORPHEUS_RUNTIME_CONFIG_JSON", "{\"K\":\"global-config\"}"),
             ("K", "plain-env"),
         ]);
-        assert_eq!(env_for_network("mainnet", &["K"], &env), "plain-env");
+        assert_eq!(
+            env_for_network("mainnet", &["K"], &env).unwrap(),
+            "plain-env"
+        );
 
         // scoped env beats everything
         let env2 = env_from(&[
@@ -770,7 +747,10 @@ mod tests {
             ("K_MAINNET", "scoped-env"),
             ("K", "plain-env"),
         ]);
-        assert_eq!(env_for_network("mainnet", &["K"], &env2), "scoped-env");
+        assert_eq!(
+            env_for_network("mainnet", &["K"], &env2).unwrap(),
+            "scoped-env"
+        );
 
         // scoped config beats plain env (it sits earlier in the JS chain)
         let env3 = env_from(&[
@@ -780,21 +760,46 @@ mod tests {
             ),
             ("K", "plain-env"),
         ]);
-        assert_eq!(env_for_network("mainnet", &["K"], &env3), "scoped-config");
+        assert_eq!(
+            env_for_network("mainnet", &["K"], &env3).unwrap(),
+            "scoped-config"
+        );
 
         // testnet ignores mainnet-scoped entries
         let env4 = env_from(&[(
             "MORPHEUS_MAINNET_RUNTIME_CONFIG_JSON",
             "{\"K\":\"scoped-config\"}",
         )]);
-        assert_eq!(env_for_network("testnet", &["K"], &env4), "");
+        assert_eq!(env_for_network("testnet", &["K"], &env4).unwrap(), "");
+        // an empty label reads the TestNet scope
+        assert_eq!(env_for_network("", &["K"], &env4).unwrap(), "");
+    }
+
+    #[test]
+    fn env_for_network_returns_an_unknown_label_as_an_error() {
+        let env = env_from(&[("K", "plain-env"), ("K_STAGING", "staging-env")]);
+        assert_eq!(
+            env_for_network("staging", &["K"], &env).unwrap_err(),
+            "unsupported Neo network: staging"
+        );
     }
 
     #[test]
     fn network_normalization_follows_the_js_rules() {
-        assert_eq!(normalize_morpheus_network("Mainnet ", "testnet"), "mainnet");
-        assert_eq!(normalize_morpheus_network("", "testnet"), "testnet");
-        assert_eq!(normalize_morpheus_network("TESTNET", "mainnet"), "testnet");
+        assert_eq!(
+            normalize_morpheus_network_strict("Mainnet ", "testnet").unwrap(),
+            "mainnet"
+        );
+        assert_eq!(
+            normalize_morpheus_network_strict("", "testnet").unwrap(),
+            "testnet"
+        );
+        assert_eq!(
+            normalize_morpheus_network_strict("TESTNET", "mainnet").unwrap(),
+            "testnet"
+        );
+        // An unreviewed fallback is refused too, never used.
+        assert!(normalize_morpheus_network_strict("", "staging").is_err());
     }
 
     #[test]
@@ -813,51 +818,43 @@ mod tests {
 
     #[test]
     fn payload_network_rejects_non_string_explicit_values() {
-        for value in [serde_json::json!(false), serde_json::json!(0)] {
-            let payload = serde_json::json!({"network": value});
+        for value in [json!(false), json!(0), json!(5)] {
+            let payload = json!({ "network": value });
             assert!(resolve_payload_network_strict(&payload, "testnet").is_err());
-            assert!(
-                std::panic::catch_unwind(|| resolve_payload_network(&payload, "testnet")).is_err()
-            );
         }
     }
 
     #[test]
-    fn compatibility_network_normalization_fails_closed_on_unknown_labels() {
-        assert!(std::panic::catch_unwind(|| normalize_morpheus_network("xyz", "testnet")).is_err());
-        assert!(std::panic::catch_unwind(|| resolve_payload_network(
-            &json!({ "network": 5 }),
-            "testnet"
-        ))
-        .is_err());
-    }
-
-    #[test]
-    fn payload_network_uses_the_first_truthy_key() {
+    fn payload_network_uses_the_first_present_key() {
         assert_eq!(
-            resolve_payload_network(&json!({ "network": "mainnet" }), "testnet"),
+            resolve_payload_network_strict(&json!({ "network": "mainnet" }), "testnet").unwrap(),
             "mainnet"
         );
         assert_eq!(
-            resolve_payload_network(
+            resolve_payload_network_strict(
                 &json!({ "network": null, "morpheus_network": "mainnet" }),
                 "testnet"
-            ),
+            )
+            .unwrap(),
             "mainnet"
         );
         assert_eq!(
-            resolve_payload_network(&json!({ "runtime_network": "testnet" }), "mainnet"),
+            resolve_payload_network_strict(
+                &json!({ "network": "", "runtime_network": "testnet" }),
+                "mainnet"
+            )
+            .unwrap(),
             "testnet"
         );
-        assert!(std::panic::catch_unwind(|| {
-            resolve_payload_network(&json!({ "environment": "production" }), "testnet")
-        })
-        .is_err());
-        assert!(std::panic::catch_unwind(|| {
-            resolve_payload_network(&json!({ "network": 5 }), "testnet")
-        })
-        .is_err());
-        assert_eq!(resolve_payload_network(&json!({}), "mainnet"), "mainnet");
+        assert_eq!(
+            resolve_payload_network_strict(&json!({ "environment": "production" }), "testnet")
+                .unwrap_err(),
+            "unsupported Neo network: production"
+        );
+        assert_eq!(
+            resolve_payload_network_strict(&json!({}), "mainnet").unwrap(),
+            "mainnet"
+        );
     }
 
     #[test]

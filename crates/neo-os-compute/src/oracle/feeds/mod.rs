@@ -23,8 +23,8 @@ use crate::oracle::feed_registry::{
     get_default_feed_symbols, get_feed_providers_for_pair, normalize_feed_pair_symbol,
 };
 use crate::oracle::feeds::shared::{
-    has_own_payload_key, normalize_boolean_like, resolve_feed_network, resolve_feed_scope,
-    FEED_PRICE_DECIMALS,
+    has_own_payload_key, normalize_boolean_like, resolve_feed_network_strict,
+    resolve_feed_scope_strict, FEED_PRICE_DECIMALS,
 };
 use crate::oracle::providers::{infer_provider_id_from_pair_symbol, parse_http_date_ms};
 
@@ -125,18 +125,19 @@ pub fn parse_provider_list(value: Option<&Json>, fallback: Vec<String>) -> Vec<S
 /// pins its provider; explicit `providers`/`provider_list` or a single
 /// `provider`/`source` follow; otherwise the network-configured
 /// `MORPHEUS_FEED_PROVIDERS` list is filtered down to the pair's available
-/// providers (falling back to twelvedata).
+/// providers (falling back to twelvedata). Reading that list needs the
+/// network, so an unknown network label is returned as an error.
 pub fn resolve_requested_providers(
     symbol: &str,
     options: &Json,
     env: EnvReader<'_>,
-) -> Vec<String> {
+) -> Result<Vec<String>, String> {
     let inferred = js_trim(&infer_provider_id_from_pair_symbol(&Json::String(
         symbol.to_string(),
     )))
     .to_lowercase();
     if !inferred.is_empty() {
-        return vec![inferred];
+        return Ok(vec![inferred]);
     }
 
     let explicit_providers = parse_provider_list(
@@ -144,36 +145,36 @@ pub fn resolve_requested_providers(
         Vec::new(),
     );
     if !explicit_providers.is_empty() {
-        return explicit_providers;
+        return Ok(explicit_providers);
     }
 
     let explicit_provider =
         js_trim_string(js_first_truthy(options, &["provider", "source"])).to_lowercase();
     if !explicit_provider.is_empty() && explicit_provider != "all" {
-        return vec![explicit_provider];
+        return Ok(vec![explicit_provider]);
     }
 
-    let network = resolve_feed_network(options, env);
+    let network = resolve_feed_network_strict(options, env)?;
     let configured = parse_provider_list(
         Some(&Json::String(env_for_network(
             &network,
             &["MORPHEUS_FEED_PROVIDERS"],
             env,
-        ))),
+        )?)),
         Vec::new(),
     );
     let available = get_feed_providers_for_pair(symbol, env);
     if !configured.is_empty() {
-        return configured
+        return Ok(configured
             .into_iter()
             .filter(|provider| available.is_empty() || available.iter().any(|id| id == provider))
-            .collect();
+            .collect());
     }
-    if available.is_empty() {
+    Ok(if available.is_empty() {
         vec!["twelvedata".to_string()]
     } else {
         available
-    }
+    })
 }
 
 /// `extractQuotePrice(response)` — the `??` chain over `data.price`,
@@ -295,22 +296,23 @@ pub fn should_fast_ack_oracle_feed(payload: &Json) -> bool {
 
 /// `buildOracleFeedRequestId(payload)` — an explicit request id wins;
 /// otherwise `pricefeed:{network}:{Date.now()}:{uuid}`. The clock and the
-/// uuid source are injected.
+/// uuid source are injected. A composed id names the network, so an unknown
+/// network label is returned as an error.
 pub fn build_oracle_feed_request_id(
     payload: &Json,
     env: EnvReader<'_>,
     now_ms: i64,
     random_uuid: impl Fn() -> String,
-) -> String {
+) -> Result<String, String> {
     let explicit = js_trim_string(js_first_truthy(payload, &["request_id", "requestId"]));
     if !explicit.is_empty() {
-        return explicit;
+        return Ok(explicit);
     }
-    format!(
+    Ok(format!(
         "pricefeed:{}:{now_ms}:{}",
-        resolve_feed_network(payload, env),
+        resolve_feed_network_strict(payload, env)?,
         random_uuid()
-    )
+    ))
 }
 
 /// `buildRoundId(previousRecord)` — the last on-chain round id + 1, or the
@@ -464,17 +466,18 @@ fn not_null(value: Option<&Json>) -> Option<&Json> {
 /// `buildFeedSnapshotRows(syncResults, state, batchTx, scope)` — the Supabase
 /// snapshot projection of one sync pass, one row per sync result. The JS
 /// signature carries a `targetChain` first argument, but it only feeds
-/// `resolveFeedScope`'s discarded fallback, so the port drops it.
+/// `resolveFeedScope`'s discarded fallback, so the port drops it. An unknown
+/// network label in `scope` is returned as an error.
 pub fn build_feed_snapshot_rows(
     sync_results: &Json,
     state: &Json,
     batch_tx: Option<&Json>,
     scope: &Json,
     env: EnvReader<'_>,
-) -> Vec<Json> {
-    let resolved_scope = resolve_feed_scope(scope, env);
+) -> Result<Vec<Json>, String> {
+    let resolved_scope = resolve_feed_scope_strict(scope, env)?;
     let Json::Array(results) = sync_results else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let mut rows = Vec::with_capacity(results.len());
     for result in results {
@@ -584,7 +587,7 @@ pub fn build_feed_snapshot_rows(
         }));
     }
     rows.retain(|row| !js_trim_string(row.get("symbol")).is_empty());
-    rows
+    Ok(rows)
 }
 
 /// `resolveRequestedSymbols(payload)` — an array `symbols` is used raw (no
@@ -716,7 +719,8 @@ mod tests {
         let env = no_env();
         // A provider-scoped symbol pins its provider before anything else.
         assert_eq!(
-            resolve_requested_providers("TWELVEDATA:NEO-USD", &json!({ "provider": "x" }), &env),
+            resolve_requested_providers("TWELVEDATA:NEO-USD", &json!({ "provider": "x" }), &env)
+                .unwrap(),
             vec!["twelvedata"]
         );
         assert_eq!(
@@ -724,7 +728,8 @@ mod tests {
                 "NEO-USD",
                 &json!({ "providers": "twelvedata,twelvedata, binance-spot" }),
                 &env
-            ),
+            )
+            .unwrap(),
             vec!["twelvedata", "binance-spot"]
         );
         assert_eq!(
@@ -732,21 +737,23 @@ mod tests {
                 "NEO-USD",
                 &json!({ "provider_list": ["BINANCE-SPOT"] }),
                 &env
-            ),
+            )
+            .unwrap(),
             vec!["binance-spot"]
         );
         // "all" is not a provider — the registry availability decides.
         assert_eq!(
-            resolve_requested_providers("NEO-USD", &json!({ "provider": "All" }), &env),
+            resolve_requested_providers("NEO-USD", &json!({ "provider": "All" }), &env).unwrap(),
             vec!["twelvedata", "binance-spot", "coingecko", "coinpaprika"]
         );
         assert_eq!(
-            resolve_requested_providers("NEO-USD", &json!({ "source": "binance-spot" }), &env),
+            resolve_requested_providers("NEO-USD", &json!({ "source": "binance-spot" }), &env)
+                .unwrap(),
             vec!["binance-spot"]
         );
         // Unknown pair, nothing configured → the twelvedata fallback.
         assert_eq!(
-            resolve_requested_providers("ZIL-USD", &json!({}), &env),
+            resolve_requested_providers("ZIL-USD", &json!({}), &env).unwrap(),
             vec!["twelvedata"]
         );
     }
@@ -755,12 +762,18 @@ mod tests {
     fn configured_provider_lists_filter_through_pair_availability() {
         let env = env_from(&[("MORPHEUS_FEED_PROVIDERS", "binance-spot, coinbase-spot")]);
         assert_eq!(
-            resolve_requested_providers("NEO-USD", &json!({}), &env),
+            resolve_requested_providers("NEO-USD", &json!({}), &env).unwrap(),
             vec!["binance-spot"]
         );
         assert_eq!(
-            resolve_requested_providers("ZIL-USD", &json!({}), &env),
+            resolve_requested_providers("ZIL-USD", &json!({}), &env).unwrap(),
             vec!["binance-spot", "coinbase-spot"]
+        );
+        // The configured list is per network: an unknown label reads none.
+        assert_eq!(
+            resolve_requested_providers("NEO-USD", &json!({ "network": "staging" }), &env)
+                .unwrap_err(),
+            "unsupported Neo network: staging"
         );
     }
 
@@ -874,7 +887,8 @@ mod tests {
         let env = no_env();
         let uuid = || "u-1".to_string();
         assert_eq!(
-            build_oracle_feed_request_id(&json!({ "request_id": "  abc  " }), &env, 5, uuid),
+            build_oracle_feed_request_id(&json!({ "request_id": "  abc  " }), &env, 5, uuid)
+                .unwrap(),
             "abc"
         );
         // The truthy chain falls past an empty request_id.
@@ -884,16 +898,22 @@ mod tests {
                 &env,
                 5,
                 uuid
-            ),
+            )
+            .unwrap(),
             "xyz"
         );
         assert_eq!(
-            build_oracle_feed_request_id(&json!({ "request_id": "" }), &env, 123, uuid),
+            build_oracle_feed_request_id(&json!({ "request_id": "" }), &env, 123, uuid).unwrap(),
             "pricefeed:testnet:123:u-1"
         );
         assert_eq!(
-            build_oracle_feed_request_id(&json!({}), &env, 123, uuid),
+            build_oracle_feed_request_id(&json!({}), &env, 123, uuid).unwrap(),
             "pricefeed:testnet:123:u-1"
+        );
+        assert_eq!(
+            build_oracle_feed_request_id(&json!({ "network": "staging" }), &env, 123, uuid)
+                .unwrap_err(),
+            "unsupported Neo network: staging"
         );
     }
 
@@ -1056,7 +1076,8 @@ mod tests {
             Some(&batch_tx),
             &json!({ "network": "mainnet" }),
             &env,
-        );
+        )
+        .unwrap();
         assert_eq!(rows.len(), 4);
         assert_eq!(rows[0].get("network"), Some(&json!("mainnet")));
         assert_eq!(rows[0].get("symbol"), Some(&json!("twelvedata:NEO-USD")));
@@ -1111,7 +1132,23 @@ mod tests {
             .iter()
             .all(|row| !js_trim_string(row.get("symbol")).is_empty()));
         // Non-array sync results produce no rows.
-        assert!(build_feed_snapshot_rows(&json!("x"), &state, None, &json!({}), &env).is_empty());
+        assert!(
+            build_feed_snapshot_rows(&json!("x"), &state, None, &json!({}), &env)
+                .unwrap()
+                .is_empty()
+        );
+        // An unknown network label is an error, never a TestNet row.
+        assert_eq!(
+            build_feed_snapshot_rows(
+                &sync_results,
+                &state,
+                None,
+                &json!({ "network": "staging" }),
+                &env
+            )
+            .unwrap_err(),
+            "unsupported Neo network: staging"
+        );
     }
 
     #[test]

@@ -96,7 +96,8 @@ pub fn handle_oracle_feed(
     if symbols.is_empty() {
         return Err(http_error(400, "at least one feed symbol is required"));
     }
-    let policy = build_sync_policy(&scope.target_chain, payload, env);
+    let policy = build_sync_policy(&scope.target_chain, payload, env)
+        .map_err(|message| http_error(400, message))?;
     let require_submission = normalize_boolean_like(
         payload
             .get("require_submission")
@@ -113,7 +114,7 @@ pub fn handle_oracle_feed(
 
     for symbol in &symbols {
         let (quotes, providers, provider_errors, aggregation) =
-            fetch_price_quotes(state, symbol, payload, env, &scope.network, now_ms);
+            fetch_price_quotes(state, symbol, payload, env, &scope.network, now_ms)?;
         if quotes.is_empty() {
             errors.push(json!({
                 "symbol": symbol,
@@ -338,6 +339,10 @@ pub fn handle_oracle_feed(
     Ok(DispatchOutcome::ok(body))
 }
 
+/// One symbol's quotes: the resolved quotes, the providers asked, their
+/// errors, and the aggregation when at least two providers answered.
+type PriceQuotes = (Vec<ResolvedQuote>, Vec<String>, Vec<Json>, Option<Json>);
+
 fn fetch_price_quotes(
     state: &AppState,
     symbol: &str,
@@ -345,8 +350,9 @@ fn fetch_price_quotes(
     env: EnvReader<'_>,
     network: &str,
     now_ms: u64,
-) -> (Vec<ResolvedQuote>, Vec<String>, Vec<Json>, Option<Json>) {
-    let providers = resolve_requested_providers(symbol, payload, env);
+) -> Result<PriceQuotes, RuntimeError> {
+    let providers = resolve_requested_providers(symbol, payload, env)
+        .map_err(|message| http_error(400, message))?;
     let mut quotes = Vec::new();
     let mut errors = Vec::new();
     for provider in &providers {
@@ -389,7 +395,7 @@ fn fetch_price_quotes(
     } else {
         None
     };
-    (quotes, providers, errors, aggregation)
+    Ok((quotes, providers, errors, aggregation))
 }
 
 fn resolve_quote_for_provider(
