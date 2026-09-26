@@ -6,9 +6,10 @@
 //! ephemeral state, sequencing, behavioural gates, the single replay-based
 //! scoring path and the 111-byte result codec (v2). Secret release,
 //! randomness and result signing remain host responsibilities: callers pass
-//! an already-attested 32-byte HMAC root, fresh OS entropy for new session
-//! tokens, and add the custody envelope only after a successful kernel-lane
-//! [`SessionStore::finalize`].
+//! a 32-byte HMAC key used for nothing else (the enclave host passes the
+//! game-session subkey of its attested KMS root, never the root itself),
+//! fresh OS entropy for new session tokens, and add the custody envelope only
+//! after a successful kernel-lane [`SessionStore::finalize`].
 //!
 //! Trust model (what changed and why):
 //!

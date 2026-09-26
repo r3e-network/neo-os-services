@@ -1480,6 +1480,57 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
     }
   });
 
+  // The enclave binds VRF randomness to the chain family and the oracle
+  // contract the request came from (Neo N3: contract script hash; Neo X: chain
+  // id + oracle address) and answers 400 when either is missing, so these
+  // fields are part of the relayer-enclave contract for random.generate.
+  for (const chain of ['neo_n3', 'neox']) {
+    it(`flag-ON VRF sends the chain domain the enclave binds (${chain})`, async () => {
+      const event = {
+        chain,
+        requestId: '778',
+        requestType: 'vrf_random',
+        appId: 'morpheus.platform.game',
+        moduleId: 'vrf_random',
+        operation: 'vrf_random',
+        payloadText: '{}',
+        txHash: '0x778',
+      };
+      const enclaveBody = enclaveResponseFor(chain, event, { randomness: 'ef'.repeat(32) });
+      const { calls, restore } = installEnclaveFetch(enclaveBody);
+      const submitted = [];
+      const config = baseConfig({
+        hooks: {
+          fulfillNeoRequest: async (call) => {
+            submitted.push(call);
+            return { tx_hash: '0xvrf', vm_state: 'HALT' };
+          },
+        },
+      });
+      try {
+        await processEvent(config, createEmptyRelayerState(), () => {}, silentLogger, event, {
+          attempts: 0,
+          durable_claimed: true,
+        });
+        assert.equal(calls.length, 1);
+        assert.ok(calls[0].url.endsWith('/oracle/fulfill'));
+        assert.equal(submitted.length, 1);
+        const sent = calls[0].body;
+        assert.equal(sent.chain, chain);
+        assert.equal(sent.request_id, '778');
+        if (chain === 'neox') {
+          assert.equal(sent.fulfillment_context.chain_id, NEOX_CHAIN_ID);
+          assert.equal(sent.fulfillment_context.oracle_contract, NEOX_ORACLE);
+        } else {
+          assert.equal(sent.fulfillment_context.contract_script_hash, N3_ORACLE);
+          assert.equal(sent.fulfillment_context.network_magic, N3_MAGIC);
+        }
+      } finally {
+        restore();
+      }
+    });
+  }
+
   it('flag-ON keeps the arbitrary-URL fetch lane on the HOST worker (host-unattested, not /oracle/fulfill)', async () => {
     const event = {
       chain: 'neo_n3',

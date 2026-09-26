@@ -1,5 +1,24 @@
 //! The `/vrf/random` fold derives stable, domain-bound bytes from a
 //! recipient-attested KMS root and signs the result envelope through custody.
+//!
+//! v2 construction (`docs/security/VRF-DESIGN-20260926.md`):
+//!
+//! ```text
+//! key        = crate::secret_root::vrf_key(root)            (HKDF-SHA256)
+//! randomness = HMAC-SHA256(key, LP("neoos-vrf-random-v2") || LP(lane)
+//!                               || LP(network) || LP(chain) || LP(chain_id)
+//!                               || LP(oracle_contract) || LP(JSON(request_id))
+//!                               || LP(module_id))
+//! LP(x)      = u32_be(len(x)) || x
+//! ```
+//!
+//! [`handle_vrf_fulfillment`] (lane `oracle-fulfill`) binds the chain family,
+//! chain id and oracle contract that the `/oracle/fulfill` fold resolved from
+//! the relayer's request context, never from the request payload. The direct
+//! route and the automation lane use lane `direct` with empty chain fields, so
+//! no `request_id` a caller picks there reproduces an on-chain request's
+//! output. A bearer holder can still compute the output of a request id that
+//! is not on chain yet; closing that is owner decision O18.
 
 use hmac::{Hmac, Mac};
 use rand::RngCore;
@@ -12,17 +31,60 @@ use crate::compute_execute::{
 use crate::state::AppState;
 use crate::{http_error, RuntimeError};
 
+/// First field of every v2 input. v1 (`neoos-vrf-random-v1`, keyed with the
+/// raw root) bound only the network, the request id and the module.
+const VRF_DOMAIN_TAG: &str = "neoos-vrf-random-v2";
+const LANE_ORACLE_FULFILL: &str = "oracle-fulfill";
+const LANE_DIRECT: &str = "direct";
+
+/// The on-chain request a fulfilment-lane output is bound to. Only the
+/// `/oracle/fulfill` fold builds one, after the checks its digest applies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct VrfRequestDomain {
+    /// The host's measured network.
+    pub(crate) network: String,
+    /// `neo_n3` or `neox`.
+    pub(crate) chain: &'static str,
+    /// Neo N3 network magic or Neo X EVM chain id.
+    pub(crate) chain_id: u64,
+    /// The oracle contract: `0x` and 40 lowercase hex digits.
+    pub(crate) oracle_contract: String,
+    /// The request id the relayer read from that contract.
+    pub(crate) request_id: String,
+}
+
 pub fn handle_vrf_random(
     state: &AppState,
     payload: &serde_json::Value,
 ) -> Result<serde_json::Value, RuntimeError> {
+    derive_signed_randomness(state, payload, None)
+}
+
+/// The `/oracle/fulfill` VRF lane. The output is bound to `domain`; the
+/// payload's own `request_id` is not read.
+pub(crate) fn handle_vrf_fulfillment(
+    state: &AppState,
+    payload: &serde_json::Value,
+    domain: &VrfRequestDomain,
+) -> Result<serde_json::Value, RuntimeError> {
+    derive_signed_randomness(state, payload, Some(domain))
+}
+
+fn derive_signed_randomness(
+    state: &AppState,
+    payload: &serde_json::Value,
+    domain: Option<&VrfRequestDomain>,
+) -> Result<serde_json::Value, RuntimeError> {
     reject_caller_supplied_signing_key(payload)?;
 
-    let request_id = payload
-        .get("request_id")
-        .filter(|value| js_truthy(value))
-        .cloned()
-        .ok_or_else(|| http_error(400, "request_id is required for deterministic VRF"))?;
+    let request_id = match domain {
+        Some(domain) => serde_json::Value::String(domain.request_id.clone()),
+        None => payload
+            .get("request_id")
+            .filter(|value| js_truthy(value))
+            .cloned()
+            .ok_or_else(|| http_error(400, "request_id is required for deterministic VRF"))?,
+    };
     let module_id = match payload.get("module_id") {
         None => "random.generate",
         Some(serde_json::Value::String(value)) if value == "random.generate" => value.as_str(),
@@ -47,19 +109,10 @@ pub fn handle_vrf_random(
         let bytes = hex::decode(root).map_err(|_| http_error(503, "VRF key is invalid"))?;
         <[u8; 32]>::try_from(bytes).map_err(|_| http_error(503, "VRF key is invalid"))?
     };
-    let request_id_bytes =
-        serde_json::to_vec(&request_id).map_err(|_| http_error(400, "request_id is invalid"))?;
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(&root).map_err(|_| http_error(503, "VRF key is invalid"))?;
-    for part in [
-        b"neoos-vrf-random-v1".as_slice(),
-        network.as_bytes(),
-        request_id_bytes.as_slice(),
-        module_id.as_bytes(),
-    ] {
-        mac.update(&(part.len() as u32).to_be_bytes());
-        mac.update(part);
-    }
+    let input = vrf_input(&network, domain, &request_id, module_id)?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(&crate::secret_root::vrf_key(&root))
+        .map_err(|_| http_error(503, "VRF key is invalid"))?;
+    mac.update(&input);
     let randomness = hex::encode(mac.finalize().into_bytes());
     let result = serde_json::json!({ "randomness": randomness });
     let payload_bytes = neo_os_core::stable_stringify::stable_stringify(
@@ -84,6 +137,45 @@ pub fn handle_vrf_random(
     response.insert("timestamp".to_string(), timestamp.into());
     response.insert("vrf_method".to_string(), "hmac-sha256-signed".into());
     Ok(serde_json::Value::Object(response))
+}
+
+/// The length-prefixed v2 input. Every field is framed, so two different
+/// field tuples never encode to the same bytes.
+fn vrf_input(
+    network: &str,
+    domain: Option<&VrfRequestDomain>,
+    request_id: &serde_json::Value,
+    module_id: &str,
+) -> Result<Vec<u8>, RuntimeError> {
+    let request_id =
+        serde_json::to_vec(request_id).map_err(|_| http_error(400, "request_id is invalid"))?;
+    let (lane, network, chain, chain_id, oracle_contract) = match domain {
+        Some(domain) => (
+            LANE_ORACLE_FULFILL,
+            domain.network.as_str(),
+            domain.chain,
+            domain.chain_id.to_string(),
+            domain.oracle_contract.as_str(),
+        ),
+        None => (LANE_DIRECT, network, "", String::new(), ""),
+    };
+    let mut input = Vec::new();
+    for part in [
+        VRF_DOMAIN_TAG.as_bytes(),
+        lane.as_bytes(),
+        network.as_bytes(),
+        chain.as_bytes(),
+        chain_id.as_bytes(),
+        oracle_contract.as_bytes(),
+        request_id.as_slice(),
+        module_id.as_bytes(),
+    ] {
+        let length =
+            u32::try_from(part.len()).map_err(|_| http_error(400, "VRF input is too long"))?;
+        input.extend_from_slice(&length.to_be_bytes());
+        input.extend_from_slice(part);
+    }
+    Ok(input)
 }
 
 fn js_truthy(value: &serde_json::Value) -> bool {

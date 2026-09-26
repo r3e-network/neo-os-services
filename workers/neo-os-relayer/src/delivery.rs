@@ -2035,6 +2035,15 @@ mod tests {
         let calls = transport.calls.lock().unwrap();
         assert_eq!(calls.len(), 10, "every commit phase is observable");
         assert!(calls[0].0.ends_with("/oracle/fulfill"));
+        // The measured host binds VRF randomness to this chain domain and
+        // answers 400 to a random.generate request that lacks it.
+        let fulfil: Value = serde_json::from_str(&calls[0].1).expect("fulfil body");
+        assert_eq!(fulfil["chain"], "neo_n3");
+        assert_eq!(
+            fulfil["fulfillment_context"]["contract_script_hash"],
+            "0xf54d8584ef82315c1800373272ab08ae0db2d5ef"
+        );
+        assert_eq!(fulfil["fulfillment_context"]["network_magic"], 894710606);
         assert!(calls[1].0.contains("/signer/api/v1/keys/updater-key"));
         // SVC-E-4: the verifier identity is fetched and compared BEFORE any
         // chain call, so a fulfilment signed by another key never reaches a
@@ -2276,6 +2285,13 @@ mod tests {
         assert!(calls[0].0.ends_with("/keys/neox-updater-key"));
         assert!(calls[1].0.ends_with("/keys/neox-verifier-key"));
         assert!(calls[2].0.ends_with("/oracle/fulfill"));
+        let fulfil: Value = serde_json::from_str(&calls[2].1).expect("fulfil body");
+        assert_eq!(fulfil["chain"], "neox");
+        assert_eq!(fulfil["fulfillment_context"]["chain_id"], 12227332);
+        assert_eq!(
+            fulfil["fulfillment_context"]["oracle_contract"],
+            "0x1111111111111111111111111111111111111111"
+        );
         assert!(calls[3].1.contains("eth_getTransactionCount"));
         assert!(calls[4].1.contains("eth_estimateGas"));
         assert!(calls[7].0.ends_with("/signer/api/v1/sign/transaction"));

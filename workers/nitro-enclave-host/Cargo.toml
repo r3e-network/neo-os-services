@@ -26,6 +26,9 @@ path = "src/lib.rs"
 axum = "0.8"
 base64 = "0.22"
 hex = "0.4"
+# Per-purpose subkeys of the KMS secret root (src/secret_root.rs). The compute
+# engine and neo-signer already carry this exact version, so no new tree.
+hkdf = "0.12"
 hmac = "0.12"
 http = "1"
 k256 = { version = "0.13", features = ["ecdsa"] }

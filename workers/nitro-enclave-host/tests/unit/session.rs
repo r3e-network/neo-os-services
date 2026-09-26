@@ -3,7 +3,8 @@
 //! Sudoku finalize produces the exact codec plus custody envelope. The kernel
 //! lane is also driven through the production `/oracle/fulfill` fold: a
 //! settled session is bound to its chain requester, consumed by the first
-//! kernel request, and encoded as the shared game-result v2 vectors.
+//! kernel request, and encoded in the shared game-result v2 codec. The host
+//! keys the session machine with the game-session subkey of its KMS root.
 
 use super::*;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -79,6 +80,49 @@ fn post(harness: &TestState, route: &str, payload: &Json) -> DispatchOutcome {
 }
 
 #[test]
+fn the_game_lane_keys_its_hmacs_with_the_game_session_subkey() {
+    let _store = store_test_lock();
+    reset_sessions_for_tests();
+    let root_hex = "07".repeat(32);
+    let harness = test_state(
+        &[
+            ("MORPHEUS_NETWORK", "testnet"),
+            ("NITRO_API_TOKEN", "s3cret"),
+            ("MORPHEUS_GAME_SECRET_ROOT_HEX", &root_hex),
+            ("MORPHEUS_GAME_SECRET_ROOT_SOURCE", "nitro-recipient-kms"),
+        ],
+        FakeAttest::with_document(b"attestation"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    harness.oracle_io.set_now_ms(1_000_000);
+    let payload = identity("miniapp-sudoku", 77);
+    let start = post(&harness, "/session/start", &payload);
+    assert_eq!(start.status, 200, "{}", start.body);
+
+    let canonical = neo_os_games::session::parse_identity(&payload)
+        .expect("valid test identity")
+        .canonical;
+    let commitment_under = |key: &[u8; 32]| {
+        let secret = neo_os_games::session::problem_secret_for(key, &canonical);
+        Json::String(hex_encode(&neo_os_games::session::commitment_for(
+            &canonical, &secret,
+        )))
+    };
+    let root = [7u8; 32];
+    assert_eq!(
+        start.body["commitment"],
+        commitment_under(&crate::secret_root::game_session_key(&root))
+    );
+    assert_ne!(start.body["commitment"], commitment_under(&root));
+    assert_ne!(
+        start.body["commitment"],
+        commitment_under(&crate::secret_root::vrf_key(&root))
+    );
+}
+
+#[test]
 fn rust_session_routes_cover_every_engine_and_sign_the_fixed_codec() {
     let _store = store_test_lock();
     reset_sessions_for_tests();
@@ -148,7 +192,10 @@ fn rust_session_routes_cover_every_engine_and_sign_the_fixed_codec() {
     let parsed =
         neo_os_games::session::parse_identity(&final_identity).expect("valid test identity");
     let root = [7u8; 32];
-    let secret = neo_os_games::session::problem_secret_for(&root, &parsed.canonical);
+    let secret = neo_os_games::session::problem_secret_for(
+        &crate::secret_root::game_session_key(&root),
+        &parsed.canonical,
+    );
     let engine =
         neo_os_games::registry::resolve_engine("miniapp-sudoku").expect("registered Sudoku");
     let (state, _) = (engine.deal)(&secret, 0);
@@ -384,7 +431,10 @@ fn play_sudoku(
         .expect("root hex")
         .try_into()
         .expect("32-byte root");
-    let secret = neo_os_games::session::problem_secret_for(&root, &parsed.canonical);
+    let secret = neo_os_games::session::problem_secret_for(
+        &crate::secret_root::game_session_key(&root),
+        &parsed.canonical,
+    );
     let engine = neo_os_games::registry::resolve_engine(SUDOKU).expect("Sudoku");
     let (state, _) = (engine.deal)(&secret, 0);
     let solution = state["solution"].as_str().expect("solution").to_string();
@@ -607,9 +657,38 @@ fn kernel_lane_loss_is_the_shared_game_result_v2_vector() {
     harness.oracle_io.set_now_ms(60_000);
     let settled = kernel_fulfill(&harness, "701", &owner.hash, &payload);
     assert_eq!(settled["success"], true, "{settled}");
+
+    // The vector was produced by the crate keyed with [9; 32] directly. The
+    // host keys the crate with the game-session subkey of its KMS root, so
+    // the two key-dependent fields (commitment, loss answer hash) necessarily
+    // differ from the vector; every other byte is the vector's.
+    let bytes = result_bytes(&settled);
+    let vector = hex::decode(loss["result"].as_str().expect("vector result")).expect("hex");
+    assert_eq!(bytes.len(), vector.len());
+    assert_eq!(bytes[0], vector[0], "codec tag");
     assert_eq!(
-        hex_encode(&result_bytes(&settled)),
-        loss["result"].as_str().expect("vector result"),
-        "the enclave's LOSS bytes are the shared vector the contract settles"
+        bytes[65..],
+        vector[65..],
+        "elapsed, undos, score, difficulty and binding are the shared vector's"
     );
+    let root: [u8; 32] = hex::decode(GAME_ROOT_HEX)
+        .expect("root hex")
+        .try_into()
+        .expect("32-byte root");
+    let key = crate::secret_root::game_session_key(&root);
+    let canonical = neo_os_games::session::parse_identity(&played.identity)
+        .expect("identity")
+        .canonical;
+    let secret = neo_os_games::session::problem_secret_for(&key, &canonical);
+    assert_eq!(
+        bytes[1..33],
+        neo_os_games::session::commitment_for(&canonical, &secret),
+        "commitment under the game-session subkey"
+    );
+    let ops = neo_os_core::js_value::JsValue::from_json(&Json::Array(played.ops.clone()));
+    let ops_digest =
+        neo_os_core::sha256_hex(neo_os_core::stable_stringify::stable_stringify(&ops).as_bytes());
+    let loss_answer_hash: [u8; 32] = Sha256::digest(format!("loss|{ops_digest}")).into();
+    assert_eq!(bytes[33..65], loss_answer_hash, "loss answer hash");
+    assert_ne!(bytes[1..65], vector[1..65]);
 }

@@ -2,8 +2,10 @@
 //!
 //! The keyless state machine and the result codec (v2, 111 bytes) live in
 //! `neo_os_games::session`. This frontier contributes only the two
-//! measured-boundary capabilities: a recipient-attested game-secret HMAC root
-//! and the custody worker signature over the successful finalize payload.
+//! measured-boundary capabilities: the game-session HMAC key, expanded from
+//! the recipient-attested KMS root under its own label
+//! ([`crate::secret_root::game_session_key`]), and the custody worker
+//! signature over the successful finalize payload.
 //! The kernel lane also hands the session machine the chain side of its
 //! request — `request_id` and `requester`, which the `/oracle/fulfill` fold
 //! takes from the relayer's view of the on-chain request — so a result can
@@ -34,7 +36,7 @@ const KMS_SOURCE: &str = "nitro-recipient-kms";
 static SESSIONS: OnceLock<Mutex<SessionStore>> = OnceLock::new();
 
 struct GameKeyMaterial {
-    secret_root: [u8; 32],
+    session_key: [u8; 32],
     public_key: String,
 }
 
@@ -55,7 +57,7 @@ pub fn handle_session_start(
     rand::rngs::OsRng.fill_bytes(&mut fresh_token);
     let reply = session_store()?.start(
         payload,
-        &material.secret_root,
+        &material.session_key,
         &material.public_key,
         now_ms,
         &fresh_token,
@@ -76,7 +78,7 @@ pub fn handle_session_step(
         None => return Ok(protocol_error(503, "game key material unavailable")),
     };
     let now_ms = state.oracle_io.now_ms() as f64;
-    let reply = session_store()?.step(payload, &material.secret_root, now_ms);
+    let reply = session_store()?.step(payload, &material.session_key, now_ms);
     Ok(reply.into())
 }
 
@@ -128,7 +130,7 @@ fn finalize_session(
     };
     let now_ms = state.oracle_io.now_ms() as f64;
     let direct = lane == FinalizeLane::Direct;
-    let reply = session_store()?.finalize(payload, &material.secret_root, now_ms, lane);
+    let reply = session_store()?.finalize(payload, &material.session_key, now_ms, lane);
     if reply.status != 200 || direct {
         return Ok(reply.into());
     }
@@ -200,7 +202,7 @@ fn game_key_material(state: &AppState, network: &str) -> Option<GameKeyMaterial>
         return None;
     }
     Some(GameKeyMaterial {
-        secret_root,
+        session_key: crate::secret_root::game_session_key(&secret_root),
         public_key: report.public_key.trim().to_string(),
     })
 }

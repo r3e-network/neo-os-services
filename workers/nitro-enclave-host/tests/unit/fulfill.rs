@@ -533,7 +533,8 @@ fn random_fulfillment_executes_in_process_without_a_bridge() {
         "request_type": "random",
         "request_id": "103",
         "payload": {},
-        "fulfillment_context": {},
+        // The VRF lane binds the oracle contract the relayer names.
+        "fulfillment_context": { "contract_script_hash": N3_TESTNET_ORACLE_CONTRACT },
     });
 
     let response = handle_oracle_fulfill(&harness.state, &body).expect("signed fulfillment");

@@ -261,6 +261,20 @@ pub fn handle_oracle_fulfill(
         }));
     }
 
+    // The VRF output is derived from the on-chain request's domain, so that
+    // domain is resolved before anything is computed: a missing or malformed
+    // field is an HTTP 400 for the whole fulfilment, never a signed refusal.
+    let vrf_domain = if intent.worker_route == "/vrf/random" {
+        Some(resolve_vrf_request_domain(
+            state,
+            body,
+            &fulfillment_context,
+            &request_id,
+        )?)
+    } else {
+        None
+    };
+
     // (a)+(b) COMPUTE via the keyless child — unless the lane is
     // operator-only, in which case nothing is computed and the deterministic
     // refusal takes the normal encode-and-sign path so the request settles.
@@ -279,6 +293,7 @@ pub fn handle_oracle_fulfill(
             &request_id,
             intent.module_id,
             &payload_text(body, &payload),
+            vrf_domain.as_ref(),
         )
     };
 
@@ -553,6 +568,85 @@ fn required_neox_chain_id(context: &serde_json::Value) -> Result<u64, RuntimeErr
     Ok(chain_id)
 }
 
+/// The chain domain a fulfilment-lane VRF output is bound to, besides the
+/// measured network and the request id: the chain family the relayer read the
+/// request from and the oracle contract that holds it. Neo N3 must name the
+/// measured oracle contract (and a supplied magic must match); Neo X must name
+/// its chain id and oracle contract address.
+fn resolve_vrf_request_domain(
+    state: &AppState,
+    body: &serde_json::Value,
+    context: &serde_json::Value,
+    request_id: &str,
+) -> Result<crate::vrf::VrfRequestDomain, RuntimeError> {
+    let chain = match body
+        .get("chain")
+        .and_then(serde_json::Value::as_str)
+        .map(|chain| js_trim(chain).to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("neo_n3") => "neo_n3",
+        Some("neox") => "neox",
+        _ => {
+            return Err(http_error(
+                400,
+                "random.generate fulfillment requires chain neo_n3 or neox",
+            ))
+        }
+    };
+    let network = state.resolve_network()?;
+    let (chain_id, oracle_contract) = if chain == "neox" {
+        let chain_id = required_neox_chain_id(context)?;
+        let contract = truthy_trimmed(context, &["oracle_contract", "oracleContract"]);
+        if contract.is_empty() {
+            return Err(http_error(
+                400,
+                "neox fulfillment_context.oracle_contract is required",
+            ));
+        }
+        let contract = canonical_evm_address(&contract).ok_or_else(|| {
+            http_error(
+                400,
+                "invalid NeoX fulfillment: invalid oracle contract address",
+            )
+        })?;
+        (chain_id, contract)
+    } else {
+        let contract = truthy_trimmed(context, &["contract_script_hash", "contractScriptHash"]);
+        if contract.is_empty() {
+            return Err(http_error(
+                400,
+                "neo_n3 random.generate fulfillment requires fulfillment_context.contract_script_hash",
+            ));
+        }
+        let supplied_magic = context
+            .get("network_magic")
+            .filter(|value| !value.is_null())
+            .or_else(|| context.get("networkMagic").filter(|value| !value.is_null()));
+        let (contract, _) = measured_n3_binding(&network, &contract, supplied_magic)?;
+        (
+            u64::from(measured_n3_magic(&network)?),
+            contract.to_ascii_lowercase(),
+        )
+    };
+    Ok(crate::vrf::VrfRequestDomain {
+        network,
+        chain,
+        chain_id,
+        oracle_contract,
+        request_id: request_id.to_string(),
+    })
+}
+
+/// An EVM address in the spelling the NeoX digest builder accepts (optional
+/// `0x`, 40 hex digits), rendered as `0x` and lowercase hex.
+fn canonical_evm_address(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    let digits = trimmed.strip_prefix("0x").unwrap_or(trimmed);
+    (digits.len() == 40 && digits.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| format!("0x{}", digits.to_ascii_lowercase()))
+}
+
 /// The Node relayer's verbatim refusal text for an operator-only lane
 /// (`workers/morpheus-relayer/src/fulfillment/executor.js`). Kept byte-exact
 /// so a consumer that matched on it before the Rust port still matches.
@@ -566,6 +660,7 @@ fn is_transient_worker_status(status: u16) -> bool {
 /// `computeWorkerResponse` (enclave-server.mjs:721-740): the confidential
 /// decrypt special case, otherwise the kernel route with the
 /// buildWorkerPayload-decorated payload.
+#[allow(clippy::too_many_arguments)]
 fn compute_worker_response(
     state: &AppState,
     chain: &str,
@@ -574,6 +669,7 @@ fn compute_worker_response(
     request_id: &str,
     intent_module_id: &str,
     payload_text_value: &serde_json::Value,
+    vrf_domain: Option<&crate::vrf::VrfRequestDomain>,
 ) -> crate::state::BridgeReply {
     if intent_module_id == "confidential.decrypt" {
         // `trimString(context.payloadText || payload?.envelope || '')`.
@@ -584,7 +680,7 @@ fn compute_worker_response(
         };
         let mut decrypted = payload.clone();
         decrypted["envelope"] = serde_json::Value::String(envelope);
-        return execute_fulfillment_route(state, "/oracle/decrypt", &decrypted);
+        return execute_fulfillment_route(state, "/oracle/decrypt", &decrypted, None);
     }
 
     let intent = resolve_kernel_intent(request_type);
@@ -598,13 +694,14 @@ fn compute_worker_response(
         &JsValue::from_json(&context),
     );
     let worker_payload_json = js_to_json(&JsValue::Object(worker_payload));
-    execute_fulfillment_route(state, intent.worker_route, &worker_payload_json)
+    execute_fulfillment_route(state, intent.worker_route, &worker_payload_json, vrf_domain)
 }
 
 fn execute_fulfillment_route(
     state: &AppState,
     route: &str,
     payload: &serde_json::Value,
+    vrf_domain: Option<&crate::vrf::VrfRequestDomain>,
 ) -> crate::state::BridgeReply {
     #[cfg(test)]
     if let Some(compute) = &state.fulfillment_compute_override {
@@ -635,7 +732,13 @@ fn execute_fulfillment_route(
         "/neodid/zklogin-ticket" => {
             value_reply(crate::neodid::handle_neo_did_zklogin_ticket(state, payload))
         }
-        "/vrf/random" => value_reply(crate::vrf::handle_vrf_random(state, payload)),
+        // Only the domain the fold resolved from the relayer's request context
+        // binds a fulfilment; without one the lane refuses instead of falling
+        // back to the direct route's caller-chosen domain.
+        "/vrf/random" => value_reply(match vrf_domain {
+            Some(domain) => crate::vrf::handle_vrf_fulfillment(state, payload, domain),
+            None => Err(http_error(500, "VRF request domain was not resolved")),
+        }),
         "/paymaster/authorize" => {
             value_reply(crate::paymaster::handle_paymaster_authorize(state, payload))
         }

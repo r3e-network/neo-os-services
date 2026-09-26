@@ -41,6 +41,7 @@ pub mod overlay;
 pub mod paymaster;
 pub mod provision;
 pub mod routes;
+pub mod secret_root;
 pub mod session;
 pub mod sign;
 pub mod state;
