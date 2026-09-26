@@ -2,7 +2,7 @@ import { apiError } from '@/lib/api-helpers';
 import { publicApiHandler } from '@/lib/public-api-handler';
 import { createRateLimitedHandler } from '@/lib/rate-limit';
 import { requireProjectOwner, WORKFLOW_REGISTRY_SELECT } from '@/lib/registry-access';
-import { resolveSupabaseNetwork } from '@/lib/server-supabase';
+import { resolveRequestNetwork } from '@/lib/request-network';
 import { trimString } from '@/lib/strings';
 import { emptyQuerySchema } from '@/lib/validators';
 import {
@@ -43,7 +43,9 @@ export const POST = createRateLimitedHandler(
     const name = trimString(body?.name || '');
     const triggerKind = trimString(body?.trigger_kind || '');
     const targetChain = trimString(body?.target_chain || 'neo_n3');
-    const network = resolveSupabaseNetwork(String(body?.network || ''));
+    const requestedNetwork = resolveRequestNetwork(String(body?.network || ''));
+    if (!requestedNetwork.ok) return requestedNetwork.response;
+    const network = requestedNetwork.network;
     const triggerConfig = body?.trigger_config ?? {};
     const handlerSource = body?.handler_source ?? null;
     if (

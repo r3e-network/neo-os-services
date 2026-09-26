@@ -2,6 +2,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { timingSafeCompare } from '@r3e-network/neo-os-services-shared/utils';
 import { Database } from './supabase-types';
 import { getCache, setCache, __resetMemoryCaches, __resetRedisClient } from './upstash-cache';
+import { UnsupportedNetworkError } from './network-errors';
 
 export type ServerSupabaseClient = SupabaseClient<Database>;
 export type MorpheusNetwork = 'mainnet' | 'testnet';
@@ -129,7 +130,7 @@ export function resolveSupabaseNetwork(value?: string | null): MorpheusNetwork {
     value || process.env.MORPHEUS_NETWORK || process.env.NEXT_PUBLIC_MORPHEUS_NETWORK || 'mainnet'
   ).trim();
   if (raw === 'mainnet' || raw === 'testnet') return raw;
-  throw new Error(`unsupported Neo network: ${raw}`);
+  throw new UnsupportedNetworkError(raw);
 }
 
 export async function resolveProjectIdBySlug(

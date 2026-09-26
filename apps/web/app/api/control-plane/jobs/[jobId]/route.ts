@@ -1,4 +1,5 @@
-import { getServerSupabaseClient, resolveSupabaseNetwork } from '@/lib/server-supabase';
+import { getServerSupabaseClient } from '@/lib/server-supabase';
+import { resolveRequestNetwork } from '@/lib/request-network';
 import { isAuthorizedControlPlaneRequest } from '@/lib/control-plane-auth';
 import { decorateControlPlaneJob } from '@/lib/workflow-runtime';
 import { trimString } from '@/lib/strings';
@@ -36,7 +37,12 @@ export async function GET(request: Request, context: { params: Promise<{ jobId: 
   }
 
   const url = new URL(request.url);
-  const network = resolveSupabaseNetwork(url.searchParams.get('network'));
+  const requestedNetwork = resolveRequestNetwork(url.searchParams.get('network'));
+  if (!requestedNetwork.ok) {
+    requestedNetwork.response.headers.set('cache-control', 'no-store');
+    return requestedNetwork.response;
+  }
+  const network = requestedNetwork.network;
   const { data, error } = await supabase
     .from('morpheus_control_plane_jobs')
     .select('*')

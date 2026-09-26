@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { apiError } from '@/lib/api-helpers';
 import { createRateLimitedHandler } from '@/lib/rate-limit';
 import { requireProjectOwner, SECRET_LIST_SELECT } from '@/lib/registry-access';
-import { resolveSupabaseNetwork } from '@/lib/server-supabase';
+import { resolveRequestNetwork } from '@/lib/request-network';
 import { trimString } from '@/lib/strings';
 import type { Json } from '@/lib/supabase-types';
 import {
@@ -27,7 +27,9 @@ export const GET = createRateLimitedHandler(
     const projectSlug = trimString(url.searchParams.get('project_slug') || '');
     if (!projectSlug) return apiError('project_slug is required', 'MISSING_PROJECT_SLUG', 400);
 
-    const network = resolveSupabaseNetwork(url.searchParams.get('network') || '');
+    const requestedNetwork = resolveRequestNetwork(url.searchParams.get('network') || '');
+    if (!requestedNetwork.ok) return requestedNetwork.response;
+    const network = requestedNetwork.network;
     const owned = await requireProjectOwner(request, projectSlug, network, {
       scope: 'secret_registry_read',
       maxRequests: 60,
@@ -63,7 +65,9 @@ export const POST = createRateLimitedHandler(
     const name = sanitizeSecretName(rawName) || `cipher-ref:${randomUUID()}`;
     const ciphertext = body?.ciphertext ?? '';
     const targetChain = trimString(body?.target_chain || 'neo_n3');
-    const network = resolveSupabaseNetwork(String(body?.network || ''));
+    const requestedNetwork = resolveRequestNetwork(String(body?.network || ''));
+    if (!requestedNetwork.ok) return requestedNetwork.response;
+    const network = requestedNetwork.network;
     const algorithm = trimString(body?.encryption_algorithm || 'client-supplied-ciphertext');
     const algorithmError = validateEncryptionAlgorithm(algorithm);
     if (algorithmError) {

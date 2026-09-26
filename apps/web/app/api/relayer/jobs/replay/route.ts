@@ -1,5 +1,6 @@
 import { signManualAction } from '@r3e-network/neo-os-services-shared/node-runtime';
-import { getServerSupabaseClient, resolveSupabaseNetwork } from '@/lib/server-supabase';
+import { getServerSupabaseClient } from '@/lib/server-supabase';
+import { resolveRequestNetwork } from '@/lib/request-network';
 import { recordOperationLog } from '@/lib/operation-logs';
 import { badRequest } from '@/lib/api-helpers';
 import { logRelayerUnauthorized, requireRelayerAdmin } from '@/lib/relayer-auth';
@@ -27,7 +28,9 @@ export async function POST(request: Request) {
   }
 
   const eventKey = typeof body?.event_key === 'string' ? body.event_key.trim() : '';
-  const network = resolveSupabaseNetwork(String(body?.network || ''));
+  const requestedNetwork = resolveRequestNetwork(String(body?.network || ''));
+  if (!requestedNetwork.ok) return requestedNetwork.response;
+  const network = requestedNetwork.network;
   if (!eventKey) return badRequest('event_key required');
 
   const { data: existing, error: existingError } = await supabase

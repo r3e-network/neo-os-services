@@ -1,7 +1,7 @@
 import { apiError } from '@/lib/api-helpers';
 import { createRateLimitedHandler } from '@/lib/rate-limit';
 import { requireProjectOwner, WORKFLOW_REGISTRY_SELECT } from '@/lib/registry-access';
-import { resolveSupabaseNetwork } from '@/lib/server-supabase';
+import { resolveRequestNetwork } from '@/lib/request-network';
 import { trimString } from '@/lib/strings';
 import { toPublicWorkflowRecord, type WorkflowRegistryRow } from '@/lib/workflow-registry';
 
@@ -24,7 +24,9 @@ export const GET = createRateLimitedHandler(
       return apiError('project_slug is required', 'MISSING_PROJECT_SLUG', 400);
     }
 
-    const network = resolveSupabaseNetwork(url.searchParams.get('network') || '');
+    const requestedNetwork = resolveRequestNetwork(url.searchParams.get('network') || '');
+    if (!requestedNetwork.ok) return requestedNetwork.response;
+    const network = requestedNetwork.network;
     const owned = await requireProjectOwner(request, projectSlug, network, {
       scope: 'workflow_registry_read',
       maxRequests: 60,

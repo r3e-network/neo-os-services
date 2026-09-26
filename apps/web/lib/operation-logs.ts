@@ -8,6 +8,7 @@ import {
   resolveSupabaseNetwork,
   type MorpheusNetwork,
 } from './server-supabase';
+import { isUnsupportedNetworkError } from './network-errors';
 import { trimString } from './strings';
 
 type OperationCategory =
@@ -287,7 +288,17 @@ function resolveOperationNetwork(
   const requestObject = isPlainObject(requestPayload) ? requestPayload : {};
   const fromRequest = trimString(requestObject.network || requestObject.morpheus_network);
   const fromMetadata = trimString(metadata.network || metadata.morpheus_network);
-  return resolveSupabaseNetwork(fromRequest || fromMetadata);
+  const label = fromRequest || fromMetadata;
+  try {
+    return resolveSupabaseNetwork(label);
+  } catch (error) {
+    // A route refuses a request whose network label is unsupported, and that
+    // refusal is still an operation to record. File it under this deployment's
+    // own network (the raw label stays in request_payload) instead of dropping
+    // the row. The label never selects the network of a served request.
+    if (isUnsupportedNetworkError(error) && label) return resolveSupabaseNetwork();
+    throw error;
+  }
 }
 
 // Defers log persistence until after the response is sent, so the per-request

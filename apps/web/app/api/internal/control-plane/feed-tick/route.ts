@@ -1,7 +1,7 @@
 import { isAuthorizedWorkflowRequest } from '@/lib/control-plane-auth';
 import { runFeedSyncJob } from '@/lib/feed-sync';
 import { sendHeartbeat } from '@/lib/heartbeat';
-import { resolveControlPlaneNetwork } from '@/lib/neo-control-plane';
+import { resolveRequestNetwork } from '@/lib/request-network';
 import { badRequest } from '@/lib/api-helpers';
 import { findHostSignerMaterialPaths } from '@/lib/host-key-guard';
 import { trimString } from '@/lib/strings';
@@ -25,12 +25,9 @@ export async function POST(request: Request) {
     );
   }
 
-  let network: 'mainnet' | 'testnet';
-  try {
-    network = resolveControlPlaneNetwork(trimString(body.network || 'testnet'));
-  } catch (error) {
-    return badRequest(error instanceof Error ? error.message : 'invalid network');
-  }
+  const requestedNetwork = resolveRequestNetwork(trimString(body.network || 'testnet'));
+  if (!requestedNetwork.ok) return requestedNetwork.response;
+  const network = requestedNetwork.network;
 
   // No signer material is resolved or forwarded. This compatibility trigger
   // can only call the host's observe/plan surface; production publication is

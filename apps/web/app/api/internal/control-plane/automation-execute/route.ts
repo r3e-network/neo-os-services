@@ -5,13 +5,13 @@ import {
   patchAutomationJobForBackend,
   queueNeoN3AutomationViaBackend,
   recordAutomationRunForBackend,
-  resolveControlPlaneNetwork,
 } from '@/lib/neo-control-plane';
 import {
   buildUpkeepDispatch,
   buildUpkeepExecutionPayload,
 } from '@r3e-network/neo-os-services-shared/automation-supervisor';
 import { badRequest } from '@/lib/api-helpers';
+import { resolveRequestNetwork } from '@/lib/request-network';
 import { findHostSignerMaterialPaths } from '@/lib/host-key-guard';
 import { trimString } from '@/lib/strings';
 
@@ -96,7 +96,9 @@ export async function POST(request: Request) {
   const automationId = trimString(body.automation_id || body.id || '');
   if (!automationId) return badRequest('automation_id is required');
 
-  const network = resolveControlPlaneNetwork(trimString(body.network || 'testnet'));
+  const requestedNetwork = resolveRequestNetwork(trimString(body.network || 'testnet'));
+  if (!requestedNetwork.ok) return requestedNetwork.response;
+  const network = requestedNetwork.network;
 
   try {
     const job = await fetchAutomationJobForBackend(network, automationId);

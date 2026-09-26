@@ -1,4 +1,5 @@
-import { getServerSupabaseClient, resolveSupabaseNetwork } from '@/lib/server-supabase';
+import { getServerSupabaseClient } from '@/lib/server-supabase';
+import { resolveRequestNetwork } from '@/lib/request-network';
 import { recordOperationLog } from '@/lib/operation-logs';
 import { badRequest } from '@/lib/api-helpers';
 import { logRelayerUnauthorized, requireRelayerAdmin } from '@/lib/relayer-auth';
@@ -19,7 +20,9 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const limit = Math.max(Number(url.searchParams.get('limit') || 10), 1);
-  const network = resolveSupabaseNetwork(url.searchParams.get('network'));
+  const requestedNetwork = resolveRequestNetwork(url.searchParams.get('network'));
+  if (!requestedNetwork.ok) return requestedNetwork.response;
+  const network = requestedNetwork.network;
 
   const { data, error } = await supabase
     .from('morpheus_relayer_runs')

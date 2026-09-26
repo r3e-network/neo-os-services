@@ -1,4 +1,5 @@
-import { getServerSupabaseClient, resolveSupabaseNetwork } from '@/lib/server-supabase';
+import { getServerSupabaseClient } from '@/lib/server-supabase';
+import { resolveRequestNetwork } from '@/lib/request-network';
 import { recordOperationLog } from '@/lib/operation-logs';
 import { badRequest } from '@/lib/api-helpers';
 import { logRelayerUnauthorized, requireRelayerAdmin } from '@/lib/relayer-auth';
@@ -22,7 +23,9 @@ export async function GET(request: Request) {
   // unbounded scan of the relayer jobs table.
   const rawLimit = Number(url.searchParams.get('limit') || 50);
   const limit = Math.min(Number.isFinite(rawLimit) ? Math.max(Math.trunc(rawLimit), 1) : 50, 200);
-  const network = resolveSupabaseNetwork(url.searchParams.get('network'));
+  const requestedNetwork = resolveRequestNetwork(url.searchParams.get('network'));
+  if (!requestedNetwork.ok) return requestedNetwork.response;
+  const network = requestedNetwork.network;
   const status = (url.searchParams.get('status') || '').trim();
   const chain = (url.searchParams.get('chain') || '').trim();
 

@@ -1,4 +1,4 @@
-import { resolveSupabaseNetwork } from '@/lib/server-supabase';
+import { resolveRequestNetwork } from '@/lib/request-network';
 import { authorizeProjectAccess } from '@/lib/registry-access';
 import { recordOperationLog } from '@/lib/operation-logs';
 import { badRequest } from '@/lib/api-helpers';
@@ -31,10 +31,38 @@ function summarizeConfigsForLog(configs: Array<Record<string, unknown>> = []) {
   }));
 }
 
+// A refused network label is logged like the route's other refusals. The
+// operation log files the row under this deployment's network and keeps the
+// raw label in the request payload.
+async function recordUnsupportedNetwork(
+  method: string,
+  requestPayload: Record<string, unknown>,
+  error: string
+) {
+  await recordOperationLog({
+    route: '/api/provider-configs',
+    method,
+    category: 'provider_config',
+    requestPayload,
+    responsePayload: { error },
+    httpStatus: 400,
+    error,
+  });
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const projectSlug = (url.searchParams.get('project_slug') || 'morpheus').trim();
-  const network = resolveSupabaseNetwork(url.searchParams.get('network'));
+  const requestedNetwork = resolveRequestNetwork(url.searchParams.get('network'));
+  if (!requestedNetwork.ok) {
+    await recordUnsupportedNetwork(
+      'GET',
+      { project_slug: projectSlug, network: url.searchParams.get('network') },
+      requestedNetwork.error
+    );
+    return requestedNetwork.response;
+  }
+  const network = requestedNetwork.network;
 
   // SECURITY (S12): the caller must be the project owner (JWT) or an operator
   // holding the provider_config admin key — a bare admin key no longer reads
@@ -112,7 +140,17 @@ export async function POST(request: Request) {
   }
 
   const projectSlug = String(body.project_slug || 'morpheus').trim();
-  const network = resolveSupabaseNetwork(String(body.network || body.morpheus_network || ''));
+  const requestedLabel = String(body.network || body.morpheus_network || '');
+  const requestedNetwork = resolveRequestNetwork(requestedLabel);
+  if (!requestedNetwork.ok) {
+    await recordUnsupportedNetwork(
+      'POST',
+      { project_slug: projectSlug, network: requestedLabel },
+      requestedNetwork.error
+    );
+    return requestedNetwork.response;
+  }
+  const network = requestedNetwork.network;
 
   // SECURITY (S12): project owner (JWT) or operator (provider_config admin key).
   const access = await authorizeProjectAccess(request, projectSlug, network, 'provider_config');
@@ -246,8 +284,21 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   const url = new URL(request.url);
   const projectSlug = (url.searchParams.get('project_slug') || 'morpheus').trim();
-  const network = resolveSupabaseNetwork(url.searchParams.get('network'));
   const providerId = (url.searchParams.get('provider_id') || '').trim();
+  const requestedNetwork = resolveRequestNetwork(url.searchParams.get('network'));
+  if (!requestedNetwork.ok) {
+    await recordUnsupportedNetwork(
+      'DELETE',
+      {
+        project_slug: projectSlug,
+        provider_id: providerId,
+        network: url.searchParams.get('network'),
+      },
+      requestedNetwork.error
+    );
+    return requestedNetwork.response;
+  }
+  const network = requestedNetwork.network;
 
   // SECURITY (S12): project owner (JWT) or operator (provider_config admin key).
   const access = await authorizeProjectAccess(request, projectSlug, network, 'provider_config');

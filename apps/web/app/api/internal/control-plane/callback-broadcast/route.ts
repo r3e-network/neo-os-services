@@ -1,7 +1,8 @@
 import { isAuthorizedWorkflowRequest } from '@/lib/control-plane-auth';
 import { sendHeartbeat } from '@/lib/heartbeat';
-import { fulfillNeoN3RequestViaBackend, resolveControlPlaneNetwork } from '@/lib/neo-control-plane';
+import { fulfillNeoN3RequestViaBackend } from '@/lib/neo-control-plane';
 import { badRequest } from '@/lib/api-helpers';
+import { resolveRequestNetwork } from '@/lib/request-network';
 import { findHostSignerMaterialPaths } from '@/lib/host-key-guard';
 import { trimString } from '@/lib/strings';
 
@@ -32,7 +33,9 @@ export async function POST(request: Request) {
     );
   }
 
-  const network = resolveControlPlaneNetwork(trimString(body.network || 'testnet'));
+  const requestedNetwork = resolveRequestNetwork(trimString(body.network || 'testnet'));
+  if (!requestedNetwork.ok) return requestedNetwork.response;
+  const network = requestedNetwork.network;
   const targetChain = trimString(body.target_chain || body.chain || '');
   const requestId = trimString(body.request_id || '');
   const verificationSignature = trimString(

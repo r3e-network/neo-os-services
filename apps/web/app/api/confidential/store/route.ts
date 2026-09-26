@@ -6,7 +6,7 @@ import { recordOperationLog } from '@/lib/operation-logs';
 import { createRateLimitedHandler } from '@/lib/rate-limit';
 import { authorizeProjectAccess } from '@/lib/registry-access';
 import { buildSecretMetadata, validateSecretBinding } from '@/lib/secret-registry';
-import { resolveSupabaseNetwork } from '@/lib/server-supabase';
+import { resolveRequestNetwork } from '@/lib/request-network';
 import { trimString } from '@/lib/strings';
 
 type EncryptedSecretInsertRow = {
@@ -33,7 +33,11 @@ const handlePost = createRateLimitedHandler(
     const body = await request.json().catch(() => ({}));
     const ciphertext = trimString(body?.ciphertext);
     const targetChain = trimString(body?.target_chain || body?.targetChain || 'neo_n3');
-    const network = resolveSupabaseNetwork(String(body?.network || body?.morpheus_network || ''));
+    const requestedNetwork = resolveRequestNetwork(
+      String(body?.network || body?.morpheus_network || '')
+    );
+    if (!requestedNetwork.ok) return requestedNetwork.response;
+    const network = requestedNetwork.network;
     const projectSlug = trimString(body?.project_slug || body?.projectSlug || '');
     const name = trimString(body?.name || '') || `cipher-ref:${randomUUID()}`;
     const algorithm = trimString(

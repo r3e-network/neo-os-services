@@ -1,8 +1,4 @@
-import {
-  getServerSupabaseClient,
-  resolveSupabaseNetwork,
-  type MorpheusNetwork,
-} from './server-supabase';
+import { getServerSupabaseClient, type MorpheusNetwork } from './server-supabase';
 import { appConfig } from './config';
 import { isRetryableStatus } from './nitro';
 import { networkRegistry } from './networks';
@@ -18,10 +14,6 @@ function pickValue(...values: unknown[]) {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-export function resolveControlPlaneNetwork(value?: string | null): MorpheusNetwork {
-  return resolveSupabaseNetwork(value);
 }
 
 export function resolveNeoN3Runtime(network: MorpheusNetwork) {
