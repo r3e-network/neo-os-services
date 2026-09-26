@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
 
     const duration = (Date.now() - startTime) / 1000;
     requestCounter.inc({ method: 'GET', endpoint: '/api/v1/quote', status_code: 200 });
-    latencyHistogram.observe(duration, '/api/v1/quote');
+    latencyHistogram.observe({ endpoint: '/api/v1/quote' }, duration);
 
     return NextResponse.json({
       ...quote,
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
 
     const duration = (Date.now() - startTime) / 1000;
     requestCounter.inc({ method: 'GET', endpoint: '/api/v1/quote', status_code: 500 });
-    latencyHistogram.observe(duration, '/api/v1/quote');
+    latencyHistogram.observe({ endpoint: '/api/v1/quote' }, duration);
 
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

@@ -48,6 +48,8 @@ export class PriceFeedServer {
   private readonly twapProvider?: (tokenPair: string) => Promise<number>;
   private metricsTimer?: ReturnType<typeof setInterval>;
   private shutdownStarted = false;
+  private redisReady = false;
+  private redisFailure: Error | null = null;
 
   constructor(
     portOrServer: number | WebSocketServer = parseInt(process.env.WS_PORT || '8081'),
@@ -58,14 +60,19 @@ export class PriceFeedServer {
       typeof portOrServer === 'number' ? new WebSocketServer({ port: portOrServer }) : portOrServer;
     this.twapProvider = dependencies.calculateTWAP;
 
-    // Use an injected client in tests and create a lazy ioredis client in production.
-    // ioredis does not expose node-redis's createClient({ url }) API.
-    this.redis = (dependencies.redis ??
-      new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+    if (dependencies.redis) {
+      this.redis = dependencies.redis;
+      this.redisReady = true;
+    } else {
+      const redisUrl = process.env.REDIS_URL?.trim();
+      if (!redisUrl) throw new Error('REDIS_URL is required for Price Feed Server');
+      // ioredis does not expose node-redis's createClient({ url }) API.
+      this.redis = new Redis(redisUrl, {
         lazyConnect: true,
         maxRetriesPerRequest: 2,
-      })) as unknown as RedisLike;
-    if (!dependencies.redis) void this.connectRedis();
+      }) as unknown as RedisLike;
+      void this.connectRedis();
+    }
 
     this.initializeWebSocketHandlers();
     this.startMetricsCleanup();
@@ -79,11 +86,17 @@ export class PriceFeedServer {
       if (this.redis.connect && this.redis.status !== 'ready') {
         await this.redis.connect();
       }
+      this.redisReady = true;
       console.log('Price Feed Server: Redis connected');
     } catch (error) {
-      // Keep the feed alive for health/read-only connections, but never claim Redis is ready.
+      this.redisFailure = error instanceof Error ? error : new Error(String(error));
       console.error('Price Feed Server: Redis connection failed', error);
     }
+  }
+
+  private ensureRedisReady(): void {
+    if (this.redisFailure) throw new Error('Price Feed Server Redis backend is unavailable');
+    if (!this.redisReady) throw new Error('Price Feed Server Redis backend is not ready');
   }
 
   private initializeWebSocketHandlers(): void {
@@ -210,6 +223,7 @@ export class PriceFeedServer {
     channel: string,
     callback: (message: string) => void
   ): Promise<{ quit: () => Promise<unknown> }> {
+    this.ensureRedisReady();
     if (!this.redis.subscribe) throw new Error('Redis subscription is unavailable');
 
     // ioredis requires a dedicated connection after SUBSCRIBE. Reusing the
@@ -325,6 +339,7 @@ export class PriceFeedServer {
     backpressureQueueSizeGauge.set(queueBefore);
 
     try {
+      this.ensureRedisReady();
       // Apply backpressure if queue is too large (>5000 pending messages)
       if (queueBefore > 5000) {
         console.warn(`Backpressure active: Queue size ${queueBefore}`);
