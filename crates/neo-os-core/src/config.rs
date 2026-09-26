@@ -1942,6 +1942,19 @@ mod tests {
     }
 
     #[test]
+    fn relayer_config_rejects_an_explicit_cleartext_neox_rpc_endpoint() {
+        let source = env_from(&[
+            ("MORPHEUS_NETWORK", "testnet"),
+            ("MORPHEUS_RELAYER_NEOX_RPC_URL", "http://cleartext-neox.rpc"),
+        ]);
+        let error = derive_pure_fields(&source, &reviewed_testnet_registry(), "")
+            .expect_err("a cleartext Neo X endpoint must stop config derivation");
+        assert!(error
+            .to_string()
+            .contains("Neo X testnet RPC requires HTTPS RPC endpoints"));
+    }
+
+    #[test]
     fn parse_url_list_strips_one_trailing_slash() {
         let urls = parse_url_list(&JsValue::Str(" https://a.io/ ,https://b.io// ".to_string()));
         assert_eq!(urls, vec!["https://a.io", "https://b.io/"]);

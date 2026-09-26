@@ -570,6 +570,31 @@ test('workflow: POST /paymaster/authorize evaluates policy', async () => {
   assert.ok(body.output_hash);
 });
 
+test('workflow: paymaster refuses a cleartext AA policy RPC before any read', async () => {
+  process.env.MORPHEUS_PAYMASTER_TESTNET_ENABLED = 'true';
+  process.env.MORPHEUS_PAYMASTER_TESTNET_POLICY_ID = 'test-policy';
+  process.env.MORPHEUS_PAYMASTER_TESTNET_AA_CORE_HASH = `0x${'11'.repeat(20)}`;
+  process.env.MORPHEUS_PAYMASTER_TESTNET_WHITELIST_HOOK_HASH = `0x${'22'.repeat(20)}`;
+  process.env.MORPHEUS_PAYMASTER_TESTNET_NEO_RPC_URL = 'http://rpc.test';
+  let fetches = 0;
+  global.fetch = async () => {
+    fetches += 1;
+    throw new Error('the AA policy read must not reach the network');
+  };
+  const res = await post('/paymaster/authorize', {
+    account_id: '0x1234567890abcdef1234567890abcdef12345678',
+    target_contract: '0xabcdef1234567890abcdef1234567890abcdef12',
+    userop_target_contract: '0x00112233445566778899aabbccddeeff00112233',
+    method: 'executeUserOp',
+    operation_hash: '0x0000000000000000000000000000000000000000000000000000000000000001',
+    estimated_gas_units: 100,
+  });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.match(String(body.error || body.message), /RPC URL must use HTTPS/);
+  assert.equal(fetches, 0);
+});
+
 test('workflow: paymaster rejects an unknown explicit network environment', async () => {
   process.env.MORPHEUS_NETWORK = 'staging';
   assert.throws(() => resolvePaymasterNetwork({}), /unsupported Neo network/i);

@@ -1869,6 +1869,25 @@ test('createRelayerConfig rejects an explicit cleartext RPC endpoint', () => {
   }
 });
 
+test('createRelayerConfig rejects an explicit cleartext Neo X RPC endpoint', () => {
+  const keys = ['MORPHEUS_NETWORK', 'MORPHEUS_RELAYER_NEOX_RPC_URL', 'NEOX_RPC'];
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  process.env.MORPHEUS_NETWORK = 'testnet';
+  delete process.env.NEOX_RPC;
+  process.env.MORPHEUS_RELAYER_NEOX_RPC_URL = 'http://cleartext-neox.rpc';
+  try {
+    assert.throws(
+      () => withIsolatedRelayerSigner(() => createRelayerConfig()),
+      /Neo X testnet RPC requires HTTPS RPC endpoints.*http:\/\/cleartext-neox\.rpc/i
+    );
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
 test('createRelayerConfig defaults active chains to neo_n3 only', () => {
   const previous = process.env.MORPHEUS_ACTIVE_CHAINS;
   delete process.env.MORPHEUS_ACTIVE_CHAINS;

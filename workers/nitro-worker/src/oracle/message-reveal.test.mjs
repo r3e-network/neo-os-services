@@ -8,6 +8,7 @@ import {
   isRevealTimestampFresh,
   handleMessageReveal,
   __buildMessageRpcConnectionForTests,
+  readMessageFromChain,
   resolveNeoxMessageChainContext,
 } from './message-reveal.js';
 
@@ -95,6 +96,22 @@ async function signedRevealPayload(messageId, issuedAt) {
   const signature = await wallet.signMessage(statement);
   return { chain: 'neox', signature, messageId, issuedAt };
 }
+
+test('readMessageFromChain refuses a cleartext RPC URL before connecting', async (t) => {
+  const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+    throw new Error('the message read must not reach the network');
+  });
+  await assert.rejects(
+    readMessageFromChain({
+      rpcUrl: 'http://rpc.example',
+      chainId: 47763,
+      contract: '0x0000000000000000000000000000000000000001',
+      messageId: '9',
+    }),
+    /RPC URL must use HTTPS/
+  );
+  assert.equal(fetchMock.mock.callCount(), 0);
+});
 
 test('Neo X message context uses the reviewed projection and rejects overrides', () => {
   const keys = [
