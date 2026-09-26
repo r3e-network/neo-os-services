@@ -10,6 +10,10 @@ const semver = require(path.join(root, 'node_modules', 'semver'));
 const neoSwap = path.join(root, 'services', 'neoswap');
 const manifest = JSON.parse(fs.readFileSync(path.join(neoSwap, 'package.json'), 'utf8'));
 const lock = JSON.parse(fs.readFileSync(path.join(neoSwap, 'package-lock.json'), 'utf8'));
+const web = path.join(root, 'apps', 'web');
+const webManifest = JSON.parse(fs.readFileSync(path.join(web, 'package.json'), 'utf8'));
+const webLock = JSON.parse(fs.readFileSync(path.join(web, 'package-lock.json'), 'utf8'));
+const rootLock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
 const rootManifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
 const apiGatewayRedis = fs.readFileSync(
@@ -54,6 +58,12 @@ function versionAtLeast(version, expectedMajor, expectedMinor, expectedPatch = 0
 
 function lockVersions(name) {
   return Object.entries(lock.packages ?? {})
+    .filter(([key]) => key === `node_modules/${name}` || key.endsWith(`/node_modules/${name}`))
+    .map(([key, value]) => ({ key, version: value.version }));
+}
+
+function webLockVersions(name) {
+  return Object.entries(webLock.packages ?? {})
     .filter(([key]) => key === `node_modules/${name}` || key.endsWith(`/node_modules/${name}`))
     .map(([key, value]) => ({ key, version: value.version }));
 }
@@ -283,6 +293,80 @@ test('services dependency security policy pins patched runtime and build package
   }
 });
 
+test('services web lockfile pins all currently vulnerable packages to patched versions', () => {
+  assert.equal(webLock.lockfileVersion, 3, 'apps/web must use an npm 10 compatible lockfile');
+  assert.equal(
+    rootLock.packages?.['apps/web']?.devDependencies?.['eslint-config-next'],
+    webManifest.devDependencies?.['eslint-config-next'],
+    'the root workspace lock must mirror apps/web/package.json'
+  );
+  assert.equal(webManifest.dependencies?.next, '^15.5.26');
+  assert.equal(webManifest.devDependencies?.['eslint-config-next'], '^15.5.26');
+  assert.equal(webManifest.devDependencies?.vitest, '^4.1.11');
+  assert.equal(webManifest.overrides?.['fast-uri'], '3.1.6');
+  assert.equal(webManifest.overrides?.browserslist, '4.28.7');
+  assert.equal(webManifest.overrides?.['baseline-browser-mapping'], '2.11.26');
+  assert.equal(webManifest.overrides?.sharp, '0.35.4');
+
+  for (const { key, version } of webLockVersions('next'))
+    assert.ok(versionAtLeast(version, 15, 5, 24), `${key} has vulnerable Next.js ${version}`);
+  for (const { key, version } of webLockVersions('eslint-config-next'))
+    assert.ok(
+      versionAtLeast(version, 15, 5, 24),
+      `${key} has an out-of-date eslint-config-next ${version}`
+    );
+  for (const { key, version } of webLockVersions('vitest'))
+    assert.ok(versionAtLeast(version, 4, 1, 11), `${key} has vulnerable Vitest ${version}`);
+  for (const { key, version } of webLockVersions('@vitest/mocker'))
+    assert.ok(versionAtLeast(version, 4, 1, 11), `${key} has vulnerable @vitest/mocker ${version}`);
+  for (const { key, version } of webLockVersions('fast-uri'))
+    assert.ok(versionAtLeast(version, 3, 1, 6), `${key} has vulnerable fast-uri ${version}`);
+  for (const { key, version } of webLockVersions('browserslist'))
+    assert.ok(versionAtLeast(version, 4, 28, 7), `${key} has vulnerable browserslist ${version}`);
+  for (const { key, version } of webLockVersions('baseline-browser-mapping'))
+    assert.ok(
+      versionAtLeast(version, 2, 11, 0),
+      `${key} has vulnerable baseline-browser-mapping ${version}`
+    );
+  for (const { key, version } of webLockVersions('sharp'))
+    assert.ok(versionAtLeast(version, 0, 35, 4), `${key} has vulnerable sharp ${version}`);
+  for (const { key, version } of webLockVersions('js-yaml')) {
+    const patched = version.startsWith('3.')
+      ? versionAtLeast(version, 3, 15, 2)
+      : version.startsWith('4.')
+        ? versionAtLeast(version, 4, 3, 2)
+        : true;
+    assert.ok(patched, `${key} has vulnerable js-yaml ${version}`);
+  }
+
+  for (const name of [
+    'next',
+    'eslint-config-next',
+    'vitest',
+    '@vitest/mocker',
+    'fast-uri',
+    'browserslist',
+    'baseline-browser-mapping',
+    'sharp',
+    'js-yaml',
+    'brace-expansion',
+  ]) {
+    for (const { key, version } of webLockVersions(name)) {
+      const packageRecord = webLock.packages[key];
+      assert.match(
+        packageRecord.resolved ?? '',
+        /^https:\/\/registry\.npmjs\.org\//,
+        `${key}@${version} is not registry pinned`
+      );
+      assert.match(
+        packageRecord.integrity ?? '',
+        /^sha512-[A-Za-z0-9+/]+={0,2}$/,
+        `${key}@${version} is not integrity pinned`
+      );
+    }
+  }
+});
+
 test('CI runs the NeoSwap security and production build gates', () => {
   assert.match(workflow, /neoswap:/, 'CI must have a dedicated NeoSwap job');
   const servicesFilterStart = workflow.indexOf('            services:\n');
@@ -291,6 +375,7 @@ test('CI runs the NeoSwap security and production build gates', () => {
   const servicesFilter = workflow.slice(servicesFilterStart, servicesFilterEnd);
   for (const pathPattern of [
     'services/**',
+    'apps/web/**',
     'package.json',
     'package-lock.json',
     'scripts/dependency-security.test.mjs',
@@ -306,6 +391,19 @@ test('CI runs the NeoSwap security and production build gates', () => {
   assert.match(workflow, /npm --prefix services\/neoswap run test:all/);
   assert.match(workflow, /npm --prefix services\/neoswap run build:all/);
   assert.match(workflow, /npm --prefix services\/neoswap run audit:security/);
+  const webGateStart = workflow.indexOf('      - name: Install services web dependencies');
+  const webGateEnd = workflow.indexOf('      - name: Install NeoSwap dependencies', webGateStart);
+  assert.ok(
+    webGateStart >= 0 && webGateEnd > webGateStart,
+    'web security steps must be in the NeoSwap job'
+  );
+  const webGate = workflow.slice(webGateStart, webGateEnd);
+  assert.match(webGate, /npm@10\.9\.2 ci --prefix apps\/web/);
+  assert.match(webGate, /npx --yes npm@10\.9\.2 audit --prefix apps\/web --audit-level=moderate/);
+  assert.match(
+    webGate,
+    /npx --yes npm@10\.9\.2 install --package-lock-only[\s\S]*--prefix apps\/web/
+  );
 });
 
 test('API Gateway Redis users fail closed without an implicit localhost backend', () => {

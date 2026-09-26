@@ -13,6 +13,7 @@ npm-debug.log*
 .serena
 .claude/
 apps/web/.next
+**/next-env.d.ts
 workers/phala-worker/node_modules
 contracts/build
 contracts/**/bin
