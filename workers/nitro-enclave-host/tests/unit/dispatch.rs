@@ -841,3 +841,212 @@ fn an_unauthorized_request_consumes_no_capacity() {
     assert_eq!(outcome.status, 401);
     assert!(harness.state.overload.snapshot().is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// Strict network labels
+// ---------------------------------------------------------------------------
+
+const TEST_VRF_ROOT: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+const TEST_ACCOUNT: &str = "0x11223344556677889900aabbccddeeff00112233";
+
+/// An overlay under which every lane below signs on a reviewed network:
+/// NeoDID salt and unverified-uid opt-in, the TestNet paymaster policy, a
+/// KMS-sourced VRF root and the legacy blind-sign opt-in.
+fn signing_overlay(network: &'static str) -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("MORPHEUS_NETWORK", network),
+        ("NITRO_API_TOKEN", "s3cret"),
+        ("NEODID_SECRET_SALT", "fixture"),
+        ("MORPHEUS_NEODID_ALLOW_UNVERIFIED_UID", "true"),
+        ("MORPHEUS_PAYMASTER_TESTNET_ENABLED", "true"),
+        ("MORPHEUS_PAYMASTER_TESTNET_POLICY_ID", "policy-1"),
+        ("MORPHEUS_GAME_SECRET_ROOT_HEX", TEST_VRF_ROOT),
+        ("MORPHEUS_GAME_SECRET_ROOT_SOURCE", "nitro-recipient-kms"),
+        (crate::sign::BLIND_SIGN_OPT_IN_ENV, "1"),
+    ]
+}
+
+/// The request body each lane accepts on TestNet, with `extra` merged in.
+fn lane_body(route: &str, extra: &serde_json::Value) -> serde_json::Value {
+    let mut body = match route {
+        "/neodid/bind" => json!({
+            "provider": "twitter",
+            "provider_uid": "uid-1",
+            "vault_account": TEST_ACCOUNT,
+        }),
+        "/neodid/action-ticket" => json!({
+            "provider": "twitter",
+            "provider_uid": "uid-1",
+            "disposable_account": TEST_ACCOUNT,
+            "action_id": "vote-1",
+        }),
+        "/paymaster/authorize" => json!({
+            "account_id": "0x1234567890abcdef1234567890abcdef12345678",
+            "target_contract": "0xabcdef1234567890abcdef1234567890abcdef12",
+            "method": "transfer",
+            "operation_hash": format!("0x{}", "00".repeat(31) + "01"),
+            "estimated_gas_units": 100,
+        }),
+        "/vrf/random" => json!({ "request_id": "req-1" }),
+        "/compute/execute" => json!({ "function": "hash.sha256", "input": {} }),
+        "/sign/payload" => json!({ "key_role": "verifier", "data_hex": valid_payload_preimage() }),
+        "/keys/derived" => json!({ "role": "worker" }),
+        "/feed/sign" => json!({
+            "chain": "neo_n3",
+            "symbols": ["NEO-USD"],
+            "write_mode": "updateFeed",
+            "operation": "updateFeed",
+        }),
+        "/oracle/fulfill" => json!({
+            "chain": "neo_n3",
+            "request_type": "oracle_query",
+            "request_id": "4242",
+            "payload": {
+                "symbol": "BTC/USD",
+                "requester": format!("0x{}", "aa".repeat(20)),
+            },
+            "fulfillment_context": {},
+            "nonce": "",
+        }),
+        other => panic!("no body for {other}"),
+    };
+    let object = body.as_object_mut().expect("lane body object");
+    for (key, value) in extra.as_object().expect("extra fields object") {
+        object.insert(key.clone(), value.clone());
+    }
+    body
+}
+
+fn assert_nothing_signed(harness: &TestState, route: &str) {
+    assert!(
+        harness.signer.sign_calls().is_empty(),
+        "{route} signed bytes"
+    );
+    assert!(
+        harness.signer.transaction_calls().is_empty(),
+        "{route} signed a transaction"
+    );
+    assert!(
+        harness.signer.n3_transaction_calls().is_empty(),
+        "{route} signed an N3 transaction"
+    );
+    assert!(
+        harness.signer.eip191_calls().is_empty(),
+        "{route} signed an EIP-191 digest"
+    );
+}
+
+fn signing_harness(network: &'static str) -> TestState {
+    let harness = test_state(
+        &signing_overlay(network),
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    // /oracle/fulfill computes its result before it signs; a canned price
+    // reply keeps the fulfilment lane on its signing path.
+    harness.bridge.set_reply(crate::state::BridgeReply {
+        ok: true,
+        status: 200,
+        body: json!({ "mode": "oracle", "result": "1", "price": "1", "symbol": "BTC/USD" }),
+    });
+    harness
+}
+
+fn error_message(outcome: &DispatchOutcome) -> &str {
+    outcome.body["error"].as_str().unwrap_or_default()
+}
+
+/// The lanes that read a network from the request refuse an explicit label
+/// that is not a reviewed network with a 400 before any custody call, instead
+/// of signing it as TestNet. The refusal comes from this repository's strict
+/// parser, `neo_os_compute::core::resolve_payload_network_strict`, which the
+/// host's `compute_execute::resolve_payload_network`, the paymaster policy and
+/// the pinned NeoDID protocol module all use. `false` and `0` are explicit
+/// labels, not absent ones.
+#[test]
+fn signing_lanes_refuse_an_explicit_unknown_payload_network_before_signing() {
+    let routes = [
+        "/neodid/bind",
+        "/neodid/action-ticket",
+        "/paymaster/authorize",
+        "/vrf/random",
+        "/compute/execute",
+    ];
+    // The same bodies sign on the reviewed network, so each refusal below is
+    // caused by the label alone.
+    for route in routes {
+        let harness = signing_harness(TEST_NETWORK);
+        let outcome = dispatch_outcome(
+            &harness,
+            "POST",
+            route,
+            &bearer("s3cret"),
+            &body_json(&lane_body(route, &json!({ "network": TEST_NETWORK }))),
+        );
+        assert_eq!(outcome.status, 200, "{route}: {}", outcome.body);
+        assert!(
+            !harness.signer.sign_calls().is_empty(),
+            "{route} did not sign"
+        );
+    }
+    for label in [json!("staging"), json!("Mainnet-2"), json!(false), json!(0)] {
+        for route in routes {
+            let harness = signing_harness(TEST_NETWORK);
+            let outcome = dispatch_outcome(
+                &harness,
+                "POST",
+                route,
+                &bearer("s3cret"),
+                &body_json(&lane_body(route, &json!({ "network": label }))),
+            );
+            assert_eq!(outcome.status, 400, "{route} {label}: {}", outcome.body);
+            assert!(
+                error_message(&outcome).contains("unsupported Neo network"),
+                "{route} {label}: {}",
+                outcome.body
+            );
+            assert_nothing_signed(&harness, route);
+        }
+    }
+}
+
+/// A host whose own MORPHEUS_NETWORK is not a reviewed label answers every
+/// signing lane, fulfilment included, with an error naming the label.
+/// Nothing panics, nothing is signed, and nothing is signed as TestNet.
+#[test]
+fn signing_lanes_refuse_an_unreviewed_host_network() {
+    for route in [
+        "/sign/payload",
+        "/keys/derived",
+        "/feed/sign",
+        "/oracle/fulfill",
+        "/neodid/bind",
+        "/neodid/action-ticket",
+        "/paymaster/authorize",
+        "/vrf/random",
+        "/compute/execute",
+    ] {
+        let harness = signing_harness("staging");
+        let outcome = dispatch_outcome(
+            &harness,
+            "POST",
+            route,
+            &bearer("s3cret"),
+            &body_json(&lane_body(route, &json!({}))),
+        );
+        assert!(
+            outcome.status == 400 || outcome.status == 503,
+            "{route}: {} {}",
+            outcome.status,
+            outcome.body
+        );
+        assert!(
+            error_message(&outcome).contains("unsupported Neo network"),
+            "{route}: {}",
+            outcome.body
+        );
+        assert_nothing_signed(&harness, route);
+    }
+}

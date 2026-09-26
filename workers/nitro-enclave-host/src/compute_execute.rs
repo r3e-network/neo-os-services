@@ -46,7 +46,7 @@ use neo_os_core::js_value::JsValue;
 use neo_os_core::stable_stringify::stable_stringify;
 
 use crate::attestation::handle_attestation;
-use crate::fulfill::{js_coerce, js_truthy, trim_string, truthy_trimmed};
+use crate::fulfill::{js_coerce, js_truthy, trim_string};
 use crate::http_error;
 use crate::state::AppState;
 use crate::RuntimeError;
@@ -315,32 +315,20 @@ pub(crate) fn reject_caller_supplied_signing_key(
     ))
 }
 
-/// `resolvePayloadNetwork` (platform/core.js:90): the first truthy network
-/// alias wins; the fallback is the host's own MORPHEUS_NETWORK resolution.
-/// Signing lanes reject an explicit unknown label instead of mapping it to a
-/// different network identity.
+/// `resolvePayloadNetwork` (platform/core.js) for the signing lanes: the
+/// fallback is the host's own reviewed MORPHEUS_NETWORK, and the payload is
+/// read by the same strict parser the compute lanes use
+/// ([`neo_os_compute::core::resolve_payload_network_strict`]). Only a missing,
+/// `null` or empty-string alias falls back. Any other explicit value that is
+/// not a reviewed network, `false` and `0` included, is a 400 instead of being
+/// mapped to a different network identity.
 pub(crate) fn resolve_payload_network(
     state: &AppState,
     payload: &serde_json::Value,
 ) -> Result<String, RuntimeError> {
     let fallback = state.resolve_network()?;
-    let alias = truthy_trimmed(
-        payload,
-        &[
-            "network",
-            "morpheus_network",
-            "runtime_network",
-            "environment",
-        ],
-    );
-    if alias.is_empty() {
-        return Ok(fallback);
-    }
-    match alias.to_ascii_lowercase().as_str() {
-        "mainnet" => Ok("mainnet".to_string()),
-        "testnet" => Ok("testnet".to_string()),
-        _ => Err(http_error(400, format!("unsupported Neo network: {alias}"))),
-    }
+    neo_os_compute::core::resolve_payload_network_strict(payload, &fallback)
+        .map_err(|message| http_error(400, message))
 }
 
 /// Sign through a ready, identity-consistent worker custody role.
