@@ -4,7 +4,9 @@
 // installed on platform/custody.js, platform/nitro-signer.js or
 // oracle/crypto.js is the one the lane uses. These tests fail against a lane
 // that imports a second, vendored copy of those modules, which is what the
-// removed process-global bridges used to paper over.
+// removed process-global bridges used to paper over. The lane also takes its
+// network and Neo N3 magic from platform/core.js, so this worker's strict
+// network parser and reviewed identity decide what a ticket may be signed for.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -24,7 +26,12 @@ import {
   __setSecretsProviderForTests,
 } from '../platform/nitro-signer.js';
 import { __resetOracleKeyMaterialForTests, ensureOracleKeyMaterial } from '../oracle/crypto.js';
-import { __resetNeoDidStateForTests, handleNeoDidBind, handleNeoDidRuntime } from './index.js';
+import {
+  __resetNeoDidStateForTests,
+  handleNeoDidActionTicket,
+  handleNeoDidBind,
+  handleNeoDidRuntime,
+} from './index.js';
 
 const WORKER_SRC = fileURLToPath(new URL('..', import.meta.url));
 const LANE_URL = new URL('./index.js', import.meta.url);
@@ -64,6 +71,8 @@ const ENV_KEYS = [
   'MORPHEUS_ORACLE_SEALED_KEYSTORE_BASE64',
   'NITRO_ORACLE_KEYSTORE_PATH',
   'NITRO_EMIT_ATTESTATION',
+  'NEO_NETWORK_MAGIC',
+  'NEO_NETWORK_MAGIC_TESTNET',
   'NODE_ENV',
 ];
 
@@ -222,4 +231,54 @@ test('the lane decrypts confidential payloads with the key material of oracle/cr
     body.master_nullifier,
     `0x${masterNullifier('twitter', 'uid-from-ciphertext', salt)}`
   );
+});
+
+test('the lane rejects an explicit unknown network through the strict parser of platform/core.js', async (t) => {
+  prepare(t);
+  process.env.NEODID_SECRET_SALT = 'host-interface-salt';
+  const calls = installCustody();
+
+  await assert.rejects(
+    handleNeoDidBind({
+      provider: 'twitter',
+      provider_uid: 'twitter-uid-1',
+      vault_account: VAULT,
+      network: 'staging',
+    }),
+    /unsupported Neo network: staging/
+  );
+  await assert.rejects(
+    handleNeoDidActionTicket({
+      provider: 'twitter',
+      provider_uid: 'twitter-uid-1',
+      disposable_account: VAULT,
+      action_id: 'vote-1',
+      morpheus_network: 'Staging',
+    }),
+    /unsupported Neo network: Staging/
+  );
+  // A non-string label is explicit too; it must not read as "no network".
+  await assert.rejects(
+    handleNeoDidBind({
+      provider: 'twitter',
+      provider_uid: 'twitter-uid-1',
+      vault_account: VAULT,
+      network: false,
+    }),
+    /unsupported Neo network/
+  );
+  assert.deepEqual(calls, [], 'no custody call may be made for an unknown network');
+});
+
+test('the lane binds only the reviewed Neo N3 magic of platform/core.js', async (t) => {
+  prepare(t);
+  process.env.NEODID_SECRET_SALT = 'host-interface-salt';
+  process.env.NEO_NETWORK_MAGIC_TESTNET = '860833102';
+  const calls = installCustody();
+
+  await assert.rejects(
+    handleNeoDidBind({ provider: 'twitter', provider_uid: 'twitter-uid-1', vault_account: VAULT }),
+    /conflicts with reviewed testnet identity/
+  );
+  assert.deepEqual(calls, [], 'a conflicting magic override must stop the lane before signing');
 });
