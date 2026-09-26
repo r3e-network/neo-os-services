@@ -295,6 +295,71 @@ fn recovery_ticket_fails_closed_for_unverified_providers() {
     );
 }
 
+fn recovery_payload(network: serde_json::Value) -> serde_json::Value {
+    json!({
+        "provider": "twitter",
+        "provider_uid": "uid-1",
+        "network": network,
+        "aa_contract": "0x11223344556677889900aabbccddeeff00112233",
+        "account_id": "acct-1",
+        "new_owner": "0xaabbccddeeff00112233445566778899aabbccdd",
+        "recovery_nonce": "1",
+        "expires_at": "2030-01-01",
+    })
+}
+
+fn recovery_overlay() -> Vec<(&'static str, &'static str)> {
+    let mut overlay = salted_overlay();
+    overlay.push((
+        "MORPHEUS_NEODID_RECOVERY_ALLOW_UNVERIFIED_PROVIDERS",
+        "twitter",
+    ));
+    overlay
+}
+
+/// The documented recovery request names its chain family, `"network":
+/// "neo_n3"`. That label is bound into the ticket and signed under the host's
+/// network; it is not refused as an unknown network.
+#[test]
+fn recovery_ticket_chain_family_label_signs_under_the_host_network() {
+    for label in [json!("neo_n3"), json!("NEO_N3")] {
+        let harness = neodid_harness(&recovery_overlay());
+        let response = post(
+            &harness.state,
+            "/neodid/recovery-ticket",
+            &recovery_payload(label.clone()),
+        )
+        .expect("recovery lane executes");
+        assert_eq!(response["network"], label);
+        let calls = harness.signer.sign_calls();
+        assert_eq!(calls.len(), 2, "digest + envelope signatures");
+        for (network, role, _) in &calls {
+            assert_eq!(network, TEST_NETWORK);
+            assert_eq!(role, "worker");
+        }
+    }
+}
+
+/// A recovery `network` that is neither a chain family nor a reviewed network
+/// is refused before any custody call, like on every other ticket.
+#[test]
+fn recovery_ticket_refuses_an_unknown_network_label() {
+    for label in [json!("staging"), json!(false)] {
+        let harness = neodid_harness(&recovery_overlay());
+        let (status, message) = error_body(
+            &harness.state,
+            "/neodid/recovery-ticket",
+            &recovery_payload(label.clone()),
+        );
+        assert_eq!(status, 400, "{label}: {message}");
+        assert!(
+            message.contains("unsupported Neo network"),
+            "{label}: {message}"
+        );
+        assert!(harness.signer.sign_calls().is_empty());
+    }
+}
+
 #[test]
 fn zklogin_route_is_folded_and_requires_a_verified_web3auth_token() {
     let harness = neodid_harness(&salted_overlay());

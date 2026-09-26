@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "repository": "https://github.com/r3e-network/neo-os-did.git",
-  "commit": "c9e17d31a70a02247466f9ba0d0ec43256024cb0",
+  "commit": "d8230bc75f59bea328e6fb55c4451e58bb39cb06",
   "files": [
     {
       "source": "runtime/nitro-worker/src/neodid/index.js",
@@ -66,12 +66,12 @@
     {
       "source": "runtime/nitro-enclave-host/src/neodid.rs",
       "dest": "workers/nitro-enclave-host/src/neodid.rs",
-      "sha256": "f02bb99362170f4e2357f5a25e50afb263b61897d4556df51b7b888ed65a8941"
+      "sha256": "86a928bee57fdb9485826c9a15d135d3fec60d3bda70ed93bd5ce2fdf42bd889"
     },
     {
       "source": "runtime/nitro-enclave-host/tests/unit/neodid.rs",
       "dest": "workers/nitro-enclave-host/tests/unit/neodid.rs",
-      "sha256": "c55acec5ddccdf2f6fc9bccfa30cef75788b106edb41b423ba37780b40803cc9"
+      "sha256": "71de266af5aaebab0c945d7b0e35311382b1f538002b7861181d94b3ca0501bd"
     },
     {
       "source": "docs/NEODID_DID_METHOD.md",

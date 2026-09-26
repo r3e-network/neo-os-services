@@ -34,7 +34,7 @@ use rsa::signature::Verifier;
 use rsa::RsaPublicKey;
 use sha2::Sha256;
 
-use neo_os_compute::core::{sanitize_error_message, EnvReader};
+use neo_os_compute::core::{normalize_target_chain, sanitize_error_message, EnvReader};
 use neo_os_compute::js::{js_first_truthy, js_trim_string};
 use neo_os_compute::neodid::{
     neodid_action_ticket, neodid_bind, neodid_recovery_ticket, neodid_zklogin_ticket, NeoDidIo,
@@ -134,7 +134,7 @@ fn handle_ticket(
     // signed custody-side under the worker role; caller-supplied key material
     // is rejected exactly like on every other signing lane.
     reject_caller_supplied_signing_key(&resolved)?;
-    let network = resolve_payload_network(state, &resolved)?;
+    let network = resolve_signing_network(state, mode, &resolved)?;
     let digest_bytes = extract_digest_bytes(&result)?;
     let digest_signed = sign_worker_hex(state, &network, &hex::encode(&digest_bytes))?;
     let mut result = result;
@@ -189,6 +189,36 @@ fn handle_ticket(
     );
     response.insert("tee_attestation".to_string(), tee_attestation);
     Ok(serde_json::Value::Object(response))
+}
+
+/// The custody network a ticket is signed under. A recovery ticket names its
+/// chain family in `network` (`neodid_recovery_ticket` binds that label into
+/// the digest and defaults it to `neo_n3`); a supported target-chain label
+/// there is not a Morpheus network, so it selects the host's network exactly as
+/// an absent label does. Every other explicit label, on every ticket, goes
+/// through the host's strict `resolve_payload_network`, which refuses a label
+/// that is not a reviewed network instead of mapping it to one.
+fn resolve_signing_network(
+    state: &AppState,
+    mode: &str,
+    resolved: &serde_json::Value,
+) -> Result<String, RuntimeError> {
+    let names_chain_family = mode == "neodid_recovery_ticket"
+        && resolved
+            .get("network")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|label| {
+                !label.trim().is_empty()
+                    && normalize_target_chain(&serde_json::Value::String(label.to_string())).is_ok()
+            });
+    if names_chain_family {
+        let mut payload = resolved.clone();
+        if let Some(object) = payload.as_object_mut() {
+            object.remove("network");
+        }
+        return resolve_payload_network(state, &payload);
+    }
+    resolve_payload_network(state, resolved)
 }
 
 /// The flow result's `digest` field is the exact byte string
