@@ -28,15 +28,21 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..', '..');
+// Spawn the binary the before() hook just built. cargo writes it under
+// CARGO_TARGET_DIR when that is set (a relative value resolves against the
+// directory cargo runs in, REPO_ROOT); a fixed ./target path would then start a
+// stale binary, or none at all.
+const TARGET_DIR = process.env.CARGO_TARGET_DIR
+  ? resolve(REPO_ROOT, process.env.CARGO_TARGET_DIR)
+  : join(REPO_ROOT, 'target');
 const HOST_BIN = join(
-  REPO_ROOT,
-  'target',
+  TARGET_DIR,
   'debug',
   process.platform === 'win32' ? 'enclave_host.exe' : 'enclave_host'
 );
