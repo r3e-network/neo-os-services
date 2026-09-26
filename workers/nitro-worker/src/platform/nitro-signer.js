@@ -15,15 +15,13 @@ let secretsFactoryForTests = null;
 // Secret IDs (overridable via env); created on the box: 32 random bytes, base64.
 function x25519SecretId() {
   return (
-    trimString(env('NITRO_X25519_SECRET_ID', ['MORPHEUS', 'X25519', 'SECRET_ID'].join('_'))) ||
-    'morpheus/x25519-wrap'
+    trimString(env('NITRO_X25519_SECRET_ID', 'MORPHEUS_X25519_SECRET_ID')) || 'morpheus/x25519-wrap'
   );
 }
 function neodidSaltSecretId() {
   return (
-    trimString(
-      env('NITRO_NEODID_SALT_SECRET_ID', ['MORPHEUS', 'NEODID', 'SALT', 'SECRET_ID'].join('_'))
-    ) || 'morpheus/neodid-salt'
+    trimString(env('NITRO_NEODID_SALT_SECRET_ID', 'MORPHEUS_NEODID_SALT_SECRET_ID')) ||
+    'morpheus/neodid-salt'
   );
 }
 
