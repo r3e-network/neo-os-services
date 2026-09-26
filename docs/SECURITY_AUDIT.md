@@ -82,24 +82,24 @@ reimplemented:
 
 ## Rust Advisory Disposition
 
-`cargo audit` currently reports RUSTSEC-2023-0071 for RustCrypto `rsa`; no
-patched release exists. The measured runtime uses RSA private operations only
-for a fresh, per-request RSA-2048 recipient key that unwraps one KMS response
-inside the enclave and is then dropped. The key is never persisted or reused,
-and the authenticated release flow generates a new key before each ciphertext,
-so a remote caller cannot collect the repeated timings for one long-lived key
-that the Marvin attack requires. Other `rsa` call sites perform public-key
-verification only and are outside the advisory's private-key recovery path.
+`cargo audit` reports RUSTSEC-2023-0071 for RustCrypto `rsa` 0.9.10; no
+patched release exists. Its disposition is open owner decision O22, recorded
+with the reachability analysis in
+`docs/security/RUST-DEPENDENCY-ADVISORIES-20260926.md`, which supersedes the
+disposition this section used to give.
 
-Until RustCrypto publishes a constant-time release, the release check is:
-
-```bash
-cargo audit --ignore RUSTSEC-2023-0071
-```
-
-The exception must be removed when a patched version exists, or earlier if an
-RSA private key is ever reused, persisted, or exposed through a remotely
-repeatable decryption/signing oracle. `paste` is an unmaintained build-time
+That earlier disposition treated a fresh, single-use RSA-2048 KMS recipient key
+as the only RSA private-key operation and stated that the other `rsa` call sites
+perform public-key verification only. That was wrong. neo-signer's per-process
+RSA-3072 custody session key (`crates/nitro-attest/src/session_key.rs`) also
+decrypts coordinator session tokens (blinded RSA-OAEP) and signs every
+coordinator authority request with unblinded RSA-PSS, whose exponentiation
+input the coordinator can recompute from each signature. That is a private key
+reused across a remotely repeatable signing operation, the condition under which
+this section said its exception had to be removed. The exception is therefore
+withdrawn: there is no `cargo audit --ignore RUSTSEC-2023-0071` waiver. The
+release check is plain `cargo audit`, and its RUSTSEC-2023-0071 finding stays
+open until O22 is decided. `paste` is an unmaintained build-time
 macro inherited from Boa and retires with that compatibility engine;
 `serde_cbor` is the unmaintained target-specific dependency of AWS's Nitro NSM
 API. Neither warning currently identifies a vulnerability, but both remain
@@ -115,7 +115,10 @@ Before a production release, verify:
 4. Production environment variables are scoped by network and deployment target.
 5. Callback, relayer, paymaster, and txproxy allowlists are reviewed against the intended deployment contracts.
 6. Any live smoke tests use dedicated testnet funds/accounts and do not reuse production signer material.
-7. `cargo audit --ignore RUSTSEC-2023-0071` reports no other vulnerability.
+7. `cargo audit`, run without `--ignore`, reports no vulnerability other than
+   RUSTSEC-2023-0071, and owner decision O22 on RUSTSEC-2023-0071
+   (`docs/security/RUST-DEPENDENCY-ADVISORIES-20260926.md`) has been taken and
+   recorded. Until it has, this item is not met.
 8. `npm run format:rust:check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
    and `cargo test --workspace --all-targets --locked` pass under Rust 1.98.0.
 9. `npm run check:rust-migration`, documentation coverage, worker/relayer/ops/script
