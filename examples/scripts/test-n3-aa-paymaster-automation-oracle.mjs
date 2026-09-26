@@ -13,6 +13,7 @@ import {
   normalizeHash160,
   readDeploymentRegistry,
   resolveNeoN3SignerWif,
+  resolveNeoN3NetworkMagic,
   sleep,
   trimString,
   tryParseJson,
@@ -1144,7 +1145,7 @@ async function main() {
 
   const account = new wallet.Account(TEST_WIF);
   const rpcClient = new neoRpc.RPCClient(RPC_URL);
-  const networkMagic = Number(deployment.network_magic || 894710606);
+  const networkMagic = resolveNeoN3NetworkMagic('testnet', deployment);
   const aaClient = new AbstractAccountClient(RPC_URL, CORE_HASH);
   const evmSigner = ethers.Wallet.createRandom();
   const verifierPubKey = sanitizeHex(evmSigner.signingKey.publicKey);

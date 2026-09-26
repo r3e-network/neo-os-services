@@ -47,7 +47,8 @@ describe('network selection', () => {
   });
 
   it('validates network query params via isKnownNetworkKey', async () => {
-    const { isKnownNetworkKey, normalizeNetworkKey } = await import('../lib/networks');
+    const { getSelectedNetworkKey, isKnownNetworkKey, normalizeNetworkKey } =
+      await import('../lib/networks');
 
     expect(isKnownNetworkKey('testnet')).toBe(true);
     expect(isKnownNetworkKey(' MainNet ')).toBe(true);
@@ -56,5 +57,6 @@ describe('network selection', () => {
     expect(isKnownNetworkKey(null)).toBe(false);
     expect(normalizeNetworkKey('TESTNET')).toBe('testnet');
     expect(normalizeNetworkKey('mainet')).toBeNull();
+    expect(() => getSelectedNetworkKey('staging')).toThrow(/Invalid network override/);
   });
 });

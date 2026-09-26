@@ -18,9 +18,9 @@
 //!   NaN, because NaN silently defeats every downstream `Math.max` floor
 //!   (Math.max(NaN, x) === NaN).
 
-use crate::js_number::{number_of, number_to_string, parse_js_number};
+use crate::js_number::{number_to_string, parse_js_number};
 use crate::js_value::{js_trim, to_display_string, JsObject, JsValue};
-use crate::CoreResult;
+use crate::{CoreError, CoreResult};
 
 /// Chains the relayer can activate, in resolution order.
 pub const SUPPORTED_CHAINS: &[&str] = &["neo_n3", "neox"];
@@ -181,6 +181,22 @@ pub fn unique_ranked_rpc_urls(values: Vec<String>) -> Vec<String> {
     unique
 }
 
+pub fn require_https_rpc_urls(values: Vec<String>, label: &str) -> CoreResult<Vec<String>> {
+    let urls = unique_ordered(values);
+    let invalid: Vec<String> = urls
+        .iter()
+        .filter(|value| !value.to_ascii_lowercase().starts_with("https://"))
+        .cloned()
+        .collect();
+    if !invalid.is_empty() {
+        return Err(CoreError::new(format!(
+            "{label} requires HTTPS RPC endpoints: {}",
+            invalid.join(", ")
+        )));
+    }
+    Ok(urls)
+}
+
 /// Port of config.js `parseActiveChains`: lowercase, keep supported chains,
 /// fall back to `['neo_n3']` when nothing supported remains.
 pub fn parse_active_chains(value: &JsValue) -> Vec<String> {
@@ -245,12 +261,13 @@ pub fn normalize_morpheus_network(value: &JsValue) -> String {
     let raw = if value.truthy() {
         display(value)
     } else {
-        "testnet".to_string()
+        String::new()
     };
-    if js_trim(&raw).to_lowercase() == "mainnet" {
-        "mainnet".to_string()
-    } else {
-        "testnet".to_string()
+    match js_trim(&raw).to_lowercase().as_str() {
+        "" => "testnet".to_string(),
+        "mainnet" => "mainnet".to_string(),
+        "testnet" => "testnet".to_string(),
+        other => panic!("unsupported Neo network: {other}"),
     }
 }
 
@@ -381,7 +398,7 @@ pub fn resolve_neo_n3_rpc_urls(
     network: &str,
     source: &EnvSource,
     registry: &JsValue,
-) -> Vec<String> {
+) -> CoreResult<Vec<String>> {
     let (scoped_aliases, generic_default) = if network == "mainnet" {
         (
             [
@@ -448,7 +465,10 @@ pub fn resolve_neo_n3_rpc_urls(
         all.extend(generic_rpc_urls);
     }
     all.extend(defaults);
-    unique_ranked_rpc_urls(all)
+    require_https_rpc_urls(
+        unique_ranked_rpc_urls(all),
+        &format!("Neo N3 {network} RPC"),
+    )
 }
 
 /// Port of config.js `resolveNeoN3NetworkMagic`: the reviewed registry value is
@@ -474,33 +494,55 @@ pub fn resolve_neo_n3_network_magic(network: &str, source: &EnvSource, registry:
         .and_then(|n3| n3.get("network_magic"))
         .cloned()
         .unwrap_or(JsValue::Undefined);
-    let default_network = if network == "mainnet" {
-        "mainnet"
-    } else {
-        "testnet"
-    };
-    let default = crate::network_identity::known_neo_n3_identity(default_network)
-        .expect("built-in network identity")
-        .magic as f64;
-
     let configured = if !scoped.is_empty() { scoped } else { generic };
-    if let JsValue::Number(registry_number) = registry_magic {
-        if registry_number.is_finite() && registry_number > 0.0 {
-            if !configured.is_empty() {
-                let configured_number = parse_js_number(&configured);
-                if configured_number != registry_number {
-                    return f64::NAN;
-                }
-            }
-            return registry_number;
-        }
-    }
-    let candidate: JsValue = if !configured.is_empty() {
-        JsValue::Str(configured)
-    } else {
-        JsValue::Number(default)
+    let expected = match crate::network_identity::known_neo_n3_identity(network) {
+        Some(identity) => identity.magic as f64,
+        None => return f64::NAN,
     };
-    number_of(&candidate)
+    let reviewed = match registry_magic {
+        JsValue::Number(value)
+            if value.is_finite() && value.fract() == 0.0 && value > 0.0 && value == expected =>
+        {
+            value
+        }
+        _ => return f64::NAN,
+    };
+    if !configured.is_empty() && parse_js_number(&configured) != reviewed {
+        return f64::NAN;
+    }
+    reviewed
+}
+
+fn resolve_neox_chain_id(network: &str, source: &EnvSource, registry: &JsValue) -> CoreResult<f64> {
+    let registry_chain = registry
+        .get("neo_x")
+        .and_then(|n| n.get("chain_id"))
+        .map(|value| match value {
+            JsValue::Number(number) => *number,
+            _ => f64::NAN,
+        });
+    let expected = crate::network_identity::known_neox_chain_id(network)
+        .ok_or_else(|| CoreError::new(format!("unsupported Neo network: {network}")))?
+        as f64;
+    let reviewed = registry_chain
+        .ok_or_else(|| CoreError::new(format!("missing reviewed Neo X chain id for {network}")))?;
+    if !reviewed.is_finite()
+        || reviewed <= 0.0
+        || reviewed.fract() != 0.0
+        || reviewed > 9_007_199_254_740_991.0
+        || reviewed != expected
+    {
+        return Err(CoreError::new(format!(
+            "Neo X chain id conflicts with reviewed {network} identity"
+        )));
+    }
+    let explicit = source.env(&["MORPHEUS_RELAYER_NEOX_CHAIN_ID", "NEOX_CHAIN_ID"]);
+    if !explicit.is_empty() && parse_js_number(&explicit) != reviewed {
+        return Err(CoreError::new(format!(
+            "Neo X chain id conflicts with reviewed {network} identity"
+        )));
+    }
+    Ok(reviewed)
 }
 
 /// Port of the `startRequestIds` / `startBlocks` env coercion: a set env is
@@ -624,12 +666,11 @@ pub fn derive_pure_fields(
 ) -> CoreResult<JsObject> {
     let network = {
         let raw = source.env(&["MORPHEUS_NETWORK", "NEXT_PUBLIC_MORPHEUS_NETWORK"]);
-        let val = if raw.is_empty() {
-            JsValue::Str("testnet".to_string())
+        crate::network_identity::resolve_reviewed_network(if raw.is_empty() {
+            None
         } else {
-            JsValue::Str(raw)
-        };
-        normalize_morpheus_network(&val)
+            Some(raw.as_str())
+        })?
     };
     let node_env_value: JsValue = {
         // JS: trimString(env('NODE_ENV') || process.env.NODE_ENV)
@@ -748,7 +789,7 @@ pub fn derive_pure_fields(
              MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER=true for an explicit non-production test",
         ));
     }
-    let neo_n3_rpc_urls = resolve_neo_n3_rpc_urls(&network, source, registry);
+    let neo_n3_rpc_urls = resolve_neo_n3_rpc_urls(&network, source, registry)?;
     let allow_fallback_value = !production
         && parse_boolean_env(
             &JsValue::Str(source.env(&["MORPHEUS_RELAYER_ALLOW_RUNTIME_FALLBACKS"])),
@@ -1520,7 +1561,7 @@ pub fn derive_pure_fields(
             explicit
         } else {
             let registry_url = registry
-                .get("neox")
+                .get("neo_x")
                 .and_then(|n| n.get("rpc_url"))
                 .map(trim_string)
                 .unwrap_or_default();
@@ -1532,6 +1573,32 @@ pub fn derive_pure_fields(
                 "https://neoxt4seed1.ngd.network".to_string()
             }
         }
+    };
+    let neox_rpc_urls = {
+        let mut list = vec![neox_primary_rpc.clone()];
+        list.extend(parse_url_list(&JsValue::Str(
+            source.env(&["MORPHEUS_RELAYER_NEOX_RPC_URLS", "NEOX_RPC_URLS"]),
+        )));
+        if let Some(neox_reg) = registry.get("neo_x") {
+            let raw = neox_reg
+                .get("rpc_urls")
+                .cloned()
+                .unwrap_or(JsValue::Undefined);
+            let val = if raw.truthy() {
+                raw
+            } else {
+                JsValue::Array(Vec::new())
+            };
+            list.extend(parse_url_list(&val));
+        }
+        if network == "mainnet" {
+            list.push("https://mainnet-1.rpc.banelabs.org".to_string());
+            list.push("https://mainnet-2.rpc.banelabs.org".to_string());
+        } else {
+            list.push("https://neoxt4seed1.ngd.network".to_string());
+            list.push("https://neoxt4seed2.ngd.network".to_string());
+        }
+        require_https_rpc_urls(list, &format!("Neo X {network} RPC"))?
     };
     let mut neox_obj = JsObject::new();
     neox_obj.set(
@@ -1548,55 +1615,11 @@ pub fn derive_pure_fields(
     neox_obj.set("rpcUrl", JsValue::Str(neox_primary_rpc.clone()));
     neox_obj.set(
         "rpcUrls",
-        JsValue::Array({
-            let mut list = vec![neox_primary_rpc.clone()];
-            list.extend(parse_url_list(&JsValue::Str(
-                source.env(&["MORPHEUS_RELAYER_NEOX_RPC_URLS", "NEOX_RPC_URLS"]),
-            )));
-            if let Some(neox_reg) = registry.get("neox") {
-                let raw = neox_reg
-                    .get("rpc_urls")
-                    .cloned()
-                    .unwrap_or(JsValue::Undefined);
-                let val = if raw.truthy() {
-                    raw
-                } else {
-                    JsValue::Array(Vec::new())
-                };
-                list.extend(parse_url_list(&val));
-            }
-            if network == "mainnet" {
-                list.push("https://mainnet-1.rpc.banelabs.org".to_string());
-                list.push("https://mainnet-2.rpc.banelabs.org".to_string());
-            } else {
-                list.push("https://neoxt4seed1.ngd.network".to_string());
-                list.push("https://neoxt4seed2.ngd.network".to_string());
-            }
-            unique_ordered(list).into_iter().map(JsValue::Str).collect()
-        }),
+        JsValue::Array(neox_rpc_urls.into_iter().map(JsValue::Str).collect()),
     );
     neox_obj.set(
         "chainId",
-        JsValue::Number({
-            let explicit = source.env(&["MORPHEUS_RELAYER_NEOX_CHAIN_ID", "NEOX_CHAIN_ID"]);
-            let candidate: JsValue = if !explicit.is_empty() {
-                JsValue::Str(explicit)
-            } else {
-                let registry_chain = registry
-                    .get("neox")
-                    .and_then(|n| n.get("chain_id"))
-                    .cloned()
-                    .unwrap_or(JsValue::Undefined);
-                if registry_chain.truthy() {
-                    registry_chain
-                } else if network == "mainnet" {
-                    JsValue::Number(47763.0)
-                } else {
-                    JsValue::Number(12_227_332.0)
-                }
-            };
-            number_of(&candidate)
-        }),
+        JsValue::Number(resolve_neox_chain_id(&network, source, registry)?),
     );
     neox_obj.set(
         "oracleContract",
@@ -1607,7 +1630,7 @@ pub fn derive_pure_fields(
                 explicit
             } else {
                 registry
-                    .get("neox")
+                    .get("neo_x")
                     .and_then(|n| n.get("contracts"))
                     .and_then(|c| c.get("morpheus_oracle"))
                     .map(trim_string)
@@ -1625,7 +1648,7 @@ pub fn derive_pure_fields(
                 explicit
             } else {
                 registry
-                    .get("neox")
+                    .get("neo_x")
                     .and_then(|n| n.get("contracts"))
                     .and_then(|c| c.get("morpheus_datafeed"))
                     .map(trim_string)
@@ -1776,6 +1799,10 @@ mod tests {
         EnvSource::new(process_env, JsObject::new())
     }
 
+    fn reviewed_testnet_registry() -> JsValue {
+        JsValue::from_json(crate::network_identity::known_network_registry("testnet").unwrap())
+    }
+
     #[test]
     fn env_alias_order_is_precedence() {
         let source = env_from(&[("A", "second"), ("B", "first-wins")]);
@@ -1887,6 +1914,34 @@ mod tests {
     }
 
     #[test]
+    fn configured_rpc_resolution_rejects_cleartext_endpoints() {
+        let error = require_https_rpc_urls(
+            vec![
+                "https://good.rpc".to_string(),
+                "http://cleartext.rpc".to_string(),
+            ],
+            "Neo N3 testnet RPC",
+        )
+        .expect_err("cleartext RPC must be rejected");
+        assert!(error
+            .to_string()
+            .contains("Neo N3 testnet RPC requires HTTPS RPC endpoints"));
+    }
+
+    #[test]
+    fn relayer_config_rejects_an_explicit_cleartext_rpc_endpoint() {
+        let source = env_from(&[
+            ("MORPHEUS_NETWORK", "testnet"),
+            ("NEO_TESTNET_RPC_URL", "http://cleartext.rpc"),
+        ]);
+        let error = derive_pure_fields(&source, &reviewed_testnet_registry(), "")
+            .expect_err("a cleartext endpoint must stop config derivation");
+        assert!(error
+            .to_string()
+            .contains("Neo N3 testnet RPC requires HTTPS RPC endpoints"));
+    }
+
+    #[test]
     fn parse_url_list_strips_one_trailing_slash() {
         let urls = parse_url_list(&JsValue::Str(" https://a.io/ ,https://b.io// ".to_string()));
         assert_eq!(urls, vec!["https://a.io", "https://b.io/"]);
@@ -1905,7 +1960,7 @@ mod tests {
     }
 
     #[test]
-    fn normalize_morpheus_network_default_is_testnet() {
+    fn normalize_morpheus_network_accepts_only_reviewed_labels() {
         assert_eq!(
             normalize_morpheus_network(&JsValue::Str("MAINNET".to_string())),
             "mainnet"
@@ -1914,10 +1969,18 @@ mod tests {
             normalize_morpheus_network(&JsValue::Str("".to_string())),
             "testnet"
         );
-        assert_eq!(
-            normalize_morpheus_network(&JsValue::Str("test-net".to_string())),
-            "testnet"
-        );
+        assert!(std::panic::catch_unwind(|| {
+            normalize_morpheus_network(&JsValue::Str("test-net".to_string()))
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn derive_pure_fields_rejects_unknown_network_labels() {
+        let source = env_from(&[("MORPHEUS_NETWORK", "staging")]);
+        let error = derive_pure_fields(&source, &reviewed_testnet_registry(), "")
+            .expect_err("an unknown network must not select TestNet");
+        assert!(error.to_string().contains("unsupported Neo network"));
     }
 
     #[test]
@@ -1941,33 +2004,66 @@ mod tests {
     #[test]
     fn network_magic_truthiness_chain() {
         let mut source = EnvSource::empty();
-        assert_eq!(
-            resolve_neo_n3_network_magic("mainnet", &source, &JsValue::Undefined),
-            860833102.0
-        );
+        assert!(resolve_neo_n3_network_magic("mainnet", &source, &JsValue::Undefined).is_nan());
         let mut registry = JsObject::new();
         let mut n3 = JsObject::new();
         n3.set("network_magic", JsValue::Number(0.0));
         registry.set("neo_n3", JsValue::Object(n3.clone()));
-        // Registry 0 is falsy in the JS `||` chain → falls to the default.
-        assert_eq!(
-            resolve_neo_n3_network_magic("testnet", &source, &JsValue::Object(registry.clone())),
-            894710606.0
-        );
+        // A missing or invalid registry is a configuration error, not a
+        // reason to fall back to an embedded or caller-selected identity.
+        assert!(resolve_neo_n3_network_magic(
+            "testnet",
+            &source,
+            &JsValue::Object(registry.clone())
+        )
+        .is_nan());
         n3.set("network_magic", JsValue::Number(777.0));
         registry.set("neo_n3", JsValue::Object(n3));
-        assert_eq!(
-            resolve_neo_n3_network_magic("testnet", &source, &JsValue::Object(registry)),
-            777.0
+        assert!(
+            resolve_neo_n3_network_magic("testnet", &source, &JsValue::Object(registry)).is_nan()
         );
-        // Scoped env beats the registry.
+        let mut reviewed_n3 = JsObject::new();
+        reviewed_n3.set("network_magic", JsValue::Number(894710606.0));
+        let mut reviewed_registry = JsObject::new();
+        reviewed_registry.set("neo_n3", JsValue::Object(reviewed_n3));
+        assert_eq!(
+            resolve_neo_n3_network_magic(
+                "testnet",
+                &source,
+                &JsValue::Object(reviewed_registry.clone())
+            ),
+            894710606.0
+        );
+        // An explicit value is only a consistency assertion against the
+        // reviewed registry; it cannot replace that identity.
         let mut process_env = JsObject::new();
         process_env.set("NEO_TESTNET_MAGIC", JsValue::Str("123".to_string()));
         source = EnvSource::new(process_env, JsObject::new());
+        assert!(resolve_neo_n3_network_magic(
+            "testnet",
+            &source,
+            &JsValue::Object(reviewed_registry)
+        )
+        .is_nan());
+    }
+
+    #[test]
+    fn neox_chain_id_registry_is_authoritative() {
+        let mut registry = JsObject::new();
+        let mut neo_x = JsObject::new();
+        neo_x.set("chain_id", JsValue::Number(12_227_332.0));
+        registry.set("neo_x", JsValue::Object(neo_x));
+        let matching = env_from(&[("NEOX_CHAIN_ID", "12227332")]);
         assert_eq!(
-            resolve_neo_n3_network_magic("testnet", &source, &JsValue::Undefined),
-            123.0
+            resolve_neox_chain_id("testnet", &matching, &JsValue::Object(registry.clone()))
+                .unwrap(),
+            12_227_332.0
         );
+        let conflicting = env_from(&[("NEOX_CHAIN_ID", "12227333")]);
+        assert!(
+            resolve_neox_chain_id("testnet", &conflicting, &JsValue::Object(registry)).is_err()
+        );
+        assert!(resolve_neox_chain_id("testnet", &matching, &JsValue::Undefined).is_err());
     }
 
     #[test]
@@ -1984,7 +2080,7 @@ mod tests {
     #[test]
     fn host_signer_gates_fire_with_exact_messages() {
         let source = env_from(&[("MORPHEUS_WORKER_NEO_N3_WIF", "secret")]);
-        let err = derive_pure_fields(&source, &JsValue::Undefined, "").unwrap_err();
+        let err = derive_pure_fields(&source, &reviewed_testnet_registry(), "").unwrap_err();
         assert_eq!(
             err.to_string(),
             "host Neo N3 signing key configuration is forbidden in the relayer; use custody key ids instead (configured: MORPHEUS_WORKER_NEO_N3_WIF)"
@@ -1997,7 +2093,7 @@ mod tests {
             ("NODE_ENV", "production"),
             ("MORPHEUS_ACTIVE_CHAINS", "neox"),
         ]);
-        derive_pure_fields(&source, &JsValue::Undefined, "")
+        derive_pure_fields(&source, &reviewed_testnet_registry(), "")
             .expect("the authoritative NeoX request lane is production-configurable");
 
         let feed_source = env_from(&[
@@ -2005,7 +2101,7 @@ mod tests {
             ("MORPHEUS_ACTIVE_CHAINS", "neox"),
             ("MORPHEUS_RELAYER_MODE", "feed_only"),
         ]);
-        derive_pure_fields(&feed_source, &JsValue::Undefined, "")
+        derive_pure_fields(&feed_source, &reviewed_testnet_registry(), "")
             .expect("the authoritative NeoX feed lane is production-configurable");
     }
 
@@ -2015,7 +2111,7 @@ mod tests {
             ("SIGNER_ROLE_NEOX_UPDATER_KEY_ID", "neox-updater"),
             ("SIGNER_ROLE_UPDATER_KEY_ID", "n3-updater"),
         ]);
-        let config = derive_pure_fields(&source, &JsValue::Undefined, "")
+        let config = derive_pure_fields(&source, &reviewed_testnet_registry(), "")
             .expect("chain-specific custody ids should derive");
         let neox = config
             .get("neox")

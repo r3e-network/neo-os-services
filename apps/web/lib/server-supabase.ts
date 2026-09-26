@@ -125,11 +125,11 @@ export function getServerSupabaseClient() {
 }
 
 export function resolveSupabaseNetwork(value?: string | null): MorpheusNetwork {
-  return String(
+  const raw = String(
     value || process.env.MORPHEUS_NETWORK || process.env.NEXT_PUBLIC_MORPHEUS_NETWORK || 'mainnet'
-  ).trim() === 'mainnet'
-    ? 'mainnet'
-    : 'testnet';
+  ).trim();
+  if (raw === 'mainnet' || raw === 'testnet') return raw;
+  throw new Error(`unsupported Neo network: ${raw}`);
 }
 
 export async function resolveProjectIdBySlug(

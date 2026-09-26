@@ -84,8 +84,11 @@ impl FromStr for Network {
 /// different chains.
 pub fn network_magic(network: Network) -> u32 {
     match network {
-        Network::Mainnet => 860_833_102,
-        Network::Testnet => 894_710_606,
+        Network::Mainnet | Network::Testnet => {
+            neo_os_core::network_identity::known_neo_n3_identity(&network.to_string())
+                .expect("known signer network must have a reviewed Neo N3 identity")
+                .magic
+        }
         Network::Private => 1_230_000,
     }
 }
@@ -94,9 +97,11 @@ pub fn network_magic(network: Network) -> u32 {
 /// These are used in EIP-155 transaction signing.
 pub fn neox_chain_id(network: Network) -> u64 {
     match network {
-        Network::Mainnet => 47763,      // NeoX Mainnet
-        Network::Testnet => 12_227_332, // NeoX Testnet T4
-        Network::Private => 1337,       // Local development
+        Network::Mainnet | Network::Testnet => {
+            neo_os_core::network_identity::known_neox_chain_id(&network.to_string())
+                .expect("known signer network must have a reviewed NeoX identity")
+        }
+        Network::Private => 1337, // Local development
     }
 }
 

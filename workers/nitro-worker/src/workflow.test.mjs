@@ -32,6 +32,7 @@ process.env.MORPHEUS_ENABLE_UNTRUSTED_SCRIPTS = 'true';
 
 const baselineEnv = { ...process.env };
 const { default: handler } = await import('./worker.js');
+const { resolvePaymasterNetwork } = await import('./paymaster/index.js');
 const { __resetDstackClientStateForTests } = await import('./platform/nitro-signer.js');
 const { __resetOracleKeyMaterialForTests } = await import('./oracle/crypto.js');
 const { __resetFeedStateForTests } = await import('./oracle/feeds.js');
@@ -88,11 +89,11 @@ test.beforeEach(restoreState);
 test.afterEach(restoreState);
 test.after(__resetCustodyTransportForTests);
 
-async function post(path, body = {}) {
+async function post(path, body = {}, extraHeaders = {}) {
   return handler(
     new Request(`http://local${path}`, {
       method: 'POST',
-      headers: authHeaders(),
+      headers: { ...authHeaders(), ...extraHeaders },
       body: JSON.stringify(body),
     })
   );
@@ -567,6 +568,28 @@ test('workflow: POST /paymaster/authorize evaluates policy', async () => {
   assert.equal(body.mode, 'paymaster_authorize');
   assert.ok(body.approved === true || body.approved === false);
   assert.ok(body.output_hash);
+});
+
+test('workflow: paymaster rejects an unknown explicit network environment', async () => {
+  process.env.MORPHEUS_NETWORK = 'staging';
+  assert.throws(() => resolvePaymasterNetwork({}), /unsupported Neo network/i);
+  const res = await post('/paymaster/authorize', {
+    account_id: '0x1234567890abcdef1234567890abcdef12345678',
+    target_contract: '0xabcdef1234567890abcdef1234567890abcdef12',
+    method: 'transfer',
+    operation_hash: '0x0000000000000000000000000000000000000000000000000000000000000001',
+    estimated_gas_units: 100,
+  });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.match(String(body.error || body.message), /unsupported Neo network/i);
+});
+
+test('worker rejects an unknown explicit network header before dispatch', async () => {
+  const res = await post('/oracle/query', {}, { 'x-morpheus-network': 'staging' });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.match(String(body.error || body.message), /unsupported Neo network/i);
 });
 
 // ===========================================================================

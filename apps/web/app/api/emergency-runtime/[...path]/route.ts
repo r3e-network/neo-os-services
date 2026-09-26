@@ -22,7 +22,9 @@ function resolveNetwork(path: string, request: Request): Network {
   const firstSegment = path.split('/').filter(Boolean)[0]?.toLowerCase();
   if (firstSegment === 'mainnet' || firstSegment === 'testnet') return firstSegment;
   const header = trimString(request.headers.get('x-morpheus-network')).toLowerCase();
-  return header === 'mainnet' ? 'mainnet' : 'testnet';
+  if (!header) return 'testnet';
+  if (header === 'mainnet' || header === 'testnet') return header;
+  throw new Error(`Invalid network override "${header}"; expected "mainnet" or "testnet"`);
 }
 
 function stripNetworkPrefix(path: string, network: Network) {
@@ -79,7 +81,15 @@ function info(network: Network) {
 async function handle(request: Request, context: RouteContext) {
   const params = await context.params;
   const path = normalizePath(params.path);
-  const network = resolveNetwork(path, request);
+  let network: Network;
+  try {
+    network = resolveNetwork(path, request);
+  } catch (error) {
+    return json(400, {
+      error: error instanceof Error ? error.message : 'invalid network override',
+      runtime: 'emergency-vercel-runtime',
+    });
+  }
   const routePath = stripNetworkPrefix(path, network);
 
   if (request.method === 'GET' && (routePath === '/health' || routePath === '/')) {

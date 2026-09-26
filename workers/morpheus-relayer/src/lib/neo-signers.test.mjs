@@ -78,8 +78,8 @@ describe('normalizeMorpheusNetwork', () => {
 
   it('returns testnet for any non-mainnet string', () => {
     assert.equal(normalizeMorpheusNetwork('testnet'), 'testnet');
-    assert.equal(normalizeMorpheusNetwork('devnet'), 'testnet');
-    assert.equal(normalizeMorpheusNetwork('random'), 'testnet');
+    assert.throws(() => normalizeMorpheusNetwork('devnet'), /unsupported Neo network/);
+    assert.throws(() => normalizeMorpheusNetwork('random'), /unsupported Neo network/);
   });
 
   it('trims whitespace', () => {

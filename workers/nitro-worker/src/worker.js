@@ -142,12 +142,22 @@ async function handleHealth() {
 
 function normalizeRequestNetwork(value) {
   const normalized = trimString(value).toLowerCase();
+  if (!normalized) return '';
+  if (normalized !== 'mainnet' && normalized !== 'testnet') {
+    throw new Error(`unsupported Neo network: ${normalized}`);
+  }
   return normalized === 'mainnet' || normalized === 'testnet' ? normalized : '';
 }
 
 function inferRequestNetwork(path, request) {
-  const pathNetwork = normalizeRequestNetwork(path.split('/').filter(Boolean)[0] || '');
-  if (pathNetwork) return pathNetwork;
+  const firstSegment = trimString(path.split('/').filter(Boolean)[0] || '').toLowerCase();
+  // Only the documented /mainnet/... and /testnet/... prefixes carry network
+  // identity. Ordinary routes such as /sign/payload must continue to use the
+  // request header (or the downstream default) rather than treating "sign" as
+  // an invalid network label.
+  if (firstSegment === 'mainnet' || firstSegment === 'testnet') {
+    return normalizeRequestNetwork(firstSegment);
+  }
   return normalizeRequestNetwork(request.headers.get('x-morpheus-network'));
 }
 
@@ -224,7 +234,12 @@ export default async function handler(request) {
     request.method === 'GET'
       ? Object.fromEntries(url.searchParams.entries())
       : await request.json().catch(() => ({}));
-  const payload = injectRequestNetwork(requestPayload, request, path);
+  let payload;
+  try {
+    payload = injectRequestNetwork(requestPayload, request, path);
+  } catch (error) {
+    return json(400, { error: error instanceof Error ? error.message : String(error) });
+  }
 
   let executionPlan = null;
 

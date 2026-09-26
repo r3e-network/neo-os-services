@@ -12,14 +12,21 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ethers } from 'ethers';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoXChainId,
+} from '../../scripts/lib-network-registry.mjs';
 
 export const CONTRACT_NAME = 'MiniAppCreditsV2';
-export const NEO_X_MAINNET_CHAIN_ID = 47_763n;
-export const MAINNET_ACK = 'neo-x-mainnet:47763';
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const MAINNET_REGISTRY = readReviewedNetworkRegistrySync(ROOT, 'mainnet');
+export const NEO_X_MAINNET_CHAIN_ID = BigInt(
+  resolveReviewedNeoXChainId(MAINNET_REGISTRY, 'mainnet')
+);
+export const MAINNET_ACK = `neo-x-mainnet:${NEO_X_MAINNET_CHAIN_ID}`;
 export const GAS_WEI_PER_CREDIT = 10n ** 16n;
 export const CREDITS_PER_GAS = 100n;
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const ABI_PATH = resolve(ROOT, `contracts-evm/build/${CONTRACT_NAME}.abi.json`);
 const BIN_PATH = resolve(ROOT, `contracts-evm/build/${CONTRACT_NAME}.bin`);
 
@@ -161,7 +168,9 @@ export async function main(env = process.env) {
   const provider = new ethers.JsonRpcProvider(config.rpcUrl);
   const network = await provider.getNetwork();
   if (network.chainId !== NEO_X_MAINNET_CHAIN_ID) {
-    throw new Error(`RPC chain mismatch: expected 47763, received ${network.chainId}`);
+    throw new Error(
+      `RPC chain mismatch: expected ${NEO_X_MAINNET_CHAIN_ID}, received ${network.chainId}`
+    );
   }
 
   const wallet = new ethers.Wallet(config.deployerKey, provider);

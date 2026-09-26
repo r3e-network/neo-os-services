@@ -112,9 +112,17 @@ async function lookupFeedNotifications(attestationHash: string, networkKey: 'mai
 async function handleLookup(request: Request) {
   const url = new URL(request.url);
   const attestationHash = normalizeHex(url.searchParams.get('attestation_hash'));
-  const networkKey = resolveSelectedNetworkKey(
-    url.searchParams.get('network') || getSelectedNetworkKey()
-  );
+  let networkKey: 'mainnet' | 'testnet';
+  try {
+    networkKey = resolveSelectedNetworkKey(
+      url.searchParams.get('network') || getSelectedNetworkKey()
+    );
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : 'invalid network override' },
+      { status: 400 }
+    );
+  }
   if (!attestationHash) {
     return Response.json({ error: 'attestation_hash query param is required' }, { status: 400 });
   }

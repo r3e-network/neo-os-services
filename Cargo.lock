@@ -1734,6 +1734,7 @@ dependencies = [
  "icu_collator",
  "icu_locale_core",
  "k256",
+ "neo-os-core",
  "neo-os-games",
  "num-bigint",
  "num-traits",

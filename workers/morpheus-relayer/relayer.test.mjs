@@ -68,7 +68,7 @@ import {
   resetSupabasePersistenceBackoffForTests,
   sanitizeForPostgres,
 } from './src/persistence.js';
-import { createRelayerConfig } from './src/config.js';
+import { createRelayerConfig, resolveReviewedNeoXChainId } from './src/config.js';
 
 const retryConfig = {
   maxRetries: 3,
@@ -141,6 +141,34 @@ function withIsolatedRelayerSigner(run) {
 test('normalizeRequestType normalizes separators and casing', () => {
   assert.equal(normalizeRequestType('Privacy-Oracle'), 'privacy_oracle');
   assert.equal(normalizeRequestType('  ZKP Compute '), 'zkp_compute');
+});
+
+test('Neo X chain ids resolve from the reviewed registry projection', () => {
+  const registry = { network: 'testnet', neo_x: { chain_id: 12227332 } };
+  assert.equal(resolveReviewedNeoXChainId('testnet', registry), 12227332);
+  assert.equal(resolveReviewedNeoXChainId('testnet', registry, '12227332'), 12227332);
+  assert.throws(
+    () => resolveReviewedNeoXChainId('testnet', registry, '31338'),
+    /conflicts with reviewed testnet identity/
+  );
+  assert.throws(
+    () =>
+      resolveReviewedNeoXChainId('testnet', { network: 'testnet', neox: { chain_id: 12227332 } }),
+    /missing reviewed Neo X chain id/
+  );
+});
+
+test('Neo X chain ids reject registry drift across reviewed networks', () => {
+  assert.throws(
+    () =>
+      resolveReviewedNeoXChainId('mainnet', { network: 'mainnet', neo_x: { chain_id: 12227332 } }),
+    /reviewed Neo X chain id/
+  );
+  assert.throws(
+    () =>
+      resolveReviewedNeoXChainId('sidechain', { network: 'sidechain', neo_x: { chain_id: 47763 } }),
+    /unsupported Neo network/
+  );
 });
 
 test('resolveWorkerRoute routes compute, feed, vrf, and oracle payloads', () => {
@@ -1766,6 +1794,25 @@ test('createRelayerConfig ranks https mainnet Neo N3 RPC endpoints before plaint
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+  }
+});
+
+test('createRelayerConfig rejects an explicit cleartext RPC endpoint', () => {
+  const key = 'NEO_MAINNET_RPC_URLS';
+  const previous = process.env[key];
+  const previousNetwork = process.env.MORPHEUS_NETWORK;
+  process.env.MORPHEUS_NETWORK = 'mainnet';
+  process.env[key] = 'http://cleartext.rpc';
+  try {
+    assert.throws(
+      () => withIsolatedRelayerSigner(() => createRelayerConfig()),
+      /Neo N3 mainnet RPC requires HTTPS RPC endpoints.*http:\/\/cleartext\.rpc/i
+    );
+  } finally {
+    if (previous === undefined) delete process.env[key];
+    else process.env[key] = previous;
+    if (previousNetwork === undefined) delete process.env.MORPHEUS_NETWORK;
+    else process.env.MORPHEUS_NETWORK = previousNetwork;
   }
 });
 

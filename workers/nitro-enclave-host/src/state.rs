@@ -8,6 +8,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::overlay::EnvOverlay;
+use crate::RuntimeError;
 
 /// One signing role's pinned-identity report — the Rust shape of
 /// `reportPinnedNeoN3Role`'s fields the host actually consumes. The custody
@@ -285,24 +286,24 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// `resolveNetwork()`: `normalizeMorpheusNetwork(MORPHEUS_NETWORK ||
-    /// 'testnet')` over the live overlay — /provision can change it.
-    pub fn resolve_network(&self) -> String {
-        crate::normalize_network(
-            self.overlay
-                .read()
-                .expect("overlay lock")
-                .get_trimmed("MORPHEUS_NETWORK")
-                .as_deref(),
-        )
+    /// Resolve the live overlay against the reviewed network registry. A
+    /// malformed explicit label is a runtime configuration error, never a
+    /// request to use TestNet.
+    pub fn resolve_network(&self) -> Result<String, RuntimeError> {
+        let raw = self
+            .overlay
+            .read()
+            .expect("overlay lock")
+            .get_trimmed("MORPHEUS_NETWORK");
+        crate::normalize_network(raw.as_deref()).map_err(|message| crate::http_error(503, message))
     }
 
     /// Resolve and cross-check every measured custody role. In addition to
     /// each key's own immutable policy, the NeoX updater and verifier must
     /// resolve to different on-chain identities. Distinct key ids alone are
     /// insufficient because two records can still wrap the same key.
-    pub fn signing_role_reports(&self) -> Vec<(&'static str, RoleReport)> {
-        let network = self.resolve_network();
+    pub fn signing_role_reports(&self) -> Result<Vec<(&'static str, RoleReport)>, RuntimeError> {
+        let network = self.resolve_network()?;
         let mut reports: Vec<(&'static str, RoleReport)> = Self::SIGNING_ROLES
             .iter()
             .map(|role| (*role, self.signer.role_report(&network, role)))
@@ -334,7 +335,7 @@ impl AppState {
             verifier.ok = false;
             verifier.issues.push(format!("neox_verifier: {ISSUE}"));
         }
-        reports
+        Ok(reports)
     }
 
     /// Every custody identity pinned into the measured service topology, in

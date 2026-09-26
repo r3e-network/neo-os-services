@@ -33,6 +33,10 @@ import { parseArgs } from 'node:util';
 import { experimental, sc, u, wallet } from '@cityofzion/neon-js';
 import { loadDotEnv } from './lib-env.mjs';
 import { normalizeMorpheusNetwork, resolvePinnedNeoN3Role } from './lib-neo-signers.mjs';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from './lib-network-registry.mjs';
 
 const DEFAULT_ORACLE_HASH = '0xf54d8584ef82315c1800373272ab08ae0db2d5ef';
 const PREFIX_CALLBACK_INDEX = 0x27; // MorpheusOracle.cs PREFIX_CALLBACK_INDEX
@@ -65,7 +69,11 @@ const rpcAddress = trimString(
     (network === 'mainnet' ? 'https://api.n3index.dev/mainnet' : 'https://api.n3index.dev/testnet')
 );
 const networkMagic = Number(
-  process.env.NEO_NETWORK_MAGIC || (network === 'mainnet' ? 860833102 : 894710606)
+  resolveReviewedNeoN3Magic(
+    readReviewedNetworkRegistrySync(process.cwd(), network),
+    network,
+    process.env.NEO_NETWORK_MAGIC || ''
+  )
 );
 const oracleHash = trimString(process.env.CONTRACT_MORPHEUS_ORACLE_HASH || DEFAULT_ORACLE_HASH);
 const batchSize = Math.max(1, Number(flags['batch-size'] || 16));

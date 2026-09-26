@@ -27,7 +27,13 @@ export MORPHEUS_RELAYER_NEO_N3_SCAN_MODE=request_cursor
 export MORPHEUS_FEED_SYNC_ENABLED=false
 export MORPHEUS_AUTOMATION_ENABLED=false
 export NEO_RPC_URL="${NEO_RPC_URL:-https://api.n3index.dev/testnet}"
-export NEO_NETWORK_MAGIC="${NEO_NETWORK_MAGIC:-894710606}"
+REVIEWED_NEO_NETWORK_MAGIC="$(node -e 'const fs = require("fs"); const config = JSON.parse(fs.readFileSync("config/networks/testnet.json", "utf8")); process.stdout.write(String(config.neo_n3.network_magic));')"
+if [[ -n "${NEO_NETWORK_MAGIC:-}" && "${NEO_NETWORK_MAGIC}" != "${REVIEWED_NEO_NETWORK_MAGIC}" ]]; then
+  echo "NEO_NETWORK_MAGIC conflicts with the reviewed testnet identity" >&2
+  exit 1
+fi
+NEO_NETWORK_MAGIC="${NEO_NETWORK_MAGIC:-${REVIEWED_NEO_NETWORK_MAGIC}}"
+export NEO_NETWORK_MAGIC
 export CONTRACT_MORPHEUS_ORACLE_HASH="$ORACLE_HASH"
 export MORPHEUS_RUNTIME_URL="${MORPHEUS_RUNTIME_URL:-http://127.0.0.1:8787}"
 export MORPHEUS_RUNTIME_TOKEN="$RUNTIME_TOKEN"

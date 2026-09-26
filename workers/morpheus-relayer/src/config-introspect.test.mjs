@@ -26,6 +26,10 @@ test('network magic is registry-authoritative and rejects env drift', () => {
     if (saved === undefined) delete process.env.NEO_MAINNET_MAGIC;
     else process.env.NEO_MAINNET_MAGIC = saved;
   }
+  assert.throws(
+    () => resolveNeoN3NetworkMagic('mainnet', {}),
+    /reviewed mainnet Neo N3 network magic is required/
+  );
 });
 
 // A minimal env that, combined with a feed_only mode, builds a valid config

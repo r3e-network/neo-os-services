@@ -14,10 +14,11 @@ use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 use base64::Engine as _;
 use serde_json::{json, Value as Json};
 use sha2::{Digest, Sha256};
+use url::Url;
 
 use crate::core::{
-    env_for_network, normalize_boolean, normalize_target_chain, parse_duration_ms, read_env,
-    resolve_payload_network, EnvReader,
+    env_for_network, normalize_boolean, normalize_morpheus_network_strict, normalize_target_chain,
+    parse_duration_ms, read_env, resolve_payload_network_strict, EnvReader,
 };
 use crate::js::{
     js_first_truthy, js_iso_string_from_ms, js_number, js_number_value, js_stringify, js_to_number,
@@ -102,14 +103,10 @@ fn normalize_hex_hash(value: Option<&Json>) -> String {
 /// `resolvePaymasterNetwork` — payload network wins, else the
 /// `MORPHEUS_NETWORK` env only when it reads `mainnet` (anything else,
 /// including unset, means testnet).
-pub fn resolve_paymaster_network(payload: &Json, env: EnvReader<'_>) -> String {
+pub fn resolve_paymaster_network(payload: &Json, env: EnvReader<'_>) -> Result<String, String> {
     let network_env = read_env(env, &["MORPHEUS_NETWORK"]);
-    let fallback = if network_env.to_lowercase() == "mainnet" {
-        "mainnet"
-    } else {
-        "testnet"
-    };
-    resolve_payload_network(payload, fallback)
+    let fallback = normalize_morpheus_network_strict(&network_env, "testnet")?;
+    resolve_payload_network_strict(payload, &fallback)
 }
 
 /// `resolvePaymasterPolicy(network)` — the per-network env set.
@@ -325,6 +322,10 @@ fn invoke_neo_read(
     method: &str,
     args: &[Json],
 ) -> Result<Json, String> {
+    let parsed_url = Url::parse(rpc_url).map_err(|_| "RPC URL must use HTTPS".to_string())?;
+    if parsed_url.scheme() != "https" {
+        return Err("RPC URL must use HTTPS".to_string());
+    }
     let body = serde_json::to_vec(&json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -485,7 +486,7 @@ pub fn evaluate_paymaster_authorization(
     now_ms: i64,
     random_uuid: impl Fn() -> String,
 ) -> Result<PaymasterEvaluation, String> {
-    let network = resolve_paymaster_network(payload, env);
+    let network = resolve_paymaster_network(payload, env)?;
     let policy = resolve_paymaster_policy(&network, env);
     let normalized = normalize_verdict_payload(payload)?;
 
@@ -660,6 +661,13 @@ mod tests {
         Err("no transport in this fixture".to_string())
     }
 
+    #[test]
+    fn direct_paymaster_rpc_reads_reject_cleartext_urls() {
+        let error = invoke_neo_read(&no_rpc, "http://rpc.example", "0xcontract", "getHook", &[])
+            .expect_err("cleartext RPC must be rejected before transport");
+        assert_eq!(error, "RPC URL must use HTTPS");
+    }
+
     fn uuid_sequence(prefix: &str) -> impl Fn() -> String {
         let prefix = prefix.to_string();
         let counter = std::cell::Cell::new(0u32);
@@ -757,17 +765,18 @@ mod tests {
     fn network_resolution_prefers_the_payload() {
         let env = env_from(&[("MORPHEUS_NETWORK", "MainNet")]);
         assert_eq!(
-            resolve_paymaster_network(&payload(&[("network", json!("testnet"))]), &env),
+            resolve_paymaster_network(&payload(&[("network", json!("testnet"))]), &env).unwrap(),
             "testnet"
         );
         assert_eq!(
-            resolve_paymaster_network(&payload(&[("network", json!("  "))]), &env),
+            resolve_paymaster_network(&payload(&[("network", json!("  "))]), &env).unwrap(),
             "mainnet"
         );
-        assert_eq!(
-            resolve_paymaster_network(&payload(&[("network", json!("bogus"))]), &no_env),
-            "testnet"
+        assert!(
+            resolve_paymaster_network(&payload(&[("network", json!("bogus"))]), &no_env).is_err()
         );
+        let invalid_env = env_from(&[("MORPHEUS_NETWORK", "staging")]);
+        assert!(resolve_paymaster_network(&payload(&[]), &invalid_env).is_err());
     }
 
     #[test]
@@ -1142,7 +1151,7 @@ mod tests {
     fn aa_env() -> impl Fn(&str) -> Option<String> {
         env_from(&[
             ("MORPHEUS_PAYMASTER_TESTNET_ENABLED", "true"),
-            ("MORPHEUS_PAYMASTER_TESTNET_NEO_RPC_URL", "http://rpc.test"),
+            ("MORPHEUS_PAYMASTER_TESTNET_NEO_RPC_URL", "https://rpc.test"),
             ("MORPHEUS_PAYMASTER_TESTNET_AA_CORE_HASH", &"11".repeat(20)),
             (
                 "MORPHEUS_PAYMASTER_TESTNET_WHITELIST_HOOK_HASH",
@@ -1220,7 +1229,7 @@ mod tests {
     fn multi_hook_walks_gethooks_before_verdict() {
         let env = env_from(&[
             ("MORPHEUS_PAYMASTER_TESTNET_ENABLED", "true"),
-            ("MORPHEUS_PAYMASTER_TESTNET_NEO_RPC_URL", "http://rpc.test"),
+            ("MORPHEUS_PAYMASTER_TESTNET_NEO_RPC_URL", "https://rpc.test"),
             ("MORPHEUS_PAYMASTER_TESTNET_AA_CORE_HASH", &"11".repeat(20)),
             (
                 "MORPHEUS_PAYMASTER_TESTNET_MULTI_HOOK_HASH",

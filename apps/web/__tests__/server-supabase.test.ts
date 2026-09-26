@@ -3,6 +3,7 @@ import {
   __resetServerSupabaseCachesForTests,
   loadProjectProviderConfig,
   resolveProjectIdBySlug,
+  resolveSupabaseNetwork,
 } from '../lib/server-supabase';
 
 const originalLookupCacheTtl = process.env.MORPHEUS_WEB_LOOKUP_CACHE_TTL_MS;
@@ -125,5 +126,11 @@ describe('server supabase lookup caches', () => {
     expect(second).toEqual(first);
     expect(fake.counts.projectLookups).toBe(1);
     expect(fake.counts.providerLookups).toBe(1);
+  });
+
+  it('rejects unknown network labels instead of silently selecting testnet', () => {
+    expect(() => resolveSupabaseNetwork('staging')).toThrow('unsupported Neo network');
+    expect(resolveSupabaseNetwork('mainnet')).toBe('mainnet');
+    expect(resolveSupabaseNetwork('testnet')).toBe('testnet');
   });
 });

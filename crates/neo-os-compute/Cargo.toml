@@ -7,6 +7,7 @@ description = "Keyless compute engine, ported lane-by-lane from workers/nitro-wo
 
 [dependencies]
 neo-os-games = { path = "../neo-os-games" }
+neo-os-core = { path = "../neo-os-core" }
 # preserve_order: JSON.parse in V8 preserves key order and the policy/decision
 # bodies copy that order into caller-facing JSON; the BTreeMap default would
 # silently sort keys.

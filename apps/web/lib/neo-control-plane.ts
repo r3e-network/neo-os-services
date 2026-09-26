@@ -26,21 +26,26 @@ export function resolveControlPlaneNetwork(value?: string | null): MorpheusNetwo
 
 export function resolveNeoN3Runtime(network: MorpheusNetwork) {
   const cfg = networkRegistry[network];
+  const reviewedMagic = Number(cfg.neo_n3?.network_magic || 0);
+  if (!Number.isSafeInteger(reviewedMagic) || reviewedMagic <= 0) {
+    throw new Error(`reviewed Neo N3 network magic is missing for ${network}`);
+  }
+  const configuredMagic = pickValue(
+    network === 'mainnet'
+      ? process.env.NEO_MAINNET_NETWORK_MAGIC
+      : process.env.NEO_TESTNET_NETWORK_MAGIC,
+    process.env.NEO_NETWORK_MAGIC
+  );
+  if (configuredMagic && Number(configuredMagic) !== reviewedMagic) {
+    throw new Error(`configured Neo N3 network magic conflicts with reviewed ${network} identity`);
+  }
   return {
     rpcUrl: pickValue(
       network === 'mainnet' ? process.env.NEO_MAINNET_RPC_URL : process.env.NEO_TESTNET_RPC_URL,
       process.env.NEO_RPC_URL,
       cfg.neo_n3?.rpc_url
     ),
-    networkMagic: Number(
-      pickValue(
-        network === 'mainnet'
-          ? process.env.NEO_MAINNET_NETWORK_MAGIC
-          : process.env.NEO_TESTNET_NETWORK_MAGIC,
-        process.env.NEO_NETWORK_MAGIC,
-        String(cfg.neo_n3?.network_magic || '')
-      ) || (network === 'mainnet' ? '860833102' : '894710606')
-    ),
+    networkMagic: reviewedMagic,
     oracleHash: pickValue(
       network === 'mainnet'
         ? process.env.CONTRACT_MORPHEUS_ORACLE_HASH_MAINNET

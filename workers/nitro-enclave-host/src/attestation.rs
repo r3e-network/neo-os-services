@@ -85,7 +85,7 @@ fn even_hex_or_error(value: &str, message: &str) -> Result<(), RuntimeError> {
 fn resolve_attestation_public_key(
     state: &AppState,
     payload: &serde_json::Value,
-) -> (String, String) {
+) -> Result<(String, String), RuntimeError> {
     let requested = truthy_string(payload, &["role", "key_role"]);
     let normalized = requested.trim().to_ascii_lowercase();
     let role = match normalized.as_str() {
@@ -94,9 +94,9 @@ fn resolve_attestation_public_key(
         "neox_updater" => "neox_updater",
         _ => "oracle_verifier",
     };
-    let network = state.resolve_network();
+    let network = state.resolve_network()?;
     let public_key = normalize_hex(&state.signer.role_report(&network, role).public_key);
-    (role.to_string(), public_key)
+    Ok((role.to_string(), public_key))
 }
 
 /// CBOR map lookup — `neo_os_core::cbor` keeps insertion-ordered entries
@@ -180,7 +180,7 @@ pub fn handle_attestation(
         hex::encode(Sha256::digest(&binding))
     };
 
-    let (role, public_key_hex) = resolve_attestation_public_key(state, payload);
+    let (role, public_key_hex) = resolve_attestation_public_key(state, payload)?;
 
     let nonce_bytes = if nonce_hex.is_empty() {
         None
@@ -229,7 +229,7 @@ pub fn handle_attestation(
     let mut response = serde_json::json!({
         "status": "ok",
         "runtime": crate::RUNTIME_NAME,
-        "network": state.resolve_network(),
+        "network": state.resolve_network()?,
         "role": role,
         "format": "cose-sign1-cbor-base64",
         "public_key": if public_key_hex.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(public_key_hex) },

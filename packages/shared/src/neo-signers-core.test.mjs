@@ -16,10 +16,18 @@ import {
   NEO_N3_SIGNER_PUBLIC_ENV_KEYS,
   assertNoRetiredPlaintextSigner,
   createPinnedRoleResolvers,
+  normalizeMorpheusNetwork,
 } from './neo-signers-core.js';
 
 const ROLES = ['worker', 'relayer', 'updater', 'oracle_verifier'];
 const NETWORKS = ['testnet', 'mainnet'];
+
+it('rejects explicit non-string network values instead of falling back to testnet', () => {
+  assert.throws(() => normalizeMorpheusNetwork(false), /unsupported Neo network/);
+  assert.throws(() => normalizeMorpheusNetwork(0), /unsupported Neo network/);
+  assert.equal(normalizeMorpheusNetwork(null), 'testnet');
+  assert.equal(normalizeMorpheusNetwork(''), 'testnet');
+});
 
 // A throwaway key generated per run: it only has to be a VALID secret, so that a
 // resolver which still materialized plaintext keys would visibly select it.

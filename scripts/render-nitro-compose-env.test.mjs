@@ -42,6 +42,22 @@ const signerMaterialPrivateKeyKeys = [
 ];
 const signerMaterialKeys = [...signerMaterialWifKeys, ...signerMaterialPrivateKeyKeys];
 
+function reviewedRegistryRoot(chainId) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'render-nitro-compose-registry-'));
+  const networkDirectory = path.join(directory, 'config', 'networks');
+  fs.mkdirSync(networkDirectory, { recursive: true });
+  const registry = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, 'config', 'networks', 'mainnet.json'), 'utf8')
+  );
+  registry.neo_x.chain_id = chainId;
+  fs.writeFileSync(
+    path.join(networkDirectory, 'mainnet.json'),
+    `${JSON.stringify(registry, null, 2)}\n`,
+    'utf8'
+  );
+  return directory;
+}
+
 function buildTestSignerEnv() {
   const account = new wallet.Account(wallet.generatePrivateKey());
 
@@ -161,4 +177,52 @@ test('render-nitro-compose-env omits archived Neo X fields from generated output
     );
     assert.deepEqual(report.issues, []);
   }
+});
+
+test('render-nitro-compose-env reads NeoX chain identity from the reviewed registry', () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'render-nitro-compose-neox-'));
+  const outputPath = path.join(outputDir, 'morpheus.mainnet.env');
+  const registryRoot = reviewedRegistryRoot(47764);
+  const result = spawnSync(
+    process.execPath,
+    [
+      'scripts/render-nitro-compose-env.mjs',
+      '--network',
+      'mainnet',
+      '--output',
+      outputPath,
+      '--registry-root',
+      registryRoot,
+    ],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: { ...process.env, ...buildTestSignerEnv() },
+    }
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const rendered = fs.readFileSync(outputPath, 'utf8');
+  const line = rendered
+    .split(/\r?\n/)
+    .find((entry) => entry.startsWith('MORPHEUS_RELAYER_NEOX_CHAIN_ID='));
+  assert.equal(line, 'MORPHEUS_RELAYER_NEOX_CHAIN_ID=47764');
+  fs.rmSync(registryRoot, { recursive: true, force: true });
+});
+
+test('render-nitro-compose-env rejects a mismatched reviewed N3 magic override', () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'render-nitro-compose-n3-'));
+  const outputPath = path.join(outputDir, 'morpheus.mainnet.env');
+  const result = spawnSync(
+    process.execPath,
+    ['scripts/render-nitro-compose-env.mjs', '--network', 'mainnet', '--output', outputPath],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: { ...process.env, ...buildTestSignerEnv(), NEO_NETWORK_MAGIC: '1' },
+    }
+  );
+
+  assert.notEqual(result.status, 0, result.stderr || result.stdout);
+  assert.match(`${result.stderr}${result.stdout}`, /Neo N3 magic|network magic/i);
 });

@@ -2,6 +2,7 @@ import { WorkflowEntrypoint } from '../workflow-runtime.mjs';
 import { trimString } from '@r3e-network/neo-os-services-shared/utils';
 import { patchJob, loadJob } from './jobs.js';
 import { callAppBackend } from './execution-plane.js';
+import { resolveControlPlaneNetwork } from './config.js';
 
 function normalizeWorkflowVersion(value) {
   const numeric = Number(value);
@@ -25,7 +26,7 @@ export class CallbackBroadcastWorkflow extends WorkflowEntrypoint {
   async run(event, step) {
     const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
     const jobId = trimString(payload.job_id || '');
-    const network = trimString(payload.network) === 'mainnet' ? 'mainnet' : 'testnet';
+    const network = resolveControlPlaneNetwork(payload.network);
     if (!jobId) {
       throw new Error('job_id is required');
     }
@@ -139,7 +140,7 @@ export class AutomationExecuteWorkflow extends WorkflowEntrypoint {
   async run(event, step) {
     const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
     const jobId = trimString(payload.job_id || '');
-    const network = trimString(payload.network) === 'mainnet' ? 'mainnet' : 'testnet';
+    const network = resolveControlPlaneNetwork(payload.network);
     if (!jobId) {
       throw new Error('job_id is required');
     }

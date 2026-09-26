@@ -62,6 +62,7 @@ export const NEVER_VENDORED_SOURCES = Object.freeze([
   'crates/neo-os-did/src/core.rs',
   'crates/neo-os-did/src/js.rs',
   'crates/neo-os-did/src/stable_stringify.rs',
+  'crates/neo-os-core/',
   'runtime/nitro-enclave-host/tests/unit/support.rs',
 ]);
 

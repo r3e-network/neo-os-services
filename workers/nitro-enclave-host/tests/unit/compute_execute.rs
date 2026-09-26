@@ -525,6 +525,23 @@ fn missing_signer_key_fails_the_signed_lane_closed() {
 }
 
 #[test]
+fn explicit_unknown_network_is_rejected_before_custody_signing() {
+    let harness = compute_harness(&healthy_overlay());
+    let error = handle_compute_execute(
+        &harness.state,
+        &json!({
+            "function": "hash.sha256",
+            "input": {},
+            "network": "staging"
+        }),
+    )
+    .expect_err("an unknown network must not be mapped to testnet");
+    assert_eq!(error.status, 400);
+    assert!(error.message.contains("unsupported Neo network"));
+    assert!(harness.signer.sign_calls().is_empty());
+}
+
+#[test]
 fn disabled_wrong_network_unreachable_and_incomplete_custody_fail_with_503() {
     for issue in [
         "worker: custody key is disabled",

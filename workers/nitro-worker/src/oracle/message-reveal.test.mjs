@@ -8,6 +8,7 @@ import {
   isRevealTimestampFresh,
   handleMessageReveal,
   __buildMessageRpcConnectionForTests,
+  resolveNeoxMessageChainContext,
 } from './message-reveal.js';
 
 process.env.MORPHEUS_ALLOW_EPHEMERAL_KEY = 'true';
@@ -94,6 +95,35 @@ async function signedRevealPayload(messageId, issuedAt) {
   const signature = await wallet.signMessage(statement);
   return { chain: 'neox', signature, messageId, issuedAt };
 }
+
+test('Neo X message context uses the reviewed projection and rejects overrides', () => {
+  const keys = [
+    'MORPHEUS_NETWORK',
+    'NEXT_PUBLIC_MORPHEUS_NETWORK',
+    'NEOX_MESSAGE_CHAIN_ID',
+    'NEOX_CHAIN_ID',
+  ];
+  const saved = new Map(keys.map((key) => [key, process.env[key]]));
+  try {
+    process.env.MORPHEUS_NETWORK = 'mainnet';
+    delete process.env.NEXT_PUBLIC_MORPHEUS_NETWORK;
+    delete process.env.NEOX_MESSAGE_CHAIN_ID;
+    delete process.env.NEOX_CHAIN_ID;
+    assert.equal(resolveNeoxMessageChainContext().chainId, 47763);
+    process.env.MORPHEUS_NETWORK = 'testnet';
+    assert.equal(resolveNeoxMessageChainContext().chainId, 12227332);
+    process.env.NEOX_MESSAGE_CHAIN_ID = '47763';
+    assert.throws(
+      () => resolveNeoxMessageChainContext(),
+      /conflicts with reviewed testnet identity/
+    );
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
 
 test('buildRevealStatement is deterministic and lowercases the contract', () => {
   const a = buildRevealStatement(

@@ -12,15 +12,15 @@ import { isBlockedIpAddress } from './platform/ssrf.js';
 
 test('validateRpcUrl blocks private/internal IPv4 literals (incl. ranges the old check missed)', async () => {
   for (const url of [
-    'http://10.0.0.5:10332',
-    'http://192.168.1.10',
-    'http://172.16.0.1',
-    'http://127.0.0.1',
-    'http://169.254.10.20', // full link-local range, not just 169.254.169.254
-    'http://169.254.169.254', // cloud metadata
-    'http://100.64.0.1', // CGNAT
-    'http://0.0.0.0',
-    'http://224.0.0.1', // multicast
+    'https://10.0.0.5:10332',
+    'https://192.168.1.10',
+    'https://172.16.0.1',
+    'https://127.0.0.1',
+    'https://169.254.10.20', // full link-local range, not just 169.254.169.254
+    'https://169.254.169.254', // cloud metadata
+    'https://100.64.0.1', // CGNAT
+    'https://0.0.0.0',
+    'https://224.0.0.1', // multicast
   ]) {
     await assert.rejects(validateRpcUrl(url), /private\/internal RPC URLs not allowed/, url);
   }
@@ -28,26 +28,30 @@ test('validateRpcUrl blocks private/internal IPv4 literals (incl. ranges the old
 
 test('validateRpcUrl blocks IPv6 loopback / ULA / link-local literals', async () => {
   for (const url of [
-    'http://[::1]', // loopback
-    'http://[fc00::1]', // ULA fc00::/7
-    'http://[fd12:3456:789a::1]', // ULA
-    'http://[fe80::1]', // link-local
-    'http://[::ffff:127.0.0.1]', // IPv4-mapped loopback
-    'http://[::ffff:169.254.169.254]', // IPv4-mapped metadata
+    'https://[::1]', // loopback
+    'https://[fc00::1]', // ULA fc00::/7
+    'https://[fd12:3456:789a::1]', // ULA
+    'https://[fe80::1]', // link-local
+    'https://[::ffff:127.0.0.1]', // IPv4-mapped loopback
+    'https://[::ffff:169.254.169.254]', // IPv4-mapped metadata
   ]) {
     await assert.rejects(validateRpcUrl(url), /private\/internal RPC URLs not allowed/, url);
   }
 });
 
 test('validateRpcUrl blocks localhost / *.local / 0.0.0.0 hostnames', async () => {
-  for (const url of ['http://localhost:10332', 'http://foo.local', 'http://0.0.0.0']) {
+  for (const url of ['https://localhost:10332', 'https://foo.local', 'https://0.0.0.0']) {
     await assert.rejects(validateRpcUrl(url), /private\/internal RPC URLs not allowed/, url);
   }
 });
 
 test('validateRpcUrl rejects non-http(s) schemes', async () => {
-  await assert.rejects(validateRpcUrl('ftp://example.com'), /must use http or https/);
-  await assert.rejects(validateRpcUrl('file:///etc/passwd'), /must use http or https/);
+  await assert.rejects(validateRpcUrl('ftp://example.com'), /must use HTTPS/);
+  await assert.rejects(validateRpcUrl('file:///etc/passwd'), /must use HTTPS/);
+});
+
+test('validateRpcUrl rejects cleartext public RPC endpoints', async () => {
+  await assert.rejects(validateRpcUrl('http://8.8.8.8'), /must use HTTPS/);
 });
 
 test('validateRpcUrl allows public RPC endpoints (hostnames and public IPs)', async () => {

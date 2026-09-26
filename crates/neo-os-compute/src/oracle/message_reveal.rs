@@ -10,6 +10,7 @@ use k256::ecdsa::{RecoveryId, Signature as EcdsaSignature, VerifyingKey};
 use num_bigint::BigInt;
 use serde_json::{json, Value as Json};
 use sha3::{Digest as _, Keccak256};
+use url::Url;
 
 use crate::core::{read_env, sanitize_error_message, EnvReader};
 use crate::js::{
@@ -19,13 +20,17 @@ use crate::js::{
 use crate::oracle::crypto::{decrypt_encrypted_token_resolved, KeystoreReader, WrapKeyDeriver};
 use crate::transport::{HttpRequest, HttpTransport};
 
-pub const DEFAULT_NEOX_CHAIN_ID: i64 = 47763;
 pub const REVEAL_FRESHNESS_WINDOW_SECONDS: f64 = 600.0; // ±10 min tolerance for clock skew
 
 /// `NEOX_CHAIN_ALIASES` (also re-exported in JS as
 /// `NEOX_DECRYPT_CHAIN_ALIASES`); membership is tested against the
 /// trim+lowercased chain name.
 pub const NEOX_CHAIN_ALIASES: [&str; 3] = ["neox", "neo_x", "neo-x"];
+
+fn reviewed_neox_chain_id(network: &str) -> f64 {
+    neo_os_core::network_identity::known_neox_chain_id(network)
+        .expect("message reveal network must have a reviewed NeoX identity") as f64
+}
 
 pub fn is_neox_chain_alias(chain: &str) -> bool {
     NEOX_CHAIN_ALIASES.contains(&chain)
@@ -174,25 +179,35 @@ pub fn parse_message_id(value: &Json) -> Option<String> {
 
 /// `resolveNeoxMessageChainContext()` — trusted worker-configured Neo X
 /// message contract context; the contract is NEVER taken from the caller.
-/// `Number(env(...)) || DEFAULT_NEOX_CHAIN_ID`, so 0/NaN fall back.
+/// The reviewed NeoX registry is authoritative; explicit env values must match it.
 pub struct NeoxMessageChainContext {
     pub rpc_url: String,
     pub contract: String,
     pub chain_id: f64,
+    pub chain_identity_valid: bool,
 }
 
 pub fn resolve_neox_message_chain_context(env: EnvReader<'_>) -> NeoxMessageChainContext {
+    let configured_network = read_env(env, &["MORPHEUS_NETWORK", "NEXT_PUBLIC_MORPHEUS_NETWORK"]);
+    let normalized_network = configured_network.trim().to_ascii_lowercase();
+    let (network, network_identity_valid) = if normalized_network == "testnet" {
+        ("testnet", true)
+    } else if normalized_network == "mainnet" || normalized_network.is_empty() {
+        ("mainnet", true)
+    } else {
+        ("mainnet", false)
+    };
+    let reviewed_chain_id = reviewed_neox_chain_id(network);
     let chain_raw = read_env(env, &["NEOX_MESSAGE_CHAIN_ID", "NEOX_CHAIN_ID"]);
     let parsed = js_number(&chain_raw);
-    let chain_id = if parsed != 0.0 && parsed.is_finite() {
-        parsed
-    } else {
-        DEFAULT_NEOX_CHAIN_ID as f64
-    };
+    let chain_identity_valid = network_identity_valid
+        && (chain_raw.is_empty()
+            || (parsed.is_finite() && parsed.fract() == 0.0 && parsed == reviewed_chain_id));
     NeoxMessageChainContext {
         rpc_url: read_env(env, &["NEOX_MESSAGE_RPC", "NEOX_RPC", "EVM_RPC_URL"]),
         contract: read_env(env, &["NEOX_MESSAGE_CONTRACT"]),
-        chain_id,
+        chain_id: reviewed_chain_id,
+        chain_identity_valid,
     }
 }
 
@@ -464,6 +479,11 @@ pub fn read_message_from_chain(
     request: &ReadMessageRequest,
     transport: HttpTransport<'_>,
 ) -> Result<NeoXMessage, String> {
+    let parsed_url =
+        Url::parse(&request.rpc_url).map_err(|_| "RPC URL must use HTTPS".to_string())?;
+    if parsed_url.scheme() != "https" {
+        return Err("RPC URL must use HTTPS".to_string());
+    }
     let selector = Keccak256::digest(b"getMessage(uint256)");
     let mut data = selector[..4].to_vec();
     let id = BigInt::parse_bytes(request.message_id.as_bytes(), 10)
@@ -599,6 +619,12 @@ pub fn handle_message_reveal(
     }
 
     let context = resolve_neox_message_chain_context(env);
+    if !context.chain_identity_valid {
+        return (
+            503,
+            json!({ "error": "recipient reveal is not configured for the reviewed Neo X identity" }),
+        );
+    }
     if context.rpc_url.is_empty() || context.contract.is_empty() {
         return (
             503,
@@ -777,6 +803,12 @@ pub fn assert_decrypt_binding(
     };
 
     let context = resolve_neox_message_chain_context(env);
+    if !context.chain_identity_valid {
+        return reject(
+            503,
+            "gated decrypt is not configured for the reviewed Neo X identity",
+        );
+    }
     if context.rpc_url.is_empty() || context.contract.is_empty() {
         return reject(503, "gated decrypt is not configured on this worker");
     }
@@ -953,7 +985,8 @@ mod tests {
         ]));
         assert_eq!(context.rpc_url, "https://rpc.example");
         assert_eq!(context.contract, "0xabc");
-        assert_eq!(context.chain_id, DEFAULT_NEOX_CHAIN_ID as f64);
+        assert_eq!(context.chain_id, reviewed_neox_chain_id("mainnet"));
+        assert!(context.chain_identity_valid);
 
         let context = resolve_neox_message_chain_context(&env_from(&[
             ("NEOX_RPC", "https://rpc-alias.example"),
@@ -961,10 +994,16 @@ mod tests {
             ("NEOX_CHAIN_ID", "31337"),
         ]));
         assert_eq!(context.rpc_url, "https://rpc-alias.example");
-        assert_eq!(context.chain_id, 31337.0);
+        assert_eq!(context.chain_id, reviewed_neox_chain_id("mainnet"));
+        assert!(!context.chain_identity_valid);
 
         let context = resolve_neox_message_chain_context(&env_from(&[("NEOX_CHAIN_ID", "junk")]));
-        assert_eq!(context.chain_id, DEFAULT_NEOX_CHAIN_ID as f64);
+        assert_eq!(context.chain_id, reviewed_neox_chain_id("mainnet"));
+        assert!(!context.chain_identity_valid);
+
+        let context =
+            resolve_neox_message_chain_context(&env_from(&[("MORPHEUS_NETWORK", "staging")]));
+        assert!(!context.chain_identity_valid);
     }
 
     #[test]
@@ -1025,7 +1064,7 @@ mod tests {
         }
         assert!(!is_neox_chain_alias("neo_n3"));
         assert!(!is_neox_chain_alias("neo-n3"));
-        assert_eq!(DEFAULT_NEOX_CHAIN_ID, 47763);
+        assert_eq!(reviewed_neox_chain_id("mainnet"), 47763.0);
     }
 
     #[test]
@@ -1218,7 +1257,7 @@ mod tests {
 
     fn signed_reveal_payload(message_id: i64) -> Json {
         let statement = build_reveal_statement(
-            &json!(DEFAULT_NEOX_CHAIN_ID),
+            &json!(reviewed_neox_chain_id("mainnet")),
             REVEAL_CONTRACT,
             &Json::String(message_id.to_string()),
             &json!(REVEAL_NOW),
@@ -1334,7 +1373,7 @@ mod tests {
         };
         let request = ReadMessageRequest {
             rpc_url: "https://rpc.example.com".to_string(),
-            chain_id: DEFAULT_NEOX_CHAIN_ID as f64,
+            chain_id: reviewed_neox_chain_id("mainnet"),
             contract: REVEAL_CONTRACT.to_string(),
             message_id: "9".to_string(),
         };
@@ -1379,7 +1418,7 @@ mod tests {
         };
         let base = ReadMessageRequest {
             rpc_url: String::new(),
-            chain_id: DEFAULT_NEOX_CHAIN_ID as f64,
+            chain_id: reviewed_neox_chain_id("mainnet"),
             contract: REVEAL_CONTRACT.to_string(),
             message_id: "9".to_string(),
         };
@@ -1403,6 +1442,21 @@ mod tests {
                 "unexpected error for {url}"
             );
         }
+    }
+
+    #[test]
+    fn direct_message_rpc_reads_reject_cleartext_urls() {
+        let request = ReadMessageRequest {
+            rpc_url: "http://rpc.example".to_string(),
+            chain_id: reviewed_neox_chain_id("mainnet"),
+            contract: REVEAL_CONTRACT.to_string(),
+            message_id: "9".to_string(),
+        };
+        let error = read_message_from_chain(&request, &|_| {
+            panic!("cleartext RPC must be rejected before transport")
+        })
+        .expect_err("cleartext RPC must be rejected before transport");
+        assert_eq!(error, "RPC URL must use HTTPS");
     }
 
     #[test]

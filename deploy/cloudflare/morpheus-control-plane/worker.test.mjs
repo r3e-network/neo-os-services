@@ -7,6 +7,8 @@ import {
   getAppBackendConfig,
   getExecutionPlaneConfig,
 } from './lib/execution-plane.js';
+import { resolveControlPlaneNetwork } from './lib/config.js';
+import { resolveWorkflowDispatch } from './lib/workflow-dispatch.js';
 
 function createEnv(overrides = {}) {
   const oracleMessages = [];
@@ -58,6 +60,30 @@ function jsonResponse(status, body) {
     headers: { 'content-type': 'application/json' },
   });
 }
+
+test('control-plane network resolution rejects unknown queue and workflow labels', () => {
+  assert.equal(resolveControlPlaneNetwork(undefined), 'testnet');
+  assert.equal(resolveControlPlaneNetwork(' MAINNET '), 'mainnet');
+  assert.throws(() => resolveControlPlaneNetwork('staging'), /unsupported Neo network: staging/);
+  assert.throws(
+    () => resolveWorkflowDispatch('/automation/execute', {}, 'staging'),
+    /unsupported Neo network: staging/
+  );
+});
+
+test('control-plane route resolution rejects an unknown network prefix', async () => {
+  await assert.rejects(
+    () =>
+      worker.fetch(
+        new Request('https://control-plane.test/staging/jobs/recover', {
+          method: 'POST',
+          headers: { authorization: 'Bearer control-plane-key' },
+        }),
+        createEnv()
+      ),
+    /unsupported Neo network: staging/
+  );
+});
 
 test('control-plane configuration rejects host WIF/private-key variables', () => {
   assert.throws(

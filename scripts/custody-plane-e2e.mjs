@@ -41,6 +41,10 @@ import {
   buildFulfillmentDigestBytes,
   resolveKernelIntent,
 } from '../workers/morpheus-relayer/src/router.js';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from './lib-network-registry.mjs';
 
 const REPO_ROOT = process.cwd();
 const TARGET = join(REPO_ROOT, 'target', 'debug');
@@ -53,7 +57,9 @@ const DATA_MESSAGE = Buffer.from('a fulfillment digest the enclave host wants si
 // The measured Neo N3 testnet binding the host applies to every fulfillment
 // digest (workers/nitro-enclave-host/src/fulfill.rs measured_n3_binding).
 const N3_TESTNET_ORACLE_CONTRACT = '0xf54d8584ef82315c1800373272ab08ae0db2d5ef';
-const N3_TESTNET_MAGIC = 894710606;
+const N3_TESTNET_MAGIC = Number(
+  resolveReviewedNeoN3Magic(readReviewedNetworkRegistrySync(REPO_ROOT, 'testnet'), 'testnet')
+);
 
 const failures = [];
 function check(condition, description, detail) {

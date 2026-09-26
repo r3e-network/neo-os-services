@@ -21,6 +21,10 @@ import {
 } from './lib-neo-signers.mjs';
 import { resolveNetworkScopedValue, snapshotEnv, withRetries } from './lib-verify-morpheus-n3.mjs';
 import { trimString } from './lib-strings.mjs';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from './lib-network-registry.mjs';
 
 const GAS_HASH = '0xd2a4cff31913016155e38e474a2c06d08be276cf';
 const CONTRACT_ENV_KEYS = [
@@ -96,12 +100,19 @@ const selectedNitroEnvSnapshot = await loadEnvSnapshot(selectedNitroEnvPath);
 await loadDotEnv(selectedNitroEnvPath, { override: false });
 await loadDotEnv();
 const networkConfig = await loadJsonIfExists(path.resolve('config', 'networks', `${network}.json`));
+const reviewedNetworkRegistry = readReviewedNetworkRegistrySync(process.cwd(), network);
 const deploymentRegistry = await loadJsonIfExists(
   path.resolve('examples', 'deployments', `${network}.json`)
 );
 const defaultRpcUrl =
   network === 'mainnet' ? 'https://api.n3index.dev/mainnet' : 'https://api.n3index.dev/testnet';
-const defaultNetworkMagic = network === 'mainnet' ? 860833102 : 894710606;
+const defaultNetworkMagic = Number(
+  resolveReviewedNeoN3Magic(
+    reviewedNetworkRegistry,
+    network,
+    process.env.NEO_NETWORK_MAGIC || networkConfig?.neo_n3?.network_magic || ''
+  )
+);
 
 function decodeCallbackArray(item) {
   if (!hasReceivedCallback(item)) return null;

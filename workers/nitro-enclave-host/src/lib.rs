@@ -100,14 +100,10 @@ impl DispatchOutcome {
     }
 }
 
-/// `normalizeMorpheusNetwork` (`packages/shared/src/neo-signers-core.js:156`):
-/// exactly `mainnet` after trim+lowercase, else `testnet`. The `?` is
-/// deliberate — an unparsable value collapses to testnet the same way a wrong
-/// one does, because a deployment that cannot spell mainnet must not get
-/// mainnet.
-pub fn normalize_network(value: Option<&str>) -> String {
-    match value {
-        Some(value) if value.trim().eq_ignore_ascii_case("mainnet") => "mainnet".to_string(),
-        _ => "testnet".to_string(),
-    }
+/// Resolve the host's network against the reviewed registry. An unset value
+/// retains the documented TestNet default; an explicit unknown label fails
+/// closed before health, custody, attestation, or KMS identity selection.
+pub fn normalize_network(value: Option<&str>) -> Result<String, String> {
+    neo_os_core::network_identity::resolve_reviewed_network(value)
+        .map_err(|error| error.to_string())
 }

@@ -9,6 +9,42 @@ pub struct NeoN3Identity {
     pub genesis_hash: String,
 }
 
+/// Resolve the operator supplied network label against the reviewed registry.
+/// An empty value intentionally uses the documented TestNet default; every
+/// explicit unknown label is an error so a typo cannot select a different
+/// custody identity.
+pub fn resolve_reviewed_network(value: Option<&str>) -> CoreResult<String> {
+    let normalized = value.unwrap_or_default().trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return Ok("testnet".to_string());
+    }
+    if known_network_registry(&normalized).is_some() {
+        return Ok(normalized);
+    }
+    Err(CoreError::new(format!(
+        "unsupported Neo network: {normalized}"
+    )))
+}
+
+/// Public NeoX chain identity paired with the reviewed network registry.
+pub fn known_neox_chain_id(network: &str) -> Option<u64> {
+    static MAINNET: OnceLock<u64> = OnceLock::new();
+    static TESTNET: OnceLock<u64> = OnceLock::new();
+    let slot = match network {
+        "mainnet" => &MAINNET,
+        "testnet" => &TESTNET,
+        _ => return None,
+    };
+    Some(*slot.get_or_init(|| {
+        let registry = known_network_registry(network).expect("known network has a registry");
+        registry
+            .pointer("/neo_x/chain_id")
+            .and_then(serde_json::Value::as_u64)
+            .filter(|value| *value > 0)
+            .expect("reviewed NeoX chain id must be positive")
+    }))
+}
+
 /// Public release configuration embedded with the binary, independent of cwd.
 /// Unknown networks have no registry fallback.
 pub fn known_network_registry(network: &str) -> Option<&'static serde_json::Value> {
@@ -119,6 +155,29 @@ mod tests {
         assert_eq!(known_neo_n3_identity("testnet").unwrap().magic, 894710606);
         for value in ["private-A", "Mainnet", "", "testnet "] {
             assert!(known_neo_n3_identity(value).is_none());
+        }
+    }
+
+    #[test]
+    fn reviewed_network_resolution_defaults_only_when_empty() {
+        assert_eq!(resolve_reviewed_network(None).unwrap(), "testnet");
+        assert_eq!(
+            resolve_reviewed_network(Some(" MAINNET ")).unwrap(),
+            "mainnet"
+        );
+        assert_eq!(
+            resolve_reviewed_network(Some("testnet")).unwrap(),
+            "testnet"
+        );
+        assert!(resolve_reviewed_network(Some("staging")).is_err());
+    }
+
+    #[test]
+    fn known_neox_chain_id_is_registry_backed_and_unknown_has_no_default() {
+        assert_eq!(known_neox_chain_id("mainnet"), Some(47_763));
+        assert_eq!(known_neox_chain_id("testnet"), Some(12_227_332));
+        for value in ["private", "Mainnet", "", "testnet "] {
+            assert_eq!(known_neox_chain_id(value), None);
         }
     }
     #[test]

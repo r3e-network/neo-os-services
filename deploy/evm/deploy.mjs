@@ -6,6 +6,11 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { ethers } from 'ethers';
+import {
+  readReviewedNetworkRegistry,
+  resolveReviewedNeoXChainId,
+  reviewedNetworkForEvmLabel,
+} from '../../scripts/lib-network-registry.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const name = process.argv[2];
@@ -16,8 +21,12 @@ if (!name) {
 }
 
 const RPC = process.env.NEOX_RPC || 'https://mainnet-1.rpc.banelabs.org';
-const CHAIN_ID = Number(process.env.NEOX_CHAIN_ID || 47763);
 const NET = process.env.NEOX_NET || 'neox-mainnet';
+const registryNetwork = reviewedNetworkForEvmLabel(NET);
+const registry = await readReviewedNetworkRegistry(ROOT, registryNetwork);
+const CHAIN_ID = Number(
+  resolveReviewedNeoXChainId(registry, registryNetwork, process.env.NEOX_CHAIN_ID)
+);
 const PK = process.env.NEOX_DEPLOY_PK || process.env.NEOX_FEED_PK;
 if (!PK) {
   console.error('set NEOX_DEPLOY_PK');

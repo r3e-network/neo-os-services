@@ -1318,8 +1318,8 @@ function loadRegistryFor(network) {
   const registryPath = path.resolve(repoRoot, 'config', 'networks', `${network}.json`);
   try {
     return JSON.parse(readFileSync(registryPath, 'utf8'));
-  } catch {
-    return { network, neo_n3: { contracts: {} } };
+  } catch (error) {
+    throw new Error(`cannot load reviewed network registry ${registryPath}: ${error.message}`);
   }
 }
 

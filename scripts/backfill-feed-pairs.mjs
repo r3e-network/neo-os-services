@@ -6,6 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { parseConfiguredFeedPairs } from './lib-feed-freshness.mjs';
 import { parseDotEnv } from './lib-env.mjs';
 import { trimString } from './lib-strings.mjs';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from './lib-network-registry.mjs';
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function installDefaultFetchTimeout(timeoutMs = 20_000) {
   if (typeof globalThis.fetch !== 'function') return;
@@ -77,7 +83,8 @@ export function assertBackfillNetworkEnv(network, env) {
   if (declared && declared !== network) {
     throw new Error(`env MORPHEUS_NETWORK=${declared} does not match --network ${network}`);
   }
-  const expectedMagic = network === 'testnet' ? '894710606' : '860833102';
+  const registry = readReviewedNetworkRegistrySync(REPO_ROOT, network);
+  const expectedMagic = resolveReviewedNeoN3Magic(registry, network);
   const configuredMagic = trimString(env?.NEO_NETWORK_MAGIC);
   if (configuredMagic && configuredMagic !== expectedMagic) {
     throw new Error(

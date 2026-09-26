@@ -11,6 +11,7 @@ import {
   patchAutomationJob,
   patchRelayerJob,
   resetSupabasePersistenceBackoffForTests,
+  resolveSupabaseNetwork,
   shouldSkipSupabasePersistence,
   upsertAutomationJob,
   upsertRelayerJob,
@@ -21,6 +22,17 @@ afterEach(() => {
 });
 
 describe('Supabase persistence backoff', () => {
+  it('rejects an unknown configured network before persistence', () => {
+    const previous = process.env.MORPHEUS_NETWORK;
+    process.env.MORPHEUS_NETWORK = 'staging';
+    try {
+      assert.throws(() => resolveSupabaseNetwork(), /unsupported Neo network/);
+    } finally {
+      if (previous === undefined) delete process.env.MORPHEUS_NETWORK;
+      else process.env.MORPHEUS_NETWORK = previous;
+    }
+  });
+
   it('detects Supabase quota restriction errors', () => {
     assert.equal(
       isSupabaseQuotaRestrictedError(

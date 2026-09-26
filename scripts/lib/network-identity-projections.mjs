@@ -7,6 +7,26 @@ function magicValue(value) {
   return value;
 }
 
+function chainIdValue(value) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error('NeoX chain id must be a positive safe integer');
+  }
+  return value;
+}
+
+export function renderRuntimeNetworkIdentities(catalog) {
+  if (catalog?.schemaVersion !== 1) throw new Error('unsupported identity schema');
+  const networks = {};
+  for (const name of ['mainnet', 'testnet']) {
+    const entry = catalog?.networks?.[name];
+    networks[name] = {
+      magic: magicValue(entry?.magic),
+      neoXChainId: chainIdValue(entry?.neoXChainId),
+    };
+  }
+  return JSON.stringify({ schemaVersion: 1, networks }, null, 2) + '\n';
+}
+
 export function renderCSharpNetworkIdentities(catalog) {
   if (catalog?.schemaVersion !== 1) throw new Error('unsupported identity schema');
   const mainnet = magicValue(catalog?.networks?.mainnet?.magic);

@@ -23,12 +23,13 @@ use num_traits::Signed;
 use serde_json::{json, Value as Json};
 use sha2::{Digest, Sha256};
 
-use crate::core::{env_for_network, read_env, resolve_payload_network, EnvReader};
+use crate::core::{env_for_network, read_env, resolve_payload_network_strict, EnvReader};
 use crate::js::{
     hex_decode_stop_at_invalid, js_bigint_from_string, js_first_truthy, js_number, js_stringify,
     js_trim_string,
 };
 use crate::stable_stringify::stable_stringify;
+use neo_os_core::network_identity::known_neo_n3_identity;
 
 const NEODID_BINDING_DOMAIN: &[u8] = b"neodid-binding-v1";
 const NEODID_CLAIM_COMMITMENT_DOMAIN: &[u8] = b"neodid-claim-secret-v1";
@@ -479,30 +480,29 @@ fn encode_hash160_or_zero(value: Option<&str>) -> Vec<u8> {
 /// `neoN3NetworkMagicLe4(network)` — env/scoped-config resolution with the
 /// mainnet/testnet fallbacks, then the shared 4-byte little-endian encoder
 /// (`>>> 0` wrap). No magic-range validation: C# has none either.
-fn neo_n3_network_magic_le4(network: &str, env: EnvReader<'_>) -> [u8; 4] {
-    let fallback = if network == "mainnet" {
-        860833102.0
-    } else {
-        894710606.0
-    };
+fn neo_n3_network_magic_le4(network: &str, env: EnvReader<'_>) -> Result<[u8; 4], String> {
+    let reviewed = known_neo_n3_identity(network)
+        .ok_or_else(|| format!("unsupported Neo N3 network: {network}"))?
+        .magic;
     let raw_env = env_for_network(network, &["NEO_NETWORK_MAGIC"], env);
-    let raw = if raw_env.is_empty() {
-        fallback
-    } else {
-        js_number(&raw_env)
-    };
-    let magic = if raw.is_finite() && raw > 0.0 {
-        raw
-    } else {
-        fallback
-    };
-    let truncated = magic.trunc().rem_euclid(4294967296.0) as u64;
-    [
-        (truncated & 0xff) as u8,
-        ((truncated >> 8) & 0xff) as u8,
-        ((truncated >> 16) & 0xff) as u8,
-        ((truncated >> 24) & 0xff) as u8,
-    ]
+    if !raw_env.is_empty() {
+        let raw = js_number(&raw_env);
+        if !raw.is_finite() || raw.fract() != 0.0 || raw <= 0.0 || raw > u32::MAX as f64 {
+            return Err("Neo N3 network magic must be a positive uint32 integer".to_owned());
+        }
+        if raw as u32 != reviewed {
+            return Err(format!(
+                "Neo N3 network magic conflicts with reviewed {network} identity"
+            ));
+        }
+    }
+    let magic = reviewed as u64;
+    Ok([
+        (magic & 0xff) as u8,
+        ((magic >> 8) & 0xff) as u8,
+        ((magic >> 16) & 0xff) as u8,
+        ((magic >> 24) & 0xff) as u8,
+    ])
 }
 
 /// `encodeUint256Word(text, fieldName)` — 32-byte big-endian zero-padded word;
@@ -666,7 +666,7 @@ fn build_binding_digest_bytes(
     input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.claim_value)?);
     input.extend_from_slice(&hex_decode_stop_at_invalid(&ticket.master_nullifier));
     input.extend_from_slice(&hex_decode_stop_at_invalid(&ticket.metadata_hash));
-    input.extend_from_slice(&neo_n3_network_magic_le4(&ticket.network, env));
+    input.extend_from_slice(&neo_n3_network_magic_le4(&ticket.network, env)?);
     Ok(Sha256::digest(&input).into())
 }
 
@@ -682,7 +682,7 @@ fn build_binding_commitment_digest_bytes(
     input.extend_from_slice(&hex_decode_stop_at_invalid(&ticket.claim_commitment));
     input.extend_from_slice(&hex_decode_stop_at_invalid(&ticket.master_nullifier));
     input.extend_from_slice(&hex_decode_stop_at_invalid(&ticket.metadata_hash));
-    input.extend_from_slice(&neo_n3_network_magic_le4(&ticket.network, env));
+    input.extend_from_slice(&neo_n3_network_magic_le4(&ticket.network, env)?);
     Ok(Sha256::digest(&input).into())
 }
 
@@ -702,7 +702,7 @@ fn build_action_digest_bytes(
     input.extend_from_slice(&hex_bytes_0x(&ticket.disposable_account));
     input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.action_id)?);
     input.extend_from_slice(&hex_decode_stop_at_invalid(&ticket.action_nullifier));
-    input.extend_from_slice(&neo_n3_network_magic_le4(&ticket.network, env));
+    input.extend_from_slice(&neo_n3_network_magic_le4(&ticket.network, env)?);
     Ok(Sha256::digest(&input).into())
 }
 
@@ -798,7 +798,7 @@ pub fn neodid_bind(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Result<Json, S
     };
     let claim_value = js_trim_string(js_first_truthy(resolved_payload, &["claim_value"]));
     let metadata_hash = compute_metadata_hash(js_first_truthy(resolved_payload, &["metadata"]));
-    let network = resolve_payload_network(resolved_payload, "testnet");
+    let network = resolve_payload_network_strict(resolved_payload, "testnet")?;
     let master_nullifier = compute_master_nullifier(&provider, &provider_uid, &salt_bytes);
 
     let ticket = BindingTicket {
@@ -862,7 +862,7 @@ pub fn neodid_action_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Resul
         ),
         "disposable_account",
     )?;
-    let network = resolve_payload_network(resolved_payload, "testnet");
+    let network = resolve_payload_network_strict(resolved_payload, "testnet")?;
 
     let ticket = ActionTicket {
         disposable_account: disposable_account.clone(),
@@ -1920,31 +1920,26 @@ mod tests {
         );
 
         let env = env_from(&[]);
-        // Testnet fallback when the env chain is empty.
+        // Empty env uses the reviewed registry identity.
         assert_eq!(
-            neo_n3_network_magic_le4("testnet", &env),
+            neo_n3_network_magic_le4("testnet", &env).unwrap(),
             [0x4e, 0x33, 0x54, 0x35]
         );
         assert_eq!(
-            neo_n3_network_magic_le4("mainnet", &env),
+            neo_n3_network_magic_le4("mainnet", &env).unwrap(),
             [0x4e, 0x45, 0x4f, 0x33]
         );
-        // Network-scoped env names win (NEO_NETWORK_MAGIC_<UPPER>).
-        let scoped = env_from(&[("NEO_NETWORK_MAGIC_MAINNET", "42")]);
-        assert_eq!(neo_n3_network_magic_le4("mainnet", &scoped), [42, 0, 0, 0]);
-        // >>> 0 wrap on out-of-range values; non-numeric env falls back.
-        let weird = env_from(&[("NEO_NETWORK_MAGIC", "4294967297")]);
-        assert_eq!(neo_n3_network_magic_le4("testnet", &weird), [1, 0, 0, 0]);
+        // A scoped or generic override must match the reviewed identity.
+        let scoped = env_from(&[("NEO_NETWORK_MAGIC_MAINNET", "860833102")]);
+        assert_eq!(
+            neo_n3_network_magic_le4("mainnet", &scoped).unwrap(),
+            [0x4e, 0x45, 0x4f, 0x33]
+        );
+        let wrong = env_from(&[("NEO_NETWORK_MAGIC", "42")]);
+        assert!(neo_n3_network_magic_le4("testnet", &wrong).is_err());
         let nonsense = env_from(&[("NEO_NETWORK_MAGIC", "4e454f33")]);
-        assert_eq!(
-            neo_n3_network_magic_le4("testnet", &nonsense),
-            [0x4e, 0x33, 0x54, 0x35]
-        );
-        // Unknown networks scope to testnet and use its fallback.
-        assert_eq!(
-            neo_n3_network_magic_le4("neo_n3", &env),
-            [0x4e, 0x33, 0x54, 0x35]
-        );
+        assert!(neo_n3_network_magic_le4("testnet", &nonsense).is_err());
+        assert!(neo_n3_network_magic_le4("neo_n3", &env).is_err());
     }
 
     #[test]

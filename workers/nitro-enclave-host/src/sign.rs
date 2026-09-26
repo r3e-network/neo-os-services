@@ -93,7 +93,7 @@ pub fn handle_sign_payload(
     {
         return Err(http_error(400, "data_hex is required"));
     }
-    let network = state.resolve_network();
+    let network = state.resolve_network()?;
     let report = state.signer.role_report(&network, role);
     if !report.ok || !report.materialized {
         return Err(unconfigured_error(role));
@@ -155,7 +155,7 @@ pub fn handle_keys_derived(
             "role must be one of oracle_verifier, updater, relayer, worker",
         ));
     };
-    let network = state.resolve_network();
+    let network = state.resolve_network()?;
     let report = state.signer.role_report(&network, role);
     if !report.ok || !report.materialized {
         return Err(unconfigured_error(role));

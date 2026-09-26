@@ -16,6 +16,7 @@ import {
   repoRoot,
   resolvePhalaCliInvocation,
   resolveNeoN3SignerWif,
+  resolveNeoN3NetworkMagic,
   sleep,
   trimString,
   writeValidationArtifacts,
@@ -528,7 +529,7 @@ async function main() {
   await loadExampleEnv();
   const deployment = (await readDeploymentRegistry('testnet')).neo_n3 || {};
   const rpcUrl = trimString(deployment.rpc_url || 'https://testnet1.neo.coz.io:443');
-  const networkMagic = Number(deployment.network_magic || 894710606);
+  const networkMagic = resolveNeoN3NetworkMagic('testnet', deployment);
   const signerWif = resolveNeoN3SignerWif('testnet');
   const oracleHash = normalizeHash160(deployment.oracle_hash || '');
   const consumerHash = normalizeHash160(deployment.example_consumer_hash || '');

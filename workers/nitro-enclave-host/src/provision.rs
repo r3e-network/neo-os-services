@@ -175,7 +175,7 @@ fn kms_release_params(
         secret_access_key,
         session_token,
         purpose: purpose.to_string(),
-        network: state.resolve_network(),
+        network: state.resolve_network().ok()?,
         key_arn,
     })
 }
@@ -226,7 +226,7 @@ pub fn materialize_provision_runtime_token(
     };
     // Network is image-owned. Letting the untrusted parent restate it here
     // would allow a valid testnet envelope to authorize a mainnet process.
-    let provision_network = state.resolve_network();
+    let provision_network = state.resolve_network()?;
     let token = envelope
         .get("token")
         .and_then(Value::as_str)
@@ -238,7 +238,7 @@ pub fn materialize_provision_runtime_token(
         .and_then(Value::as_i64)
         .filter(|version| *version >= 1);
     let network_ok = crate::normalize_network(envelope.get("network").and_then(Value::as_str))
-        == provision_network;
+        .is_ok_and(|network| network == provision_network);
     let purpose_ok =
         envelope.get("purpose").and_then(Value::as_str) == Some(RUNTIME_TOKEN_KMS_PURPOSE);
     let token_len = token.chars().count();
@@ -289,8 +289,9 @@ fn release_context_envelope(
         .and_then(Value::as_u64)
         .is_some_and(|version| version > 0);
     let purpose_ok = envelope.get("purpose").and_then(Value::as_str) == Some(expected_purpose);
+    let provision_network = state.resolve_network()?;
     let network_ok = crate::normalize_network(envelope.get("network").and_then(Value::as_str))
-        == state.resolve_network();
+        .is_ok_and(|network| network == provision_network);
     if !(version_ok && purpose_ok && network_ok) {
         return Err(http_error(
             400,
@@ -540,9 +541,9 @@ pub fn assert_provision_authorized(
 }
 
 /// The per-role health the provision response carries (`signerRolesHealth`).
-pub fn signer_roles_health(state: &AppState) -> Vec<Value> {
-    state
-        .signing_role_reports()
+pub fn signer_roles_health(state: &AppState) -> Result<Vec<Value>, RuntimeError> {
+    Ok(state
+        .signing_role_reports()?
         .into_iter()
         .map(|(role, report)| {
             let RoleReport {
@@ -561,7 +562,7 @@ pub fn signer_roles_health(state: &AppState) -> Vec<Value> {
                 "key_source": key_source,
             })
         })
-        .collect()
+        .collect())
 }
 
 /// The diagnostic KMS probe — outcome only, never plaintext. In the split the
@@ -605,7 +606,12 @@ fn run_kms_diag(state: &AppState) -> Value {
         secret_access_key,
         session_token,
         purpose: KMS_DIAG_PURPOSE.to_string(),
-        network: state.resolve_network(),
+        network: match state.resolve_network() {
+            Ok(network) => network,
+            Err(error) => {
+                return serde_json::json!({ "state": "error", "message": error.message });
+            }
+        },
         key_arn,
     };
     match state.kms.decrypt(&params) {
@@ -676,8 +682,8 @@ pub fn handle_provision(
     let diag = run_kms_diag(state);
     *state.kms_diag.lock().expect("kms diag lock") = crate::state::KmsDiag { value: diag };
 
-    let roles = signer_roles_health(state);
-    let network = state.resolve_network();
+    let roles = signer_roles_health(state)?;
+    let network = state.resolve_network()?;
     let status = if roles.iter().all(|role| role["ok"] == Value::Bool(true)) {
         "ok"
     } else {

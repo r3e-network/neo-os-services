@@ -7,13 +7,53 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   renderCSharpNetworkIdentities,
+  renderRuntimeNetworkIdentities,
   projectProtocolNetwork,
 } from './lib/network-identity-projections.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const catalog = (mainnet = 860833102, testnet = 894710606) => ({
   schemaVersion: 1,
-  networks: { mainnet: { magic: mainnet }, testnet: { magic: testnet } },
+  networks: {
+    mainnet: { magic: mainnet, neoXChainId: 47763 },
+    testnet: { magic: testnet, neoXChainId: 12227332 },
+  },
+});
+
+test('checked-in worker projection matches the reviewed network registries', () => {
+  const networks = Object.fromEntries(
+    ['mainnet', 'testnet'].map((name) => {
+      const registry = JSON.parse(
+        fs.readFileSync(path.join(root, 'config', 'networks', `${name}.json`), 'utf8')
+      );
+      return [
+        name,
+        {
+          magic: registry.neo_n3?.network_magic,
+          neoXChainId: registry.neo_x?.chain_id,
+        },
+      ];
+    })
+  );
+  assert.equal(
+    fs.readFileSync(
+      path.join(root, 'workers', 'nitro-worker', 'src', 'chain', 'network-identities.v1.json'),
+      'utf8'
+    ),
+    renderRuntimeNetworkIdentities({ schemaVersion: 1, networks })
+  );
+});
+
+test('runtime identity projection exposes every chain-bound value', () => {
+  const source = renderRuntimeNetworkIdentities(catalog());
+  const parsed = JSON.parse(source);
+  assert.deepEqual(parsed, {
+    schemaVersion: 1,
+    networks: {
+      mainnet: { magic: 860833102, neoXChainId: 47763 },
+      testnet: { magic: 894710606, neoXChainId: 12227332 },
+    },
+  });
 });
 
 test('C# projection keeps fixed namespace, uint constants and reviewed values', () => {
@@ -43,6 +83,11 @@ test('C# renderer and protocol projection refuse invalid or injectable magic', (
     invalid.networks.mainnet.magic = bad;
     assert.throws(() => renderCSharpNetworkIdentities(invalid));
     assert.throws(() => projectProtocolNetwork('{"ProtocolConfiguration":{"Network":1}}', bad));
+  }
+  for (const bad of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '47763', Infinity, NaN]) {
+    const invalid = catalog();
+    invalid.networks.mainnet.neoXChainId = bad;
+    assert.throws(() => renderRuntimeNetworkIdentities(invalid));
   }
 });
 
@@ -106,6 +151,7 @@ test('generator validates Native input before any --write output mutation', () =
             genesis_hash: '0x' + 'a'.repeat(64),
             genesis_source: 'reviewed-fixture',
           },
+          neo_x: { chain_id: name === 'mainnet' ? 47763 : 12227332 },
         })
       );
     write(
@@ -183,6 +229,7 @@ function generatorFixture(run) {
             genesis_hash: '0x' + 'a'.repeat(64),
             genesis_source: 'reviewed-fixture',
           },
+          neo_x: { chain_id: name === 'mainnet' ? 47763 : 12227332 },
         })
       );
     write(
@@ -218,6 +265,32 @@ test('generator refuses all-zero genesis before writing any consumer', () => {
     const result = execute('--write');
     assert.notEqual(result.status, 0, 'zero genesis must not be exported');
     assert.match(result.stderr, /identity|genesis/i);
+    assert.equal(
+      fs.readFileSync(
+        path.join(dir, 'neo-os-services/config/generated/network-identities.v1.json'),
+        'utf8'
+      ),
+      'untouched'
+    );
+  });
+});
+
+test('generator refuses a missing NeoX identity before writing any consumer', () => {
+  generatorFixture(({ dir, write, execute }) => {
+    write(
+      'neo-os-services/config/networks/testnet.json',
+      JSON.stringify({
+        network: 'testnet',
+        neo_n3: {
+          network_magic: 894710606,
+          genesis_hash: '0x' + 'a'.repeat(64),
+          genesis_source: 'reviewed-fixture',
+        },
+      })
+    );
+    const result = execute('--write');
+    assert.notEqual(result.status, 0, 'missing NeoX identity must not be exported');
+    assert.match(result.stderr, /identity/i);
     assert.equal(
       fs.readFileSync(
         path.join(dir, 'neo-os-services/config/generated/network-identities.v1.json'),

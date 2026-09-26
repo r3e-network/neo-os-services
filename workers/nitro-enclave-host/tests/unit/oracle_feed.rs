@@ -15,6 +15,31 @@ fn json_reply(body: &str) -> neo_os_compute::transport::HttpResponse {
 }
 
 #[test]
+fn explicit_unknown_network_fails_before_feed_fetch_or_signing() {
+    reset_feed_state_for_tests();
+    let harness = test_state(
+        &[
+            ("MORPHEUS_NETWORK", TEST_NETWORK),
+            ("NITRO_API_TOKEN", "s3cret"),
+        ],
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+
+    let error = handle_oracle_feed(
+        &harness.state,
+        &json!({ "network": "staging", "symbols": ["NEO-USD"], "wait": true }),
+    )
+    .expect_err("unknown network must fail closed");
+    assert_eq!(error.status, 400);
+    assert!(error.message.contains("unsupported Neo network"));
+    assert!(harness.oracle_io.fetches().is_empty());
+    assert!(harness.signer.sign_calls().is_empty());
+}
+
+#[test]
 fn fetches_aggregates_signs_and_persists_but_fails_when_updates_cannot_be_submitted() {
     reset_feed_state_for_tests();
     let nonce = std::time::SystemTime::now()

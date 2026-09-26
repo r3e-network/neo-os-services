@@ -27,3 +27,24 @@ test('workflow persistence shapes normalized execution and risk records', () => 
   assert.equal(riskEvent.scope_id, 'oracle.query');
   assert.equal(riskEvent.status, 'open');
 });
+
+test('workflow persistence rejects an unknown network instead of selecting testnet', () => {
+  assert.throws(
+    () =>
+      buildWorkflowExecutionRecord({
+        workflowId: 'oracle.query',
+        executionId: 'exec-unknown-network',
+        network: 'staging',
+      }),
+    /unsupported Neo network/
+  );
+  assert.throws(
+    () =>
+      buildRiskEventRecord({
+        scope: 'workflow',
+        scope_id: 'workflow-1',
+        network: 'staging',
+      }),
+    /unsupported Neo network/
+  );
+});

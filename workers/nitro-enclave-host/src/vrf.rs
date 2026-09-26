@@ -31,7 +31,7 @@ pub fn handle_vrf_random(
     if module_id != "random.generate" {
         return Err(http_error(400, "module_id must be random.generate"));
     }
-    let network = resolve_payload_network(state, payload);
+    let network = resolve_payload_network(state, payload)?;
     let root = {
         let overlay = state.overlay.read().expect("overlay lock");
         if overlay

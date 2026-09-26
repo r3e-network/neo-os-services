@@ -134,7 +134,7 @@ fn handle_ticket(
     // signed custody-side under the worker role; caller-supplied key material
     // is rejected exactly like on every other signing lane.
     reject_caller_supplied_signing_key(&resolved)?;
-    let network = resolve_payload_network(state, &resolved);
+    let network = resolve_payload_network(state, &resolved)?;
     let digest_bytes = extract_digest_bytes(&result)?;
     let digest_signed = sign_worker_hex(state, &network, &hex::encode(&digest_bytes))?;
     let mut result = result;

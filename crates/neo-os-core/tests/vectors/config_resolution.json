@@ -93,6 +93,9 @@
               "binding_tx": "0x73b7b2da5c91f16fa265d5661a9c698e40482b1d2f6c520cd8ecf09f316ebc9f"
             }
           }
+        },
+        "neo_x": {
+          "chain_id": 12227332
         }
       },
       "expected": {
@@ -730,6 +733,9 @@
               "binding_tx": "0x2ae018ee4b358b4b75a23d8a9c0c1b1a5874133bb41a3a0e58ed01b89e1f0149"
             }
           }
+        },
+        "neo_x": {
+          "chain_id": 47763
         }
       },
       "expected": {
@@ -1390,6 +1396,9 @@
               "binding_tx": "0x2ae018ee4b358b4b75a23d8a9c0c1b1a5874133bb41a3a0e58ed01b89e1f0149"
             }
           }
+        },
+        "neo_x": {
+          "chain_id": 47763
         }
       },
       "expected": {
@@ -2035,6 +2044,9 @@
               "binding_tx": "0x73b7b2da5c91f16fa265d5661a9c698e40482b1d2f6c520cd8ecf09f316ebc9f"
             }
           }
+        },
+        "neo_x": {
+          "chain_id": 12227332
         }
       },
       "expected": {
@@ -2671,6 +2683,9 @@
               "binding_tx": "0x73b7b2da5c91f16fa265d5661a9c698e40482b1d2f6c520cd8ecf09f316ebc9f"
             }
           }
+        },
+        "neo_x": {
+          "chain_id": 12227332
         }
       },
       "expected": {
@@ -3302,6 +3317,9 @@
               "binding_tx": "0x73b7b2da5c91f16fa265d5661a9c698e40482b1d2f6c520cd8ecf09f316ebc9f"
             }
           }
+        },
+        "neo_x": {
+          "chain_id": 12227332
         }
       },
       "expected": {
@@ -3933,6 +3951,9 @@
               "binding_tx": "0x73b7b2da5c91f16fa265d5661a9c698e40482b1d2f6c520cd8ecf09f316ebc9f"
             }
           }
+        },
+        "neo_x": {
+          "chain_id": 12227332
         }
       },
       "expected": {
@@ -4035,6 +4056,9 @@
               "binding_tx": "0x73b7b2da5c91f16fa265d5661a9c698e40482b1d2f6c520cd8ecf09f316ebc9f"
             }
           }
+        },
+        "neo_x": {
+          "chain_id": 12227332
         }
       },
       "expected": {
@@ -4137,6 +4161,9 @@
               "binding_tx": "0x73b7b2da5c91f16fa265d5661a9c698e40482b1d2f6c520cd8ecf09f316ebc9f"
             }
           }
+        },
+        "neo_x": {
+          "chain_id": 12227332
         }
       },
       "expected": {
@@ -4240,6 +4267,9 @@
               "binding_tx": "0x73b7b2da5c91f16fa265d5661a9c698e40482b1d2f6c520cd8ecf09f316ebc9f"
             }
           }
+        },
+        "neo_x": {
+          "chain_id": 12227332
         }
       },
       "expected": {
@@ -4872,6 +4902,9 @@
               "binding_tx": "0x73b7b2da5c91f16fa265d5661a9c698e40482b1d2f6c520cd8ecf09f316ebc9f"
             }
           }
+        },
+        "neo_x": {
+          "chain_id": 12227332
         }
       },
       "expected": {
@@ -5508,6 +5541,9 @@
               "binding_tx": "0x73b7b2da5c91f16fa265d5661a9c698e40482b1d2f6c520cd8ecf09f316ebc9f"
             }
           }
+        },
+        "neo_x": {
+          "chain_id": 12227332
         }
       },
       "expected": {

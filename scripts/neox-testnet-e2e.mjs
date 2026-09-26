@@ -8,23 +8,20 @@ import { ethers } from 'ethers';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoXChainId,
+} from './lib-network-registry.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const PK = process.env.NEOX_TEST_PK;
-const RPC = process.env.NEOX_RPC || 'https://testnet.rpc.banelabs.org';
-const CHAIN_ID = Number(process.env.NEOX_CHAIN_ID || 12227332);
+const TESTNET_REGISTRY = readReviewedNetworkRegistrySync(ROOT, 'testnet');
 
-if (!PK) {
-  console.error('set NEOX_TEST_PK');
-  process.exit(1);
+export function resolveTestnetChainId(env = process.env) {
+  return Number(resolveReviewedNeoXChainId(TESTNET_REGISTRY, 'testnet', env.NEOX_CHAIN_ID || ''));
 }
-
-const provider = new ethers.JsonRpcProvider(RPC, CHAIN_ID);
-const wallet = new ethers.Wallet(PK, provider);
 
 // Use a separate verifier key (derived from a different private key for realistic testing)
 const VERIFIER_PK = '0x' + 'ab'.repeat(32); // deterministic test verifier key
-const verifierWallet = new ethers.Wallet(VERIFIER_PK);
 
 let passed = 0,
   failed = 0;
@@ -38,12 +35,20 @@ function ok(name, cond, detail = '') {
   }
 }
 
-async function main() {
+export async function main(env = process.env) {
+  const pk = String(env.NEOX_TEST_PK || '').trim();
+  if (!pk) throw new Error('set NEOX_TEST_PK');
+  const rpc = String(env.NEOX_RPC || 'https://testnet.rpc.banelabs.org').trim();
+  const chainId = resolveTestnetChainId(env);
+  const provider = new ethers.JsonRpcProvider(rpc, chainId);
+  const wallet = new ethers.Wallet(pk, provider);
+  const verifierWallet = new ethers.Wallet(VERIFIER_PK);
+
   console.log('═══════════════════════════════════════════════════════════');
   console.log(' NeoX Testnet E2E Verification');
   console.log('═══════════════════════════════════════════════════════════');
-  console.log(`  RPC:      ${RPC}`);
-  console.log(`  ChainId:  ${CHAIN_ID}`);
+  console.log(`  RPC:      ${rpc}`);
+  console.log(`  ChainId:  ${chainId}`);
   console.log(`  Deployer: ${wallet.address}`);
   console.log(`  Verifier: ${verifierWallet.address}`);
 
@@ -405,14 +410,16 @@ async function main() {
   console.log('═══════════════════════════════════════════════════════════');
   console.log(`  Oracle:    ${oracleAddr}`);
   console.log(`  PriceFeed: ${feedAddr}`);
-  console.log(`  Network:   NeoX Testnet (chainId ${CHAIN_ID})`);
+  console.log(`  Network:   NeoX Testnet (chainId ${chainId})`);
   console.log(`  Deployer:  ${wallet.address}`);
   console.log(`  Verifier:  ${verifierWallet.address}`);
 
   if (failed > 0) process.exit(1);
 }
 
-main().catch((e) => {
-  console.error('FATAL:', e.message);
-  process.exit(1);
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((e) => {
+    console.error('FATAL:', e.message);
+    process.exit(1);
+  });
+}

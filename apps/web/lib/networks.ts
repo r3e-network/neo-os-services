@@ -19,7 +19,11 @@ export function isKnownNetworkKey(value?: string | null) {
 }
 
 export function resolveSelectedNetworkKey(selectedEnv?: string | null) {
-  return normalizeNetworkKey(selectedEnv) === 'mainnet' ? 'mainnet' : 'testnet';
+  const normalized = normalizeNetworkKey(selectedEnv);
+  if (normalized) return normalized;
+  throw new Error(
+    `Invalid network override "${trimString(selectedEnv)}"; expected "mainnet" or "testnet"`
+  );
 }
 
 function readSelectedEnv() {

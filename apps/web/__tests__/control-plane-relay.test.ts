@@ -77,6 +77,14 @@ describe('control-plane custody relay wrappers', () => {
     vi.unstubAllGlobals();
   });
 
+  it('rejects a Neo N3 magic override that differs from the reviewed registry', async () => {
+    vi.stubEnv('NEO_NETWORK_MAGIC', '42');
+    const { resolveNeoN3Runtime } = await import('../lib/neo-control-plane');
+    expect(() => resolveNeoN3Runtime('testnet')).toThrow(
+      /configured Neo N3 network magic conflicts with reviewed testnet identity/
+    );
+  });
+
   it('fulfillNeoN3RequestViaBackend relays fulfillRequest without signer material', async () => {
     const { fulfillNeoN3RequestViaBackend } = await import('../lib/neo-control-plane');
     const result = await fulfillNeoN3RequestViaBackend({

@@ -2,6 +2,10 @@ import { trimString } from './lib-strings.mjs';
 import { experimental, rpc as neoRpc, sc, wallet } from '@cityofzion/neon-js';
 import { loadDotEnv } from './lib-env.mjs';
 import { normalizeMorpheusNetwork, resolvePinnedNeoN3Role } from './lib-neo-signers.mjs';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from './lib-network-registry.mjs';
 
 const requestedNetwork = normalizeMorpheusNetwork(process.env.MORPHEUS_NETWORK || 'testnet');
 await loadDotEnv();
@@ -15,7 +19,11 @@ const rpcAddress = trimString(
     (network === 'mainnet' ? 'https://api.n3index.dev/mainnet' : 'https://api.n3index.dev/testnet')
 );
 const networkMagic = Number(
-  process.env.NEO_NETWORK_MAGIC || (network === 'mainnet' ? 860833102 : 894710606)
+  resolveReviewedNeoN3Magic(
+    readReviewedNetworkRegistrySync(process.cwd(), network),
+    network,
+    process.env.NEO_NETWORK_MAGIC || ''
+  )
 );
 const oracleHash = trimString(process.env.CONTRACT_MORPHEUS_ORACLE_HASH || '');
 const updaterHash = trimString(process.env.MORPHEUS_UPDATER_HASH || '');

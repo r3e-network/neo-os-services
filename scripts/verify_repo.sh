@@ -67,22 +67,24 @@ npm run test:relayer:compat
 npm run check:brand
 npm run check:web-content
 npm --prefix apps/web run test:run
-attempt=1
-max_attempts=3
-while :; do
-  kill_web_builders
-  rm -rf apps/web/.next
-  if npm run build:web; then
-    break
-  fi
+for network in testnet mainnet; do
+  attempt=1
+  max_attempts=3
+  while :; do
+    kill_web_builders
+    rm -rf apps/web/.next
+    if MORPHEUS_NETWORK="$network" NEXT_PUBLIC_MORPHEUS_NETWORK="$network" npm run build:web; then
+      break
+    fi
 
-  if [ "$attempt" -ge "$max_attempts" ]; then
-    echo "[verify:repo] web build failed after ${max_attempts} attempts" >&2
-    exit 1
-  fi
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      echo "[verify:repo] ${network} web build failed after ${max_attempts} attempts" >&2
+      exit 1
+    fi
 
-  attempt=$((attempt + 1))
-  echo "[verify:repo] web build failed; retrying (${attempt}/${max_attempts}) after cleanup" >&2
-  kill_web_builders
+    attempt=$((attempt + 1))
+    echo "[verify:repo] ${network} web build failed; retrying (${attempt}/${max_attempts}) after cleanup" >&2
+    kill_web_builders
+  done
 done
 npm run lint -- --max-warnings=0

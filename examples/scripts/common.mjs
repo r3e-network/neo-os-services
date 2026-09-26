@@ -10,6 +10,10 @@ import {
   normalizeMorpheusNetwork,
   resolvePinnedNeoN3RolePreferMatch,
 } from '../../scripts/lib-neo-signers.mjs';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from '../../scripts/lib-network-registry.mjs';
 
 export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 export const deploymentsDir = path.resolve(repoRoot, 'examples/deployments');
@@ -310,18 +314,23 @@ export function resolveNeoN3RpcUrl(network = 'testnet', deployment = {}) {
 
 export function resolveNeoN3NetworkMagic(network = 'testnet', deployment = {}) {
   const normalized = trimString(network).toLowerCase() || 'testnet';
-  const defaultNetworkMagic = normalized === 'mainnet' ? 860833102 : 894710606;
   const raw =
     normalized === 'testnet'
       ? process.env.NEO_TESTNET_NETWORK_MAGIC ||
         deployment.network_magic ||
         process.env.NEO_NETWORK_MAGIC ||
-        defaultNetworkMagic
+        ''
       : process.env.NEO_MAINNET_NETWORK_MAGIC ||
         process.env.NEO_NETWORK_MAGIC ||
         deployment.network_magic ||
-        defaultNetworkMagic;
-  return Number(raw);
+        '';
+  return Number(
+    resolveReviewedNeoN3Magic(
+      readReviewedNetworkRegistrySync(repoRoot, normalized),
+      normalized,
+      raw
+    )
+  );
 }
 
 export function resolveNeoN3OracleHash(network = 'testnet', deployment = {}) {

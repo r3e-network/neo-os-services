@@ -1,5 +1,6 @@
 import { isAuthorizedControlPlaneRequest } from '@/lib/control-plane-auth';
 import { appConfig } from '@/lib/config';
+import { resolveControlPlaneNetwork } from '@/lib/neo-control-plane';
 import { badRequest } from '@/lib/api-helpers';
 import { findHostSignerMaterialPaths } from '@/lib/host-key-guard';
 import { trimString } from '@/lib/strings';
@@ -8,10 +9,6 @@ export const runtime = 'nodejs';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function resolveNetwork(value: unknown) {
-  return trimString(value) === 'mainnet' ? 'mainnet' : 'testnet';
 }
 
 function resolveControlPlaneUrl() {
@@ -41,7 +38,12 @@ export async function POST(request: Request) {
     headers.set('x-admin-api-key', appConfig.controlPlaneApiKey);
   }
 
-  const network = resolveNetwork(body.network);
+  let network: 'mainnet' | 'testnet';
+  try {
+    network = resolveControlPlaneNetwork(trimString(body.network || 'testnet'));
+  } catch (error) {
+    return badRequest(error instanceof Error ? error.message : 'invalid network');
+  }
   try {
     const response = await fetch(`${controlPlaneUrl}/${network}/automation/execute`, {
       method: 'POST',

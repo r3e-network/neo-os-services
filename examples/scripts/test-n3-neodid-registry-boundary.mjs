@@ -10,6 +10,7 @@ import {
   readDeploymentRegistry,
   repoRoot,
   resolveNeoN3SignerWif,
+  resolveNeoN3NetworkMagic,
   sleep,
   trimString,
   tryParseJson,
@@ -532,11 +533,7 @@ async function main() {
       ? deployment.rpc_url || process.env.NEO_RPC_URL || 'https://testnet1.neo.coz.io:443'
       : process.env.NEO_RPC_URL || deployment.rpc_url || 'https://testnet1.neo.coz.io:443'
   );
-  const networkMagic = Number(
-    network === 'testnet'
-      ? deployment.network_magic || process.env.NEO_NETWORK_MAGIC || 894710606
-      : process.env.NEO_NETWORK_MAGIC || deployment.network_magic || 894710606
-  );
+  const networkMagic = resolveNeoN3NetworkMagic(network, deployment);
   const signerWif = resolveNeoN3SignerWif('testnet');
   const oracleHash = normalizeHash160(
     network === 'testnet'

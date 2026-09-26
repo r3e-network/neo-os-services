@@ -20,6 +20,8 @@
  * console.log(env.name) // 'development' | 'staging' | 'production'
  */
 
+import { networkRegistry } from './networks';
+
 export type EnvironmentName = 'development' | 'staging' | 'production';
 
 export interface EnvironmentConfig {
@@ -321,7 +323,7 @@ export const getDefaultsForEnvironment = (env: EnvironmentName): Record<string, 
     case 'development':
       Object.assign(defaults, {
         NEO_RPC_URL: 'https://api.n3index.dev/testnet',
-        NEO_NETWORK_MAGIC: '894710606',
+        NEO_NETWORK_MAGIC: String(networkRegistry.testnet.neo_n3?.network_magic),
         MORPHEUS_RUNTIME_URL: 'http://localhost:8080',
         DEBUG: 'true',
         MORPHEUS_GUARDS_REQUIRED: 'false',
@@ -331,7 +333,7 @@ export const getDefaultsForEnvironment = (env: EnvironmentName): Record<string, 
     case 'staging':
       Object.assign(defaults, {
         NEO_RPC_URL: 'https://api.n3index.dev/testnet',
-        NEO_NETWORK_MAGIC: '894710606',
+        NEO_NETWORK_MAGIC: String(networkRegistry.testnet.neo_n3?.network_magic),
         MORPHEUS_RUNTIME_URL: 'https://oracle.meshmini.app/testnet',
         DEBUG: 'false',
         MORPHEUS_GUARDS_REQUIRED: 'true',
@@ -343,7 +345,7 @@ export const getDefaultsForEnvironment = (env: EnvironmentName): Record<string, 
     case 'production':
       Object.assign(defaults, {
         NEO_RPC_URL: 'https://api.n3index.dev/mainnet',
-        NEO_NETWORK_MAGIC: '860833102',
+        NEO_NETWORK_MAGIC: String(networkRegistry.mainnet.neo_n3?.network_magic),
         MORPHEUS_RUNTIME_URL: 'https://oracle.meshmini.app/mainnet',
         MORPHEUS_CONTROL_PLANE_URL: 'https://control.meshmini.app',
         DEBUG: 'false',

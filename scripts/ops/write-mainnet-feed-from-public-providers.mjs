@@ -3,8 +3,18 @@
 import { createHash, randomInt } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { sc, tx, u, wallet } from '@cityofzion/neon-js';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from '../lib-network-registry.mjs';
 
-const NETWORK_MAGIC = 860833102;
+const NETWORK_MAGIC = Number(
+  resolveReviewedNeoN3Magic(
+    readReviewedNetworkRegistrySync(process.cwd(), 'mainnet'),
+    'mainnet',
+    process.env.NEO_NETWORK_MAGIC || ''
+  )
+);
 const FEED_HASH = '0x03013f49c42a14546c8bbe58f9d434c3517fccab';
 const UPDATER_HASH = '0x9fb28bdacfaa7fcc0a4d660d0dc990b0e7d46118';
 const UPDATER_PUBLIC_KEY = '02f63e3f618d8f6995eb85279a03361beb715d25d3b97407c73c351d26ba849744';

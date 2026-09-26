@@ -11,6 +11,10 @@ import {
 import { parseGasToRaw } from './lib-gas-units.mjs';
 import { trimString } from './lib-strings.mjs';
 import { withRetries } from './lib-verify-morpheus-n3.mjs';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from '../lib-network-registry.mjs';
 
 const GAS_HASH = '0xd2a4cff31913016155e38e474a2c06d08be276cf';
 const ADMIN_ADDRESS = 'NUVmRwZDoSZMKcPj9UCQLHkpno2TPqYVxC';
@@ -891,12 +895,17 @@ async function main() {
   if (network !== 'mainnet') throw new Error('this repair script only runs on mainnet');
 
   const networkConfig = await loadJsonIfExists(path.resolve('config', 'networks', 'mainnet.json'));
+  const reviewedNetworkRegistry = readReviewedNetworkRegistrySync(process.cwd(), 'mainnet');
   const deployments = await loadJsonIfExists(
     path.resolve('examples', 'deployments', 'mainnet.json')
   );
   const rpcUrl = trimString(process.env.NEO_RPC_URL || networkConfig.neo_n3?.rpc_url || '');
   const networkMagic = Number(
-    process.env.NEO_NETWORK_MAGIC || networkConfig.neo_n3?.network_magic || 860833102
+    resolveReviewedNeoN3Magic(
+      reviewedNetworkRegistry,
+      'mainnet',
+      process.env.NEO_NETWORK_MAGIC || networkConfig.neo_n3?.network_magic || ''
+    )
   );
   const oracleHash = normalizeHash160(
     explicitContractEnv.CONTRACT_MORPHEUS_ORACLE_HASH_MAINNET ||

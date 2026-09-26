@@ -1,4 +1,4 @@
-# N3 identity provenance
+# N3 and NeoX identity provenance
 
 The authority remains `config/networks/mainnet.json` and `testnet.json`. The
 generated identity projection contains no endpoints, credentials, or contracts.
@@ -9,10 +9,10 @@ commit `6d7bd0c7d612c1e9eeaf08efbb8788efef5a449b`, on 2026-09-09. Mainnet also
 matches that upstream's explicit genesis assertion. These are Neo RPC display
 hashes (`0x` + `Hash().StringLE()`), not internal byte-order encodings.
 
-| Network |     Magic | Genesis                                                              |
-| ------- | --------: | -------------------------------------------------------------------- |
-| mainnet | 860833102 | `0x1f4d1defa46faa5e7b9b8d3f79a06bec777d7c26c4aa5f6f5899a291daa87c15` |
-| testnet | 894710606 | `0x9d3276785e7306daf59a3f3b9e31912c095598bbfb8a4476b821b0e59be4c57a` |
+| Network |     Magic | NeoX chain ID | Genesis                                                              |
+| ------- | --------: | ------------: | -------------------------------------------------------------------- |
+| mainnet | 860833102 |         47763 | `0x1f4d1defa46faa5e7b9b8d3f79a06bec777d7c26c4aa5f6f5899a291daa87c15` |
+| testnet | 894710606 |      12227332 | `0x9d3276785e7306daf59a3f3b9e31912c095598bbfb8a4476b821b0e59be4c57a` |
 
 Primary sources:
 
@@ -71,5 +71,8 @@ checks do not require Git metadata, so isolated composition fixtures remain
 valid. The invocation continues to use the declared sibling layout; external
 Explorer/MCP copies are checked through the workspace artifact resolver.
 
-This revision covers Neo N3 identity. NeoX chain ID checks remain in their
-existing custody guard; NeoX genesis and chain identity are not newly attested.
+The NeoX chain IDs are now part of the same reviewed registry projection. A
+read-only `eth_chainId` probe against `mainnet-1.rpc.banelabs.org` and
+`testnet.rpc.banelabs.org` returned 47763 and 12227332 respectively during the
+W4.5 review; the probe is evidence, not an authority or a deployment action.
+NeoX genesis is not newly attested.

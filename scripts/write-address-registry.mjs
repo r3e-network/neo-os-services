@@ -1,7 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from './lib-network-registry.mjs';
 
-const network = process.env.MORPHEUS_NETWORK || 'testnet';
+const network = String(process.env.MORPHEUS_NETWORK || 'testnet')
+  .trim()
+  .toLowerCase();
+const reviewed = readReviewedNetworkRegistrySync(process.cwd(), network);
 const target = path.resolve('config/networks', `${network}.json`);
 const current = JSON.parse(await fs.readFile(target, 'utf8'));
 
@@ -10,7 +17,13 @@ const next = {
   neo_n3: {
     ...current.neo_n3,
     rpc_url: process.env.NEO_RPC_URL || current.neo_n3?.rpc_url || '',
-    network_magic: Number(process.env.NEO_NETWORK_MAGIC || current.neo_n3?.network_magic || 0),
+    network_magic: Number(
+      resolveReviewedNeoN3Magic(
+        reviewed,
+        network,
+        process.env.NEO_NETWORK_MAGIC || String(current.neo_n3?.network_magic || '')
+      )
+    ),
     contracts: {
       ...current.neo_n3?.contracts,
       morpheus_oracle:

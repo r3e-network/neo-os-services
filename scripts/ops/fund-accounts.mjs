@@ -1,11 +1,27 @@
 import { experimental, sc, wallet } from '@cityofzion/neon-js';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from '../lib-network-registry.mjs';
 
 const RPC_URL = process.env.NEO_RPC_URL || '';
-const NETWORK_MAGIC = Number(process.env.NEO_NETWORK_MAGIC || 0);
+const NETWORK = String(process.env.MORPHEUS_NETWORK || 'testnet')
+  .trim()
+  .toLowerCase();
+if (NETWORK !== 'mainnet' && NETWORK !== 'testnet') {
+  throw new Error('MORPHEUS_NETWORK must be mainnet or testnet');
+}
+const NETWORK_REGISTRY = readReviewedNetworkRegistrySync(process.cwd(), NETWORK);
+const CONFIGURED_NETWORK_MAGIC = String(process.env.NEO_NETWORK_MAGIC || '').trim();
+const NETWORK_MAGIC = CONFIGURED_NETWORK_MAGIC
+  ? Number(resolveReviewedNeoN3Magic(NETWORK_REGISTRY, NETWORK, CONFIGURED_NETWORK_MAGIC))
+  : 0;
 const GAS_HASH = '0xd2a4cff31913016155e38e474a2c06d08be276cf';
 const ADMIN_WIF = process.env.NEO_ADMIN_WIF || process.env.ADMIN_WIF || '';
 const ALLOW_MAINNET_FUNDING = process.env.ALLOW_MAINNET_FUNDING === '1';
-const MAINNET_MAGIC = 860833102;
+const MAINNET_MAGIC = Number(
+  resolveReviewedNeoN3Magic(readReviewedNetworkRegistrySync(process.cwd(), 'mainnet'), 'mainnet')
+);
 
 const RECIPIENTS = [
   { label: 'Relayer', address: 'NMGtkqaWSCTxuuMx9Zx8HT7HzHNnve8uLf' },

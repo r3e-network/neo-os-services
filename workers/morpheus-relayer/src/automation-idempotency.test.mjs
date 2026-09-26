@@ -5,7 +5,12 @@ import {
   guardQueuedAutomationExecution,
   handleAutomationControlRequest,
   processAutomationJobs,
+  resolveSupabaseNetwork,
 } from './automation.js';
+
+test('automation network selection rejects unknown explicit labels', () => {
+  assert.throws(() => resolveSupabaseNetwork('staging'), /unsupported Neo network/);
+});
 
 // These tests assert the DURABLE execution-idempotency guarantee: dedup must not
 // depend on the process-local in-memory cache. The fake store below faithfully

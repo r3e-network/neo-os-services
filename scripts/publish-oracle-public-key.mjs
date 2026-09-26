@@ -1,6 +1,10 @@
 import { experimental, sc, wallet } from '@cityofzion/neon-js';
 import { loadDotEnv } from './lib-env.mjs';
 import { normalizeMorpheusNetwork, resolvePinnedNeoN3Role } from './lib-neo-signers.mjs';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from './lib-network-registry.mjs';
 
 async function main() {
   const requestedNetwork = normalizeMorpheusNetwork(process.env.MORPHEUS_NETWORK || 'testnet');
@@ -21,7 +25,11 @@ async function main() {
     process.env.NEO_RPC_URL ||
     (network === 'mainnet' ? 'https://api.n3index.dev/mainnet' : 'https://api.n3index.dev/testnet');
   const networkMagic = Number(
-    process.env.NEO_NETWORK_MAGIC || (network === 'mainnet' ? 860833102 : 894710606)
+    resolveReviewedNeoN3Magic(
+      readReviewedNetworkRegistrySync(process.cwd(), network),
+      network,
+      process.env.NEO_NETWORK_MAGIC || ''
+    )
   );
   const oracleHash = process.env.CONTRACT_MORPHEUS_ORACLE_HASH || '';
   // setOracleEncryptionKey -> SetRuntimeEncryptionKey is gated by ValidateAdmin(), so it

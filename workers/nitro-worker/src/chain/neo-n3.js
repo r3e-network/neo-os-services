@@ -1,13 +1,13 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import { experimental, rpc as neoRpc, sc, tx, u, wallet as neoWallet } from '@cityofzion/neon-js';
 import {
-  DEFAULT_NEO_NETWORK_MAGIC,
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_WAIT_TIMEOUT_MS,
   envForNetwork,
   normalizeBoolean,
   resolveTrustedRpcUrl,
   resolvePayloadNetwork,
+  resolveReviewedNeoNetworkMagic,
   sanitizeErrorMessage,
   strip0x,
   trimString,
@@ -237,10 +237,9 @@ export async function loadNeoN3Context(
   const rpcUrl = await resolveTrustedRpcUrl(network, payload.rpc_url);
   if (requireRpc && !rpcUrl) throw new Error('NEO_RPC_URL is required for Neo N3 relay');
 
-  const networkMagic = Number(
-    payload.network_magic ||
-      envForNetwork(network, 'NEO_NETWORK_MAGIC') ||
-      DEFAULT_NEO_NETWORK_MAGIC
+  const networkMagic = resolveReviewedNeoNetworkMagic(
+    network,
+    payload.network_magic || envForNetwork(network, 'NEO_NETWORK_MAGIC')
   );
 
   // Raw signing material never belongs in this process. Reject it even for
@@ -250,7 +249,7 @@ export async function loadNeoN3Context(
   const context = {
     network,
     rpcUrl,
-    networkMagic: Number.isFinite(networkMagic) ? networkMagic : DEFAULT_NEO_NETWORK_MAGIC,
+    networkMagic,
     account: null,
     custody: null,
     // The signing identity resolves lazily: read-only consumers (on-chain

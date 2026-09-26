@@ -7,8 +7,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use neo_os_core::config::{
-    configured_host_signer_env_names, default_state_file_name, derive_pure_fields,
-    normalize_morpheus_network, EnvSource,
+    configured_host_signer_env_names, default_state_file_name, derive_pure_fields, EnvSource,
 };
 use neo_os_core::js_value::{JsObject, JsValue};
 use serde::{Deserialize, Serialize};
@@ -192,11 +191,13 @@ pub fn create_relayer_config_from_env(
     reject_host_evm_private_keys(&env_source)?;
 
     let raw_network = env_source.env(&["MORPHEUS_NETWORK", "NEXT_PUBLIC_MORPHEUS_NETWORK"]);
-    let network = if raw_network.is_empty() {
-        "testnet".to_string()
-    } else {
-        normalize_morpheus_network(&JsValue::Str(raw_network))
-    };
+    let network =
+        neo_os_core::network_identity::resolve_reviewed_network(if raw_network.is_empty() {
+            None
+        } else {
+            Some(raw_network.as_str())
+        })
+        .map_err(|error| error.to_string())?;
 
     let registry = load_network_registry(&network);
 
@@ -483,5 +484,13 @@ mod tests {
             assert!(error.contains("forbidden in the Rust relayer"));
             assert!(!error.contains("secret"));
         }
+    }
+
+    #[test]
+    fn rust_wrapper_rejects_unknown_network_before_registry_selection() {
+        let env = BTreeMap::from([("MORPHEUS_NETWORK".to_string(), "staging".to_string())]);
+        let error = create_relayer_config_from_env(&env)
+            .expect_err("an unknown network must not default to TestNet");
+        assert!(error.contains("unsupported Neo network"));
     }
 }

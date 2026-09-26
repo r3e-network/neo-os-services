@@ -13,6 +13,12 @@
  * rotate URLs and is isolated by getversion magic.
  */
 
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const MAINNET_NETWORK_REGISTRY = require('../../config/networks/mainnet.json');
+const TESTNET_NETWORK_REGISTRY = require('../../config/networks/testnet.json');
+
 export const FEED_SLO_SECONDS = 6 * 3600;
 export const FEED_GAS_WARN_DEFAULT = 8;
 export const CLOCK_SKEW_TOLERANCE_SEC = 120;
@@ -80,7 +86,7 @@ export const DEFAULT_RETIRED_FEED_PAIRS = Object.freeze([
 export const FEED_NETWORK_DEFAULTS = Object.freeze({
   mainnet: Object.freeze({
     network: 'mainnet',
-    magic: 860833102,
+    magic: MAINNET_NETWORK_REGISTRY.neo_n3.network_magic,
     feed: '03013f49c42a14546c8bbe58f9d434c3517fccab',
     updaterPub: '02f63e3f618d8f6995eb85279a03361beb715d25d3b97407c73c351d26ba849744',
     updaterSh: '9fb28bdacfaa7fcc0a4d660d0dc990b0e7d46118',
@@ -93,7 +99,7 @@ export const FEED_NETWORK_DEFAULTS = Object.freeze({
   }),
   testnet: Object.freeze({
     network: 'testnet',
-    magic: 894710606,
+    magic: TESTNET_NETWORK_REGISTRY.neo_n3.network_magic,
     feed: '9bea75cf702f6afc09125aa6d22f082bfd2ee064',
     updaterPub: '02911ea28aee939ef686f42e1137954135998b71e7e997794bde8c0a40f4b95cb4',
     updaterSh: 'e421999c396ee0249a8a8c9dd95bfbdaf55f8bf7',

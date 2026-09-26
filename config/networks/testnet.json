@@ -78,5 +78,8 @@
         "binding_tx": "0x73b7b2da5c91f16fa265d5661a9c698e40482b1d2f6c520cd8ecf09f316ebc9f"
       }
     }
+  },
+  "neo_x": {
+    "chain_id": 12227332
   }
 }

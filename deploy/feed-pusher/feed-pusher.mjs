@@ -1,5 +1,7 @@
 import { appendFileSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import pkg from '@cityofzion/neon-js';
 const { sc, wallet, tx, u } = pkg;
 import {
@@ -44,6 +46,10 @@ import {
   persistFeedWriterMetrics,
   restoreFeedWriterMetricsFromDisk,
 } from './lib-feed-writer-metrics.mjs';
+import {
+  readReviewedNetworkRegistry,
+  resolveReviewedNeoXChainId,
+} from '../../scripts/lib-network-registry.mjs';
 
 // ── Shared config ────────────────────────────────────────────────────────────
 const TD_KEY = process.env.TD_KEY;
@@ -450,6 +456,17 @@ async function td(syms) {
 // keeps writing 0x03013f49… until an operator sets FEED_NETWORK=testnet.
 export const FEED_TARGET = resolveFeedNetwork(process.env);
 const FEED_TARGET_BOOTSTRAP = Object.freeze({ ...FEED_TARGET });
+const NEOX_REGISTRY = await readReviewedNetworkRegistry(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../..'),
+  FEED_TARGET.network === 'testnet' ? 'testnet' : 'mainnet'
+);
+const NEOX_CHAIN_ID = Number(
+  resolveReviewedNeoXChainId(
+    NEOX_REGISTRY,
+    FEED_TARGET.network === 'testnet' ? 'testnet' : 'mainnet',
+    process.env.NEOX_CHAIN_ID
+  )
+);
 const GASH = 'd2a4cff31913016155e38e474a2c06d08be276cf';
 const n3Rpcs = () => FEED_TARGET.rpcs;
 const n3Magic = () => FEED_TARGET.magic;
@@ -1651,7 +1668,6 @@ export async function pushNeoN3(prices, now) {
 // ── Neo X (EVM) chain: MorpheusPriceFeed, signed by the configured key ─────────
 const NEOX_PK = process.env.NEOX_FEED_PK;
 const NEOX_RPC = process.env.NEOX_RPC || 'https://mainnet-1.rpc.banelabs.org';
-const NEOX_CHAIN_ID = Number(process.env.NEOX_CHAIN_ID || 47763);
 const NEOX_FEED = process.env.NEOX_FEED || '0x38DD6BCEBDD47f4234AE11760CEFB58f9ae6a3bB';
 const NEOX_GAS_WARN = Number(process.env.NEOX_GAS_WARN || 5);
 // Neo X pushes real EVM gas every cycle, so it runs a crypto-only subset of the

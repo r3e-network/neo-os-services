@@ -109,7 +109,7 @@ function buildRequest(pathname, headers, body) {
   ].join('\r\n');
 }
 
-function childEnv(token = TOKEN) {
+function childEnv(token = TOKEN, networkMagic = NETWORK_MAGIC) {
   const env = { ...process.env };
   for (const key of [
     'NITRO_SIGNER_TOKEN',
@@ -120,7 +120,8 @@ function childEnv(token = TOKEN) {
     delete env[key];
   }
   if (token) env.NITRO_SIGNER_TOKEN = token;
-  env.NEO_NETWORK_MAGIC = String(NETWORK_MAGIC);
+  env.MORPHEUS_NETWORK = 'testnet';
+  env.NEO_NETWORK_MAGIC = String(networkMagic);
   env.SIGNER_SERVICE_URL = CUSTODY_URL;
   env.SIGNER_SERVICE_TOKEN = CUSTODY_TOKEN;
   env.SIGNER_ROLE_UPDATER_KEY_ID = UPDATER_KEY_ID;
@@ -148,6 +149,39 @@ function stdioRequest(rawRequest, token = TOKEN) {
     child.stdin.end();
   });
 }
+
+function stdioRequestWithNetworkMagic(rawRequest, networkMagic) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [SERVER, '--stdio'], {
+      env: childEnv(TOKEN, networkMagic),
+      encoding: 'utf8',
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    child.on('error', reject);
+    child.on('close', () => resolve({ stdout, stderr }));
+    child.stdin.write(rawRequest);
+    child.stdin.end();
+  });
+}
+
+test('signer refuses a network magic that disagrees with the reviewed registry', async () => {
+  const { stdout } = await stdioRequestWithNetworkMagic(
+    buildRequest(
+      '/sign/payload',
+      [`authorization: Bearer ${TOKEN}`],
+      JSON.stringify({ key_role: 'updater', data_hex: '00' })
+    ),
+    42
+  );
+  assert.match(stdout, /configured Neo N3 magic conflicts with reviewed testnet identity/i);
+});
 
 function jsonBody(stdout) {
   return JSON.parse(stdout.split('\r\n\r\n').pop());

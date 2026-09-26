@@ -18,18 +18,37 @@ fn resolve_network_follows_the_overlay_like_process_env() {
         FakeBridge::new(),
         FakeKms::default(),
     );
-    assert_eq!(harness.state.resolve_network(), "mainnet");
+    assert_eq!(harness.state.resolve_network().unwrap(), "mainnet");
 }
 
 #[test]
 fn an_unspellable_network_collapses_to_testnet() {
-    assert_eq!(normalize_network(Some("MAINNET")), "mainnet");
-    assert_eq!(normalize_network(Some("  mainnet  ")), "mainnet");
-    assert_eq!(normalize_network(Some("mainnet ")), "mainnet");
-    assert_eq!(normalize_network(Some("testnet")), "testnet");
-    assert_eq!(normalize_network(Some("mainnet-but-wrong")), "testnet");
-    assert_eq!(normalize_network(Some("")), "testnet");
-    assert_eq!(normalize_network(None), "testnet");
+    assert_eq!(normalize_network(Some("MAINNET")).unwrap(), "mainnet");
+    assert_eq!(normalize_network(Some("  mainnet  ")).unwrap(), "mainnet");
+    assert_eq!(normalize_network(Some("mainnet ")).unwrap(), "mainnet");
+    assert_eq!(normalize_network(Some("testnet")).unwrap(), "testnet");
+    assert!(normalize_network(Some("mainnet-but-wrong")).is_err());
+    assert_eq!(normalize_network(Some("")).unwrap(), "testnet");
+    assert_eq!(normalize_network(None).unwrap(), "testnet");
+}
+
+#[test]
+fn an_explicit_unknown_network_is_rejected_before_identity_selection() {
+    let harness = test_state(
+        &[("MORPHEUS_NETWORK", "staging")],
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    assert!(harness.state.resolve_network().is_err());
+    let body = crate::health::handle_health(&harness.state);
+    assert_eq!(body["ready"], false);
+    assert_eq!(body["network"], serde_json::Value::Null);
+    assert!(body["error"]
+        .as_str()
+        .expect("network error")
+        .contains("unsupported Neo network"));
 }
 
 #[test]
@@ -41,14 +60,14 @@ fn provisioning_cannot_change_the_image_owned_network() {
         FakeBridge::new(),
         FakeKms::default(),
     );
-    assert_eq!(harness.state.resolve_network(), "testnet");
+    assert_eq!(harness.state.resolve_network().unwrap(), "testnet");
     harness
         .state
         .overlay
         .write()
         .expect("overlay lock")
         .apply("MORPHEUS_NETWORK", &serde_json::json!("mainnet"));
-    assert_eq!(harness.state.resolve_network(), "testnet");
+    assert_eq!(harness.state.resolve_network().unwrap(), "testnet");
 }
 
 #[test]

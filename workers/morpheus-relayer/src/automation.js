@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { normalizeMorpheusNetwork } from './lib/neo-signers.js';
 
 import {
   AUTOMATION_PROCESSING_CLAIM_MARKER,
@@ -19,12 +20,10 @@ import { fetchNeoN3FeedRecord, queueNeoN3AutomationRequest } from './neo-n3.js';
 import { buildUpkeepDispatch, buildUpkeepExecutionPayload } from './automation-supervisor.js';
 import { normalizeRequestType, parseNonNegativeInteger, trimString } from './lib/strings.js';
 
-function resolveSupabaseNetwork(value) {
-  return trimString(
+export function resolveSupabaseNetwork(value) {
+  return normalizeMorpheusNetwork(
     value || process.env.MORPHEUS_NETWORK || process.env.NEXT_PUBLIC_MORPHEUS_NETWORK || 'testnet'
-  ) === 'mainnet'
-    ? 'mainnet'
-    : 'testnet';
+  );
 }
 
 function isPlainObject(value) {

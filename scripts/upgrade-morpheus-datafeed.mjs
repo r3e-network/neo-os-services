@@ -8,6 +8,10 @@ import { experimental, sc, u, wallet } from '@cityofzion/neon-js';
 import { loadDotEnv } from './lib-env.mjs';
 import { normalizeMorpheusNetwork, resolvePinnedNeoN3Role } from './lib-neo-signers.mjs';
 import { trimString } from './lib-strings.mjs';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from './lib-network-registry.mjs';
 
 const { values: flags } = parseArgs({
   options: {
@@ -51,7 +55,11 @@ const rpcAddress = trimString(
     (network === 'mainnet' ? 'https://api.n3index.dev/mainnet' : 'https://api.n3index.dev/testnet')
 );
 const networkMagic = Number(
-  process.env.NEO_NETWORK_MAGIC || (network === 'mainnet' ? 860833102 : 894710606)
+  resolveReviewedNeoN3Magic(
+    readReviewedNetworkRegistrySync(process.cwd(), network),
+    network,
+    process.env.NEO_NETWORK_MAGIC || ''
+  )
 );
 const contractTarget = trimString(process.env.CONTRACT_MORPHEUS_DATAFEED_HASH || '');
 if (!contractTarget) throw new Error('CONTRACT_MORPHEUS_DATAFEED_HASH is required');

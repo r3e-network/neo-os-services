@@ -4,7 +4,10 @@
 
 use serde_json::Value as Json;
 
-use crate::core::{normalize_morpheus_network, read_env, resolve_payload_network, EnvReader};
+use crate::core::{
+    normalize_morpheus_network, normalize_morpheus_network_strict, read_env,
+    resolve_payload_network, resolve_payload_network_strict, EnvReader,
+};
 use crate::js::{js_number, js_number_to_string, js_trim, js_trim_string};
 
 pub const DEFAULT_FEED_STATE_PATH: &str = "/data/morpheus-feed-state.json";
@@ -49,6 +52,29 @@ pub fn resolve_feed_scope(input: &Json, env: EnvReader<'_>) -> FeedScope {
         network: resolve_feed_network(input, env),
         target_chain: resolve_feed_target_chain(),
     }
+}
+
+/// Strict feed scope used by the host's signing and publication observation
+/// lane. Empty values use the already reviewed environment fallback; an
+/// explicit unknown label is a request error and cannot select another chain.
+pub fn resolve_feed_scope_strict(input: &Json, env: EnvReader<'_>) -> Result<FeedScope, String> {
+    Ok(FeedScope {
+        network: resolve_feed_network_strict(input, env)?,
+        target_chain: resolve_feed_target_chain(),
+    })
+}
+
+pub fn resolve_feed_network_strict(input: &Json, env: EnvReader<'_>) -> Result<String, String> {
+    let from_env = read_env(env, &["MORPHEUS_NETWORK", "NEXT_PUBLIC_MORPHEUS_NETWORK"]);
+    let fallback = normalize_morpheus_network_strict(
+        if from_env.is_empty() {
+            "testnet"
+        } else {
+            &from_env
+        },
+        "testnet",
+    )?;
+    resolve_payload_network_strict(input, &fallback)
 }
 
 /// `isEnabled(rawValue, fallback = true)` — the token set the feed lane gates
@@ -252,17 +278,31 @@ mod tests {
             resolve_feed_network(&json!({ "network": "testnet" }), &env),
             "testnet"
         );
-        // an unrecognized payload network normalizes into the env fallback
-        assert_eq!(
-            resolve_feed_network(&json!({ "network": "bogus" }), &env),
-            "mainnet"
-        );
+        assert!(std::panic::catch_unwind(|| {
+            resolve_feed_network(&json!({ "network": "bogus" }), &env)
+        })
+        .is_err());
 
         let public_env = env_from(&[("NEXT_PUBLIC_MORPHEUS_NETWORK", "mainnet")]);
         assert_eq!(resolve_feed_network(&json!({}), &public_env), "mainnet");
 
         let empty = env_from(&[]);
         assert_eq!(resolve_feed_network(&json!({}), &empty), "testnet");
+    }
+
+    #[test]
+    fn strict_feed_network_rejects_unknown_explicit_labels() {
+        let env = env_from(&[("MORPHEUS_NETWORK", "mainnet")]);
+        assert_eq!(
+            resolve_feed_network_strict(&json!({}), &env).unwrap(),
+            "mainnet"
+        );
+        assert_eq!(
+            resolve_feed_network_strict(&json!({ "network": "testnet" }), &env).unwrap(),
+            "testnet"
+        );
+        assert!(resolve_feed_network_strict(&json!({ "network": "staging" }), &env).is_err());
+        assert!(resolve_feed_scope_strict(&json!({ "network": "staging" }), &env).is_err());
     }
 
     #[test]

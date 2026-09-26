@@ -103,6 +103,48 @@ export function uniqueRankedRpcUrls(values) {
   return uniqueOrdered(values).sort((left, right) => rpcUrlRank(left) - rpcUrlRank(right));
 }
 
+export function requireHttpsRpcUrls(values, label = 'RPC') {
+  const urls = uniqueOrdered(values);
+  const invalid = urls.filter((value) => {
+    try {
+      return new URL(value).protocol !== 'https:';
+    } catch {
+      return true;
+    }
+  });
+  if (invalid.length > 0) {
+    throw new Error(`${label} requires HTTPS RPC endpoints: ${invalid.join(', ')}`);
+  }
+  return urls;
+}
+
+export function resolveReviewedNeoXChainId(network, registry, configuredValue = '') {
+  const canonicalChainId = { mainnet: 47763, testnet: 12227332 }[network];
+  if (!canonicalChainId) {
+    throw new Error(`unsupported Neo network: ${network}`);
+  }
+  if (registry?.network && registry.network !== network) {
+    throw new Error(`reviewed Neo X registry network conflicts with ${network}`);
+  }
+  const registryValue = registry?.neo_x?.chain_id;
+  if (!Number.isSafeInteger(registryValue) || registryValue <= 0) {
+    throw new Error(`missing reviewed Neo X chain id for ${network}`);
+  }
+  if (registryValue !== canonicalChainId) {
+    throw new Error(`reviewed Neo X chain id conflicts with canonical ${network} identity`);
+  }
+  const configured = trimString(configuredValue);
+  if (!configured) return registryValue;
+  const parsed = Number(configured);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`invalid Neo X chain id for ${network}`);
+  }
+  if (parsed !== registryValue) {
+    throw new Error(`Neo X chain id conflicts with reviewed ${network} identity`);
+  }
+  return parsed;
+}
+
 export function resolveAllowLocalClaimDuringBackoff({
   nodeEnv = process.env.NODE_ENV,
   requested = false,
@@ -153,13 +195,16 @@ function resolveNeoN3RpcUrls(network, registry) {
           )
         );
   const genericRpcUrls = parseUrlList(env('NEO_RPC_URLS', 'NEO_RPC_URL'));
-  return uniqueRankedRpcUrls([
-    ...scopedRpcUrls,
-    ...parseUrlList(registry.neo_n3?.rpc_urls || []),
-    trimString(registry.neo_n3?.rpc_url || ''),
-    ...(parseBoolean(env('ALLOW_GENERIC_NEO_RPC_URL'), false) ? genericRpcUrls : []),
-    ...(DEFAULT_NEO_N3_RPC_URLS[network] || []),
-  ]);
+  return requireHttpsRpcUrls(
+    uniqueRankedRpcUrls([
+      ...scopedRpcUrls,
+      ...parseUrlList(registry.neo_n3?.rpc_urls || []),
+      trimString(registry.neo_n3?.rpc_url || ''),
+      ...(parseBoolean(env('ALLOW_GENERIC_NEO_RPC_URL'), false) ? genericRpcUrls : []),
+      ...(DEFAULT_NEO_N3_RPC_URLS[network] || []),
+    ]),
+    `Neo N3 ${network} RPC`
+  );
 }
 
 export function resolveNeoN3NetworkMagic(network, registry) {
@@ -182,7 +227,7 @@ export function resolveNeoN3NetworkMagic(network, registry) {
     }
     return registryMagic;
   }
-  return Number(configuredMagic || (network === 'mainnet' ? 860833102 : 894710606));
+  throw new Error(`reviewed ${network} Neo N3 network magic is required`);
 }
 
 function parseIntegerString(value, fallback) {
@@ -320,12 +365,9 @@ function resolveNitroApiUrls(network, registry, { allowPublicFallbacks = true } 
 
 function loadNetworkRegistry(networkName) {
   const registryPath = path.resolve(repoRoot, 'config', 'networks', `${networkName}.json`);
-  return (
-    loadJsonFile(registryPath) || {
-      network: networkName,
-      neo_n3: { contracts: {} },
-    }
-  );
+  const registry = loadJsonFile(registryPath);
+  if (!registry) throw new Error(`cannot load reviewed network registry ${registryPath}`);
+  return registry;
 }
 
 export function createRelayerConfig() {
@@ -704,7 +746,7 @@ export function createRelayerConfig() {
       scanMode: trimString(env('MORPHEUS_RELAYER_NEOX_SCAN_MODE')) || 'request_cursor',
       rpcUrl:
         trimString(env('MORPHEUS_RELAYER_NEOX_RPC_URL', 'NEOX_RPC')) ||
-        trimString(registry.neox?.rpc_url || '') ||
+        trimString(registry.neo_x?.rpc_url || '') ||
         (network === 'mainnet'
           ? 'https://mainnet-1.rpc.banelabs.org'
           : 'https://neoxt4seed1.ngd.network'),
@@ -714,31 +756,35 @@ export function createRelayerConfig() {
       // plus per-net public defaults. De-duped, order preserved. The signer/submit
       // path stays pinned to rpcUrl (a stable per-signer key) so failover never
       // rotates the URL used for nonce management mid-flight.
-      rpcUrls: uniqueOrdered([
-        trimString(env('MORPHEUS_RELAYER_NEOX_RPC_URL', 'NEOX_RPC')) ||
-          trimString(registry.neox?.rpc_url || '') ||
-          (network === 'mainnet'
-            ? 'https://mainnet-1.rpc.banelabs.org'
-            : 'https://neoxt4seed1.ngd.network'),
-        ...parseUrlList(env('MORPHEUS_RELAYER_NEOX_RPC_URLS', 'NEOX_RPC_URLS')),
-        ...parseUrlList(registry.neox?.rpc_urls || []),
-        ...(network === 'mainnet'
-          ? ['https://mainnet-1.rpc.banelabs.org', 'https://mainnet-2.rpc.banelabs.org']
-          : ['https://neoxt4seed1.ngd.network', 'https://neoxt4seed2.ngd.network']),
-      ]),
-      // Neo X chain ids: mainnet 47763 (0xba93), T4 testnet 12227332 (0xba9304).
+      rpcUrls: requireHttpsRpcUrls(
+        uniqueOrdered([
+          trimString(env('MORPHEUS_RELAYER_NEOX_RPC_URL', 'NEOX_RPC')) ||
+            trimString(registry.neo_x?.rpc_url || '') ||
+            (network === 'mainnet'
+              ? 'https://mainnet-1.rpc.banelabs.org'
+              : 'https://neoxt4seed1.ngd.network'),
+          ...parseUrlList(env('MORPHEUS_RELAYER_NEOX_RPC_URLS', 'NEOX_RPC_URLS')),
+          ...parseUrlList(registry.neo_x?.rpc_urls || []),
+          ...(network === 'mainnet'
+            ? ['https://mainnet-1.rpc.banelabs.org', 'https://mainnet-2.rpc.banelabs.org']
+            : ['https://neoxt4seed1.ngd.network', 'https://neoxt4seed2.ngd.network']),
+        ]),
+        `Neo X ${network} RPC`
+      ),
       // Must be correct — it is bound into the fulfillment digest the kernel verifies.
-      chainId: Number(
-        env('MORPHEUS_RELAYER_NEOX_CHAIN_ID', 'NEOX_CHAIN_ID') ||
-          registry.neox?.chain_id ||
-          (network === 'mainnet' ? 47763 : 12227332)
+      // The reviewed per-network registry is the fallback authority; an explicit
+      // environment value remains an operator assertion for compatibility.
+      chainId: resolveReviewedNeoXChainId(
+        network,
+        registry,
+        env('MORPHEUS_RELAYER_NEOX_CHAIN_ID', 'NEOX_CHAIN_ID')
       ),
       oracleContract:
         trimString(env('MORPHEUS_RELAYER_NEOX_ORACLE', 'NEOX_ORACLE')) ||
-        trimString(registry.neox?.contracts?.morpheus_oracle || ''),
+        trimString(registry.neo_x?.contracts?.morpheus_oracle || ''),
       datafeedContract:
         trimString(env('MORPHEUS_RELAYER_NEOX_DATAFEED', 'NEOX_DATAFEED')) ||
-        trimString(registry.neox?.contracts?.morpheus_datafeed || ''),
+        trimString(registry.neo_x?.contracts?.morpheus_datafeed || ''),
       feedGasLimit: Math.max(
         parseNumericEnv(env('MORPHEUS_RELAYER_NEOX_FEED_GAS_LIMIT'), 2_000_000),
         21_000

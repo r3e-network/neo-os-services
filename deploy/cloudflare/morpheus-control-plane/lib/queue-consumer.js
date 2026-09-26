@@ -1,6 +1,11 @@
 import { trimString, parseTimestampMs } from '@r3e-network/neo-os-services-shared/utils';
 import { claimJob, loadJob, patchJob, normalizeJobStatus } from './jobs.js';
-import { resolveStaleProcessingMs, computeRetryDelaySeconds, isStaleProcessing } from './config.js';
+import {
+  resolveStaleProcessingMs,
+  computeRetryDelaySeconds,
+  isStaleProcessing,
+  resolveControlPlaneNetwork,
+} from './config.js';
 import { isRetryableStatus } from './execution-plane.js';
 import { callExecutionPlane, callExecutionFeedPlane } from './execution-plane.js';
 import {
@@ -60,7 +65,7 @@ async function claimQueueJob(message, env, job, network, queueName) {
 async function processExecutionJob(message, env) {
   const body = message.body && typeof message.body === 'object' ? message.body : {};
   const jobId = trimString(body.job_id);
-  const network = trimString(body.network) === 'mainnet' ? 'mainnet' : 'testnet';
+  const network = resolveControlPlaneNetwork(body.network);
   if (!jobId) {
     message.ack();
     return;
@@ -178,7 +183,7 @@ async function processExecutionJob(message, env) {
 async function processFeedTickJob(message, env) {
   const body = message.body && typeof message.body === 'object' ? message.body : {};
   const jobId = trimString(body.job_id);
-  const network = trimString(body.network) === 'mainnet' ? 'mainnet' : 'testnet';
+  const network = resolveControlPlaneNetwork(body.network);
   if (!jobId) {
     message.ack();
     return;
@@ -305,7 +310,7 @@ async function processFeedTickJob(message, env) {
 async function processDeadLetterJob(message, env) {
   const body = message.body && typeof message.body === 'object' ? message.body : {};
   const jobId = trimString(body.job_id);
-  const network = trimString(body.network) === 'mainnet' ? 'mainnet' : 'testnet';
+  const network = resolveControlPlaneNetwork(body.network);
   if (!jobId) {
     message.ack();
     return;

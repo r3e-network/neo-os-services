@@ -7,7 +7,7 @@
 // Env:
 //   NEOX_ORACLE          oracle kernel address (default: build record)
 //   NEOX_RPC             RPC (default mainnet-1.rpc.banelabs.org)
-//   NEOX_CHAIN_ID        47763
+//   NEOX_CHAIN_ID        reviewed registry value
 //   NEOX_UPDATER_PK      key that sends fulfillRequest (gas payer / updater)
 //   NEOX_VERIFIER_PK     key that signs the result digest (default: NEOX_UPDATER_PK)
 //   NEOX_WORKER_URL      Nitro worker base for HTTP/compute (optional)
@@ -20,9 +20,16 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { ethers } from 'ethers';
+import {
+  readReviewedNetworkRegistry,
+  resolveReviewedNeoXChainId,
+  reviewedNetworkForEvmLabel,
+} from '../../scripts/lib-network-registry.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const NET = process.env.NEOX_NET || 'neox-mainnet';
+const registryNetwork = reviewedNetworkForEvmLabel(NET);
+const registry = await readReviewedNetworkRegistry(ROOT, registryNetwork);
 let recAddr = '';
 try {
   recAddr = JSON.parse(
@@ -31,7 +38,9 @@ try {
 } catch {}
 const ADDR = process.env.NEOX_ORACLE || recAddr;
 const RPC = process.env.NEOX_RPC || 'https://mainnet-1.rpc.banelabs.org';
-const CHAIN_ID = Number(process.env.NEOX_CHAIN_ID || 47763);
+const CHAIN_ID = Number(
+  resolveReviewedNeoXChainId(registry, registryNetwork, process.env.NEOX_CHAIN_ID)
+);
 const POLL_MS = Number(process.env.POLL_MS || 5000);
 const LOOKBACK = Number(process.env.LOOKBACK_BLOCKS || 5000);
 const STATE = process.env.FULFILLER_STATE || '/var/lib/morpheus/neox-fulfiller.json';

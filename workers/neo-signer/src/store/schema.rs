@@ -1,6 +1,8 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
+use crate::network::{network_magic, Network};
+
 /// Custody, boundary configuration, caller grants, and the record of what was
 /// done with all three.
 ///
@@ -282,18 +284,21 @@ pub(super) fn migrate_signer_tables(connection: &Connection) -> Result<()> {
     // a private-network key keeps the default it had. One transaction, so no
     // crash can leave rows at the `DEFAULT 0` the `ALTER` installs.
     if !has_column(connection, "signer_keys", "network_magic")? {
-        connection.execute_batch(
+        let mainnet_magic = network_magic(Network::Mainnet);
+        let testnet_magic = network_magic(Network::Testnet);
+        let private_magic = network_magic(Network::Private);
+        connection.execute_batch(&format!(
             "BEGIN;
              ALTER TABLE signer_keys ADD COLUMN network_magic INTEGER NOT NULL DEFAULT 0;
              UPDATE signer_keys
              SET network_magic = CASE network
-                 WHEN 'mainnet' THEN 860833102
-                 WHEN 'testnet' THEN 894710606
-                 ELSE 1230000
+                 WHEN 'mainnet' THEN {mainnet_magic}
+                 WHEN 'testnet' THEN {testnet_magic}
+                 ELSE {private_magic}
              END
              WHERE network_magic = 0;
              COMMIT;",
-        )?;
+        ))?;
     }
     // Curve/chain binding is immutable custody metadata, not a request hint.
     // Every historical key is P-256/N3, so the only truthful backfill is N3.

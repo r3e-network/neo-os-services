@@ -1,14 +1,24 @@
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { timingSafeEqual } from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tx as neoTx } from '@cityofzion/neon-js';
 import { normalizeMorpheusNetwork, reportPinnedNeoN3Role } from '../../scripts/lib-neo-signers.mjs';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from '../../scripts/lib-network-registry.mjs';
 
 const port = Math.max(Number(process.env.PORT || process.env.NITRO_SIGNER_PORT || 8080), 1);
 // SECURITY (S15): bind loopback by default; expose externally only when
 // explicitly configured (NITRO_SIGNER_HOST=0.0.0.0).
 const host = trimString(process.env.NITRO_SIGNER_HOST || process.env.HOST || '127.0.0.1');
 const network = normalizeMorpheusNetwork(process.env.MORPHEUS_NETWORK || 'mainnet');
+const networkRegistry = readReviewedNetworkRegistrySync(
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..'),
+  network
+);
 const maxBodyBytes = Math.max(Number(process.env.NITRO_SIGNER_MAX_BODY_BYTES || 65536), 1024);
 const attestBin = trimString(process.env.NITRO_ATTEST_BIN) || '/app/bin/nsm-attest';
 const runtimeTrustedTokens = new Set(
@@ -145,15 +155,15 @@ async function custodyRequest(method, pathname, body) {
 }
 
 function configuredNetworkMagic() {
-  const magic = Number(trimString(effectiveEnv().NEO_NETWORK_MAGIC || ''));
-  if (!Number.isFinite(magic) || magic <= 0) {
+  const configured = trimString(effectiveEnv().NEO_NETWORK_MAGIC || '');
+  if (!configured) {
     const error = new Error(
       'NEO_NETWORK_MAGIC is not provisioned; a transaction preimage cannot be checked against the chain it claims'
     );
     error.status = 503;
     throw error;
   }
-  return magic >>> 0;
+  return Number(resolveReviewedNeoN3Magic(networkRegistry, network, configured));
 }
 
 // The one request kind this shim still translates: a preimage that carries the

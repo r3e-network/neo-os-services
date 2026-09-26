@@ -22,6 +22,7 @@ use neo_os_chain_evm::{build_neox_digest, eip191_message_hash};
 use neo_os_core::n3_tx::{
     address_from_script_hash, script_hash_from_public_key, verification_script_single_sig,
 };
+use neo_os_core::network_identity::known_neo_n3_identity;
 use p256::ecdsa::{
     signature::Verifier, Signature as P256Signature, VerifyingKey as P256VerifyingKey,
 };
@@ -501,11 +502,8 @@ impl SignerPlane for CustodySigner {
         let expected_magic = neo_os_core::network_identity::known_neo_n3_identity(network)
             .map(|identity| identity.magic)
             .unwrap_or(0);
-        let expected_chain_id = match network {
-            "mainnet" => 47_763,
-            "testnet" => 12_227_332,
-            _ => 0,
-        };
+        let expected_chain_id =
+            neo_os_core::network_identity::known_neox_chain_id(network).unwrap_or(0);
         if neox_role {
             if expected_chain_id == 0 || key.chain_id != Some(expected_chain_id) {
                 return RoleReport {
@@ -931,11 +929,9 @@ impl SignerPlane for CustodySigner {
             .map_err(|_| invalid_response_error(role, "public key was malformed"))?;
         let signature = P256Signature::from_slice(&invocation[2..])
             .map_err(|_| invalid_response_error(role, "signature was malformed"))?;
-        let magic = match network {
-            "mainnet" => 860_833_102_u32,
-            "testnet" => 894_710_606_u32,
-            _ => return Err(invalid_response_error(role, "network was unsupported")),
-        };
+        let magic = known_neo_n3_identity(network)
+            .map(|identity| identity.magic)
+            .ok_or_else(|| invalid_response_error(role, "network was unsupported"))?;
         let mut message = magic.to_le_bytes().to_vec();
         message.extend_from_slice(&Sha256::digest(&unsigned));
         verifying_key

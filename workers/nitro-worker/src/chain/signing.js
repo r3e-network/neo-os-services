@@ -3,6 +3,7 @@
 // exact submitted bytes inside the attested boundary under the role's allow_raw
 // key. Caller-supplied key material is rejected unconditionally; there is no
 // local-signing path or environment escape hatch.
+import { createRequire } from 'node:module';
 import {
   REPLAY_WINDOW_MS,
   env,
@@ -14,6 +15,17 @@ import {
 } from '../platform/core.js';
 import { custodyKeyId, custodyKeyInfo, custodySignRaw } from '../platform/custody.js';
 import { maybeBuildDstackAttestation } from '../platform/nitro-signer.js';
+
+const require = createRequire(import.meta.url);
+const NETWORK_IDENTITIES = require('./network-identities.v1.json');
+
+function expectedNeoN3Magic(network) {
+  const identity = NETWORK_IDENTITIES?.networks?.[network];
+  if (!identity || !Number.isSafeInteger(identity.magic) || identity.magic <= 0) {
+    throw new Error(`missing reviewed Neo N3 identity for ${network}`);
+  }
+  return identity.magic;
+}
 
 function hasCallerSuppliedKeyMaterial(payload = {}) {
   return Boolean(
@@ -105,7 +117,7 @@ export async function custodySignBytes(role, bytes) {
   const keyId = custodyKeyId(role);
   const key = await custodyKeyInfo(keyId);
   const network = normalizeMorpheusNetwork(env('MORPHEUS_NETWORK'), 'testnet');
-  const expectedMagic = network === 'mainnet' ? 860833102 : 894710606;
+  const expectedMagic = expectedNeoN3Magic(network);
   const ready =
     key &&
     key.signing_enabled === true &&

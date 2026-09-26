@@ -79,7 +79,7 @@ fn post_feed(harness: &TestState, body: &serde_json::Value) -> DispatchOutcome {
     let object = compatible_body
         .as_object_mut()
         .expect("feed test body must be a JSON object");
-    let default_mode = if harness.state.resolve_network() == "testnet" {
+    let default_mode = if harness.state.resolve_network().unwrap() == "testnet" {
         "updateFeed"
     } else {
         "updateFeeds"
@@ -1108,4 +1108,10 @@ fn ok_response_key_order() {
         assert!(position > previous, "{key} out of order");
         previous = position;
     }
+}
+
+#[test]
+fn feed_identity_rejects_unknown_network_without_testnet_fallback() {
+    assert!(feed_magic("staging").is_err());
+    assert!(feed_n3_contract("staging").is_err());
 }

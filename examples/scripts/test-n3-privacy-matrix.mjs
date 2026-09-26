@@ -10,6 +10,7 @@ import {
   resolveNeoN3ConsumerHash,
   resolveNeoN3OracleHash,
   resolveNeoN3SignerWif,
+  resolveNeoN3NetworkMagic,
   sleep,
   trimString,
   tryParseJson,
@@ -275,11 +276,8 @@ const deployment = registry.neo_n3 || {};
 // is made from. Never restore an http:// default here.
 const defaultRpcUrl =
   network === 'mainnet' ? 'https://mainnet1.neo.coz.io:443' : 'https://testnet1.neo.coz.io:443';
-const defaultNetworkMagic = network === 'mainnet' ? 860833102 : 894710606;
 const rpcUrl = trimString(process.env.NEO_RPC_URL || deployment.rpc_url || defaultRpcUrl);
-const networkMagic = Number(
-  process.env.NEO_NETWORK_MAGIC || deployment.network_magic || defaultNetworkMagic
-);
+const networkMagic = resolveNeoN3NetworkMagic(network, deployment);
 const wif = resolveNeoN3SignerWif(network);
 const consumerHash = resolveNeoN3ConsumerHash(network, deployment);
 const oracleHash = resolveNeoN3OracleHash(network, deployment);

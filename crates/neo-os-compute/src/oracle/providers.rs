@@ -12,8 +12,8 @@ use url::Url;
 
 use crate::circuit_breaker::CircuitBreaker;
 use crate::core::{
-    get_supabase_rest_config, normalize_morpheus_network, read_env, resolve_max_bytes,
-    resolve_payload_network, EnvReader, JsHeaders,
+    get_supabase_rest_config, normalize_morpheus_network_strict, read_env, resolve_max_bytes,
+    resolve_payload_network_strict, EnvReader, JsHeaders,
 };
 use crate::js::{js_first_truthy, js_stringify, js_to_number, js_trim_string, js_truthy};
 use crate::oracle::fetch::is_timeout_error;
@@ -297,7 +297,7 @@ pub fn coerce_provider_params(value: &Json) -> Json {
 
 /// `resolveSupabaseNetwork(value)` — `value || env(MORPHEUS_NETWORK) ||
 /// env(NEXT_PUBLIC_MORPHEUS_NETWORK) || 'testnet'`, normalized.
-pub fn resolve_supabase_network(value: &Json, env: EnvReader<'_>) -> String {
+pub fn resolve_supabase_network(value: &Json, env: EnvReader<'_>) -> Result<String, String> {
     let chain = [
         Some(value.clone()),
         Some(Json::String(read_env(env, &["MORPHEUS_NETWORK"]))),
@@ -313,7 +313,7 @@ pub fn resolve_supabase_network(value: &Json, env: EnvReader<'_>) -> String {
         .find(|candidate| js_truthy(candidate))
         .cloned()
         .unwrap_or(Json::Null);
-    normalize_morpheus_network(&js_stringify(&chosen), "testnet")
+    normalize_morpheus_network_strict(&js_stringify(&chosen), "testnet")
 }
 
 // ---- request specs ----
@@ -1285,15 +1285,15 @@ pub fn resolve_provider_payload(
             .or_else(|| js_first_truthy(options, &["projectSlug"]).cloned())
             .unwrap_or(Json::String(String::new())),
     ));
-    let network = resolve_payload_network(
+    let network = resolve_payload_network_strict(
         payload,
         &resolve_supabase_network(
             &js_first_truthy(options, &["network"])
                 .cloned()
                 .unwrap_or(Json::Null),
             env,
-        ),
-    );
+        )?,
+    )?;
 
     let mut resolved_map = match payload {
         Json::Object(map) => map.clone(),
@@ -1552,6 +1552,16 @@ mod tests {
             .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect();
         move |name| map.get(name).cloned()
+    }
+
+    #[test]
+    fn provider_network_rejects_unknown_explicit_labels() {
+        let env = env_from(&[("MORPHEUS_NETWORK", "mainnet")]);
+        assert_eq!(
+            resolve_supabase_network(&json!("testnet"), &env).unwrap(),
+            "testnet"
+        );
+        assert!(resolve_supabase_network(&json!("staging"), &env).is_err());
     }
 
     fn dns_from(addresses: &[&str]) -> impl Fn(&str) -> Result<Vec<ResolvedAddress>, ()> {

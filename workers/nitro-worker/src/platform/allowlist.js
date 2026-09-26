@@ -1,5 +1,12 @@
 import { sc, u, wallet as neoWallet } from '@cityofzion/neon-js';
-import { envForNetwork, isHexString, strip0x, trimString, resolvePayloadNetwork } from './core.js';
+import {
+  envForNetwork,
+  isHexString,
+  normalizeMorpheusNetwork,
+  strip0x,
+  trimString,
+  resolvePayloadNetwork,
+} from './core.js';
 
 export function normalizeNeoHash160(value) {
   const raw = trimString(value);
@@ -130,7 +137,7 @@ const allowlistCache = new Map();
 
 function resolveAllowlistNetwork(input) {
   if (typeof input === 'string') {
-    return input.trim().toLowerCase() === 'mainnet' ? 'mainnet' : 'testnet';
+    return normalizeMorpheusNetwork(input, 'testnet');
   }
   return resolvePayloadNetwork(input || {}, 'testnet');
 }

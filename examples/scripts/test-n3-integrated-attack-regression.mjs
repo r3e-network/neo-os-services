@@ -11,6 +11,7 @@ import {
   repoRelativePath,
   repoRoot,
   resolveNeoN3SignerWif,
+  resolveNeoN3NetworkMagic,
   sleep,
   trimString,
   writeValidationArtifacts,
@@ -272,7 +273,7 @@ async function ensureExampleConsumerCredit({
 async function ensureIntegratedPreflight({ requesterRequests = 0, consumerRequests = 0 } = {}) {
   const deployment = (await readDeploymentRegistry(network)).neo_n3 || {};
   const rpcUrl = trimString(deployment.rpc_url || 'https://testnet1.neo.coz.io:443');
-  const networkMagic = Number(deployment.network_magic || 894710606);
+  const networkMagic = resolveNeoN3NetworkMagic('testnet', deployment);
   const oracleHash = normalizeHash160(deployment.oracle_hash || '');
   const consumerHash = normalizeHash160(deployment.example_consumer_hash || '');
   const signerWif = overrideTestWif || resolveNeoN3SignerWif(network);

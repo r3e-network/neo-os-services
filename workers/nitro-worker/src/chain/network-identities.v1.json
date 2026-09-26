@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "networks": {
+    "mainnet": {
+      "magic": 860833102,
+      "neoXChainId": 47763
+    },
+    "testnet": {
+      "magic": 894710606,
+      "neoXChainId": 12227332
+    }
+  }
+}

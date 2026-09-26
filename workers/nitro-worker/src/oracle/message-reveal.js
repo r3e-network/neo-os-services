@@ -1,5 +1,13 @@
 import { ethers } from 'ethers';
-import { env, json, jsonError, sanitizeErrorMessage } from '../platform/core.js';
+import { createRequire } from 'node:module';
+import {
+  env,
+  json,
+  jsonError,
+  normalizeMorpheusNetwork,
+  requireHttpsRpcUrl,
+  sanitizeErrorMessage,
+} from '../platform/core.js';
 import { decryptEncryptedToken } from './crypto.js';
 
 // Recipient-gated confidential reveal for Neo Message recipient-only messages
@@ -15,7 +23,8 @@ import { decryptEncryptedToken } from './crypto.js';
 //   3. decrypts inside the enclave host and returns the plaintext only in the
 //      authenticated HTTP response (still token-gated end-to-end via the edge).
 
-const DEFAULT_NEOX_CHAIN_ID = 47763;
+const require = createRequire(import.meta.url);
+const NETWORK_IDENTITIES = require('../chain/network-identities.v1.json');
 const REVEAL_FRESHNESS_WINDOW_SECONDS = 600; // ±10 min tolerance for clock skew
 const MESSAGE_READ_TIMEOUT_MS = 10_000; // ethers defaults to 300s — far too long for a request lane
 
@@ -97,7 +106,10 @@ export function __buildMessageRpcConnectionForTests(rpcUrl) {
 }
 
 export async function readMessageFromChain({ rpcUrl, chainId, contract, messageId }) {
-  const provider = new ethers.JsonRpcProvider(buildMessageRpcConnection(rpcUrl), chainId);
+  const provider = new ethers.JsonRpcProvider(
+    buildMessageRpcConnection(requireHttpsRpcUrl(rpcUrl)),
+    chainId
+  );
   try {
     const reader = new ethers.Contract(contract, MESSAGE_ABI, provider);
     return await reader.getMessage(messageId);
@@ -108,15 +120,37 @@ export async function readMessageFromChain({ rpcUrl, chainId, contract, messageI
 
 export const NEOX_DECRYPT_CHAIN_ALIASES = NEOX_CHAIN_ALIASES;
 
+function resolveReviewedNeoXChainId(network, configuredValue = '') {
+  const registryValue = NETWORK_IDENTITIES?.networks?.[network]?.neoXChainId;
+  if (!Number.isSafeInteger(registryValue) || registryValue <= 0) {
+    throw new Error(`missing reviewed Neo X chain id for ${network}`);
+  }
+  const configured = String(configuredValue || '').trim();
+  if (!configured) return registryValue;
+  const parsed = Number(configured);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`invalid Neo X chain id for ${network}`);
+  }
+  if (parsed !== registryValue) {
+    throw new Error(`Neo X chain id conflicts with reviewed ${network} identity`);
+  }
+  return parsed;
+}
+
 // Trusted, worker-configured Neo X message contract context (the contract is
 // NEVER taken from the caller — a hostile contract could otherwise lie about
 // recipient/unlockTime). Shared by the recipient-reveal and the time-locked
 // /oracle/decrypt gating lanes.
 export function resolveNeoxMessageChainContext() {
+  const network = normalizeMorpheusNetwork(
+    env('MORPHEUS_NETWORK', 'NEXT_PUBLIC_MORPHEUS_NETWORK'),
+    'mainnet'
+  );
   return {
     rpcUrl: env('NEOX_MESSAGE_RPC', 'NEOX_RPC', 'EVM_RPC_URL'),
     contract: env('NEOX_MESSAGE_CONTRACT'),
-    chainId: Number(env('NEOX_MESSAGE_CHAIN_ID', 'NEOX_CHAIN_ID')) || DEFAULT_NEOX_CHAIN_ID,
+    chainId: resolveReviewedNeoXChainId(network, env('NEOX_MESSAGE_CHAIN_ID', 'NEOX_CHAIN_ID')),
+    network,
   };
 }
 
@@ -144,9 +178,13 @@ export async function handleMessageReveal(
     return json(403, { error: 'reveal request expired; re-sign with a current timestamp' });
   }
 
-  const rpcUrl = env('NEOX_MESSAGE_RPC', 'NEOX_RPC', 'EVM_RPC_URL');
-  const contract = env('NEOX_MESSAGE_CONTRACT');
-  const chainId = Number(env('NEOX_MESSAGE_CHAIN_ID', 'NEOX_CHAIN_ID')) || DEFAULT_NEOX_CHAIN_ID;
+  let context;
+  try {
+    context = resolveNeoxMessageChainContext();
+  } catch {
+    return json(503, { error: 'recipient reveal has an invalid reviewed network identity' });
+  }
+  const { rpcUrl, contract, chainId } = context;
   if (!rpcUrl || !contract) {
     return json(503, { error: 'recipient reveal is not configured on this worker' });
   }

@@ -10,6 +10,7 @@ import {
   json,
   requestLog,
   resolvePayloadNetwork,
+  resolveReviewedNeoNetworkMagic,
   sha256Hex,
   strip0x,
   trimString,
@@ -400,11 +401,10 @@ function encodeHash160OrZero(value) {
 // append these bytes before the SHA256, so the off-chain signer MUST reproduce
 // them or every binding/action ticket fails on-chain signature verification.
 function neoN3NetworkMagicLe4(network) {
-  const fallback = network === 'mainnet' ? 860833102 : 894710606;
-  const raw = Number(envForNetwork(network, 'NEO_NETWORK_MAGIC') || fallback);
-  const magic = Number.isFinite(raw) && raw > 0 ? raw : fallback;
-  // Byte encoding is single-sourced; this wrapper only owns the env/network
-  // fallback resolution of the magic value.
+  const magic = resolveReviewedNeoNetworkMagic(
+    network,
+    envForNetwork(network, 'NEO_NETWORK_MAGIC')
+  );
   return neoNetworkMagicLe4(magic);
 }
 

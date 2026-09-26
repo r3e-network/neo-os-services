@@ -21,8 +21,8 @@ use sha2::Sha256;
 use url::Url;
 
 use crate::core::{
-    buffer_from_base64, decode_base64, normalize_boolean, normalize_morpheus_network, read_env,
-    resolve_payload_network, EnvReader,
+    buffer_from_base64, decode_base64, normalize_boolean, normalize_morpheus_network_strict,
+    read_env, resolve_payload_network_strict, EnvReader,
 };
 use crate::js::{js_first_truthy, js_stringify, js_to_number, js_trim_string, js_truthy};
 use crate::transport::{HttpRequest, HttpResponse, HttpTransport};
@@ -941,12 +941,12 @@ pub fn resolve_encrypted_token_ciphertext(
 
 /// `resolvePayloadNetwork(payload, normalizeMorpheusNetwork(env(...)))` — the
 /// network the encrypted-secrets row is scoped to.
-fn resolve_ref_network(payload: &Json, env: EnvReader<'_>) -> String {
-    let scoped = normalize_morpheus_network(
+fn resolve_ref_network(payload: &Json, env: EnvReader<'_>) -> Result<String, String> {
+    let scoped = normalize_morpheus_network_strict(
         &read_env(env, &["MORPHEUS_NETWORK", "NEXT_PUBLIC_MORPHEUS_NETWORK"]),
         "testnet",
-    );
-    resolve_payload_network(payload, &scoped)
+    )?;
+    resolve_payload_network_strict(payload, &scoped)
 }
 
 fn supabase_headers(api_key: &str, extra: &[(&str, &str)]) -> Vec<(String, String)> {
@@ -985,7 +985,7 @@ pub fn load_encrypted_ciphertext_by_ref(
                 .to_string(),
         );
     };
-    let network = resolve_ref_network(payload, env);
+    let network = resolve_ref_network(payload, env)?;
 
     let mut url = Url::parse(&format!(
         "{}/morpheus_encrypted_secrets",
@@ -1253,6 +1253,16 @@ mod tests {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
         move |name| map.get(name).cloned()
+    }
+
+    #[test]
+    fn encrypted_ref_network_rejects_unknown_explicit_labels() {
+        let env = env_from(&[("MORPHEUS_NETWORK", "mainnet")]);
+        assert_eq!(
+            resolve_ref_network(&json!({ "network": "testnet" }), &env).unwrap(),
+            "testnet"
+        );
+        assert!(resolve_ref_network(&json!({ "network": "staging" }), &env).is_err());
     }
 
     // Golden vectors harvested from Node webcrypto (the same subtle

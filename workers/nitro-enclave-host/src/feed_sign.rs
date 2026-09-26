@@ -36,8 +36,6 @@ use crate::overlay::EnvOverlay;
 use crate::state::{AppState, PriceSource};
 use crate::RuntimeError;
 
-const FEED_N3_MAINNET_MAGIC: u32 = 860_833_102;
-const FEED_N3_TESTNET_MAGIC: u32 = 894_710_606;
 /// Network-pinned deployed MorpheusDataFeed script hashes. These bytes use
 /// the same display order as the registry and `create_invoke_script`.
 const FEED_N3_MAINNET_CONTRACT: [u8; 20] = [
@@ -134,13 +132,14 @@ pub fn handle_feed_sign(
             ))
         }
     };
-    if write_mode == "updateFeed" && state.resolve_network() != "testnet" {
+    let network = state.resolve_network()?;
+    if write_mode == "updateFeed" && network != "testnet" {
         return Err(http_error(
             400,
             "Neo N3 updateFeed write mode is testnet-only; refusing mainnet downgrade",
         ));
     }
-    if write_mode == "updateFeeds" && state.resolve_network() == "testnet" {
+    if write_mode == "updateFeeds" && network == "testnet" {
         return Err(http_error(
             400,
             "Neo N3 updateFeeds write mode is mainnet-only; refusing TestNet batch",
@@ -277,7 +276,7 @@ pub fn handle_feed_sign(
 
     // The updater identity drives the tx signer's account; resolve it before
     // building the tx so the message binds the SAME signer that signs it.
-    let network = state.resolve_network();
+    let network = state.resolve_network()?;
     let updater_script_hash = resolve_updater_script_hash(state, &network)?;
 
     // RPC-derived tx params (block count + fees). The caller may supply them
@@ -330,7 +329,7 @@ pub fn handle_feed_sign(
             ));
         }
         create_invoke_script(
-            feed_n3_contract(&network),
+            feed_n3_contract(&network)?,
             "updateFeed",
             &[
                 planned_pairs.into_iter().next().expect("one planned pair"),
@@ -359,7 +358,7 @@ pub fn handle_feed_sign(
         .expect("updateFeed args are always encodable")
     } else {
         create_invoke_script(
-            feed_n3_contract(&network),
+            feed_n3_contract(&network)?,
             "updateFeeds",
             &[
                 ContractParam::Array(planned_pairs),
@@ -383,7 +382,7 @@ pub fn handle_feed_sign(
         },
         script: &script,
     };
-    let message_hex = hex::encode(tx.message_for_signing(feed_magic(&network)));
+    let message_hex = hex::encode(tx.message_for_signing(feed_magic(&network)?));
     let unsigned_hex = hex::encode(tx.serialize_unsigned());
     let signer_request_id = format!("n3-feed:{}", tx.hash_display().trim_start_matches("0x"));
     let signed =
@@ -594,7 +593,7 @@ fn handle_neox_feed_sign(
     );
     let request_digest = Keccak256::digest(&unsigned);
     let request_id = format!("feed-neox:{}", hex::encode(request_digest));
-    let network = state.resolve_network();
+    let network = state.resolve_network()?;
     let signed = state.signer.sign_transaction(
         &network,
         "neox_updater",
@@ -997,19 +996,21 @@ fn feed_td_timeout_ms(overlay: &BTreeMap<String, String>) -> u64 {
     parsed.max(1000.0) as u64
 }
 
-fn feed_magic(network: &str) -> u32 {
-    if network == "mainnet" {
-        FEED_N3_MAINNET_MAGIC
-    } else {
-        FEED_N3_TESTNET_MAGIC
-    }
+fn feed_magic(network: &str) -> Result<u32, crate::RuntimeError> {
+    let reviewed_network = match network {
+        "mainnet" | "testnet" => network,
+        other => return Err(http_error(503, format!("unsupported Neo network: {other}"))),
+    };
+    neo_os_core::network_identity::known_neo_n3_identity(reviewed_network)
+        .map(|identity| identity.magic)
+        .ok_or_else(|| http_error(503, format!("unsupported Neo network: {network}")))
 }
 
-fn feed_n3_contract(network: &str) -> &'static [u8; 20] {
-    if network == "mainnet" {
-        &FEED_N3_MAINNET_CONTRACT
-    } else {
-        &FEED_N3_TESTNET_CONTRACT
+fn feed_n3_contract(network: &str) -> Result<&'static [u8; 20], crate::RuntimeError> {
+    match network {
+        "mainnet" => Ok(&FEED_N3_MAINNET_CONTRACT),
+        "testnet" => Ok(&FEED_N3_TESTNET_CONTRACT),
+        other => Err(http_error(503, format!("unsupported Neo network: {other}"))),
     }
 }
 

@@ -1,5 +1,7 @@
-const MAINNET_MAGIC = 860833102;
-const TESTNET_MAGIC = 894710606;
+import { networkRegistry } from './networks';
+
+const MAINNET_MAGIC = Number(networkRegistry.mainnet.neo_n3?.network_magic);
+const TESTNET_MAGIC = Number(networkRegistry.testnet.neo_n3?.network_magic);
 
 type DapiAccount = {
   hash?: string;

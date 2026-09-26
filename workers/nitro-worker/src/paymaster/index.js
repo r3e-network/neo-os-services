@@ -6,8 +6,10 @@ import {
   json,
   jsonError,
   normalizeBoolean,
+  normalizeMorpheusNetwork,
   normalizeTargetChain,
   parseDurationMs,
+  requireHttpsRpcUrl,
   resolvePayloadNetwork,
   sha256Hex,
   trimString,
@@ -28,13 +30,9 @@ function normalizeHexHash(value) {
   return `0x${raw}`;
 }
 
-function resolvePaymasterNetwork(payload = {}) {
-  return resolvePayloadNetwork(
-    payload,
-    trimString(env('MORPHEUS_NETWORK') || 'testnet').toLowerCase() === 'mainnet'
-      ? 'mainnet'
-      : 'testnet'
-  );
+export function resolvePaymasterNetwork(payload = {}) {
+  const fallback = normalizeMorpheusNetwork(env('MORPHEUS_NETWORK') || 'testnet');
+  return resolvePayloadNetwork(payload, fallback);
 }
 
 function resolvePaymasterPolicy(network) {
@@ -119,7 +117,7 @@ function buildDeniedVerdict(policy, normalized, reason) {
 }
 
 async function invokeNeoRead(rpcUrl, contractHash, method, args = []) {
-  const response = await fetch(rpcUrl, {
+  const response = await fetch(requireHttpsRpcUrl(rpcUrl), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({

@@ -8,6 +8,11 @@ import {
   getPinnedNeoN3Role,
   resolvePinnedNeoN3RolePreferMatch,
 } from './lib-neo-signers.mjs';
+import {
+  readReviewedNetworkRegistry,
+  resolveReviewedNeoN3Magic,
+  resolveReviewedNeoXChainId,
+} from './lib-network-registry.mjs';
 
 const repoRoot = process.cwd();
 const rootEnvPath = path.resolve(repoRoot, '.env');
@@ -25,6 +30,11 @@ function parseArgs(argv = process.argv.slice(2)) {
     if (current === '--output') {
       parsed.output = argv[index + 1] || '';
       index += 1;
+      continue;
+    }
+    if (current === '--registry-root') {
+      parsed.registryRoot = argv[index + 1] || '';
+      index += 1;
     }
   }
   return parsed;
@@ -33,6 +43,7 @@ function parseArgs(argv = process.argv.slice(2)) {
 const cliArgs = parseArgs();
 const requestedNetwork = trimString(cliArgs.network || process.env.NITRO_ENV_NETWORK || '');
 const requestedOutput = trimString(cliArgs.output || process.env.NITRO_ENV_OUTPUT || '');
+const registryRoot = path.resolve(cliArgs.registryRoot || repoRoot);
 
 async function readLocalEnv() {
   const merged = {};
@@ -66,18 +77,6 @@ async function writeSecretFile(filePath, content) {
     await fs.chmod(filePath, 0o600);
   } finally {
     await fs.rm(temporaryPath, { force: true }).catch(() => {});
-  }
-}
-
-async function readNetworkRegistry(network) {
-  try {
-    const raw = await fs.readFile(
-      path.resolve(repoRoot, 'config/networks', `${network}.json`),
-      'utf8'
-    );
-    return JSON.parse(raw);
-  } catch {
-    return { neo_n3: { contracts: {} } };
   }
 }
 
@@ -140,7 +139,7 @@ const outputPath = path.resolve(
   repoRoot,
   requestedOutput || `deploy/nitro/morpheus.${network}.env`
 );
-const registry = await readNetworkRegistry(network);
+const registry = await readReviewedNetworkRegistry(registryRoot, network);
 const get = createResolver(localEnv, existingEnv);
 const getInputOnly = createInputOnlyResolver(localEnv);
 const explicitNetworkMode = Boolean(requestedNetwork);
@@ -292,10 +291,7 @@ const runtimeConfig = {
   MORPHEUS_OPERATOR_API_KEY: get('MORPHEUS_OPERATOR_API_KEY', 'ADMIN_CONSOLE_API_KEY'),
   MORPHEUS_NETWORK: network,
   NEO_RPC_URL: resolveRegistryBackedValue(registry.neo_n3?.rpc_url || '', 'NEO_RPC_URL'),
-  NEO_NETWORK_MAGIC: resolveRegistryBackedValue(
-    String(registry.neo_n3?.network_magic || 894710606),
-    'NEO_NETWORK_MAGIC'
-  ),
+  NEO_NETWORK_MAGIC: resolveReviewedNeoN3Magic(registry, network, get('NEO_NETWORK_MAGIC')),
   CONTRACT_MORPHEUS_ORACLE_HASH: resolveRegistryBackedValue(
     registry.neo_n3?.contracts?.morpheus_oracle || '',
     'CONTRACT_MORPHEUS_ORACLE_HASH'
@@ -600,7 +596,7 @@ const lines = [
   line('MORPHEUS_RELAYER_NEOX_RPC_URLS', get('MORPHEUS_RELAYER_NEOX_RPC_URLS')),
   line(
     'MORPHEUS_RELAYER_NEOX_CHAIN_ID',
-    get('MORPHEUS_RELAYER_NEOX_CHAIN_ID') || (network === 'mainnet' ? '47763' : '12227332')
+    resolveReviewedNeoXChainId(registry, network, get('MORPHEUS_RELAYER_NEOX_CHAIN_ID'))
   ),
   line('MORPHEUS_RELAYER_NEOX_DATAFEED', get('MORPHEUS_RELAYER_NEOX_DATAFEED')),
   line(

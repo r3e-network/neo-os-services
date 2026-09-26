@@ -10,6 +10,10 @@
 import neon from '@cityofzion/neon-js';
 import crypto from 'crypto';
 import { parseArgs } from 'node:util';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from '../lib-network-registry.mjs';
 
 const { values: flags } = parseArgs({
   options: {
@@ -32,6 +36,7 @@ if (flags.apply && !flags.network) {
 const ENV_SUFFIX = NETWORK.toUpperCase();
 const APPLY = flags.apply === true;
 const DRY_RUN = !APPLY;
+const NETWORK_REGISTRY = readReviewedNetworkRegistrySync(process.cwd(), NETWORK);
 
 const CVM_URL =
   process.env[`NITRO_RUNTIME_URL_${ENV_SUFFIX}`] ||
@@ -52,9 +57,11 @@ const ORACLE_CONTRACT =
   '';
 const RPC_URL = process.env[`NEO_RPC_URL_${ENV_SUFFIX}`] || process.env.NEO_RPC_URL || '';
 const NETWORK_MAGIC = Number(
-  process.env[`NEO_NETWORK_MAGIC_${ENV_SUFFIX}`] ||
-    process.env.NEO_NETWORK_MAGIC ||
-    (NETWORK === 'mainnet' ? 860833102 : 894710606)
+  resolveReviewedNeoN3Magic(
+    NETWORK_REGISTRY,
+    NETWORK,
+    process.env[`NEO_NETWORK_MAGIC_${ENV_SUFFIX}`] || process.env.NEO_NETWORK_MAGIC || ''
+  )
 );
 const ADMIN_ADDRESS = process.env.NEO_ADMIN_ADDRESS || '';
 const NEW_UPDATER = process.env.MORPHEUS_ORACLE_NEW_UPDATER || '';

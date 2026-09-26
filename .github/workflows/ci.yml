@@ -82,6 +82,12 @@ jobs:
       # in the path-filtered jobs, so a Cargo.lock-only change is still checked.
       - run: node --test scripts/rust-security-dependency.test.mjs
       - run: npm run check:neodid-vendor
+      - name: Verify checked-in network identity projections
+        run: |
+          node scripts/export-network-identities.mjs --check-local
+          node --test scripts/network-identity-projections.test.mjs
+          node --test scripts/lib-network-registry.test.mjs scripts/render-nitro-env.test.mjs scripts/render-nitro-compose-env.test.mjs
+          node --test scripts/network-identity-consumers.test.mjs
       # Asserts that deploy-web.yml and publish-images.yml still block on a test
       # job. Runs here as well as inside those workflows so a workflow edit is
       # caught on the pull request, not at the moment it deploys.

@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { stableStringify } from '@r3e-network/neo-os-services-shared/utils';
 import { assertResolvedHostAllowed } from './ssrf.js';
+
+const require = createRequire(import.meta.url);
+const NETWORK_IDENTITIES = require('../chain/network-identities.v1.json');
 
 // Canonical deterministic stringifier behind signed output_hash digests; the
 // single implementation lives in packages/shared and is pinned byte-for-byte
@@ -11,7 +15,25 @@ export { stableStringify };
 // HTTP/compute lanes (it returns the result; the relayer signs per chain — Neo N3
 // secp256r1 via the enclave, Neo X secp256k1), so Neo X is an accepted target.
 export const SUPPORTED_ORACLE_TARGET_CHAINS = new Set(['neo_n3', 'neox']);
-export const DEFAULT_NEO_NETWORK_MAGIC = 894710606;
+export const DEFAULT_NEO_NETWORK_MAGIC = NETWORK_IDENTITIES.networks.testnet.magic;
+
+export function resolveReviewedNeoNetworkMagic(network, configuredValue = '') {
+  const normalized = String(network || '')
+    .trim()
+    .toLowerCase();
+  if (normalized !== 'mainnet' && normalized !== 'testnet') {
+    throw new Error(`unsupported Neo N3 network: ${network}`);
+  }
+  const reviewed = NETWORK_IDENTITIES?.networks?.[normalized]?.magic;
+  if (!Number.isSafeInteger(reviewed) || reviewed <= 0 || reviewed > 0xffffffff) {
+    throw new Error(`missing reviewed Neo N3 magic for ${normalized}`);
+  }
+  const configured = String(configuredValue || '').trim();
+  if (configured && (!/^\d+$/.test(configured) || Number(configured) !== reviewed)) {
+    throw new Error(`Neo N3 magic conflicts with reviewed ${normalized} identity`);
+  }
+  return reviewed;
+}
 export const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
 export const DEFAULT_POLL_INTERVAL_MS = 2000;
 export const REPLAY_WINDOW_MS = 10 * 60 * 1000;
@@ -80,21 +102,24 @@ export function env(...names) {
 }
 
 export function normalizeMorpheusNetwork(value, fallback = 'testnet') {
-  const normalized = String(value || '')
+  const normalized = String(value ?? '')
     .trim()
     .toLowerCase();
+  if (!normalized) {
+    if (fallback !== 'mainnet' && fallback !== 'testnet') {
+      throw new Error(`unsupported Neo network fallback: ${fallback}`);
+    }
+    return fallback;
+  }
   if (normalized === 'mainnet' || normalized === 'testnet') return normalized;
-  return fallback === 'mainnet' ? 'mainnet' : 'testnet';
+  throw new Error(`unsupported Neo network: ${value}`);
 }
 
 export function resolvePayloadNetwork(payload = {}, fallback = 'testnet') {
-  return normalizeMorpheusNetwork(
-    payload?.network ||
-      payload?.morpheus_network ||
-      payload?.runtime_network ||
-      payload?.environment,
-    fallback
-  );
+  const value = ['network', 'morpheus_network', 'runtime_network', 'environment']
+    .map((key) => payload?.[key])
+    .find((candidate) => candidate !== undefined && candidate !== null && candidate !== '');
+  return normalizeMorpheusNetwork(value, fallback);
 }
 
 export function envForNetwork(networkInput, ...names) {
@@ -299,16 +324,28 @@ export function cappedDurationMs(value, fallbackMs = 0, maxMs = MAX_USER_TIMEOUT
 // which prevents request input from choosing a hostname that neon-js later
 // re-resolves at connection time.
 export async function validateRpcUrl(rawUrl) {
-  const url = trimString(rawUrl);
+  const url = requireHttpsRpcUrl(rawUrl);
   if (!url) return url;
   const parsedUrl = new URL(url);
-  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-    throw new Error('RPC URL must use http or https');
-  }
   try {
     await assertResolvedHostAllowed(parsedUrl.hostname);
   } catch {
     throw new Error('private/internal RPC URLs not allowed');
+  }
+  return url;
+}
+
+export function requireHttpsRpcUrl(rawUrl) {
+  const url = trimString(rawUrl);
+  if (!url) return url;
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    throw new Error('RPC URL must use HTTPS');
+  }
+  if (parsedUrl.protocol !== 'https:') {
+    throw new Error('RPC URL must use HTTPS');
   }
   return url;
 }

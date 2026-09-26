@@ -273,7 +273,13 @@ export function assertNoRetiredPlaintextSigner(report) {
 }
 
 export function normalizeMorpheusNetwork(value) {
-  return trimString(value || 'testnet').toLowerCase() === 'mainnet' ? 'mainnet' : 'testnet';
+  const fallback =
+    value === undefined || value === null || (typeof value === 'string' && value.trim() === '')
+      ? 'testnet'
+      : value;
+  const normalized = trimString(fallback).toLowerCase();
+  if (normalized === 'mainnet' || normalized === 'testnet') return normalized;
+  throw new Error(`unsupported Neo network: ${value}`);
 }
 
 export function normalizeHash160(value) {

@@ -257,6 +257,11 @@ test('refuses to pin a neo-os-did stand-in for a module or data file this reposi
       dest: 'crates/neo-os-compute/src/core.rs',
       body: '// core\n',
     },
+    {
+      source: 'crates/neo-os-core/src/network_identity.rs',
+      dest: 'crates/neo-os-core/src/network_identity.rs',
+      body: '// network identity\n',
+    },
   ];
   for (const entry of standIns) write(join(root, entry.dest), entry.body);
   writePin(root, pinFor(commit, [...FILES, ...standIns]));
@@ -267,6 +272,7 @@ test('refuses to pin a neo-os-did stand-in for a module or data file this reposi
       `${PIN_FILE}: files[2]: runtime/nitro-worker/src/platform/custody.js`,
       `${PIN_FILE}: files[3]: config/networks/testnet.json`,
       `${PIN_FILE}: files[4]: crates/neo-os-did/src/core.rs`,
+      `${PIN_FILE}: files[5]: crates/neo-os-core/src/network_identity.rs`,
     ]
   );
 });

@@ -157,7 +157,9 @@ fn main() {
                 "msg": "morpheus enclave-server listening",
                 "host": host,
                 "port": port,
-                "network": app_state.resolve_network(),
+                "network": app_state
+                    .resolve_network()
+                    .unwrap_or_else(|error| panic!("invalid runtime network: {}", error.message)),
                 "execution_plane": "rust-in-process",
             })
         );

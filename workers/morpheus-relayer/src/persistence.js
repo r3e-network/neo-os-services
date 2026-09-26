@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { env, sha256Hex, signManualAction } from '@r3e-network/neo-os-services-shared/node-runtime';
+import { normalizeMorpheusNetwork } from './lib/neo-signers.js';
 import { resolveKernelIntent } from './router.js';
 import { trimString } from './lib/strings.js';
 
@@ -7,12 +8,10 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function resolveSupabaseNetwork() {
-  return trimString(
+export function resolveSupabaseNetwork() {
+  return normalizeMorpheusNetwork(
     process.env.MORPHEUS_NETWORK || process.env.NEXT_PUBLIC_MORPHEUS_NETWORK || 'testnet'
-  ) === 'mainnet'
-    ? 'mainnet'
-    : 'testnet';
+  );
 }
 
 export const AUTOMATION_PROCESSING_CLAIM_MARKER = '__morpheus_automation_processing_claim__';

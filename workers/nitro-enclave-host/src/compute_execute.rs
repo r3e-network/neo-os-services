@@ -133,7 +133,7 @@ pub fn handle_compute_execute(
     reject_caller_supplied_signing_key(&payload)?;
     let payload_bytes = stable_stringify(&JsValue::from_json(&result)).into_bytes();
     let output_hash = neo_os_core::sha256_hex(&payload_bytes);
-    let network = resolve_payload_network(state, &payload);
+    let network = resolve_payload_network(state, &payload)?;
     let signed = sign_worker_bytes(state, &network, &payload_bytes)?;
     let tee_attestation = build_tee_attestation(state, &payload, "worker", &output_hash)?;
 
@@ -317,8 +317,13 @@ pub(crate) fn reject_caller_supplied_signing_key(
 
 /// `resolvePayloadNetwork` (platform/core.js:90): the first truthy network
 /// alias wins; the fallback is the host's own MORPHEUS_NETWORK resolution.
-pub(crate) fn resolve_payload_network(state: &AppState, payload: &serde_json::Value) -> String {
-    let fallback = state.resolve_network();
+/// Signing lanes reject an explicit unknown label instead of mapping it to a
+/// different network identity.
+pub(crate) fn resolve_payload_network(
+    state: &AppState,
+    payload: &serde_json::Value,
+) -> Result<String, RuntimeError> {
+    let fallback = state.resolve_network()?;
     let alias = truthy_trimmed(
         payload,
         &[
@@ -328,10 +333,13 @@ pub(crate) fn resolve_payload_network(state: &AppState, payload: &serde_json::Va
             "environment",
         ],
     );
+    if alias.is_empty() {
+        return Ok(fallback);
+    }
     match alias.to_ascii_lowercase().as_str() {
-        "mainnet" => "mainnet".to_string(),
-        "testnet" => "testnet".to_string(),
-        _ => fallback,
+        "mainnet" => Ok("mainnet".to_string()),
+        "testnet" => Ok("testnet".to_string()),
+        _ => Err(http_error(400, format!("unsupported Neo network: {alias}"))),
     }
 }
 

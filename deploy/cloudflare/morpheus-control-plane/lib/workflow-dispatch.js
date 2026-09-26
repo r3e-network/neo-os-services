@@ -1,13 +1,10 @@
 import { listWorkflowDefinitions } from '@r3e-network/neo-os-services-shared';
 import { trimString } from '@r3e-network/neo-os-services-shared/utils';
+import { resolveControlPlaneNetwork } from './config.js';
 
 const WORKFLOW_DEFINITIONS_BY_ROUTE = new Map(
   listWorkflowDefinitions().map((definition) => [definition.route, definition])
 );
-
-function normalizeNetwork(value) {
-  return trimString(value) === 'mainnet' ? 'mainnet' : 'testnet';
-}
 
 function createExecutionId() {
   if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
@@ -46,7 +43,7 @@ export function resolveWorkflowDispatch(
   const definition = WORKFLOW_DEFINITIONS_BY_ROUTE.get(trimString(routePath));
   if (!definition) return null;
 
-  const normalizedNetwork = normalizeNetwork(network);
+  const normalizedNetwork = resolveControlPlaneNetwork(network);
   if (
     Array.isArray(definition.allowedNetworks) &&
     definition.allowedNetworks.length > 0 &&

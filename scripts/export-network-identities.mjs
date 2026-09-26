@@ -5,12 +5,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   renderCSharpNetworkIdentities,
+  renderRuntimeNetworkIdentities,
   projectProtocolNetwork,
 } from './lib/network-identity-projections.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const modes = process.argv.slice(2);
-if (modes.length !== 1 || !['--check', '--write'].includes(modes[0]))
-  throw new Error('use --check or --write');
+if (modes.length !== 1 || !['--check', '--check-local', '--write'].includes(modes[0]))
+  throw new Error('use --check, --check-local or --write');
+const mode = modes[0];
 const networks = {};
 for (const name of ['mainnet', 'testnet']) {
   const registry = JSON.parse(
@@ -21,6 +23,7 @@ for (const name of ['mainnet', 'testnet']) {
     genesis_hash: genesisHash,
     genesis_source: provenance,
   } = registry.neo_n3;
+  const neoXChainId = registry.neo_x?.chain_id;
   if (
     registry.network !== name ||
     !Number.isInteger(magic) ||
@@ -29,14 +32,51 @@ for (const name of ['mainnet', 'testnet']) {
     typeof genesisHash !== 'string' ||
     !/^0x[0-9a-f]{64}$/.test(genesisHash) ||
     /^0x0{64}$/.test(genesisHash) ||
-    !provenance
+    !provenance ||
+    !Number.isSafeInteger(neoXChainId) ||
+    neoXChainId <= 0
   )
     throw new Error(name + ': incomplete reviewed identity');
-  networks[name] = { network: name, magic, genesisHash, provenance };
+  networks[name] = { network: name, magic, genesisHash, provenance, neoXChainId };
 }
 const catalog = { schemaVersion: 1, networks };
-const text = JSON.stringify(catalog, null, 2) + '\n';
+// Preserve the existing cross-repository N3 projection contract. NeoX is
+// emitted through the dedicated runtime projection below so consumers that
+// have not yet adopted the wider registry shape do not silently drift.
+const text =
+  JSON.stringify(
+    {
+      schemaVersion: 1,
+      networks: Object.fromEntries(
+        Object.entries(networks).map(([name, entry]) => [
+          name,
+          {
+            network: entry.network,
+            magic: entry.magic,
+            genesisHash: entry.genesisHash,
+            provenance: entry.provenance,
+          },
+        ])
+      ),
+    },
+    null,
+    2
+  ) + '\n';
+const runtimeText = renderRuntimeNetworkIdentities(catalog);
 const csharp = renderCSharpNetworkIdentities(catalog);
+if (mode === '--check-local') {
+  const localOutputs = [
+    [path.join(root, 'config/generated/network-identities.v1.json'), text],
+    [path.join(root, 'workers/nitro-worker/src/chain/network-identities.v1.json'), runtimeText],
+    [path.join(root, 'config/generated/NeoN3NetworkIdentity.g.cs'), csharp],
+  ];
+  for (const [target, expected] of localOutputs) {
+    if (fs.readFileSync(target, 'utf8') !== expected)
+      throw new Error(path.basename(target) + ': local network identity projection drift');
+  }
+  console.log('local network identity projections match reviewed registry');
+  process.exit(0);
+}
 const nativeRoot = path.join(root, '../neo-os-app');
 const furaRoot = path.join(root, '../neo-os-fura');
 const devpackRoot = path.join(root, '../neo-os-devpack');
@@ -110,6 +150,11 @@ const outputs = [
     text,
   },
   {
+    repository: root,
+    target: path.join(root, 'workers/nitro-worker/src/chain/network-identities.v1.json'),
+    text: runtimeText,
+  },
+  {
     repository: furaRoot,
     target: path.join(furaRoot, 'supabase_indexer/internal/networkidentity/known-networks.json'),
     text,
@@ -140,7 +185,7 @@ for (const { repository, target } of outputs) validateDestination(repository, ta
 if (!fs.readFileSync(protocolPath).equals(protocolBytes))
   throw new Error('Native protocol changed while planning; refusing writes');
 for (const { target, text: output } of outputs) {
-  if (modes[0] === '--write') {
+  if (mode === '--write') {
     if (fs.existsSync(target) && fs.readFileSync(target, 'utf8') === output) continue;
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, output);

@@ -10,9 +10,7 @@
 
 use serde_json::Value as Json;
 
-use crate::js::{
-    js_first_truthy, js_math_round, js_number, js_stringify, js_trim, js_trim_string, js_truthy,
-};
+use crate::js::{js_math_round, js_number, js_stringify, js_trim, js_trim_string, js_truthy};
 
 /// Functions that read `process.env` in JS take one of these, so tests drive
 /// every env branch without process mutation and the host can feed its overlay.
@@ -121,29 +119,69 @@ pub fn normalize_morpheus_network(value: &str, fallback: &str) -> String {
     if normalized == "mainnet" || normalized == "testnet" {
         return normalized;
     }
-    if fallback == "mainnet" {
-        "mainnet".to_string()
-    } else {
-        "testnet".to_string()
+    if normalized.is_empty() {
+        let fallback = js_trim(fallback).to_lowercase();
+        if fallback == "mainnet" || fallback == "testnet" {
+            return fallback;
+        }
     }
+    panic!("unsupported Neo network: {value}");
+}
+
+/// Strict network normalization for signing and identity-bound lanes. Empty
+/// input means "use the already reviewed fallback"; a non-empty unknown label
+/// is an input error and must never be mapped to a different network.
+pub fn normalize_morpheus_network_strict(value: &str, fallback: &str) -> Result<String, String> {
+    let normalized = js_trim(value).to_lowercase();
+    if normalized == "mainnet" || normalized == "testnet" {
+        return Ok(normalized);
+    }
+    if normalized.is_empty() {
+        let fallback = js_trim(fallback).to_lowercase();
+        if fallback == "mainnet" || fallback == "testnet" {
+            return Ok(fallback);
+        }
+    }
+    Err(format!("unsupported Neo network: {value}"))
 }
 
 /// `resolvePayloadNetwork(payload, fallback)` (platform/core.js:90) — the
 /// first truthy of network / morpheus_network / runtime_network / environment,
 /// then normalized as a network name.
 pub fn resolve_payload_network(payload: &Json, fallback: &str) -> String {
-    let raw = js_first_truthy(
-        payload,
-        &[
-            "network",
-            "morpheus_network",
-            "runtime_network",
-            "environment",
-        ],
-    )
-    .map(js_stringify)
+    let raw = [
+        "network",
+        "morpheus_network",
+        "runtime_network",
+        "environment",
+    ]
+    .iter()
+    .find_map(|key| match payload.get(*key) {
+        Some(Json::Null) | None => None,
+        Some(Json::String(value)) if value.is_empty() => None,
+        Some(value) => Some(js_stringify(value)),
+    })
     .unwrap_or_default();
     normalize_morpheus_network(&raw, fallback)
+}
+
+/// Strict counterpart used by NeoDID ticket digests. It preserves the
+/// JavaScript empty-value fallback while refusing an explicit unknown network.
+pub fn resolve_payload_network_strict(payload: &Json, fallback: &str) -> Result<String, String> {
+    let raw = [
+        "network",
+        "morpheus_network",
+        "runtime_network",
+        "environment",
+    ]
+    .iter()
+    .find_map(|key| match payload.get(*key) {
+        Some(Json::Null) | None => None,
+        Some(Json::String(value)) if value.is_empty() => None,
+        Some(value) => Some(js_stringify(value)),
+    })
+    .unwrap_or_default();
+    normalize_morpheus_network_strict(&raw, fallback)
 }
 
 /// `normalizeBoolean(value, fallback)` (platform/core.js:171) — `undefined`,
@@ -756,9 +794,42 @@ mod tests {
     fn network_normalization_follows_the_js_rules() {
         assert_eq!(normalize_morpheus_network("Mainnet ", "testnet"), "mainnet");
         assert_eq!(normalize_morpheus_network("", "testnet"), "testnet");
-        assert_eq!(normalize_morpheus_network("xyz", "testnet"), "testnet");
-        assert_eq!(normalize_morpheus_network("xyz", "mainnet"), "mainnet");
         assert_eq!(normalize_morpheus_network("TESTNET", "mainnet"), "testnet");
+    }
+
+    #[test]
+    fn strict_network_normalization_rejects_unknown_explicit_labels() {
+        assert_eq!(
+            normalize_morpheus_network_strict("  MAINNET  ", "testnet").unwrap(),
+            "mainnet"
+        );
+        assert_eq!(
+            normalize_morpheus_network_strict("", "testnet").unwrap(),
+            "testnet"
+        );
+        assert!(normalize_morpheus_network_strict("xyz", "testnet").is_err());
+        assert!(resolve_payload_network_strict(&json!({ "network": "xyz" }), "testnet").is_err());
+    }
+
+    #[test]
+    fn payload_network_rejects_non_string_explicit_values() {
+        for value in [serde_json::json!(false), serde_json::json!(0)] {
+            let payload = serde_json::json!({"network": value});
+            assert!(resolve_payload_network_strict(&payload, "testnet").is_err());
+            assert!(
+                std::panic::catch_unwind(|| resolve_payload_network(&payload, "testnet")).is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn compatibility_network_normalization_fails_closed_on_unknown_labels() {
+        assert!(std::panic::catch_unwind(|| normalize_morpheus_network("xyz", "testnet")).is_err());
+        assert!(std::panic::catch_unwind(|| resolve_payload_network(
+            &json!({ "network": 5 }),
+            "testnet"
+        ))
+        .is_err());
     }
 
     #[test]
@@ -778,14 +849,14 @@ mod tests {
             resolve_payload_network(&json!({ "runtime_network": "testnet" }), "mainnet"),
             "testnet"
         );
-        assert_eq!(
-            resolve_payload_network(&json!({ "environment": "production" }), "testnet"),
-            "testnet" // not a network name → fallback
-        );
-        assert_eq!(
-            resolve_payload_network(&json!({ "network": 5 }), "testnet"),
-            "testnet" // String(5) = "5" is not a network name
-        );
+        assert!(std::panic::catch_unwind(|| {
+            resolve_payload_network(&json!({ "environment": "production" }), "testnet")
+        })
+        .is_err());
+        assert!(std::panic::catch_unwind(|| {
+            resolve_payload_network(&json!({ "network": 5 }), "testnet")
+        })
+        .is_err());
         assert_eq!(resolve_payload_network(&json!({}), "mainnet"), "mainnet");
     }
 

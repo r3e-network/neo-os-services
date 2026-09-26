@@ -234,6 +234,8 @@ fn an_envelope_from_the_wrong_context_is_a_401() {
         json!({ "purpose": "other/v1", "network": "testnet", "version": 1, "token": RELEASED_TOKEN }),
         // Wrong network.
         json!({ "purpose": "neoos/nitro-runtime-auth/v1", "network": "mainnet", "version": 1, "token": RELEASED_TOKEN }),
+        // Unknown network must not normalize into TestNet.
+        json!({ "purpose": "neoos/nitro-runtime-auth/v1", "network": "staging", "version": 1, "token": RELEASED_TOKEN }),
         // Version below one / fractional.
         json!({ "purpose": "neoos/nitro-runtime-auth/v1", "network": "testnet", "version": 0, "token": RELEASED_TOKEN }),
         json!({ "purpose": "neoos/nitro-runtime-auth/v1", "network": "testnet", "version": 1.5, "token": RELEASED_TOKEN }),

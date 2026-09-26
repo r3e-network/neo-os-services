@@ -1,8 +1,9 @@
 import { RESULT_ENVELOPE_VERSION } from '../../../packages/shared/src/workflow-catalog.js';
+import { normalizeMorpheusNetwork } from './lib/neo-signers.js';
 import { trimString } from './lib/strings.js';
 
 function normalizeNetwork(value) {
-  return trimString(value) === 'mainnet' ? 'mainnet' : 'testnet';
+  return normalizeMorpheusNetwork(value);
 }
 
 function isPlainObject(value) {

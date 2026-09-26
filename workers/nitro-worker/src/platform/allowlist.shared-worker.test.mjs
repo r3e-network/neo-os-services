@@ -40,3 +40,8 @@ test('txproxy allowlist resolves Morpheus Oracle contract per network in a share
     false
   );
 });
+
+test('txproxy allowlist rejects an unknown explicit network label', async () => {
+  const { buildTxProxyAllowlist } = await import(`./allowlist.js?strict-network=${Date.now()}`);
+  assert.throws(() => buildTxProxyAllowlist('staging'), /unsupported Neo network/);
+});

@@ -33,6 +33,8 @@ test('repo verification script runs the canonical local validation stack', () =>
   assert.match(script, /test:relayer:compat/);
   assert.match(script, /check:brand/);
   assert.match(script, /build:web/);
+  assert.match(script, /for network in testnet mainnet/);
+  assert.match(script, /MORPHEUS_NETWORK=\"\$network\" NEXT_PUBLIC_MORPHEUS_NETWORK=\"\$network\"/);
   assert.match(script, /lint -- --max-warnings=0/);
   assert.match(script, /command -v pgrep/);
 });

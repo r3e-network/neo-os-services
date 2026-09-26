@@ -22,7 +22,7 @@ use neo_os_compute::oracle::feed_registry::{
     get_source_set_id_for_provider,
 };
 use neo_os_compute::oracle::feeds::shared::{
-    clamp_feed_timestamp_sec, normalize_boolean_like, resolve_feed_scope,
+    clamp_feed_timestamp_sec, normalize_boolean_like, resolve_feed_scope_strict,
     resolve_feed_timestamp_future_skew_seconds, resolve_feed_timestamp_max_future_seconds,
     DEFAULT_FEED_STATE_PATH, FEED_PRICE_DECIMALS,
 };
@@ -90,7 +90,8 @@ pub fn handle_oracle_feed(
         .map_err(|_| http_error(500, "oracle feed execution state unavailable"))?;
     let overlay = state.overlay.read().expect("overlay lock").merged_map();
     let env: EnvReader<'_> = &|name| overlay.get(name).cloned();
-    let scope = resolve_feed_scope(payload, env);
+    let scope =
+        resolve_feed_scope_strict(payload, env).map_err(|message| http_error(400, message))?;
     let symbols = resolve_requested_symbols(payload, env);
     if symbols.is_empty() {
         return Err(http_error(400, "at least one feed symbol is required"));

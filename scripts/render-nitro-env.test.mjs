@@ -23,6 +23,22 @@ function scratchDir(t, prefix) {
   return directory;
 }
 
+function reviewedRegistryRoot(t, network, chainId) {
+  const directory = scratchDir(t, 'render-nitro-registry-');
+  const networkDirectory = path.join(directory, 'config', 'networks');
+  fs.mkdirSync(networkDirectory, { recursive: true });
+  const registry = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, 'config', 'networks', `${network}.json`), 'utf8')
+  );
+  registry.neo_x.chain_id = chainId;
+  fs.writeFileSync(
+    path.join(networkDirectory, `${network}.json`),
+    `${JSON.stringify(registry, null, 2)}\n`,
+    'utf8'
+  );
+  return directory;
+}
+
 // Synthetic, non-secret inputs: printable tokens and base64 "ciphertexts".
 const RUNTIME_TOKEN = 'render-test-runtime-token-0123456789abcdef';
 const RUNTIME_TOKEN_CIPHERTEXT = Buffer.from('runtime-token-envelope').toString('base64');
@@ -113,6 +129,46 @@ test('render-nitro-env binds the staged NeoX identity to the selected network', 
   assert.equal(templateUrl, 'http://127.0.0.1:8791');
   assert.match(relayer, new RegExp(`^MORPHEUS_RUNTIME_URL=${templateUrl}$`, 'm'));
   assert.match(relayer, new RegExp(`^MORPHEUS_RELAYER_ENCLAVE_FULFILL_URL=${templateUrl}$`, 'm'));
+});
+
+test('render-nitro-env reads NeoX chain identity from the reviewed registry', (t) => {
+  const directory = scratchDir(t, 'render-nitro-neox-registry-');
+  const registryRoot = reviewedRegistryRoot(t, 'mainnet', 47764);
+  const source = path.join(directory, 'empty.env');
+  fs.writeFileSync(source, '', 'utf8');
+
+  const result = runRenderer([
+    '--network',
+    'mainnet',
+    '--source',
+    source,
+    '--output-dir',
+    directory,
+    '--registry-root',
+    registryRoot,
+    '--allow-missing',
+  ]);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const relayer = fs.readFileSync(path.join(directory, 'neo-os-relayer.env'), 'utf8');
+  assert.match(relayer, /^MORPHEUS_RELAYER_NEOX_CHAIN_ID=47764$/m);
+});
+
+test('render-nitro-env rejects a mismatched reviewed N3 magic override', (t) => {
+  const directory = scratchDir(t, 'render-nitro-n3-magic-');
+  const source = path.join(directory, 'mismatched.env');
+  fs.writeFileSync(source, 'NEO_MAINNET_MAGIC=1\n', 'utf8');
+
+  const result = runRenderer([
+    '--network',
+    'mainnet',
+    '--source',
+    source,
+    '--output-dir',
+    directory,
+    '--allow-missing',
+  ]);
+  assert.notEqual(result.status, 0, result.stderr || result.stdout);
+  assert.match(`${result.stderr}${result.stdout}`, /Neo N3 magic|network magic/i);
 });
 
 test('render-nitro-env preserves validated production chain and lane selection', (t) => {

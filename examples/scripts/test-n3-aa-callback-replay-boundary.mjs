@@ -12,6 +12,7 @@ import {
   readDeploymentRegistry,
   repoRoot,
   resolveNeoN3SignerWif,
+  resolveNeoN3NetworkMagic,
   sleep,
   trimString,
   tryParseJson,
@@ -463,9 +464,7 @@ async function main() {
   const rpcUrl = trimString(
     deployment.rpc_url || process.env.NEO_RPC_URL || 'https://testnet1.neo.coz.io:443'
   );
-  const networkMagic = Number(
-    deployment.network_magic || process.env.NEO_NETWORK_MAGIC || 894710606
-  );
+  const networkMagic = resolveNeoN3NetworkMagic('testnet', deployment);
   const signerWif = resolveNeoN3SignerWif('testnet');
   assertCondition(signerWif, 'testnet signer WIF is required');
 

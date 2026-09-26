@@ -9,6 +9,7 @@ import {
   resolveAllowLocalClaimDuringBackoff,
   resolveDurableQueueFailClosed,
   rpcUrlRank,
+  requireHttpsRpcUrls,
   uniqueRankedRpcUrls,
 } from './config.js';
 
@@ -160,6 +161,13 @@ test('the network registry SSOT lists no cleartext RPC endpoint', () => {
       `config/networks/${network}.json neo_n3.rpc_urls must be a list`
     );
   }
+});
+
+test('configured RPC resolution rejects an explicit cleartext endpoint', () => {
+  assert.throws(
+    () => requireHttpsRpcUrls(['https://good.rpc', 'http://cleartext.rpc'], 'Neo N3 testnet RPC'),
+    /Neo N3 testnet RPC requires HTTPS RPC endpoints.*http:\/\/cleartext\.rpc/i
+  );
 });
 
 test('production ignores the local durable-claim backoff opt-in', () => {

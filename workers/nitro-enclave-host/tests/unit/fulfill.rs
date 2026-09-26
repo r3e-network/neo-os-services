@@ -116,7 +116,7 @@ fn neo_n3_with_app_id_digest_envelope_and_signature_byte_exact() {
             "app_id": "demo.app",
             "module_id": intent.module_id,
             "operation": intent.operation,
-            "contract_script_hash": measured_n3_oracle_contract(TEST_NETWORK),
+            "contract_script_hash": measured_n3_oracle_contract(TEST_NETWORK).expect("reviewed test network"),
             "network_magic": 894710606,
         },
         "nonce": "deadbeef",
@@ -139,7 +139,9 @@ fn neo_n3_with_app_id_digest_envelope_and_signature_byte_exact() {
         app_id: "demo.app".to_string(),
         module_id: intent.module_id.to_string(),
         operation: intent.operation.to_string(),
-        contract_script_hash: measured_n3_oracle_contract(TEST_NETWORK).to_string(),
+        contract_script_hash: measured_n3_oracle_contract(TEST_NETWORK)
+            .expect("reviewed test network")
+            .to_string(),
         network_magic: Some(894710606.0),
     };
     let expected_digest = build_fulfillment_digest_bytes(
@@ -577,8 +579,12 @@ fn legacy_no_app_id_uses_the_legacy_domain() {
         fulfillment.result_bytes_base64.as_deref().unwrap_or(""),
         &FulfillmentOptions {
             chain: Some("legacy".to_string()),
-            contract_script_hash: measured_n3_oracle_contract(TEST_NETWORK).to_string(),
-            network_magic: Some(f64::from(measured_n3_magic(TEST_NETWORK))),
+            contract_script_hash: measured_n3_oracle_contract(TEST_NETWORK)
+                .expect("reviewed test network")
+                .to_string(),
+            network_magic: Some(f64::from(
+                measured_n3_magic(TEST_NETWORK).expect("reviewed test network"),
+            )),
             ..FulfillmentOptions::default()
         },
     )
@@ -606,7 +612,7 @@ fn vrf_compact_lane_returns_the_callback_bytes() {
             "app_id": "dice.app",
             "module_id": intent.module_id,
             "operation": intent.operation,
-            "contract_script_hash": measured_n3_oracle_contract(TEST_NETWORK),
+            "contract_script_hash": measured_n3_oracle_contract(TEST_NETWORK).expect("reviewed test network"),
             "network_magic": 894710606,
         },
     });
@@ -632,7 +638,9 @@ fn vrf_compact_lane_returns_the_callback_bytes() {
         app_id: "dice.app".to_string(),
         module_id: intent.module_id.to_string(),
         operation: intent.operation.to_string(),
-        contract_script_hash: measured_n3_oracle_contract(TEST_NETWORK).to_string(),
+        contract_script_hash: measured_n3_oracle_contract(TEST_NETWORK)
+            .expect("reviewed test network")
+            .to_string(),
         network_magic: Some(894710606.0),
     };
     let expected_digest = build_fulfillment_digest_bytes(
@@ -836,4 +844,10 @@ fn missing_request_fields_are_400s_before_any_compute() {
     assert_eq!(error.status, 400);
     assert_eq!(error.message, "request_id is required");
     assert!(harness.bridge.forwards().is_empty());
+}
+
+#[test]
+fn measured_n3_identity_rejects_unknown_network_without_testnet_fallback() {
+    assert!(measured_n3_oracle_contract("staging").is_err());
+    assert!(measured_n3_magic("staging").is_err());
 }

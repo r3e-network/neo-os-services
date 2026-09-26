@@ -47,6 +47,18 @@ function resolveStaleProcessingMs(env) {
   return Math.max(Math.floor(configured), 30_000);
 }
 
+/**
+ * Resolve a network carried by a queue/workflow payload. Empty values retain
+ * the documented TestNet default; an explicit unknown label is a poison
+ * message and must never be routed to a different Supabase/network scope.
+ */
+function resolveControlPlaneNetwork(value) {
+  const normalized = trimString(value).toLowerCase();
+  if (!normalized) return 'testnet';
+  if (normalized === 'mainnet' || normalized === 'testnet') return normalized;
+  throw new Error(`unsupported Neo network: ${normalized}`);
+}
+
 function isStaleProcessing(job, nowMs, staleProcessingMs) {
   const startedMs = parseTimestampMs(job?.started_at);
   if (!startedMs) return false;
@@ -71,6 +83,11 @@ function resolveNetworkRoute(url) {
   const segments =
     trimString(rawSegments[0]).toLowerCase() === 'control' ? rawSegments.slice(1) : rawSegments;
   const maybeNetwork = trimString(segments[0]).toLowerCase();
+  const knownRoutePrefixes = new Set(['health', 'jobs', 'feeds', 'callbacks', 'automation']);
+  const hasNetworkPrefix = maybeNetwork === 'mainnet' || maybeNetwork === 'testnet';
+  if (!hasNetworkPrefix && maybeNetwork && !knownRoutePrefixes.has(maybeNetwork)) {
+    throw new Error(`unsupported Neo network: ${maybeNetwork}`);
+  }
   const network = maybeNetwork === 'mainnet' ? 'mainnet' : 'testnet';
   const routePath =
     maybeNetwork === 'mainnet' || maybeNetwork === 'testnet'
@@ -116,6 +133,7 @@ export {
   resolveMaxRequeueAttempts,
   isStaleProcessing,
   computeRetryDelaySeconds,
+  resolveControlPlaneNetwork,
   resolveNetworkRoute,
   resolveJobMetadata,
 };

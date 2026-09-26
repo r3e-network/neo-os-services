@@ -655,7 +655,16 @@ pub fn validate_relayer_config(
             let registry_network = if registry_network.is_empty() {
                 "testnet".to_string()
             } else {
-                neo_os_core::config::normalize_morpheus_network(&JsValue::Str(registry_network))
+                let normalized = registry_network.trim().to_ascii_lowercase();
+                if neo_os_core::network_identity::known_neo_n3_identity(&normalized).is_some() {
+                    normalized
+                } else {
+                    // Keep the registry lookup deterministic while letting
+                    // derive_pure_fields return the user-facing validation
+                    // error for the unknown label. Never panic in the
+                    // introspection endpoint on malformed configuration.
+                    "testnet".to_string()
+                }
             };
             let registry = crate::config::load_network_registry(&registry_network);
             match neo_os_core::config::derive_pure_fields(&env_source, &registry, "") {

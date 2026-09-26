@@ -14,11 +14,17 @@ import { trimString } from './lib-strings.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { readMergedDotEnvFiles } from './lib-env.mjs';
+import {
+  readReviewedNetworkRegistry,
+  resolveReviewedNeoN3Magic,
+  resolveReviewedNeoXChainId,
+} from './lib-network-registry.mjs';
 
 function parseArgs(argv = process.argv.slice(2)) {
   const out = {
     network: 'mainnet',
     outputDir: '',
+    registryRoot: '',
     source: [],
     allowMissing: false,
   };
@@ -28,6 +34,9 @@ function parseArgs(argv = process.argv.slice(2)) {
     else if (arg.startsWith('--network=')) out.network = arg.slice('--network='.length);
     else if (arg === '--output-dir') out.outputDir = argv[++index] || out.outputDir;
     else if (arg.startsWith('--output-dir=')) out.outputDir = arg.slice('--output-dir='.length);
+    else if (arg === '--registry-root') out.registryRoot = argv[++index] || out.registryRoot;
+    else if (arg.startsWith('--registry-root='))
+      out.registryRoot = arg.slice('--registry-root='.length);
     else if (arg === '--source') out.source.push(argv[++index] || '');
     else if (arg.startsWith('--source=')) out.source.push(arg.slice('--source='.length));
     else if (arg === '--allow-missing') out.allowMissing = true;
@@ -55,11 +64,13 @@ async function write0600(filePath, content) {
 
 const args = parseArgs();
 const repoRoot = process.cwd();
+const registryRoot = path.resolve(args.registryRoot || repoRoot);
 const network = trimString(args.network) || 'mainnet';
 if (!['mainnet', 'testnet'].includes(network)) {
   console.error(JSON.stringify({ ok: false, reason: `unsupported network: ${network}` }, null, 2));
   process.exit(2);
 }
+const registry = await readReviewedNetworkRegistry(registryRoot, network);
 const outputDir = path.resolve(args.outputDir || '.secrets/nitro');
 const sources = args.source.filter(Boolean).length
   ? args.source
@@ -71,6 +82,13 @@ const sources = args.source.filter(Boolean).length
       '.automation-logs/hourly-full-stack-validation/20260522-090604/workspace-secrets.env',
     ];
 const env = await readMergedDotEnvFiles(sources.map((entry) => path.resolve(repoRoot, entry)));
+const configuredN3Magic = pick(
+  env,
+  network === 'mainnet'
+    ? ['NEO_MAINNET_MAGIC', 'MAINNET_NETWORK_MAGIC', 'NEO_NETWORK_MAGIC']
+    : ['NEO_TESTNET_MAGIC', 'TESTNET_NETWORK_MAGIC', 'NEO_NETWORK_MAGIC']
+);
+const reviewedN3Magic = resolveReviewedNeoN3Magic(registry, network, configuredN3Magic);
 const runtimeToken = pick(env, ['NITRO_SIGNER_TOKEN', 'MORPHEUS_RUNTIME_TOKEN', 'NITRO_API_TOKEN']);
 const runtimeTokenCiphertext = pick(env, ['MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64']);
 const custodyTokenCiphertext = pick(env, ['SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64']);
@@ -188,6 +206,7 @@ if (!['true', 'false'].includes(feedSyncEnabled.toLowerCase())) {
 const signerEnv =
   [
     line('MORPHEUS_NETWORK', network),
+    line('NEO_NETWORK_MAGIC', reviewedN3Magic),
     line('PORT', '8080'),
     line('NITRO_SIGNER_VSOCK_PORT', '8787'),
     line(
@@ -203,6 +222,7 @@ const signerEnv =
 const relayerEnv =
   [
     line('MORPHEUS_NETWORK', network),
+    line('NEO_NETWORK_MAGIC', reviewedN3Magic),
     // The production Rust authority supports N3/NeoX request and feed lanes.
     // Keep generated defaults conservative (N3 requests) and automation closed;
     // operators can opt into the other validated combinations explicitly.
@@ -267,8 +287,7 @@ const relayerEnv =
     line('MORPHEUS_RELAYER_NEOX_RPC_URLS', pick(env, ['MORPHEUS_RELAYER_NEOX_RPC_URLS'])),
     line(
       'MORPHEUS_RELAYER_NEOX_CHAIN_ID',
-      pick(env, ['MORPHEUS_RELAYER_NEOX_CHAIN_ID']) ||
-        (network === 'mainnet' ? '47763' : '12227332')
+      resolveReviewedNeoXChainId(registry, network, pick(env, ['MORPHEUS_RELAYER_NEOX_CHAIN_ID']))
     ),
     line('MORPHEUS_RELAYER_NEOX_ORACLE', pick(env, ['MORPHEUS_RELAYER_NEOX_ORACLE'])),
     line('MORPHEUS_RELAYER_NEOX_DATAFEED', pick(env, ['MORPHEUS_RELAYER_NEOX_DATAFEED'])),

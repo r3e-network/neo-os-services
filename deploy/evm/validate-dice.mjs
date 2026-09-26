@@ -5,15 +5,24 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { ethers } from 'ethers';
+import {
+  readReviewedNetworkRegistry,
+  resolveReviewedNeoXChainId,
+  reviewedNetworkForEvmLabel,
+} from '../../scripts/lib-network-registry.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const NET = process.env.NEOX_NET || 'neox-mainnet';
+const registryNetwork = reviewedNetworkForEvmLabel(NET);
+const registry = await readReviewedNetworkRegistry(ROOT, registryNetwork);
 const rec = JSON.parse(
   readFileSync(resolve(ROOT, `contracts-evm/build/MiniAppDiceGameEVM.${NET}.json`), 'utf8')
 );
 const DICE = process.env.NEOX_DICE || rec.address;
 const RPC = process.env.NEOX_RPC || 'https://mainnet-1.rpc.banelabs.org';
-const CHAIN_ID = Number(process.env.NEOX_CHAIN_ID || 47763);
+const CHAIN_ID = Number(
+  resolveReviewedNeoXChainId(registry, registryNetwork, process.env.NEOX_CHAIN_ID)
+);
 const abi = JSON.parse(
   readFileSync(resolve(ROOT, 'contracts-evm/build/MiniAppDiceGameEVM.abi.json'), 'utf8')
 );

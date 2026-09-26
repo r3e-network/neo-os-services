@@ -16,8 +16,30 @@ use crate::state::AppState;
 use crate::RUNTIME_NAME;
 
 pub fn handle_health(state: &AppState) -> serde_json::Value {
-    let network = state.resolve_network();
-    let reports = state.signing_role_reports();
+    let network = match state.resolve_network() {
+        Ok(network) => network,
+        Err(error) => {
+            return serde_json::json!({
+                "status": "error",
+                "ready": false,
+                "runtime": RUNTIME_NAME,
+                "network": serde_json::Value::Null,
+                "error": error.message,
+            });
+        }
+    };
+    let reports = match state.signing_role_reports() {
+        Ok(reports) => reports,
+        Err(error) => {
+            return serde_json::json!({
+                "status": "error",
+                "ready": false,
+                "runtime": RUNTIME_NAME,
+                "network": network,
+                "error": error.message,
+            });
+        }
+    };
     // Neo N3 is the mandatory signing plane for this host. NeoX roles are an
     // optional lane and must not make a Neo N3-only deployment report
     // globally unhealthy when they are intentionally unconfigured.

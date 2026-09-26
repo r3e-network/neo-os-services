@@ -1,10 +1,24 @@
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   assertFreshResponse,
   assertFreshTimestamp,
   assertLatestHeight,
 } from './lib/canonical-domain-freshness.mjs';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from './lib-network-registry.mjs';
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const REVIEWED_N3_MAGIC = Object.fromEntries(
+  ['mainnet', 'testnet'].map((network) => [
+    network,
+    Number(resolveReviewedNeoN3Magic(readReviewedNetworkRegistrySync(REPO_ROOT, network), network)),
+  ])
+);
 
 const checks = [];
 async function probe(name, url, validate, init = {}) {
@@ -80,7 +94,7 @@ await Promise.allSettled([
         const body = await json(response);
         assertFuraCachePolicy(response);
         assert.equal(body.error, undefined);
-        assert.equal(body.result.protocol.network, network === 'mainnet' ? 860833102 : 894710606);
+        assert.equal(body.result.protocol.network, REVIEWED_N3_MAGIC[network]);
         return { network, magic: body.result.protocol.network };
       },
       {

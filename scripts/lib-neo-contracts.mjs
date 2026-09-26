@@ -1,20 +1,29 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { experimental, sc, wallet } from '@cityofzion/neon-js';
 import { resolvePinnedNeoN3Role, normalizeMorpheusNetwork } from './lib-neo-signers.mjs';
 import { trimString } from './lib-strings.mjs';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from './lib-network-registry.mjs';
 
-function resolveNeoN3NetworkDefaults() {
-  const network = trimString(process.env.MORPHEUS_NETWORK || 'testnet').toLowerCase();
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+function resolveNeoN3NetworkDefaults(network) {
+  const registry = readReviewedNetworkRegistrySync(REPO_ROOT, network);
   if (network === 'mainnet') {
     return {
       rpcAddress: 'https://api.n3index.dev/mainnet',
-      networkMagic: 860833102,
+      networkMagic: Number(resolveReviewedNeoN3Magic(registry, network)),
+      registry,
     };
   }
   return {
     rpcAddress: 'https://api.n3index.dev/testnet',
-    networkMagic: 894710606,
+    networkMagic: Number(resolveReviewedNeoN3Magic(registry, network)),
+    registry,
   };
 }
 
@@ -32,10 +41,16 @@ export async function loadContractArtifacts(baseName, buildDir = path.resolve('c
 }
 
 export function getDeployConfig() {
-  const defaults = resolveNeoN3NetworkDefaults();
   const network = normalizeMorpheusNetwork(process.env.MORPHEUS_NETWORK || 'testnet');
+  const defaults = resolveNeoN3NetworkDefaults(network);
   const rpcAddress = trimString(process.env.NEO_RPC_URL || defaults.rpcAddress);
-  const networkMagic = Number(process.env.NEO_NETWORK_MAGIC || defaults.networkMagic);
+  const networkMagic = Number(
+    resolveReviewedNeoN3Magic(
+      defaults.registry,
+      network,
+      process.env.NEO_NETWORK_MAGIC || String(defaults.networkMagic)
+    )
+  );
   const signer = resolvePinnedNeoN3Role(network, 'updater', { env: process.env });
   const account = new wallet.Account(
     signer.materialized?.wif || signer.materialized?.private_key || ''

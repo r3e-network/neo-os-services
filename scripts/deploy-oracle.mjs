@@ -15,6 +15,10 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import {
+  readReviewedNetworkRegistrySync,
+  resolveReviewedNeoN3Magic,
+} from './lib-network-registry.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -24,7 +28,13 @@ const CVM_URL =
   'https://oracle.meshmini.app/mainnet';
 const AUTH_TOKEN = process.env.NITRO_API_TOKEN || process.env.MORPHEUS_RUNTIME_TOKEN || '';
 const RPC_URL = process.env.NEO_RPC_URL || 'https://api.n3index.dev/mainnet';
-const NETWORK_MAGIC = parseInt(process.env.NEO_NETWORK_MAGIC || '860833102');
+const NETWORK_MAGIC = Number(
+  resolveReviewedNeoN3Magic(
+    readReviewedNetworkRegistrySync(process.cwd(), 'mainnet'),
+    'mainnet',
+    process.env.NEO_NETWORK_MAGIC || ''
+  )
+);
 
 // ContractManagement native contract hash
 const CONTRACT_MANAGEMENT = 'fffdc93764dbaddd97c48f252a53ea4643faa3fd';

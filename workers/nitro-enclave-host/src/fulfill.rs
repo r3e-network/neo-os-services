@@ -32,8 +32,6 @@ use crate::http_error;
 use crate::state::{AppState, Eip191FulfillmentRequest};
 use crate::RuntimeError;
 
-const N3_MAINNET_MAGIC: u32 = 860_833_102;
-const N3_TESTNET_MAGIC: u32 = 894_710_606;
 const N3_MAINNET_ORACLE_CONTRACT: &str = "0xf54d8584ef82315c1800373272ab08ae0db2d5ef";
 const N3_TESTNET_ORACLE_CONTRACT: &str = "0xf54d8584ef82315c1800373272ab08ae0db2d5ef";
 
@@ -321,7 +319,7 @@ pub fn handle_oracle_fulfill(
         &fulfillment_context,
         &["contract_script_hash", "contractScriptHash"],
     );
-    let network = state.resolve_network();
+    let network = state.resolve_network()?;
     let (digest_hex, signed, result_bytes_hex, attestation_role) = if chain == "neox" {
         let chain_id = required_neox_chain_id(&fulfillment_context)?;
         let oracle_contract =
@@ -490,7 +488,7 @@ fn measured_n3_binding(
     supplied_contract: &str,
     supplied_magic: Option<&serde_json::Value>,
 ) -> Result<(String, Option<f64>), RuntimeError> {
-    let expected_contract = measured_n3_oracle_contract(network);
+    let expected_contract = measured_n3_oracle_contract(network)?;
     if !supplied_contract.is_empty() && !supplied_contract.eq_ignore_ascii_case(expected_contract) {
         return Err(http_error(
             400,
@@ -500,7 +498,7 @@ fn measured_n3_binding(
         ));
     }
 
-    let expected_magic = measured_n3_magic(network);
+    let expected_magic = measured_n3_magic(network)?;
     if let Some(value) = supplied_magic {
         let parsed = match value {
             serde_json::Value::Number(number) => number.as_u64(),
@@ -522,20 +520,22 @@ fn measured_n3_binding(
     ))
 }
 
-fn measured_n3_oracle_contract(network: &str) -> &'static str {
-    if network == "mainnet" {
-        N3_MAINNET_ORACLE_CONTRACT
-    } else {
-        N3_TESTNET_ORACLE_CONTRACT
+fn measured_n3_oracle_contract(network: &str) -> Result<&'static str, RuntimeError> {
+    match network {
+        "mainnet" => Ok(N3_MAINNET_ORACLE_CONTRACT),
+        "testnet" => Ok(N3_TESTNET_ORACLE_CONTRACT),
+        other => Err(http_error(503, format!("unsupported Neo network: {other}"))),
     }
 }
 
-fn measured_n3_magic(network: &str) -> u32 {
-    if network == "mainnet" {
-        N3_MAINNET_MAGIC
-    } else {
-        N3_TESTNET_MAGIC
-    }
+fn measured_n3_magic(network: &str) -> Result<u32, RuntimeError> {
+    let reviewed_network = match network {
+        "mainnet" | "testnet" => network,
+        other => return Err(http_error(503, format!("unsupported Neo network: {other}"))),
+    };
+    neo_os_core::network_identity::known_neo_n3_identity(reviewed_network)
+        .map(|identity| identity.magic)
+        .ok_or_else(|| http_error(503, format!("unsupported Neo network: {network}")))
 }
 
 fn required_neox_chain_id(context: &serde_json::Value) -> Result<u64, RuntimeError> {
