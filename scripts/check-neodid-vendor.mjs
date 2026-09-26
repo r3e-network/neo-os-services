@@ -30,7 +30,8 @@ if (sibling) {
   } catch (error) {
     throw new Error(`could not read NeoDID sibling checkout: ${error.message}`);
   }
-  if (head !== pin.commit) throw new Error(`NeoDID sibling drift: expected ${pin.commit}, got ${head}`);
+  if (head !== pin.commit)
+    throw new Error(`NeoDID sibling drift: expected ${pin.commit}, got ${head}`);
   for (const entry of pin.files) {
     const source = join(sibling, entry.source);
     if (!existsSync(source)) throw new Error(`missing NeoDID sibling source: ${entry.source}`);
@@ -38,4 +39,11 @@ if (sibling) {
     if (actual !== entry.sha256) throw new Error(`NeoDID source/vendor mismatch: ${entry.source}`);
   }
 }
-console.log(JSON.stringify({ repository: pin.repository, commit: pin.commit, files: pin.files.length, siblingChecked: Boolean(sibling) }));
+console.log(
+  JSON.stringify({
+    repository: pin.repository,
+    commit: pin.commit,
+    files: pin.files.length,
+    siblingChecked: Boolean(sibling),
+  })
+);

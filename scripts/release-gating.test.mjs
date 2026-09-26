@@ -30,8 +30,10 @@ async function readWorkflows() {
 }
 
 function hasDependencyCache(source) {
-  return /^\s*cache:\s*(?:['"])?(?:npm|yarn|pnpm|true)(?:['"])?\s*$/mu.test(source)
-    || /^\s*-\s*uses:\s*actions\/cache@/mu.test(source);
+  return (
+    /^\s*cache:\s*(?:['"])?(?:npm|yarn|pnpm|true)(?:['"])?\s*$/mu.test(source) ||
+    /^\s*-\s*uses:\s*actions\/cache@/mu.test(source)
+  );
 }
 
 test('every workflow in this repo parses into a job graph', async () => {
@@ -318,8 +320,13 @@ test('the gate reports the exact shapes this repo shipped before the fix', () =>
 test('release and publish workflows do not restore dependency caches', async () => {
   const violations = [];
   for (const { name, source } of await readWorkflows()) {
-    if (/(?:^|[-_])(publish|deploy|release)(?:[-_.]|$)/iu.test(name) && hasDependencyCache(source)) {
-      violations.push(`${name}: release and publish workflows must install from the lockfile without a cache`);
+    if (
+      /(?:^|[-_])(publish|deploy|release)(?:[-_.]|$)/iu.test(name) &&
+      hasDependencyCache(source)
+    ) {
+      violations.push(
+        `${name}: release and publish workflows must install from the lockfile without a cache`
+      );
     }
   }
   assert.deepEqual(violations, [], violations.join('\n'));

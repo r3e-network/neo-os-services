@@ -8,12 +8,12 @@ its design is `neo-os/claudedocs/NEOOS-TARGET-ARCHITECTURE-V2-20260921.md`.
 
 ## v1 binding (enforced)
 
-| Component                  | Plane          | Published interfaces                                       |
-| -------------------------- | -------------- | ---------------------------------------------------------- |
+| Component                  | Plane          | Published interfaces                                                |
+| -------------------------- | -------------- | ------------------------------------------------------------------- |
 | `protocol-did-registry`    | protocol plane | owned by `neo-os-did`; services consumes the pinned vendor snapshot |
-| `gateway-network-identity` | gateway plane  | interfaces: NetworkIdentity, NetworkPolicy                 |
-| `gateway-signer`           | gateway plane  | interfaces: ScopedSigner, SubmissionReceipt, SignerPolicy  |
-| `gateway-service-kernel`   | gateway plane  | interfaces: DurableJob, CallbackEnvelope, RelayerPolicy    |
+| `gateway-network-identity` | gateway plane  | interfaces: NetworkIdentity, NetworkPolicy                          |
+| `gateway-signer`           | gateway plane  | interfaces: ScopedSigner, SubmissionReceipt, SignerPolicy           |
+| `gateway-service-kernel`   | gateway plane  | interfaces: DurableJob, CallbackEnvelope, RelayerPolicy             |
 
 ## v2 binding (proposed)
 
@@ -21,7 +21,7 @@ Repository layer: `L3` (gateway).
 
 | Component              | Layer | Ownership                                                                                                                                               |
 | ---------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `C04` identity         | L1    | owned by `neo-os-did`: NeoDIDRegistry bindings, claims, nullifiers, action tickets and verifier rotation                                                  | must not own: authorization                                           |
+| `C04` identity         | L1    | owned by `neo-os-did`: NeoDIDRegistry bindings, claims, nullifiers, action tickets and verifier rotation                                                | must not own: authorization                                           |
 | `C05` oracle           | L1    | owns: MorpheusOracle request routing and fulfilment, MorpheusDataFeed, callback consumer adapter                                                        | must not own: app-registration, module-grants, app-state, fee-credits |
 | `C12` sign             | L3    | owns: signer policy, caller auth, network binding, per-key limits…                                                                                      | must not own: key-custody                                             |
 | `C14` deliver          | L3    | owns: DeliveryJob, journal-before-broadcast, callbacks, sponsored submission with idempotent claim…                                                     | must not own: confirmation-semantics                                  |
@@ -31,17 +31,17 @@ Repository layer: `L3` (gateway).
 
 ### Declared moves out of this repository
 
-| Path                            | Destination |
-| ------------------------------- | ----------- |
+| Path                                         | Destination |
+| -------------------------------------------- | ----------- |
 | `vendor/neo-os-did/contracts/NeoDIDRegistry` | C04         |
-| `contracts`                     | C05         |
-| `apps/web`                      | C20         |
-| `services/neoswap`              | delete      |
-| `workers/morpheus-relayer`      | delete      |
-| `workers/morpheus-relater-rs`   | delete      |
-| `contracts-evm`                 | archive     |
-| `workers/nitro-worker/src/game` | retire      |
-| `config/networks`               | C08         |
+| `contracts`                                  | C05         |
+| `apps/web`                                   | C20         |
+| `services/neoswap`                           | delete      |
+| `workers/morpheus-relayer`                   | delete      |
+| `workers/morpheus-relater-rs`                | delete      |
+| `contracts-evm`                              | archive     |
+| `workers/nitro-worker/src/game`              | retire      |
+| `config/networks`                            | C08         |
 
 No deployment or production status is asserted here. Status is generated, never written:
 see `neo-os-web/docs/workspace/ARCHITECTURE-STATUS.generated.md`.

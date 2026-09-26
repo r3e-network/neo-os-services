@@ -215,22 +215,23 @@ test('loadStableOracleKeyMaterial re-throws non-ENOENT read errors', async () =>
     getSecret: async () => Buffer.alloc(48, 7).toString('base64'),
   }));
 
-  test.mock.method(fs, 'readFile', async () => {
-    const error = new Error('EACCES: permission denied');
-    error.code = 'EACCES';
-    throw error;
-  });
-
+  // Import before mocking: on Node 22 the ESM loader reads module source
+  // through fs/promises.readFile, so an unscoped mock fails the import itself.
   const cryptoMod = await import(`./crypto.js?test=permission-${Date.now()}`);
   const saved = saveKeyMaterialEnv();
+  const keystorePath = path.join(tmpdir(), `permission-keystore-${Date.now()}.json`);
+  const originalReadFile = fs.readFile;
   try {
+    test.mock.method(fs, 'readFile', async (file, ...rest) => {
+      if (String(file) !== keystorePath) return originalReadFile.call(fs, file, ...rest);
+      const error = new Error('EACCES: permission denied');
+      error.code = 'EACCES';
+      throw error;
+    });
     delete process.env.MORPHEUS_ORACLE_KEY_MATERIAL_BASE64;
     delete process.env.MORPHEUS_ORACLE_SEALED_KEYSTORE_JSON;
     delete process.env.MORPHEUS_ORACLE_SEALED_KEYSTORE_BASE64;
-    process.env.NITRO_ORACLE_KEYSTORE_PATH = path.join(
-      tmpdir(),
-      `permission-keystore-${Date.now()}.json`
-    );
+    process.env.NITRO_ORACLE_KEYSTORE_PATH = keystorePath;
     cryptoMod.__resetOracleKeyMaterialForTests();
 
     await assert.rejects(
