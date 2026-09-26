@@ -65,3 +65,4 @@ examples/contracts/n3/obj/
 **/.mimosa/
 contracts-evm/build/*.bin
 .env*
+supabase/.temp

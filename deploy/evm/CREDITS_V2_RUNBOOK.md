@@ -104,7 +104,7 @@ signer separation, and production change review are complete.
 
 ## Relayer schema compatibility
 
-`supabase/migrations/0016_allow_neox_relayer_jobs.sql` repairs the existing
+`db/services/migrations/0016_allow_neox_relayer_jobs.sql` repairs the existing
 durable-queue mismatch: the Neo X adapter emits `chain='neox'`, while migration
 0004 accepted only `neo_n3`. The migration adds exactly `neox`; it does not add a
 testnet value, activate the Neo X worker, or change RLS.

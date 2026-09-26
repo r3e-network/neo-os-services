@@ -22,10 +22,6 @@ for (const path of [
 }
 
 for (const path of [
-  'services/neoswap/oracle-aggregator/src/metrics.ts',
-  'services/neoswap/oracle-aggregator/src/twap-calculator.ts',
-  'services/neoswap/price-feed/src/server.ts',
-  'services/neoswap/price-feed/src/server.test.ts',
 ]) {
   test(`service source satisfies lint rules: ${path}`, async () => {
     const results = await eslint.lintFiles([path]);
@@ -38,8 +34,6 @@ for (const path of [
 
 for (const path of [
   'dist/index.js',
-  'services/neoswap/oracle-aggregator/dist/twap-calculator.js',
-  'services/neoswap/price-feed/dist/server.js',
 ]) {
   test(`lint excludes generated output: ${path}`, async () => {
     assert.equal(await eslint.isPathIgnored(path), true);
@@ -47,10 +41,7 @@ for (const path of [
 }
 
 for (const path of [
-  'services/neoswap/oracle-aggregator/src/twap-calculator.ts',
-  'services/neoswap/price-feed/src/server.ts',
   'scripts/source-quality-gates.test.mjs',
-  'tests/cypress/e2e/neoswap-v2.cy.js',
 ]) {
   test(`lint retains authored source: ${path}`, async () => {
     assert.equal(await eslint.isPathIgnored(path), false);

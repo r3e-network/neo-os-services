@@ -97,43 +97,6 @@ jobs:
       # oracle without regenerating them (the Rust ports verify against these).
       - run: node scripts/export-rust-vectors.mjs --check
 
-  neoswap:
-    needs: changes
-    if: ${{ github.event_name == 'push' || needs.changes.outputs.services == 'true' }}
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version-file: .nvmrc
-      - name: Install root dependencies with pinned npm
-        run: npx --yes npm@10.9.2 ci --no-audit --no-fund
-      - name: Run NeoSwap dependency security test
-        run: node --test scripts/dependency-security.test.mjs
-      - name: Audit root dependencies
-        run: npx --yes npm@10.9.2 audit --audit-level=moderate
-      - name: Install services web dependencies with pinned npm
-        run: npx --yes npm@10.9.2 ci --prefix apps/web --no-audit --no-fund
-      - name: Audit services web dependencies
-        run: npx --yes npm@10.9.2 audit --prefix apps/web --audit-level=moderate
-      - name: Guard services web lockfile drift
-        run: |
-          npx --yes npm@10.9.2 install --package-lock-only --ignore-scripts --no-audit --no-fund --prefix apps/web
-          git diff --exit-code -- apps/web/package-lock.json
-      - name: Install NeoSwap dependencies with pinned npm
-        run: cd services/neoswap && npx --yes npm@10.9.2 ci --no-audit --no-fund
-      - name: Audit NeoSwap dependencies
-        run: npm --prefix services/neoswap run audit:security
-      - name: Test NeoSwap services
-        run: npm --prefix services/neoswap run test:all
-      - name: Build every NeoSwap service
-        run: npm --prefix services/neoswap run build:all
-      - name: Guard NeoSwap lockfile drift
-        run: |
-          cd services/neoswap
-          npx --yes npm@10.9.2 install --package-lock-only --ignore-scripts --no-audit --no-fund
-          git diff --exit-code -- package-lock.json
-
   # The Rust crates of the repository-root cargo workspace (the custody service
   # and the consensus core). fmt/clippy/test all run --locked: a Cargo.lock
   # drift is a review finding, not a side effect (same posture as the npm

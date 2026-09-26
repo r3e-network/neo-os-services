@@ -118,7 +118,7 @@ Proposed v2 binding: in `neo-os-web/docs/workspace/neoos-target-architecture.v2.
 - `workers/neo-signer` — key custody service; a Rust crate, in `workers/` because that is where this repository keeps confidential-plane processes, and deliberately not an npm workspace member
 - `deploy/cloudflare` — edge gateway and control-plane workers
 - `contracts` — Neo N3 MiniApp OS kernel and built-in modules
-- `supabase/migrations` — schema, policies, control-plane jobs, relayer durability
+- `db/services/migrations` — schema, policies, control-plane jobs, relayer durability
 - `docs` — canonical architecture, deployment, operations, validation, and specs
 - `scripts` — deployment, verification, SaaS sync, and operator helpers
 
