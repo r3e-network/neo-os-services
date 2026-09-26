@@ -22,7 +22,7 @@ fn resolve_network_follows_the_overlay_like_process_env() {
 }
 
 #[test]
-fn an_unspellable_network_collapses_to_testnet() {
+fn an_unspellable_network_is_an_error_not_testnet() {
     assert_eq!(normalize_network(Some("MAINNET")).unwrap(), "mainnet");
     assert_eq!(normalize_network(Some("  mainnet  ")).unwrap(), "mainnet");
     assert_eq!(normalize_network(Some("mainnet ")).unwrap(), "mainnet");
