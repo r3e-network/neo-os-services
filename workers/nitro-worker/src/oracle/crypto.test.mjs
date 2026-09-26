@@ -5,6 +5,12 @@ import fs, { writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { resolveEncryptedTokenCiphertext } from './crypto.js';
+import { isolateAwsCredentials } from '../test-support/aws-credentials.mjs';
+
+// Nothing in this file may reach AWS: the worker's Secrets Manager client falls
+// back to the SDK's default credential chain when no secrets provider is
+// installed (see test-support/aws-credentials.mjs).
+test.after(isolateAwsCredentials());
 
 const originalFetch = global.fetch;
 const originalSupabaseUrl = process.env.SUPABASE_URL;

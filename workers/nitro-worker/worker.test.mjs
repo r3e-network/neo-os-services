@@ -17,6 +17,12 @@ import {
   neoNetworkMagicLe4,
   encodeUint256Word,
 } from '@r3e-network/neo-os-services-shared/neo-encoding';
+import { isolateAwsCredentials } from './src/test-support/aws-credentials.mjs';
+
+// Nothing in this file may reach AWS: the worker's Secrets Manager client falls
+// back to the SDK's default credential chain when no secrets provider is
+// installed (see src/test-support/aws-credentials.mjs).
+test.after(isolateAwsCredentials());
 
 const originalFetch = global.fetch;
 const originalRuntimeToken = process.env.MORPHEUS_RUNTIME_TOKEN;

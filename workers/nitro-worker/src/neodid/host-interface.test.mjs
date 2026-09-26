@@ -26,6 +26,7 @@ import {
   __setSecretsProviderForTests,
 } from '../platform/nitro-signer.js';
 import { __resetOracleKeyMaterialForTests, ensureOracleKeyMaterial } from '../oracle/crypto.js';
+import { isolateAwsCredentials } from '../test-support/aws-credentials.mjs';
 import {
   __resetNeoDidStateForTests,
   handleNeoDidActionTicket,
@@ -77,10 +78,13 @@ const ENV_KEYS = [
 ];
 
 // Every test starts from cleared seams and a known environment, and puts both
-// back when it ends.
+// back when it ends. The AWS SDK's default credential chain is left with
+// nothing to find, so a lane that stopped using this worker's secrets seam
+// fails here instead of sending a real Secrets Manager request.
 function prepare(t) {
   const saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
   for (const key of ENV_KEYS) delete process.env[key];
+  t.after(isolateAwsCredentials());
   process.env.SIGNER_ROLE_WORKER_KEY_ID = KEY_ID;
   process.env.MORPHEUS_NETWORK = 'testnet';
   process.env.MORPHEUS_NEODID_ALLOW_UNVERIFIED_UID = 'true';

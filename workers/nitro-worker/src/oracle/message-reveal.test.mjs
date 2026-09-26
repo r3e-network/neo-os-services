@@ -11,6 +11,12 @@ import {
   readMessageFromChain,
   resolveNeoxMessageChainContext,
 } from './message-reveal.js';
+import { isolateAwsCredentials } from '../test-support/aws-credentials.mjs';
+
+// Nothing in this file may reach AWS: the worker's Secrets Manager client falls
+// back to the SDK's default credential chain when no secrets provider is
+// installed (see test-support/aws-credentials.mjs).
+test.after(isolateAwsCredentials());
 
 process.env.MORPHEUS_ALLOW_EPHEMERAL_KEY = 'true';
 const { ensureOracleKeyMaterial } = await import('./crypto.js');

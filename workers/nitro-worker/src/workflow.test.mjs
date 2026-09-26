@@ -9,11 +9,17 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { isolateAwsCredentials } from './test-support/aws-credentials.mjs';
 
 // ---------------------------------------------------------------------------
 // Environment setup (mirrors worker.test.mjs)
 // ---------------------------------------------------------------------------
 const originalFetch = global.fetch;
+// Nothing in this file may reach AWS: the worker's Secrets Manager client falls
+// back to the SDK's default credential chain when no secrets provider is
+// installed (see test-support/aws-credentials.mjs). baselineEnv below captures
+// the isolation, so restoreState keeps it for every test.
+test.after(isolateAwsCredentials());
 
 process.env.MORPHEUS_RUNTIME_TOKEN = 'workflow-test-secret';
 delete process.env.MORPHEUS_WORKER_NEO_N3_PRIVATE_KEY;

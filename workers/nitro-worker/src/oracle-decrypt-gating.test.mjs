@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import { ethers } from 'ethers';
 
 import { __handleOracleDecryptForTests } from './capabilities.js';
+import { isolateAwsCredentials } from './test-support/aws-credentials.mjs';
+
+// Nothing in this file may reach AWS: the worker's Secrets Manager client falls
+// back to the SDK's default credential chain when no secrets provider is
+// installed (see test-support/aws-credentials.mjs).
+test.after(isolateAwsCredentials());
 
 // E5 — /oracle/decrypt per-request gating. The binding path is opt-in: a request
 // with no binding fields keeps the legacy (token-only) behavior unless the
