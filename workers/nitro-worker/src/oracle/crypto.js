@@ -11,6 +11,7 @@ import {
   getSupabaseRestConfig,
   normalizeBoolean,
   normalizeMorpheusNetwork,
+  normalizeTargetChain,
   cappedDurationMs,
   resolveMaxBytes,
   resolvePayloadNetwork,
@@ -310,7 +311,39 @@ function resolveEncryptedConfidentialRef(payload) {
   );
 }
 
-async function loadEncryptedCiphertextByRef(ref, payload = {}) {
+function namesTargetChain(label) {
+  if (typeof label !== 'string' || !label.trim()) return false;
+  try {
+    normalizeTargetChain(label);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The network whose encrypted secrets an encrypted ref is looked up in: the
+ * payload's network, or this worker's MORPHEUS_NETWORK when it names none. A
+ * recovery ticket names its chain family in `network` (`neo_n3` by default,
+ * and the documented request sends it); for such a caller
+ * (`networkNamesChainFamily`), a label that normalizeTargetChain accepts names
+ * no Morpheus network, so the ref is looked up under this worker's network, the
+ * rule the enclave host applies when it signs a recovery ticket. Any other
+ * explicit label goes through the strict resolvePayloadNetwork.
+ */
+function resolveEncryptedRefNetwork(payload, { networkNamesChainFamily = false } = {}) {
+  const workerNetwork = normalizeMorpheusNetwork(
+    env('MORPHEUS_NETWORK') || env('NEXT_PUBLIC_MORPHEUS_NETWORK') || 'testnet'
+  );
+  if (networkNamesChainFamily && namesTargetChain(payload?.network)) {
+    const withoutChainFamily = { ...payload };
+    delete withoutChainFamily.network;
+    return resolvePayloadNetwork(withoutChainFamily, workerNetwork);
+  }
+  return resolvePayloadNetwork(payload, workerNetwork);
+}
+
+async function loadEncryptedCiphertextByRef(ref, payload = {}, options = {}) {
   const requestId = resolveEncryptedRefRequestId(payload);
   if (!requestId) {
     throw new Error('request_id is required when resolving an encrypted ref');
@@ -320,12 +353,7 @@ async function loadEncryptedCiphertextByRef(ref, payload = {}) {
     throw new Error(
       'SUPABASE_URL and a Supabase secret or service-role key are required for encrypted ref resolution'
     );
-  const network = resolvePayloadNetwork(
-    payload,
-    normalizeMorpheusNetwork(
-      env('MORPHEUS_NETWORK') || env('NEXT_PUBLIC_MORPHEUS_NETWORK') || 'testnet'
-    )
-  );
+  const network = resolveEncryptedRefNetwork(payload, options);
 
   const url = new URL(`${restConfig.restUrl}/morpheus_encrypted_secrets`);
   url.searchParams.set('select', 'id,ciphertext,network,metadata');
@@ -640,11 +668,18 @@ export async function decryptEncryptedToken(ciphertext, payload = {}) {
   return decryptX25519Envelope(envelope, keyMaterial);
 }
 
-export async function resolveConfidentialPayload(payload = {}) {
+/**
+ * Merge a confidential patch (direct ciphertext or an encrypted ref) into the
+ * payload. `options.networkNamesChainFamily` marks a caller whose `network`
+ * field names a chain family rather than a Morpheus network (the NeoDID
+ * recovery ticket); it only changes which network an encrypted ref is looked
+ * up in (see resolveEncryptedRefNetwork).
+ */
+export async function resolveConfidentialPayload(payload = {}, options = {}) {
   let ciphertext = resolveEncryptedConfidentialPayload(payload);
   const encryptedRef = resolveEncryptedConfidentialRef(payload);
   if (!ciphertext && encryptedRef) {
-    ciphertext = await loadEncryptedCiphertextByRef(encryptedRef, payload);
+    ciphertext = await loadEncryptedCiphertextByRef(encryptedRef, payload, options);
   }
   if (!ciphertext) return payload;
 

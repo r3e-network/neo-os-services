@@ -756,7 +756,11 @@ export async function handleNeoDidActionTicket(payload = {}) {
 }
 
 export async function handleNeoDidRecoveryTicket(payload = {}) {
-  const resolvedPayload = await resolveConfidentialPayload(payload);
+  // `network` names the ticket's chain family here (neo_n3 by default), not a
+  // Morpheus network, so an encrypted ref is looked up under the host network.
+  const resolvedPayload = await resolveConfidentialPayload(payload, {
+    networkNamesChainFamily: true,
+  });
   const saltBytes = await resolveNeoDidSalt();
   const provider = requireSupportedProvider(resolvedPayload.provider || 'twitter');
   const providerUid = await resolveVerifiedProviderUid(provider, resolvedPayload, 'recovery');

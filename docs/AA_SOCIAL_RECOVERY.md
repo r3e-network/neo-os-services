@@ -193,6 +193,15 @@ Large-JWT alternative:
 }
 ```
 
+The worker looks the ref up under its own `MORPHEUS_NETWORK`: in a recovery
+ticket `network` names the chain family (`neo_n3`), not a Morpheus network. The
+Rust enclave host serves only a direct `encrypted_params` today and answers a
+ref with 503.
+
+worker 在自己的 `MORPHEUS_NETWORK` 下查找该 ref：恢复票据中的 `network`
+表示链族（`neo_n3`），不是 Morpheus 网络。Rust enclave host 目前只接受直接传入的
+`encrypted_params`，对 ref 返回 503。
+
 ### Web3Auth As The DID Root / 用 Web3Auth 作为 DID 根身份
 
 Recommended production model:

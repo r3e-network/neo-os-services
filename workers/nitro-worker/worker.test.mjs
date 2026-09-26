@@ -1196,6 +1196,104 @@ test('neodid recovery-ticket accepts confidential web3auth id_token payloads', a
   assert.match(body.action_nullifier, /^0x[0-9a-f]{64}$/);
 });
 
+test('neodid recovery-ticket resolves encrypted_params_ref under the worker network when network names the chain family', async () => {
+  __resetNeoDidStateForTests();
+  process.env.SUPABASE_URL = 'https://supabase.test';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-role-key';
+  const fixture = await buildWeb3AuthFixture({
+    claims: {
+      aggregateVerifier: 'web3auth-google',
+      aggregateVerifierId: 'alice@example.com',
+    },
+    clientId: 'worker-test-web3auth-client-recovery-ref',
+    jwksUrl: 'https://jwks.test/web3auth-recovery-ref.json',
+    kid: 'worker-test-web3auth-recovery-ref',
+  });
+
+  const keyRes = await handler(
+    new Request('http://local/oracle/public-key', { headers: authHeaders() })
+  );
+  assert.equal(keyRes.status, 200);
+  const keyMeta = await keyRes.json();
+  const encryptedParams = await encryptForOracle(
+    keyMeta.public_key,
+    JSON.stringify({
+      id_token: fixture.token,
+      web3auth_client_id: fixture.clientId,
+      web3auth_jwks_url: fixture.jwksUrl,
+    })
+  );
+
+  const secretLookups = [];
+  global.fetch = async (url) => {
+    const value = String(url);
+    if (value === fixture.jwksUrl) {
+      return new Response(JSON.stringify(fixture.jwks), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (value.startsWith('https://supabase.test/rest/v1/morpheus_encrypted_secrets')) {
+      secretLookups.push(new URL(value).searchParams.get('network'));
+      return new Response(
+        JSON.stringify([
+          { id: '55555555-5555-5555-5555-555555555555', ciphertext: encryptedParams },
+        ]),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    throw new Error(`unexpected fetch ${value}`);
+  };
+
+  // The documented Large-JWT recovery request: "network": "neo_n3" names the
+  // ticket's chain family, so the ref is looked up under the worker network.
+  const recovery = {
+    provider: 'web3auth',
+    network: 'neo_n3',
+    aa_contract: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+    verifier_contract: '0x03013f49c42a14546c8bbe58f9d434c3517fccab',
+    account_id: 'aa-social-recovery-demo',
+    new_owner: '0x89b05cac00804648c666b47ecb1c57bc185821b7',
+    recovery_nonce: '7',
+    expires_at: '1735689600',
+    encrypted_params_ref: '55555555-5555-5555-5555-555555555555',
+    request_id: 'neodid-recovery-ref',
+  };
+  const res = await handler(
+    new Request('http://local/neodid/recovery-ticket', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(recovery),
+    })
+  );
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.network, 'neo_n3');
+  assert.equal(body.provider, 'web3auth');
+  assert.ok(secretLookups.length > 0);
+  assert.ok(secretLookups.every((network) => network === 'eq.testnet'));
+
+  // Only the recovery lane reads network as a chain family; on a bind ticket
+  // the same label is still an unsupported network, refused before any lookup.
+  secretLookups.length = 0;
+  const bindRes = await handler(
+    new Request('http://local/neodid/bind', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        provider: 'web3auth',
+        network: 'neo_n3',
+        vault_account: '0x6d0656f6dd91469db1c90cc1e574380613f43738',
+        encrypted_params_ref: '55555555-5555-5555-5555-555555555555',
+        request_id: 'neodid-bind-ref',
+      }),
+    })
+  );
+  assert.equal(bindRes.status, 400);
+  assert.match((await bindRes.json()).error, /unsupported Neo network: neo_n3/);
+  assert.deepEqual(secretLookups, []);
+});
+
 test('neodid zklogin-ticket binds a web3auth identity root to an AA operation digest', async () => {
   __resetNeoDidStateForTests();
   const fixture = await buildWeb3AuthFixture({
