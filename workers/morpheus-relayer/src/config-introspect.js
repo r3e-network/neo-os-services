@@ -21,7 +21,10 @@ function trim(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-// Mirror of config.js getRuntimeConfig() — parse the packed JSON env fallback.
+// Observational parse of the packed JSON env fallback for the report.
+// config.js getRuntimeConfig() refuses a corrupt or non-object value, so
+// validateRelayerConfig() reports it as a build error; the report itself then
+// shows no packed values.
 function parseRuntimeConfig(env) {
   const raw = trim(env.MORPHEUS_RUNTIME_CONFIG_JSON || '');
   if (!raw) return {};

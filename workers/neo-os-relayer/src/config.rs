@@ -175,7 +175,7 @@ pub fn create_relayer_config_from_env(
     env: &BTreeMap<String, String>,
 ) -> Result<RelayerConfig, String> {
     let repo_root = resolve_repo_root();
-    let runtime_config = crate::config_introspect::parse_runtime_config(env);
+    let runtime_config = crate::config_introspect::parse_runtime_config(env)?;
 
     let mut process_env_obj = JsObject::new();
     for (k, v) in env {
@@ -483,6 +483,51 @@ mod tests {
                 .expect_err("Rust wrapper must never accept host EVM key material");
             assert!(error.contains("forbidden in the Rust relayer"));
             assert!(!error.contains("secret"));
+        }
+    }
+
+    #[test]
+    fn rust_wrapper_refuses_a_corrupt_or_non_object_runtime_config() {
+        // Truncated JSON that names mainnet: read as empty, it would start the
+        // relayer on its TestNet defaults.
+        let secret = "packed-secret-value-0123456789";
+        let corrupt = format!(
+            r#"{{"MORPHEUS_NETWORK":"mainnet","MORPHEUS_RELAYER_ADMIN_API_KEY":"{secret}""#
+        );
+        let env = BTreeMap::from([("MORPHEUS_RUNTIME_CONFIG_JSON".to_string(), corrupt)]);
+        let error = create_relayer_config_from_env(&env)
+            .expect_err("a corrupt runtime config must not start on defaults");
+        assert!(
+            error.contains("MORPHEUS_RUNTIME_CONFIG_JSON is not valid JSON"),
+            "{error}"
+        );
+        assert!(!error.contains(secret), "the error must not echo the value");
+        for value in [r#"["mainnet"]"#, r#""mainnet""#, "42", "null"] {
+            let env = BTreeMap::from([(
+                "MORPHEUS_RUNTIME_CONFIG_JSON".to_string(),
+                value.to_string(),
+            )]);
+            let error = create_relayer_config_from_env(&env).expect_err(value);
+            assert!(
+                error.contains("MORPHEUS_RUNTIME_CONFIG_JSON must be a JSON object"),
+                "{value}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn rust_wrapper_treats_a_packed_false_or_zero_network_as_explicit() {
+        for packed in ["false", "0"] {
+            let env = BTreeMap::from([(
+                "MORPHEUS_RUNTIME_CONFIG_JSON".to_string(),
+                format!(r#"{{"MORPHEUS_NETWORK":{packed}}}"#),
+            )]);
+            let error = create_relayer_config_from_env(&env)
+                .expect_err("a packed non-string network must not read as absent");
+            assert!(
+                error.contains("unsupported Neo network"),
+                "{packed}: {error}"
+            );
         }
     }
 

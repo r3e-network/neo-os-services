@@ -1610,6 +1610,59 @@ test('createRelayerConfig exposes the custody-backed Neo X lane in production', 
   }
 });
 
+// Runs `run` with only MORPHEUS_RUNTIME_CONFIG_JSON selecting the network.
+function withPackedRuntimeConfig(value, run) {
+  const keys = ['MORPHEUS_RUNTIME_CONFIG_JSON', 'MORPHEUS_NETWORK', 'NEXT_PUBLIC_MORPHEUS_NETWORK'];
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  for (const key of keys) delete process.env[key];
+  process.env.MORPHEUS_RUNTIME_CONFIG_JSON = value;
+  try {
+    return withIsolatedRelayerSigner(run);
+  } finally {
+    for (const [key, saved] of previous) {
+      if (saved === undefined) delete process.env[key];
+      else process.env[key] = saved;
+    }
+  }
+}
+
+test('createRelayerConfig refuses a corrupt or non-object packed runtime config', () => {
+  // Truncated JSON that names mainnet: read as empty, it would start the
+  // relayer on its TestNet defaults.
+  const secret = 'packed-secret-value-0123456789';
+  withPackedRuntimeConfig(
+    `{"MORPHEUS_NETWORK":"mainnet","MORPHEUS_RELAYER_ADMIN_API_KEY":"${secret}"`,
+    () => {
+      assert.throws(
+        () => createRelayerConfig(),
+        (error) =>
+          /MORPHEUS_RUNTIME_CONFIG_JSON is not valid JSON/.test(error.message) &&
+          !error.message.includes(secret)
+      );
+    }
+  );
+  for (const value of ['["mainnet"]', '"mainnet"', '42', 'null']) {
+    withPackedRuntimeConfig(value, () => {
+      assert.throws(
+        () => createRelayerConfig(),
+        /MORPHEUS_RUNTIME_CONFIG_JSON must be a JSON object/,
+        value
+      );
+    });
+  }
+});
+
+test('createRelayerConfig treats a packed false or 0 network as an explicit label', () => {
+  for (const network of [false, 0]) {
+    withPackedRuntimeConfig(JSON.stringify({ MORPHEUS_NETWORK: network }), () => {
+      assert.throws(() => createRelayerConfig(), /unsupported Neo network/, String(network));
+    });
+  }
+  withPackedRuntimeConfig(JSON.stringify({ MORPHEUS_NETWORK: 'mainnet' }), () => {
+    assert.equal(createRelayerConfig().network, 'mainnet');
+  });
+});
+
 test('createRelayerConfig reads relayer heartbeat urls from packed runtime config', () => {
   const keys = [
     'MORPHEUS_RUNTIME_CONFIG_JSON',

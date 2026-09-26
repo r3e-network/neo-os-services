@@ -258,19 +258,30 @@ function resolveRelayerMode(value) {
 let runtimeConfigCache;
 let runtimeConfigCacheRaw;
 
+// A non-empty MORPHEUS_RUNTIME_CONFIG_JSON must be a JSON object. Reading a
+// corrupt or non-object value as empty would drop every packed setting,
+// MORPHEUS_NETWORK included, and start the relayer on its defaults, so it is a
+// configuration error. The message never echoes the value: it can carry
+// secrets.
+function parseRuntimeConfigJson(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('MORPHEUS_RUNTIME_CONFIG_JSON is not valid JSON');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('MORPHEUS_RUNTIME_CONFIG_JSON must be a JSON object');
+  }
+  return parsed;
+}
+
 function getRuntimeConfig() {
   const raw = trimString(process.env.MORPHEUS_RUNTIME_CONFIG_JSON || '');
   if (runtimeConfigCache !== undefined && raw === runtimeConfigCacheRaw) return runtimeConfigCache;
+  const parsed = raw ? parseRuntimeConfigJson(raw) : {};
   runtimeConfigCacheRaw = raw;
-  if (!raw) {
-    runtimeConfigCache = {};
-    return runtimeConfigCache;
-  }
-  try {
-    runtimeConfigCache = JSON.parse(raw);
-  } catch {
-    runtimeConfigCache = {};
-  }
+  runtimeConfigCache = parsed;
   return runtimeConfigCache;
 }
 

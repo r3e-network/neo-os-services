@@ -139,17 +139,25 @@ pub struct ConfigReport {
     pub settings: Vec<ResolvedSettingReport>,
 }
 
-pub fn parse_runtime_config(env: &BTreeMap<String, String>) -> BTreeMap<String, Value> {
+/// Parse `MORPHEUS_RUNTIME_CONFIG_JSON`. An unset or blank value is an empty
+/// runtime config; any other value must be a JSON object. Reading a corrupt or
+/// non-object value as empty would drop every packed setting,
+/// `MORPHEUS_NETWORK` included, and start the relayer on its defaults, so it is
+/// an error. The message never echoes the value: it can carry secrets.
+pub fn parse_runtime_config(
+    env: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, Value>, String> {
     let raw = env
         .get("MORPHEUS_RUNTIME_CONFIG_JSON")
         .map(|s| s.trim())
         .unwrap_or("");
     if raw.is_empty() {
-        return BTreeMap::new();
+        return Ok(BTreeMap::new());
     }
     match serde_json::from_str::<Value>(raw) {
-        Ok(Value::Object(map)) => map.into_iter().collect(),
-        _ => BTreeMap::new(),
+        Ok(Value::Object(map)) => Ok(map.into_iter().collect()),
+        Ok(_) => Err("MORPHEUS_RUNTIME_CONFIG_JSON must be a JSON object".to_string()),
+        Err(_) => Err("MORPHEUS_RUNTIME_CONFIG_JSON is not valid JSON".to_string()),
     }
 }
 
@@ -215,7 +223,9 @@ pub fn is_secret_setting(setting: &ConfigSetting) -> bool {
 }
 
 pub fn resolve_config_report(env: &BTreeMap<String, String>) -> ConfigReport {
-    let runtime_config = parse_runtime_config(env);
+    // Observational: a corrupt runtime config shows no packed values here, and
+    // validate_relayer_config reports the parse error itself.
+    let runtime_config = parse_runtime_config(env).unwrap_or_default();
     let settings = CONFIG_SCHEMA
         .iter()
         .map(|setting| {
@@ -640,8 +650,16 @@ pub fn validate_relayer_config(
                 direct_env.set(key.clone(), JsValue::Str(value.clone()));
             }
             let mut runtime_env = JsObject::new();
-            for (key, value) in parse_runtime_config(env) {
-                runtime_env.set(key, JsValue::from_json(&value));
+            match parse_runtime_config(env) {
+                Ok(runtime_config) => {
+                    for (key, value) in runtime_config {
+                        runtime_env.set(key, JsValue::from_json(&value));
+                    }
+                }
+                Err(message) => errors.push(ValidationError {
+                    key: "MORPHEUS_RUNTIME_CONFIG_JSON".to_string(),
+                    message,
+                }),
             }
             let env_source = neo_os_core::config::EnvSource::new(direct_env, runtime_env);
             if let Err(message) = crate::config::reject_host_evm_private_keys(&env_source) {
@@ -983,6 +1001,26 @@ mod tests {
                 .errors
                 .iter()
                 .any(|e| e.key == "neo_n3.networkMagic"));
+        }
+    }
+
+    #[test]
+    fn validation_reports_a_corrupt_runtime_config() {
+        for (raw, message) in [
+            (r#"{"MORPHEUS_NETWORK":"mainnet""#, "is not valid JSON"),
+            (r#"["mainnet"]"#, "must be a JSON object"),
+        ] {
+            let env = BTreeMap::from([("MORPHEUS_RUNTIME_CONFIG_JSON".to_owned(), raw.to_owned())]);
+            let result = validate_relayer_config(&env, None);
+            assert!(!result.ok);
+            assert!(
+                result
+                    .errors
+                    .iter()
+                    .any(|e| e.key == "MORPHEUS_RUNTIME_CONFIG_JSON" && e.message.contains(message)),
+                "{raw}: {:?}",
+                result.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+            );
         }
     }
 

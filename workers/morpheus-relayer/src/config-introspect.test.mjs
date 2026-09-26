@@ -44,6 +44,26 @@ function feedOnlyEnv(overrides = {}) {
   };
 }
 
+test('validate reports a corrupt packed runtime config as a build error', () => {
+  const saved = process.env.MORPHEUS_RUNTIME_CONFIG_JSON;
+  process.env.MORPHEUS_RUNTIME_CONFIG_JSON = '{"MORPHEUS_NETWORK":"mainnet"';
+  try {
+    const result = validateRelayerConfig({ env: process.env });
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.errors.some(
+        (error) =>
+          error.key === 'config' &&
+          /MORPHEUS_RUNTIME_CONFIG_JSON is not valid JSON/.test(error.message)
+      ),
+      JSON.stringify(result.errors)
+    );
+  } finally {
+    if (saved === undefined) delete process.env.MORPHEUS_RUNTIME_CONFIG_JSON;
+    else process.env.MORPHEUS_RUNTIME_CONFIG_JSON = saved;
+  }
+});
+
 test('validate flags missing neo_n3 requirements (oracle contract + custody updater key)', () => {
   // combined mode with neo_n3 active but no oracle contract and no custody
   // updater key id -> both conditional requirements must fire. Derived keys do
