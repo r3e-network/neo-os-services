@@ -371,3 +371,28 @@ test('a malformed JSON body is a dispatch failure, not a crash', async () => {
   assert.equal(body.status, 'error');
   assert.equal(body.runtime, RUNTIME);
 });
+
+// -- boot --------------------------------------------------------------------
+
+test('an unreviewed MORPHEUS_NETWORK stops the host before it listens', async () => {
+  const port = await freePort();
+  // A host that started serving would block here until the timeout kills it.
+  const result = spawnSync(HOST_BIN, {
+    env: {
+      ...baseEnv(),
+      HOST: '127.0.0.1',
+      ENCLAVE_PORT: String(port),
+      NITRO_API_TOKEN: 'parity-suite-token',
+      MORPHEUS_NETWORK: 'staging',
+    },
+    encoding: 'utf8',
+    timeout: 20_000,
+  });
+  assert.equal(result.status, 1, `stderr: ${result.stderr}`);
+  assert.match(
+    result.stderr,
+    /refusing to serve — invalid runtime network: unsupported Neo network: staging/
+  );
+  assert.equal(result.stdout, '', 'the host must not report that it is listening');
+  await assert.rejects(fetch(`http://127.0.0.1:${port}/health`), 'nothing may listen on the port');
+});

@@ -132,6 +132,21 @@ fn main() {
         }
     }
 
+    // MORPHEUS_NETWORK is fixed at boot (it is not provisionable), and every
+    // signing lane resolves its custody identity from it. An unreviewed label
+    // stops the process here, before it binds, the same way an unattested
+    // boot does, instead of panicking after the listener is up.
+    let network = match app_state.resolve_network() {
+        Ok(network) => network,
+        Err(error) => {
+            eprintln!(
+                "enclave_host: refusing to serve — invalid runtime network: {}",
+                error.message
+            );
+            std::process::exit(1);
+        }
+    };
+
     let router = Router::new().fallback(any(serve)).with_state(ShimState {
         app: app_state.clone(),
         max_body_bytes,
@@ -157,9 +172,7 @@ fn main() {
                 "msg": "morpheus enclave-server listening",
                 "host": host,
                 "port": port,
-                "network": app_state
-                    .resolve_network()
-                    .unwrap_or_else(|error| panic!("invalid runtime network: {}", error.message)),
+                "network": network,
                 "execution_plane": "rust-in-process",
             })
         );
