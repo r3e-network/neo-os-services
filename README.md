@@ -19,9 +19,11 @@ test, the seven `/api/neodid/*` handlers, and the Rust protocol and enclave-host
 copies of `neo-os-did` sources placed at their consumer paths, so they import this repository's own platform
 modules and every security primitive exists once. `vendor/neo-os-did.pin.json` records the `neo-os-did` commit
 and each copy's source, destination and SHA-256. `vendor/neo-os-did/` holds only NeoDID data read as data: the
-DID method text and the registry NEF and manifest. `npm run check:neodid-vendor` fails on drift, on an undeclared
-file under `vendor/neo-os-did/`, on a pinned copy of a module this repository owns, and, with a sibling
-`neo-os-did` checkout, on a checkout that is not at the pinned commit. A change to a pinned file is made in
+DID method text and the registry NEF and manifest. `npm run check:neodid-vendor` fails on drift, on a pin that
+drops one of the known consumer or data destinations, on an undeclared file under `vendor/neo-os-did/`, on a
+pinned copy of a module this repository owns, and, with a sibling `neo-os-did` checkout, on a checkout that is not
+at the pinned commit. CI has no `neo-os-did` checkout (the repository is private), so the sibling rules run only
+where one is present locally. A change to a pinned file is made in
 `neo-os-did` and arrives by moving the pin; enclave builds remain offline and reproducible. Eligibility is an
 independent proof that the operation-policy layer composes with AA authorization; the registry never grants
 authorization, and an indexer never grants eligibility.

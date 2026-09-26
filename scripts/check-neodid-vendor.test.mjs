@@ -3,13 +3,25 @@
 // weakened rule fails here instead of silently passing the real pin.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { PIN_FILE, checkNeoDidVendor } from './check-neodid-vendor.mjs';
+import { PIN_FILE, REQUIRED_DESTINATIONS, checkNeoDidVendor } from './check-neodid-vendor.mjs';
+
+const GATE = fileURLToPath(new URL('./check-neodid-vendor.mjs', import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 
@@ -90,8 +102,9 @@ function makeTree(t, { siblingBodies = null } = {}) {
   return { base, root, siblingPath, commit };
 }
 
+// A throwaway tree's known destinations are its fixture files.
 function audit(root, env = {}) {
-  return checkNeoDidVendor({ root, env });
+  return checkNeoDidVendor({ root, env, requiredDestinations: FILES.map(({ dest }) => dest) });
 }
 
 test('passes a tree that matches its pin when no sibling checkout exists', (t) => {
@@ -274,5 +287,45 @@ test('refuses to pin a neo-os-did stand-in for a module or data file this reposi
       `${PIN_FILE}: files[4]: crates/neo-os-did/src/core.rs`,
       `${PIN_FILE}: files[5]: crates/neo-os-core/src/network_identity.rs`,
     ]
+  );
+});
+
+test('fails when the pin drops a required destination and leaves the file unpinned', (t) => {
+  const { root, commit } = makeTree(t);
+  // The consumer file stays in place; only its pin entry is gone.
+  writePin(root, pinFor(commit, [FILES[1]]));
+  const { problems } = audit(root);
+  assert.deepEqual(problems, [
+    `${PIN_FILE} does not pin required NeoDID destination workers/nitro-worker/src/neodid/index.js`,
+  ]);
+});
+
+test('the repository pin declares every required destination', () => {
+  const pin = JSON.parse(readFileSync(join(REPO_ROOT, PIN_FILE), 'utf8'));
+  const declared = new Set(pin.files.map(({ dest }) => dest));
+  assert.deepEqual(
+    REQUIRED_DESTINATIONS.filter((dest) => !declared.has(dest)),
+    [],
+    'every consumer file and data file must stay pinned'
+  );
+});
+
+test('runs the audit when invoked through a symlink', (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'neodid-pin-gate-link-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const link = join(base, 'check-neodid-vendor.mjs');
+  symlinkSync(GATE, link);
+  // A NEOOS_DID_CHECKOUT that is not a checkout must fail the audit, so a run
+  // that skipped main() would show up as a clean exit with no output.
+  const missing = join(base, 'no-neo-os-did-here');
+  const result = spawnSync(process.execPath, [link], {
+    encoding: 'utf8',
+    env: { ...process.env, NEOOS_DID_CHECKOUT: missing },
+  });
+  assert.equal(result.status, 1, `stdout: ${result.stdout}\nstderr: ${result.stderr}`);
+  assert.match(result.stderr, /NeoDID pin gate failed/);
+  assert.ok(
+    result.stderr.includes(`NEOOS_DID_CHECKOUT=${missing} is not a git checkout of neo-os-did`),
+    result.stderr
   );
 });

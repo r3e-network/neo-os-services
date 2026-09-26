@@ -22,21 +22,29 @@
  *      file this repository owns, or places source code under
  *      vendor/neo-os-did/, where its imports would resolve to a second copy of
  *      this repository's modules;
- *   3. a dest is missing, is not a regular file, or does not hash to its
+ *   3. the pin does not declare one of REQUIRED_DESTINATIONS, the NeoDID files
+ *      this repository runs or reads: dropping an entry would leave that file
+ *      in place but unverified;
+ *   4. a dest is missing, is not a regular file, or does not hash to its
  *      sha256;
- *   4. a file under vendor/neo-os-did/ is not a declared dest (an orphan);
- *   5. a sibling neo-os-did checkout is found (NEOOS_DID_CHECKOUT, else
+ *   5. a file under vendor/neo-os-did/ is not a declared dest (an orphan);
+ *   6. a sibling neo-os-did checkout is found (NEOOS_DID_CHECKOUT, else
  *      ../neo-os-did or ../../neo-os-did) and its HEAD is not the pin commit,
  *      or a source at the pin commit does not hash to its sha256.
  *      NEOOS_DID_CHECKOUT naming anything but a git checkout is a failure, not
  *      a skipped check.
  *
  * Exported as a function so scripts/check-neodid-vendor.test.mjs can drive each
- * rule against a throwaway tree; run as a CLI it audits this repository.
+ * rule against a throwaway tree; run as a CLI it audits this repository. The
+ * CLI entry compares real paths, so a symlinked invocation still runs it.
+ *
+ * CI runs this gate without a neo-os-did checkout (the repository is private),
+ * so there the sibling rules are skipped and the pin's sha256 values are
+ * compared with the destinations only.
  */
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -64,6 +72,34 @@ export const NEVER_VENDORED_SOURCES = Object.freeze([
   'crates/neo-os-did/src/stable_stringify.rs',
   'crates/neo-os-core/',
   'runtime/nitro-enclave-host/tests/unit/support.rs',
+]);
+
+/**
+ * The destinations every pin must declare: the consumer files this repository
+ * runs from neo-os-did (the worker lane, the resolver and its test, the seven
+ * API handlers, the Rust protocol module and the enclave-host adapter and its
+ * tests) and the NeoDID data it reads. A pin that dropped one would still pass
+ * the other rules while the file stayed in place unverified, so a missing entry
+ * is a failure.
+ */
+export const REQUIRED_DESTINATIONS = Object.freeze([
+  'workers/nitro-worker/src/neodid/index.js',
+  'apps/web/lib/neodid-did.ts',
+  'apps/web/lib/neodid-did-common.ts',
+  'apps/web/lib/neodid-did.test.ts',
+  'apps/web/app/api/neodid/action-ticket/route.ts',
+  'apps/web/app/api/neodid/bind/route.ts',
+  'apps/web/app/api/neodid/providers/route.ts',
+  'apps/web/app/api/neodid/recovery-ticket/route.ts',
+  'apps/web/app/api/neodid/resolve/route.ts',
+  'apps/web/app/api/neodid/runtime/route.ts',
+  'apps/web/app/api/neodid/zklogin-ticket/route.ts',
+  'crates/neo-os-compute/src/neodid.rs',
+  'workers/nitro-enclave-host/src/neodid.rs',
+  'workers/nitro-enclave-host/tests/unit/neodid.rs',
+  'vendor/neo-os-did/docs/NEODID_DID_METHOD.md',
+  'vendor/neo-os-did/contracts/build/NeoDIDRegistry.nef',
+  'vendor/neo-os-did/contracts/build/NeoDIDRegistry.manifest.json',
 ]);
 
 /** Extensions of files that run or compile; none of them belongs under vendor/neo-os-did/. */
@@ -165,6 +201,13 @@ function auditPinShape(pin) {
   return problems;
 }
 
+function auditRequiredDestinations(files, requiredDestinations) {
+  const declared = new Set(files.map((entry) => entry.dest));
+  return requiredDestinations
+    .filter((dest) => !declared.has(dest))
+    .map((dest) => `${PIN_FILE} does not pin required NeoDID destination ${dest}`);
+}
+
 function auditDestinations(root, files) {
   const problems = [];
   for (const entry of files) {
@@ -261,8 +304,13 @@ function auditSibling(sibling, pin) {
 /**
  * Audits the pin of the repository at `root`. Returns the problems found (empty
  * when the tree matches the pin) and a summary of what was checked.
+ * `requiredDestinations` defaults to this repository's REQUIRED_DESTINATIONS.
  */
-export function checkNeoDidVendor({ root = REPO_ROOT, env = process.env } = {}) {
+export function checkNeoDidVendor({
+  root = REPO_ROOT,
+  env = process.env,
+  requiredDestinations = REQUIRED_DESTINATIONS,
+} = {}) {
   const summary = {
     repository: null,
     commit: null,
@@ -284,7 +332,11 @@ export function checkNeoDidVendor({ root = REPO_ROOT, env = process.env } = {}) 
   summary.commit = pin.commit;
   summary.files = pin.files.length;
 
-  const problems = [...auditDestinations(root, pin.files), ...auditOrphans(root, pin.files)];
+  const problems = [
+    ...auditRequiredDestinations(pin.files, requiredDestinations),
+    ...auditDestinations(root, pin.files),
+    ...auditOrphans(root, pin.files),
+  ];
   const sibling = findSiblingCheckout(root, env);
   if (sibling) {
     problems.push(...auditSibling(sibling, pin));
@@ -305,6 +357,16 @@ function main() {
   console.log(JSON.stringify(summary));
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/** True when this file is the process entry point, however it was named. */
+function isCliEntry(entry = process.argv[1]) {
+  if (!entry) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isCliEntry()) {
   main();
 }
