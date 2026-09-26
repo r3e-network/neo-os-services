@@ -4,14 +4,27 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 const lockPath = process.env.NEOOS_CARGO_LOCK ?? join(process.cwd(), 'Cargo.lock');
+const signerManifestPath =
+  process.env.NEOOS_SIGNER_CARGO_TOML ?? join(process.cwd(), 'workers', 'neo-signer', 'Cargo.toml');
 
+// One [[package]] entry per locked version: a second entry for the same name
+// means an older, possibly vulnerable copy is still in the graph.
 function packageVersion(lockfile, packageName) {
   const escaped = packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = lockfile.match(
-    new RegExp(`\\[\\[package\\]\\]\\nname = "${escaped}"\\nversion = "([^"]+)"`, 'u')
+  const entries = lockfile
+    .split(/^\[\[package\]\]\s*$/mu)
+    .filter((entry) => new RegExp(`^name = "${escaped}"$`, 'mu').test(entry));
+  assert.equal(entries.length, 1, `${lockPath} must contain exactly one ${packageName} package`);
+  const [entry] = entries;
+  assert.match(
+    entry,
+    /^source = "registry\+https:\/\/github\.com\/rust-lang\/crates\.io-index"$/mu,
+    `${packageName} must come from the crates.io registry`
   );
-  assert.ok(match, `${packageName} must be present in ${lockPath}`);
-  return match[1];
+  assert.match(entry, /^checksum = "[a-f0-9]{64}"$/mu, `${packageName} must carry a checksum`);
+  const version = /^version = "([^"]+)"$/mu.exec(entry)?.[1];
+  assert.ok(version, `${packageName} must have a locked version in ${lockPath}`);
+  return version;
 }
 
 function compareVersions(left, right) {
@@ -39,5 +52,13 @@ test('Cargo.lock pins protobuf past the uncontrolled recursion advisory', () => 
   assert.ok(
     compareVersions(version, '3.7.2') >= 0,
     `protobuf ${version} is vulnerable to RUSTSEC-2024-0437; require >= 3.7.2`
+  );
+});
+
+test('neo-signer requires the prometheus line that depends on protobuf 3', () => {
+  assert.match(
+    readFileSync(signerManifestPath, 'utf8'),
+    /^prometheus = "0\.14"$/mu,
+    'prometheus 0.13 depends on protobuf 2 (RUSTSEC-2024-0437)'
   );
 });

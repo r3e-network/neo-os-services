@@ -78,6 +78,9 @@ jobs:
       - run: npm run check:rust-migration
       - run: npm run check:production-topology
       - run: npm run check:cargo-lock-provenance
+      # Cargo.lock floors for the rustls and protobuf advisories. Runs here, not
+      # in the path-filtered jobs, so a Cargo.lock-only change is still checked.
+      - run: node --test scripts/rust-security-dependency.test.mjs
       - run: npm run check:neodid-vendor
       # Asserts that deploy-web.yml and publish-images.yml still block on a test
       # job. Runs here as well as inside those workflows so a workflow edit is
