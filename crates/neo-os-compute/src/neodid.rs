@@ -29,7 +29,7 @@ use crate::js::{
     js_trim_string,
 };
 use crate::stable_stringify::stable_stringify;
-use neo_os_core::network_identity::known_neo_n3_identity;
+use neo_os_core::network_identity::{known_neo_n3_identity, resolve_reviewed_network};
 
 const NEODID_BINDING_DOMAIN: &[u8] = b"neodid-binding-v1";
 const NEODID_CLAIM_COMMITMENT_DOMAIN: &[u8] = b"neodid-claim-secret-v1";
@@ -505,6 +505,25 @@ fn neo_n3_network_magic_le4(network: &str, env: EnvReader<'_>) -> Result<[u8; 4]
     ])
 }
 
+/// The network a bind or action ticket digest is bound to. The host signs the
+/// digest with its worker key, which exists only for the host's own network:
+/// its reviewed `MORPHEUS_NETWORK`, resolved as the host resolves its custody
+/// network (an empty value is the documented TestNet default, an unknown label
+/// an error). An absent payload label therefore selects the host network, and
+/// an explicit label must name it; any other network would yield a digest that
+/// the signature can never match on chain.
+fn resolve_ticket_network(env: EnvReader<'_>, resolved_payload: &Json) -> Result<String, String> {
+    let host_network = resolve_reviewed_network(env("MORPHEUS_NETWORK").as_deref())
+        .map_err(|error| error.to_string())?;
+    let network = resolve_payload_network_strict(resolved_payload, &host_network)?;
+    if network != host_network {
+        return Err(format!(
+            "ticket network {network} does not match the host network {host_network}"
+        ));
+    }
+    Ok(network)
+}
+
 /// `encodeUint256Word(text, fieldName)` — 32-byte big-endian zero-padded word;
 /// rejects negatives and overflow. The text has already passed
 /// `resolve_uint256_text`, so the BigInt grammar quirks are unreachable here,
@@ -798,7 +817,7 @@ pub fn neodid_bind(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Result<Json, S
     };
     let claim_value = js_trim_string(js_first_truthy(resolved_payload, &["claim_value"]));
     let metadata_hash = compute_metadata_hash(js_first_truthy(resolved_payload, &["metadata"]));
-    let network = resolve_payload_network_strict(resolved_payload, "testnet")?;
+    let network = resolve_ticket_network(io.env, resolved_payload)?;
     let master_nullifier = compute_master_nullifier(&provider, &provider_uid, &salt_bytes);
 
     let ticket = BindingTicket {
@@ -862,7 +881,7 @@ pub fn neodid_action_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Resul
         ),
         "disposable_account",
     )?;
-    let network = resolve_payload_network_strict(resolved_payload, "testnet")?;
+    let network = resolve_ticket_network(io.env, resolved_payload)?;
 
     let ticket = ActionTicket {
         disposable_account: disposable_account.clone(),
@@ -1438,9 +1457,11 @@ mod tests {
 
     #[test]
     fn action_digest_matches_node_golden() {
+        // A mainnet ticket is issued by a mainnet host.
         let env = env_from(&[
             ("NEODID_SECRET_SALT", "unit-test-salt-text"),
             ("MORPHEUS_NEODID_ALLOW_UNVERIFIED_UID", "true"),
+            ("MORPHEUS_NETWORK", "mainnet"),
         ]);
         let payload = json!({
             "provider": "twitter",
@@ -1467,6 +1488,88 @@ mod tests {
         );
         // Mainnet fallback magic rides at the end of the preimage.
         assert_eq!(result["digest"], format!("0x{GOLDEN_ACT_DIGEST}"));
+    }
+
+    fn ticket_payload(network: Option<&str>) -> Json {
+        let mut payload = json!({
+            "provider": "twitter",
+            "provider_uid": "user-42",
+            "vault_account": format!("0x{}", "11".repeat(20)),
+            "action_id": "act-1",
+            "disposable_account": format!("0x{}", "22".repeat(20)),
+        });
+        if let Some(network) = network {
+            payload["network"] = json!(network);
+        }
+        payload
+    }
+
+    fn host_env(network: Option<&'static str>) -> impl Fn(&str) -> Option<String> {
+        let mut pairs = vec![
+            ("NEODID_SECRET_SALT", "unit-test-salt-text"),
+            ("MORPHEUS_NEODID_ALLOW_UNVERIFIED_UID", "true"),
+        ];
+        if let Some(network) = network {
+            pairs.push(("MORPHEUS_NETWORK", network));
+        }
+        env_from(&pairs)
+    }
+
+    #[test]
+    fn bind_and_action_tickets_default_to_the_host_network() {
+        let mainnet = host_env(Some("mainnet"));
+        let io = io_with(&mainnet, unreachable_verify(), unreachable_derive());
+        // With no label, a mainnet host binds the mainnet magic: the digest an
+        // explicit mainnet label produces, and the action golden above.
+        let action = neodid_action_ticket(&io, &ticket_payload(None)).unwrap();
+        assert_eq!(action["digest"], format!("0x{GOLDEN_ACT_DIGEST}"));
+        assert_eq!(
+            action,
+            neodid_action_ticket(&io, &ticket_payload(Some("mainnet"))).unwrap()
+        );
+        let bind = neodid_bind(&io, &ticket_payload(None)).unwrap();
+        assert_eq!(
+            bind,
+            neodid_bind(&io, &ticket_payload(Some("MAINNET"))).unwrap()
+        );
+
+        // The TestNet default applies only to a host with no MORPHEUS_NETWORK.
+        let unset = host_env(None);
+        let io_unset = io_with(&unset, unreachable_verify(), unreachable_derive());
+        let testnet_bind = neodid_bind(&io_unset, &ticket_payload(None)).unwrap();
+        assert_eq!(
+            testnet_bind,
+            neodid_bind(&io_unset, &ticket_payload(Some("testnet"))).unwrap()
+        );
+        assert_ne!(bind["digest"], testnet_bind["digest"]);
+    }
+
+    #[test]
+    fn a_ticket_for_another_network_than_the_host_is_refused() {
+        let testnet = host_env(Some("testnet"));
+        let io = io_with(&testnet, unreachable_verify(), unreachable_derive());
+        assert_eq!(
+            neodid_bind(&io, &ticket_payload(Some("mainnet"))).unwrap_err(),
+            "ticket network mainnet does not match the host network testnet"
+        );
+        let mut action = ticket_payload(None);
+        action["morpheus_network"] = json!("mainnet");
+        assert_eq!(
+            neodid_action_ticket(&io, &action).unwrap_err(),
+            "ticket network mainnet does not match the host network testnet"
+        );
+        // An unknown label is refused as such, never mapped to the host network.
+        assert_eq!(
+            neodid_bind(&io, &ticket_payload(Some("staging"))).unwrap_err(),
+            "unsupported Neo network: staging"
+        );
+        // So is a host whose own network is not a reviewed one.
+        let staging = host_env(Some("staging"));
+        let io = io_with(&staging, unreachable_verify(), unreachable_derive());
+        assert_eq!(
+            neodid_action_ticket(&io, &ticket_payload(None)).unwrap_err(),
+            "unsupported Neo network: staging"
+        );
     }
 
     #[test]

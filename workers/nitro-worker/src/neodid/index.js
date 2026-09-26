@@ -8,6 +8,7 @@ import {
   env,
   envForNetwork,
   json,
+  normalizeMorpheusNetwork,
   requestLog,
   resolvePayloadNetwork,
   resolveReviewedNeoNetworkMagic,
@@ -408,6 +409,20 @@ function neoN3NetworkMagicLe4(network) {
   return neoNetworkMagicLe4(magic);
 }
 
+// The network a bind or action ticket digest is bound to. The worker signs the
+// digest with its one custody key, which chain/signing.js binds to
+// MORPHEUS_NETWORK, so an absent payload label selects that network and an
+// explicit label must name it: a digest for any other network could never
+// match the signature on chain.
+function resolveTicketNetwork(resolvedPayload) {
+  const hostNetwork = normalizeMorpheusNetwork(env('MORPHEUS_NETWORK'), 'testnet');
+  const network = resolvePayloadNetwork(resolvedPayload, hostNetwork);
+  if (network !== hostNetwork) {
+    throw new Error(`ticket network ${network} does not match the host network ${hostNetwork}`);
+  }
+  return network;
+}
+
 function buildBindingDigestBytes(ticket) {
   return createHash('sha256')
     .update(
@@ -678,7 +693,7 @@ export async function handleNeoDidBind(payload = {}) {
     metadata_hash: computeMetadataHash(resolvedPayload.metadata || {}),
     // Network the digest is signed for; bound into the digest so the signature
     // matches the on-chain NeoDIDRegistry verifier and cannot be cross-network replayed.
-    network: resolvePayloadNetwork(resolvedPayload, 'testnet'),
+    network: resolveTicketNetwork(resolvedPayload),
   };
   ticket.master_nullifier = computeMasterNullifier(ticket.provider, ticket.provider_uid, saltBytes);
   ticket.claim_commitment = computeClaimCommitment(
@@ -726,7 +741,7 @@ export async function handleNeoDidActionTicket(payload = {}) {
     action_id: actionId,
     action_nullifier: actionNullifier,
     // Bound into the digest to match the on-chain verifier (cross-network replay guard).
-    network: resolvePayloadNetwork(resolvedPayload, 'testnet'),
+    network: resolveTicketNetwork(resolvedPayload),
   };
   const digestBytes = buildActionDigestBytes(ticket);
   const signer = await signDigestBytes(digestBytes, resolvedPayload);

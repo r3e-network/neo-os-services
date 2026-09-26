@@ -105,16 +105,18 @@ function prepare(t) {
   });
 }
 
-// Deterministic custody signer speaking the §5 shapes for one worker key,
-// recording every call it answers.
-function installCustody(calls = []) {
+const REVIEWED_MAGIC = { testnet: 894710606, mainnet: 860833102 };
+
+// Deterministic custody signer speaking the §5 shapes for one worker key bound
+// to `network`, recording every call it answers.
+function installCustody(calls = [], network = 'testnet') {
   __setCustodyTransportForTests(async (method, pathname, body = {}) => {
     calls.push({ method, pathname, body });
     if (method === 'GET' && pathname === `/keys/${KEY_ID}`) {
       return {
         key_id: KEY_ID,
-        network: 'testnet',
-        network_magic: 894710606,
+        network,
+        network_magic: REVIEWED_MAGIC[network],
         public_key: workerAccount.publicKey,
         address: workerAccount.address,
         script_hash: `0x${workerAccount.scriptHash}`,
@@ -272,6 +274,52 @@ test('the lane rejects an explicit unknown network through the strict parser of 
     /unsupported Neo network/
   );
   assert.deepEqual(calls, [], 'no custody call may be made for an unknown network');
+});
+
+test('the lane binds a ticket without a network label to MORPHEUS_NETWORK', async (t) => {
+  prepare(t);
+  process.env.NEODID_SECRET_SALT = 'host-interface-salt';
+  const ticket = { provider: 'twitter', provider_uid: 'twitter-uid-1', vault_account: VAULT };
+  const bindDigest = async (payload) => (await (await handleNeoDidBind(payload)).json()).digest;
+
+  process.env.MORPHEUS_NETWORK = 'mainnet';
+  installCustody([], 'mainnet');
+  const mainnetDefault = await bindDigest(ticket);
+  // The same digest as an explicit mainnet label: the host network is the default.
+  assert.equal(mainnetDefault, await bindDigest({ ...ticket, network: 'mainnet' }));
+
+  process.env.MORPHEUS_NETWORK = 'testnet';
+  installCustody([], 'testnet');
+  const testnetDefault = await bindDigest(ticket);
+  assert.equal(testnetDefault, await bindDigest({ ...ticket, network: 'testnet' }));
+  assert.notEqual(mainnetDefault, testnetDefault, 'the bound magic follows MORPHEUS_NETWORK');
+});
+
+test('the lane refuses a ticket label for another network than MORPHEUS_NETWORK', async (t) => {
+  prepare(t);
+  process.env.NEODID_SECRET_SALT = 'host-interface-salt';
+  const calls = installCustody();
+
+  await assert.rejects(
+    handleNeoDidBind({
+      provider: 'twitter',
+      provider_uid: 'twitter-uid-1',
+      vault_account: VAULT,
+      network: 'mainnet',
+    }),
+    /ticket network mainnet does not match the host network testnet/
+  );
+  await assert.rejects(
+    handleNeoDidActionTicket({
+      provider: 'twitter',
+      provider_uid: 'twitter-uid-1',
+      disposable_account: VAULT,
+      action_id: 'vote-1',
+      network: 'mainnet',
+    }),
+    /ticket network mainnet does not match the host network testnet/
+  );
+  assert.deepEqual(calls, [], 'no custody call may be made for another network');
 });
 
 test('the lane binds only the reviewed Neo N3 magic of platform/core.js', async (t) => {

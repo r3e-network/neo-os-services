@@ -176,6 +176,89 @@ fn bind_ticket_flows_in_process_with_both_custody_signatures() {
     assert!(harness.bridge.forwards().is_empty());
 }
 
+/// A bind ticket without a network label is bound to the host's network: on a
+/// MainNet host its digest carries the MainNet magic, exactly as with an
+/// explicit `mainnet` label, and both custody signatures ride MainNet.
+#[test]
+fn bind_without_a_label_binds_the_host_network() {
+    let mut overlay = salted_overlay();
+    overlay.retain(|(name, _)| *name != "MORPHEUS_NETWORK");
+    overlay.push(("MORPHEUS_NETWORK", "mainnet"));
+    let harness = neodid_harness(&overlay);
+    let payload = json!({
+        "provider": "twitter",
+        "provider_uid": "uid-1",
+        "vault_account": "0x11223344556677889900aabbccddeeff00112233",
+    });
+    let response = post(&harness.state, "/neodid/bind", &payload).expect("bind lane executes");
+
+    let env_reader = |name: &str| {
+        overlay
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| (*value).to_string())
+    };
+    let verify = |_request: &neo_os_compute::neodid::Web3AuthVerifyRequest<'_>| -> Result<serde_json::Value, String> {
+        unreachable!("web3auth verification not expected")
+    };
+    let derive = |_path: &str, _purpose: &str| -> Result<Vec<u8>, String> {
+        unreachable!("TEE salt derivation not expected")
+    };
+    let io = neo_os_compute::neodid::NeoDidIo {
+        env: &env_reader,
+        verify_id_token: &verify,
+        derive_key_bytes: &derive,
+    };
+    let mut labelled = payload.clone();
+    labelled["network"] = json!("mainnet");
+    let expected = neo_os_compute::neodid::neodid_bind(&io, &labelled).expect("mainnet bind");
+    assert_eq!(response["digest"], expected["digest"]);
+
+    let calls = harness.signer.sign_calls();
+    assert_eq!(calls.len(), 2, "digest + envelope signatures");
+    for (network, role, _) in &calls {
+        assert_eq!(network, "mainnet");
+        assert_eq!(role, "worker");
+    }
+}
+
+/// An explicit label must name the host's network: a digest bound to another
+/// network could never match the host worker key's signature on chain, so the
+/// ticket is refused before any custody call.
+#[test]
+fn tickets_refuse_a_label_for_another_network_before_custody() {
+    for (route, payload) in [
+        (
+            "/neodid/bind",
+            json!({
+                "provider": "twitter",
+                "provider_uid": "uid-1",
+                "vault_account": "0x11223344556677889900aabbccddeeff00112233",
+                "network": "mainnet",
+            }),
+        ),
+        (
+            "/neodid/action-ticket",
+            json!({
+                "provider": "twitter",
+                "provider_uid": "uid-1",
+                "disposable_account": "0x11223344556677889900aabbccddeeff00112233",
+                "action_id": "vote-1",
+                "network": "mainnet",
+            }),
+        ),
+    ] {
+        let harness = neodid_harness(&salted_overlay());
+        let (status, message) = error_body(&harness.state, route, &payload);
+        assert_eq!(status, 400, "{route}: {message}");
+        assert_eq!(
+            message, "ticket network mainnet does not match the host network testnet",
+            "{route}"
+        );
+        assert!(harness.signer.sign_calls().is_empty(), "{route}");
+    }
+}
+
 #[test]
 fn response_field_order_matches_the_node_handler() {
     let harness = neodid_harness(&salted_overlay());
