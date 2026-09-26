@@ -1,246 +1,246 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "repository": "https://github.com/r3e-network/neo-os-did.git",
   "commit": "ac746176662191372e2bbf9475b594f5d48c1e9a",
   "files": [
     {
       "source": "config/networks/mainnet.json",
-      "vendor": "vendor/neo-os-did/config/networks/mainnet.json",
+      "dest": "vendor/neo-os-did/config/networks/mainnet.json",
       "sha256": "5a4133313174ca19b0190b9e5181cc3ba1dfd3a9d12756a247e6fd2b6d836634"
     },
     {
       "source": "config/networks/testnet.json",
-      "vendor": "vendor/neo-os-did/config/networks/testnet.json",
+      "dest": "vendor/neo-os-did/config/networks/testnet.json",
       "sha256": "0d7309c4a667c6058493bd82cf7267b80742bb26df55915ad49087f2d938221b"
     },
     {
       "source": "contracts/NeoDIDRegistry/NeoDIDRegistry.Commitments.cs",
-      "vendor": "vendor/neo-os-did/contracts/NeoDIDRegistry/NeoDIDRegistry.Commitments.cs",
+      "dest": "vendor/neo-os-did/contracts/NeoDIDRegistry/NeoDIDRegistry.Commitments.cs",
       "sha256": "33394fadb0c3d0ad30375a0afbe58a273bde8d5271d3aa3d01ddc2a22cf9f9ea"
     },
     {
       "source": "contracts/NeoDIDRegistry/NeoDIDRegistry.Verifier.cs",
-      "vendor": "vendor/neo-os-did/contracts/NeoDIDRegistry/NeoDIDRegistry.Verifier.cs",
+      "dest": "vendor/neo-os-did/contracts/NeoDIDRegistry/NeoDIDRegistry.Verifier.cs",
       "sha256": "1557c17847e782df432d6056b67f966885321604d9894ac0d5ba67ba88164ecc"
     },
     {
       "source": "contracts/NeoDIDRegistry/NeoDIDRegistry.cs",
-      "vendor": "vendor/neo-os-did/contracts/NeoDIDRegistry/NeoDIDRegistry.cs",
+      "dest": "vendor/neo-os-did/contracts/NeoDIDRegistry/NeoDIDRegistry.cs",
       "sha256": "81ebfc9dc31fb39a444f03335daa9c220571350d2e742ed81bb1ce5038bf3438"
     },
     {
       "source": "contracts/__tests__/Generated/NeoDIDRegistry.artifacts.cs",
-      "vendor": "vendor/neo-os-did/contracts/__tests__/Generated/NeoDIDRegistry.artifacts.cs",
+      "dest": "vendor/neo-os-did/contracts/__tests__/Generated/NeoDIDRegistry.artifacts.cs",
       "sha256": "1bd5e3b915bb52effc435a22fc4efe0c8ff03b6499b30ad10209325a709c0aab"
     },
     {
       "source": "contracts/build/NeoDIDRegistry.artifacts.cs",
-      "vendor": "vendor/neo-os-did/contracts/build/NeoDIDRegistry.artifacts.cs",
+      "dest": "vendor/neo-os-did/contracts/build/NeoDIDRegistry.artifacts.cs",
       "sha256": "1bd5e3b915bb52effc435a22fc4efe0c8ff03b6499b30ad10209325a709c0aab"
     },
     {
       "source": "contracts/build/NeoDIDRegistry.manifest.json",
-      "vendor": "vendor/neo-os-did/contracts/build/NeoDIDRegistry.manifest.json",
+      "dest": "vendor/neo-os-did/contracts/build/NeoDIDRegistry.manifest.json",
       "sha256": "ab167914648628b97750118fac114387733d48d78beb9d3e5886f0d8d91d40de"
     },
     {
       "source": "contracts/build/NeoDIDRegistry.nef",
-      "vendor": "vendor/neo-os-did/contracts/build/NeoDIDRegistry.nef",
+      "dest": "vendor/neo-os-did/contracts/build/NeoDIDRegistry.nef",
       "sha256": "08eaca068431e3ecdbd61eaebb5b2a775faac3abc7eaa74d8cd6419ee81d0f0b"
     },
     {
       "source": "crates/neo-os-did/src/core.rs",
-      "vendor": "vendor/neo-os-did/crates/neo-os-did/src/core.rs",
+      "dest": "vendor/neo-os-did/crates/neo-os-did/src/core.rs",
       "sha256": "70bb5b227409a68256e80f3934c015dd2bac33cce3e373efc910548c2f9a855e"
     },
     {
       "source": "crates/neo-os-did/src/js.rs",
-      "vendor": "vendor/neo-os-did/crates/neo-os-did/src/js.rs",
+      "dest": "vendor/neo-os-did/crates/neo-os-did/src/js.rs",
       "sha256": "48ecc56b51b27ee41fb553dc255d8c1c5b86096479b870d15e2e02f40681b56b"
     },
     {
       "source": "crates/neo-os-did/src/neodid.rs",
-      "vendor": "vendor/neo-os-did/crates/neo-os-did/src/neodid.rs",
+      "dest": "vendor/neo-os-did/crates/neo-os-did/src/neodid.rs",
       "sha256": "3a19827ce19076b4225932cde9173fdf7fb8f6fc30bce76174b7b9d8d37c2835"
     },
     {
       "source": "crates/neo-os-did/src/stable_stringify.rs",
-      "vendor": "vendor/neo-os-did/crates/neo-os-did/src/stable_stringify.rs",
+      "dest": "vendor/neo-os-did/crates/neo-os-did/src/stable_stringify.rs",
       "sha256": "3f5aa9d350d57822c1fbba645ddca9ba69a92aa037211d71b282b44ae1de0ede"
     },
     {
       "source": "docs/NEODID_DID_METHOD.md",
-      "vendor": "vendor/neo-os-did/docs/NEODID_DID_METHOD.md",
+      "dest": "vendor/neo-os-did/docs/NEODID_DID_METHOD.md",
       "sha256": "e8c9f95d69f35e899c8aa6827fb91de48d324023e41f29e1f2ef1fa9c91715b1"
     },
     {
       "source": "packages/web/app/api/neodid/action-ticket.ts",
-      "vendor": "vendor/neo-os-did/packages/web/app/api/neodid/action-ticket.ts",
+      "dest": "vendor/neo-os-did/packages/web/app/api/neodid/action-ticket.ts",
       "sha256": "e07378d7b3b5047d2e723cd7c8f0c1b37c77a75a78e0dc47d158f5e7925d1aa9"
     },
     {
       "source": "packages/web/app/api/neodid/bind.ts",
-      "vendor": "vendor/neo-os-did/packages/web/app/api/neodid/bind.ts",
+      "dest": "vendor/neo-os-did/packages/web/app/api/neodid/bind.ts",
       "sha256": "87818833caab6cb035964fed78afbb4f4334435376f6ab3de3731aa69cebac1f"
     },
     {
       "source": "packages/web/app/api/neodid/providers.ts",
-      "vendor": "vendor/neo-os-did/packages/web/app/api/neodid/providers.ts",
+      "dest": "vendor/neo-os-did/packages/web/app/api/neodid/providers.ts",
       "sha256": "cc14d4cd6cf7f02207249745ba59a37aa77dbd29fbf3ce48b66cbab1ac18309f"
     },
     {
       "source": "packages/web/app/api/neodid/recovery-ticket.ts",
-      "vendor": "vendor/neo-os-did/packages/web/app/api/neodid/recovery-ticket.ts",
+      "dest": "vendor/neo-os-did/packages/web/app/api/neodid/recovery-ticket.ts",
       "sha256": "8219a066ec83491a642202f757296f4d058fc611724fb782eb3e3ec48881cddb"
     },
     {
       "source": "packages/web/app/api/neodid/resolve.ts",
-      "vendor": "vendor/neo-os-did/packages/web/app/api/neodid/resolve.ts",
+      "dest": "vendor/neo-os-did/packages/web/app/api/neodid/resolve.ts",
       "sha256": "f219484ecfb0b38d53c486fe4499a05ba1f872568ec6670398bcbb2559dded2d"
     },
     {
       "source": "packages/web/app/api/neodid/runtime.ts",
-      "vendor": "vendor/neo-os-did/packages/web/app/api/neodid/runtime.ts",
+      "dest": "vendor/neo-os-did/packages/web/app/api/neodid/runtime.ts",
       "sha256": "2e51b827390dd4112eb86fe7bbeabd516fa483df21c952a22736908ba29c3923"
     },
     {
       "source": "packages/web/app/api/neodid/zklogin-ticket.ts",
-      "vendor": "vendor/neo-os-did/packages/web/app/api/neodid/zklogin-ticket.ts",
+      "dest": "vendor/neo-os-did/packages/web/app/api/neodid/zklogin-ticket.ts",
       "sha256": "972f5d8d568e976aab60b92878387d341ad704a59910292266eb7203aab6f1af"
     },
     {
       "source": "packages/web/src/config.ts",
-      "vendor": "vendor/neo-os-did/packages/web/src/config.ts",
+      "dest": "vendor/neo-os-did/packages/web/src/config.ts",
       "sha256": "45f959627b71b1546db22955368f3919af13cdb57e5511a6412a417299affee0"
     },
     {
       "source": "packages/web/src/feed-defaults.ts",
-      "vendor": "vendor/neo-os-did/packages/web/src/feed-defaults.ts",
+      "dest": "vendor/neo-os-did/packages/web/src/feed-defaults.ts",
       "sha256": "23042ff8b52ce9dd18c01660a978cc84592088ec8ea95d375715b94bd265a108"
     },
     {
       "source": "packages/web/src/neodid-did-common.ts",
-      "vendor": "vendor/neo-os-did/packages/web/src/neodid-did-common.ts",
+      "dest": "vendor/neo-os-did/packages/web/src/neodid-did-common.ts",
       "sha256": "53100db07da9a3eb3e910aaa90d903d4a2a8adc5d3114d7a9f2d287229ba6b69"
     },
     {
       "source": "packages/web/src/neodid-did.test.ts",
-      "vendor": "vendor/neo-os-did/packages/web/src/neodid-did.test.ts",
+      "dest": "vendor/neo-os-did/packages/web/src/neodid-did.test.ts",
       "sha256": "56a0112f640fea28e5c589838e7309f1541153a750a3f4f56191b1a08017ef43"
     },
     {
       "source": "packages/web/src/neodid-did.ts",
-      "vendor": "vendor/neo-os-did/packages/web/src/neodid-did.ts",
+      "dest": "vendor/neo-os-did/packages/web/src/neodid-did.ts",
       "sha256": "2e4d5d6ab16604ea1fde824fa2197006171b43dbdfc3fe2250503f34693a326c"
     },
     {
       "source": "packages/web/src/networks.ts",
-      "vendor": "vendor/neo-os-did/packages/web/src/networks.ts",
+      "dest": "vendor/neo-os-did/packages/web/src/networks.ts",
       "sha256": "a67f6765cc05be4d6cd8da3f4b34922806f1c5e6250db9e35ebdbbcd8f813f25"
     },
     {
       "source": "packages/web/src/onchain-data.ts",
-      "vendor": "vendor/neo-os-did/packages/web/src/onchain-data.ts",
+      "dest": "vendor/neo-os-did/packages/web/src/onchain-data.ts",
       "sha256": "616b1ae360131b0e59fa70e3b199eb1877ddbd31cdd8b8809159f2a682f382af"
     },
     {
       "source": "packages/web/src/public-config.ts",
-      "vendor": "vendor/neo-os-did/packages/web/src/public-config.ts",
+      "dest": "vendor/neo-os-did/packages/web/src/public-config.ts",
       "sha256": "ed01fb825824ae778ae2c3913b8533e128d2c0ca64a19e54b30f1f1b13398f1a"
     },
     {
       "source": "protocol/vectors/neodid-vectors.v1.json",
-      "vendor": "vendor/neo-os-did/protocol/vectors/neodid-vectors.v1.json",
+      "dest": "vendor/neo-os-did/protocol/vectors/neodid-vectors.v1.json",
       "sha256": "e46a64194bd0c9ddb2503a9d71ad4b7972dce187a1cb897cd873d83cbb404476"
     },
     {
       "source": "runtime/nitro-enclave-host/src/neodid.rs",
-      "vendor": "vendor/neo-os-did/runtime/nitro-enclave-host/src/neodid.rs",
+      "dest": "vendor/neo-os-did/runtime/nitro-enclave-host/src/neodid.rs",
       "sha256": "54dab3f8fc73945a621ead4935fc8073587504c8679772acb8ba9d2662d4fb75"
     },
     {
       "source": "runtime/nitro-enclave-host/tests/unit/neodid.rs",
-      "vendor": "vendor/neo-os-did/runtime/nitro-enclave-host/tests/unit/neodid.rs",
+      "dest": "vendor/neo-os-did/runtime/nitro-enclave-host/tests/unit/neodid.rs",
       "sha256": "8d4e00a5dee448cebc6a8a22d1546305681e2516a6c9b55950ce550ba4f28783"
     },
     {
       "source": "runtime/nitro-enclave-host/tests/unit/support.rs",
-      "vendor": "vendor/neo-os-did/runtime/nitro-enclave-host/tests/unit/support.rs",
+      "dest": "vendor/neo-os-did/runtime/nitro-enclave-host/tests/unit/support.rs",
       "sha256": "4695d90336bc9264748ca65c55a8b7b04027ef633b612e9c011bd2fb3662a0ba"
     },
     {
       "source": "runtime/nitro-worker/src/chain/index.js",
-      "vendor": "vendor/neo-os-did/runtime/nitro-worker/src/chain/index.js",
+      "dest": "vendor/neo-os-did/runtime/nitro-worker/src/chain/index.js",
       "sha256": "c6fa39f24614478dd6a2ac8371bf22c22284e07250769b2ba2f001a489e15019"
     },
     {
       "source": "runtime/nitro-worker/src/chain/neo-n3.js",
-      "vendor": "vendor/neo-os-did/runtime/nitro-worker/src/chain/neo-n3.js",
+      "dest": "vendor/neo-os-did/runtime/nitro-worker/src/chain/neo-n3.js",
       "sha256": "99e963a3434d040ae1199ce88744471fce8324b4fb9e9c028d83c9aaa5ec7012"
     },
     {
       "source": "runtime/nitro-worker/src/chain/signing.js",
-      "vendor": "vendor/neo-os-did/runtime/nitro-worker/src/chain/signing.js",
+      "dest": "vendor/neo-os-did/runtime/nitro-worker/src/chain/signing.js",
       "sha256": "09fd29121b47daa4ef6fec97df94f23b68d1183b3de8725f2391f40a062ebed4"
     },
     {
       "source": "runtime/nitro-worker/src/neodid/index.js",
-      "vendor": "vendor/neo-os-did/runtime/nitro-worker/src/neodid/index.js",
+      "dest": "vendor/neo-os-did/runtime/nitro-worker/src/neodid/index.js",
       "sha256": "ee89ffd0ec1dd58a8aa92f4f2df3a787c946d45a7d7f756258009f01ad61252a"
     },
     {
       "source": "runtime/nitro-worker/src/oracle/crypto.js",
-      "vendor": "vendor/neo-os-did/runtime/nitro-worker/src/oracle/crypto.js",
+      "dest": "vendor/neo-os-did/runtime/nitro-worker/src/oracle/crypto.js",
       "sha256": "761ceb598806d5aaa4fceb0894f0ca55ab7bd6d1f9b839fd5ea433800d301cc9"
     },
     {
       "source": "runtime/nitro-worker/src/platform/allowlist.js",
-      "vendor": "vendor/neo-os-did/runtime/nitro-worker/src/platform/allowlist.js",
+      "dest": "vendor/neo-os-did/runtime/nitro-worker/src/platform/allowlist.js",
       "sha256": "6a58ee0173452effa0dce3af9c252945b845073b87eca3e9b3cb9c763aa9d8a1"
     },
     {
       "source": "runtime/nitro-worker/src/platform/core.js",
-      "vendor": "vendor/neo-os-did/runtime/nitro-worker/src/platform/core.js",
+      "dest": "vendor/neo-os-did/runtime/nitro-worker/src/platform/core.js",
       "sha256": "730e48f63cc7507717339cc55b097ed485f00ed5d163a62218e9e7271acda92d"
     },
     {
       "source": "runtime/nitro-worker/src/platform/custody.js",
-      "vendor": "vendor/neo-os-did/runtime/nitro-worker/src/platform/custody.js",
+      "dest": "vendor/neo-os-did/runtime/nitro-worker/src/platform/custody.js",
       "sha256": "8263a2be2c70cbc576ee817294e53a5378e7eefe4a80213cc3083882ab1bc2df"
     },
     {
       "source": "runtime/nitro-worker/src/platform/nitro-signer.js",
-      "vendor": "vendor/neo-os-did/runtime/nitro-worker/src/platform/nitro-signer.js",
+      "dest": "vendor/neo-os-did/runtime/nitro-worker/src/platform/nitro-signer.js",
       "sha256": "1ffd38558d258f2b87fd3b2a5d62d040cfb178a2f119559c36b6b37ff3714dd7"
     },
     {
       "source": "runtime/nitro-worker/src/platform/permission-guard.js",
-      "vendor": "vendor/neo-os-did/runtime/nitro-worker/src/platform/permission-guard.js",
+      "dest": "vendor/neo-os-did/runtime/nitro-worker/src/platform/permission-guard.js",
       "sha256": "76bd503c5c01723482f3f686caf6a2a161addb55ad417277f4e13a6f234ce827"
     },
     {
       "source": "runtime/nitro-worker/src/platform/script-policy.js",
-      "vendor": "vendor/neo-os-did/runtime/nitro-worker/src/platform/script-policy.js",
+      "dest": "vendor/neo-os-did/runtime/nitro-worker/src/platform/script-policy.js",
       "sha256": "443f5d23d5458df67366b10560889dec06fa88c5ab6b2f4a5cd5bbbffdadaa75"
     },
     {
       "source": "runtime/nitro-worker/src/platform/script-runner.js",
-      "vendor": "vendor/neo-os-did/runtime/nitro-worker/src/platform/script-runner.js",
+      "dest": "vendor/neo-os-did/runtime/nitro-worker/src/platform/script-runner.js",
       "sha256": "bac5ada3d922f1f14e5794bf1818ea0a61732da44594674f6475dc4258da59f4"
     },
     {
       "source": "runtime/nitro-worker/src/platform/script-source.js",
-      "vendor": "vendor/neo-os-did/runtime/nitro-worker/src/platform/script-source.js",
+      "dest": "vendor/neo-os-did/runtime/nitro-worker/src/platform/script-source.js",
       "sha256": "130228afdf86179303ec4be4f420084f105a759879d7b94a2e96399ad724350e"
     },
     {
       "source": "runtime/nitro-worker/src/platform/ssrf.js",
-      "vendor": "vendor/neo-os-did/runtime/nitro-worker/src/platform/ssrf.js",
+      "dest": "vendor/neo-os-did/runtime/nitro-worker/src/platform/ssrf.js",
       "sha256": "5025b99a1a946ad41f1427544f30cf57bfa4b198640ceea79d6b86dbaf47837b"
     },
     {
       "source": "runtime/nitro-worker/src/platform/wasm-runner.js",
-      "vendor": "vendor/neo-os-did/runtime/nitro-worker/src/platform/wasm-runner.js",
+      "dest": "vendor/neo-os-did/runtime/nitro-worker/src/platform/wasm-runner.js",
       "sha256": "d4919700d1e84418788993051779ceab8dca0b256dfeabeaa191dd84427abf96"
     }
   ]
