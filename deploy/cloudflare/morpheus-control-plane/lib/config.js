@@ -49,12 +49,15 @@ function resolveStaleProcessingMs(env) {
 }
 
 /**
- * Resolve a network carried by a queue/workflow payload. Empty values retain
- * the documented TestNet default; an explicit unknown label is a poison
- * message and must never be routed to a different Supabase/network scope.
+ * Resolve a network carried by a queue/workflow payload. An absent, null or
+ * blank value retains the documented TestNet default; any other value that is
+ * not a served network label, `false` and `0` included, is a poison message
+ * and must never be routed to a different Supabase/network scope.
  */
 function resolveControlPlaneNetwork(value) {
-  const normalized = trimString(value).toLowerCase();
+  if (value === undefined || value === null) return 'testnet';
+  if (typeof value !== 'string') throw new Error(`unsupported Neo network: ${String(value)}`);
+  const normalized = value.trim().toLowerCase();
   if (!normalized) return 'testnet';
   if (normalized === 'mainnet' || normalized === 'testnet') return normalized;
   throw new Error(`unsupported Neo network: ${normalized}`);

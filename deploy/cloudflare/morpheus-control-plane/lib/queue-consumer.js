@@ -37,6 +37,30 @@ function mergeJobMetadata(job, workflowMetadata, extra = {}) {
   };
 }
 
+/**
+ * The network of a queue message. This Worker enqueues messages from job rows
+ * whose network is already mainnet or testnet, so any other label marks a
+ * malformed (poison) message. It cannot be matched to a job row without
+ * guessing a network, so it is logged and acknowledged instead of thrown: a
+ * throw would abort the rest of the batch, and every unacknowledged message in
+ * it would be retried and could be dead-lettered with it. A real job row keeps
+ * its status and stays with the cron recovery path, which re-enqueues it from
+ * the row's own network.
+ */
+function resolveMessageNetwork(message, body, queueName) {
+  try {
+    return resolveControlPlaneNetwork(body.network);
+  } catch (error) {
+    console.error(
+      `[control-plane] dropping ${queueName} message ${message.id || '(no id)'} for job ${
+        trimString(body.job_id) || '(none)'
+      }: ${error instanceof Error ? error.message : String(error)}`
+    );
+    message.ack();
+    return null;
+  }
+}
+
 async function claimQueueJob(message, env, job, network, queueName) {
   const attempts = Number(message.attempts || 1);
   const workflowMetadata = resolveWorkflowMetadata(job, network, job.id);
@@ -65,7 +89,8 @@ async function claimQueueJob(message, env, job, network, queueName) {
 async function processExecutionJob(message, env) {
   const body = message.body && typeof message.body === 'object' ? message.body : {};
   const jobId = trimString(body.job_id);
-  const network = resolveControlPlaneNetwork(body.network);
+  const network = resolveMessageNetwork(message, body, 'oracle_request');
+  if (!network) return;
   if (!jobId) {
     message.ack();
     return;
@@ -183,7 +208,8 @@ async function processExecutionJob(message, env) {
 async function processFeedTickJob(message, env) {
   const body = message.body && typeof message.body === 'object' ? message.body : {};
   const jobId = trimString(body.job_id);
-  const network = resolveControlPlaneNetwork(body.network);
+  const network = resolveMessageNetwork(message, body, 'feed_tick');
+  if (!network) return;
   if (!jobId) {
     message.ack();
     return;
@@ -310,13 +336,15 @@ async function processFeedTickJob(message, env) {
 async function processDeadLetterJob(message, env) {
   const body = message.body && typeof message.body === 'object' ? message.body : {};
   const jobId = trimString(body.job_id);
-  const network = resolveControlPlaneNetwork(body.network);
   if (!jobId) {
     message.ack();
     return;
   }
 
   try {
+    // Parsed inside the try: a DLQ message with an unknown network is acked
+    // like every other one instead of wedging the dead-letter queue.
+    const network = resolveControlPlaneNetwork(body.network);
     const job = await loadJob(env, jobId, network);
     if (!job) {
       message.ack();
@@ -341,11 +369,17 @@ async function processDeadLetterJob(message, env) {
         dead_letter_queue_message_id: message.id,
       },
     }).catch(() => null);
-  } catch {
-    // Even if the Supabase patch fails we ack: re-driving the DLQ message would
-    // not change the outcome (the cron path is the durable backstop), and a
-    // wedged DLQ is worse than a row the cron will mark on its next pass via the
-    // requeue ceiling in recovery.js.
+  } catch (error) {
+    // Even if the Supabase patch fails, or the message names no network this
+    // Worker serves, we ack: re-driving the DLQ message would not change the
+    // outcome (the cron path is the durable backstop), and a wedged DLQ is
+    // worse than a row the cron will mark on its next pass via the requeue
+    // ceiling in recovery.js.
+    console.error(
+      `[control-plane] dead-letter message ${message.id || '(no id)'} for job ${jobId} not finalized: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
   }
   message.ack();
 }

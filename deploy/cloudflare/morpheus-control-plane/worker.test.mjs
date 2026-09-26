@@ -64,8 +64,14 @@ function jsonResponse(status, body) {
 
 test('control-plane network resolution rejects unknown queue and workflow labels', () => {
   assert.equal(resolveControlPlaneNetwork(undefined), 'testnet');
+  assert.equal(resolveControlPlaneNetwork(null), 'testnet');
+  assert.equal(resolveControlPlaneNetwork('  '), 'testnet');
   assert.equal(resolveControlPlaneNetwork(' MAINNET '), 'mainnet');
   assert.throws(() => resolveControlPlaneNetwork('staging'), /unsupported Neo network: staging/);
+  // A non-string label is explicit, not absent.
+  for (const value of [false, 0, {}]) {
+    assert.throws(() => resolveControlPlaneNetwork(value), /unsupported Neo network/);
+  }
   assert.throws(
     () => resolveWorkflowDispatch('/automation/execute', {}, 'staging'),
     /unsupported Neo network: staging/
@@ -1528,6 +1534,162 @@ test('dlq consumer leaves an already-terminal job untouched (B5)', async () => {
   assert.equal(message.acked, true);
   // Unchanged: a succeeded job must not be flipped to dead_lettered.
   assert.equal(state.jobs.get('job-done')?.status, 'succeeded');
+});
+
+// --- Poison messages: an unknown network never aborts a batch ---
+
+function recordingFetch(state) {
+  const baseFetch = createFetchMock(state);
+  const urls = [];
+  const fetchImpl = async (url, init = {}) => {
+    urls.push(String(url));
+    return baseFetch(url, init);
+  };
+  return { fetchImpl, urls };
+}
+
+function seedQueueJob(state, id, overrides = {}) {
+  state.jobs.set(id, {
+    id,
+    network: 'testnet',
+    queue: 'oracle_request',
+    route: '/oracle/query',
+    status: 'dispatched',
+    payload: { symbol: 'TWELVEDATA:NEO-USD', target_chain: 'neo_n3' },
+    metadata: {},
+    created_at: '2026-09-26T00:00:00.000Z',
+    updated_at: '2026-09-26T00:00:00.000Z',
+    ...overrides,
+  });
+}
+
+test('oracle_request consumer acks an unknown-network message and still processes the rest of the batch', async (t) => {
+  const logged = t.mock.method(console, 'error', () => {});
+  const env = createEnv();
+  const state = createState();
+  const { fetchImpl, urls } = recordingFetch(state);
+  global.fetch = fetchImpl;
+  seedQueueJob(state, 'job-staging');
+  seedQueueJob(state, 'job-good');
+
+  const poison = createQueueMessage({
+    job_id: 'job-staging',
+    network: 'staging',
+    queue: 'oracle_request',
+  });
+  poison.id = 'msg-poison';
+  const good = createQueueMessage({
+    job_id: 'job-good',
+    network: 'testnet',
+    queue: 'oracle_request',
+  });
+  good.id = 'msg-good';
+  await worker.queue({ queue: 'morpheus-oracle-request', messages: [poison, good] }, env);
+
+  assert.equal(poison.acked, true);
+  assert.equal(poison.retried, false);
+  assert.equal(good.acked, true);
+  assert.equal(state.executionCalls.length, 1, 'only the valid message reaches execution');
+  assert.equal(state.jobs.get('job-good')?.status, 'succeeded');
+  // The row named by the poison message is not touched under a guessed network.
+  assert.equal(state.jobs.get('job-staging')?.status, 'dispatched');
+  assert.equal(
+    urls.some((url) => url.includes('job-staging')),
+    false,
+    'no Supabase request may be made for the poison message'
+  );
+  assert.equal(logged.mock.callCount(), 1);
+  assert.match(
+    String(logged.mock.calls[0].arguments[0]),
+    /dropping oracle_request message msg-poison for job job-staging: unsupported Neo network: staging/
+  );
+});
+
+test('feed_tick consumer acks an unknown-network message without loading or executing it', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const env = createEnv();
+  const state = createState();
+  const { fetchImpl, urls } = recordingFetch(state);
+  global.fetch = fetchImpl;
+  seedQueueJob(state, 'job-feed', { queue: 'feed_tick', route: '/feeds/tick' });
+
+  const poison = createQueueMessage({ job_id: 'job-feed', network: false, queue: 'feed_tick' });
+  await worker.queue({ queue: 'morpheus-feed-tick', messages: [poison] }, env);
+
+  assert.equal(poison.acked, true);
+  assert.equal(poison.retried, false);
+  assert.deepEqual(urls, []);
+  assert.equal(state.executionCalls.length, 0);
+  assert.equal(state.jobs.get('job-feed')?.status, 'dispatched');
+});
+
+test('dlq consumer acks an unknown-network message and finalizes the next one in the batch', async (t) => {
+  const logged = t.mock.method(console, 'error', () => {});
+  const env = createEnv();
+  const state = createState();
+  const { fetchImpl, urls } = recordingFetch(state);
+  global.fetch = fetchImpl;
+  seedQueueJob(state, 'job-dlq-staging', { status: 'queued' });
+  seedQueueJob(state, 'job-dlq-good', { status: 'queued' });
+
+  const poison = createQueueMessage({
+    job_id: 'job-dlq-staging',
+    network: 'staging',
+    queue: 'oracle_request',
+  });
+  const good = createQueueMessage({
+    job_id: 'job-dlq-good',
+    network: 'testnet',
+    queue: 'oracle_request',
+  });
+  good.id = 'msg-2';
+  await worker.queue({ queue: 'morpheus-oracle-request-dlq', messages: [poison, good] }, env);
+
+  assert.equal(poison.acked, true, 'the DLQ always acks');
+  assert.equal(good.acked, true);
+  assert.equal(state.jobs.get('job-dlq-staging')?.status, 'queued');
+  assert.equal(state.jobs.get('job-dlq-good')?.status, 'dead_lettered');
+  assert.equal(
+    urls.some((url) => url.includes('job-dlq-staging')),
+    false,
+    'no Supabase request may be made for the poison message'
+  );
+  assert.match(
+    String(logged.mock.calls[0].arguments[0]),
+    /dead-letter message msg-1 for job job-dlq-staging not finalized: unsupported Neo network: staging/
+  );
+});
+
+test('workflows refuse an unknown network before any step or backend call', async () => {
+  const env = createEnv();
+  const state = createState();
+  const { fetchImpl, urls } = recordingFetch(state);
+  global.fetch = fetchImpl;
+  seedQueueJob(state, 'job-wf-staging', {
+    queue: 'callback_broadcast',
+    route: '/callbacks/broadcast',
+  });
+
+  for (const Workflow of [CallbackBroadcastWorkflow, AutomationExecuteWorkflow]) {
+    const steps = [];
+    const workflow = new Workflow({}, env);
+    await assert.rejects(
+      workflow.run(
+        { payload: { job_id: 'job-wf-staging', network: 'Staging' } },
+        {
+          async do(label) {
+            steps.push(label);
+            throw new Error(`step ${label} must not run`);
+          },
+        }
+      ),
+      /unsupported Neo network: staging/
+    );
+    assert.deepEqual(steps, [], `${Workflow.name} ran a step`);
+  }
+  assert.deepEqual(urls, []);
+  assert.equal(state.backendCalls.length, 0);
+  assert.equal(state.jobs.get('job-wf-staging')?.status, 'dispatched');
 });
 
 // --- B5(b): recovery requeue ceiling dead-letters poison jobs ---
