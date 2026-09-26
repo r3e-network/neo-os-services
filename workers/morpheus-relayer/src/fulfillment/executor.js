@@ -306,10 +306,16 @@ export async function prepareOracleFulfillment(config, event, logger = null) {
     // a terminal configuration error in classifier.js (no retry burn, no
     // on-chain failure callback). Dev/test keep the fallback.
     //
-    // Binding the fallback to the request (domain-separated derivation over
-    // requestId) was considered and rejected: the fulfillment digest already
-    // binds result ↔ requestId on-chain, and a derivation whose seed is never
-    // revealed is unverifiable — so fail-closed is the whole fix.
+    // The enclave lane is the request-bound derivation: the output is an
+    // HMAC-SHA256, under a VRF subkey HKDF-derived from the attested KMS root,
+    // over the measured network, chain family, chain id, oracle contract,
+    // request id and module (neoos-vrf-random-v2), so a request cannot be
+    // re-rolled. That output is still not third-party verifiable, and anyone
+    // holding an enclave token can compute it before the request exists;
+    // owner decision O18 (docs/security/VRF-DESIGN-20260926.md) chooses
+    // between published VRF proofs, chain-bound input and commit-reveal. A
+    // relayer-side derivation would have neither the attestation nor that
+    // decision behind it, so this fallback stays fail-closed in production.
     if (process.env.NODE_ENV === 'production') {
       throw new Error(
         'enclave fulfillment required in production: random.generate refuses the ' +
