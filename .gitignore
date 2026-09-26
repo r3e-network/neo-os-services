@@ -1,30 +1,97 @@
-node_modules
-.next
-.vercel
-.env
-.env.local
-.env.ci
-.env.*.local
-.npmrc
-coverage
-npm-debug.log*
-*.tsbuildinfo
-.DS_Store
-.serena
-.claude/
-apps/web/.next
-**/next-env.d.ts
-workers/phala-worker/node_modules
-contracts/build
+# === NeoOS Standard .gitignore ===
+
+# Tool State (NEVER commit)
+/.claude/
+/.codegraph/
+/.serena/
+/.planning/
+/.workbuddy/
+/.omx/
+/.worktrees/
+/graphify-out/
+/.vercel/
+/.turbo/
+
+# Build Outputs
+/dist/
+/coverage/
+/.next/
+/test-results/
+*.neopkg
+*.wasm
+
+# Cargo build output (workspace target dir at repo root)
+/target/
+workers/neo-signer/target
+
+# .NET
+/bin/
+/obj/
+**/bin/
+**/obj/
 contracts/**/bin
 contracts/**/obj
+examples/contracts/n3/bin/
+examples/contracts/n3/obj/
+
+# Dependencies
+/node_modules/
+workers/phala-worker/node_modules
+contracts/neox/node_modules
+
+# Environment
+.env
+.env.*
+.env.local
+.env.*.local
+.env.ci
+!.env.example
+
+# Secrets
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+*.gpg
+
+# Editor/IDE
+/.vscode/
+/.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temp
+*.log
+*.tmp
+*.bak
+.cache/
+/tmp/
+
+# === Repository-Specific Patterns ===
+
+# Build outputs
+node_modules
+.npmrc
+npm-debug.log*
+*.tsbuildinfo
+**/next-env.d.ts
+dist
+contracts/build
 examples/build
 contracts/neox/artifacts
 contracts/neox/cache
-contracts/neox/node_modules
 contracts-evm/cache
 contracts-evm/build/forge-out
 contracts-evm/build/*.bin
+
+# Morpheus state
 .morpheus-relayer-state.json
 .morpheus-relayer-state*.json
 deploy/phala/morpheus.env
@@ -33,35 +100,33 @@ deploy/phala/morpheus.mainnet.env
 deploy/phala/morpheus.hub.env
 deploy/nitro/morpheus.*.env
 deploy/nitro/*.env
+
+# Backups
 private-backups/
-.env*.local
+
+# Reports
 docs/reports/
 docs/*_20??-??-??.md
+
+# Deployments
 examples/deployments/*.20??-??-??.json
 examples/deployments/control-plane-smoke.*.latest.json
 examples/deployments/*.latest.json
-dist
 
-# Cargo build output (workspace target dir lives at the repo root; the
-# standalone-target leftover under workers/neo-signer predates workspace
-# membership).
-/target
-workers/neo-signer/target
-
-# Neo-contract compiler artifacts land at the repo root when the contracts
-# test harness builds in place; the checked-in evidence is the generated
-# artifacts source under contracts/__tests__/Generated, not these binaries.
+# Neo-contract compiler artifacts (generated at repo root)
 /MorpheusOracle.nef
 /MorpheusOracle.manifest.json
 
-.worktrees/
+# Secrets directory
 .secrets/
-examples/contracts/n3/bin/
-examples/contracts/n3/obj/
-.omx/
+
+# Operations backups
 .ops-backups/
-.ops-backups/
+
+# Automation logs
 .automation-logs/
+
+# Mimosa state
 **/.mimosa/
 contracts-evm/build/*.bin
 .env*
