@@ -62,3 +62,11 @@ test('neo-signer requires the prometheus line that depends on protobuf 3', () =>
     'prometheus 0.13 depends on protobuf 2 (RUSTSEC-2024-0437)'
   );
 });
+
+test('Cargo.lock excludes RustCrypto rsa affected by RUSTSEC-2023-0071', () => {
+  assert.doesNotMatch(
+    readFileSync(lockPath, 'utf8'),
+    /^name = "rsa"$/mu,
+    'RSA private operations must use the reviewed provider; no patched RustCrypto rsa release is available'
+  );
+});

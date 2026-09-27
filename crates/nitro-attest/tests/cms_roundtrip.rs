@@ -8,13 +8,12 @@
 use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
 use aes_gcm::aead::Aead;
 use aes_gcm::Aes256Gcm;
+use aws_lc_rs::rsa::{OaepPublicEncryptingKey, PublicEncryptingKey, OAEP_SHA256_MGF1SHA256};
 use nitro_attest::asn1::{
     oid_aes256_cbc, oid_aes256_gcm, oid_data, oid_enveloped_data, oid_rsaes_oaep,
 };
 use nitro_attest::cms::{decrypt_cms_enveloped_data, pkcs7_unpad};
-use rsa::pkcs8::DecodePrivateKey;
-use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
-use sha2::Sha256;
+use nitro_attest::rsa_provider::PrivateKey;
 
 const MAIN_KEY_HEX: &str = "308204be020100300d06092a864886f70d0101010500048204a8308204a402010002820101009513e1e91821cfc5f1a4d9980ab57151ef72bcd62948768470a46efbe451738ce3c9a3ed7c54bfb30c7da2509867857ced5d66d2b056c8e90d35011309dc03b65ef9ca5e0138bb3807c5cff353b0f0ac535e75e2985479017cd9f42967022752fd8a8929364b7afbd3e106570be47ee5f1f8aa484171fff3907e57cd25dba739918b2c662093d135900dfe6a9c348813215404bc46eb3a7ee7a8dc2b461c1817c866af0847b798e3982044fa99a30e359525f5711c45a99a736bed713fd39fd04482cf1f4d2e7f0690e841fb8199e87ad817d8b9745ac4d8c196735e6a0d7fcd49f0e6a09e66e2626edc34b4f9afa3e69b4b75a5e3d2322c44944d0a8565793f020301000102820100390a66823dcd92267713507eb07a4465c96ce97c384795b18f381b8f1e095c6128375b15df60be08d05ab1e48cabef93a16eff8cd6141ec3ad5dfe8f3e5284c91f060cbc735335af76a9e5ab80f64ee060f5dfbd57f3da690b5089efdd8e2165cbc55a3dfe9c5aee485fed8118f7d0e642f3969417167b8cc258d5579588ba2ee3209acec9b1013e63cc63dfa7669661e2cc4744b51d64428a532bc9d80bdff12ddfb1573aba79084a74f17fc0017567d38fe3a53f6d621321570c2f964c57393c2a4ea3ecfd1b7d73a24f98096b78026d6889d94dcd891f60e6f967080d9649fdbb7f6d309d3f4ffb72f87888f1d822decf5a20db576f07f24bd2e63db5e72102818100cdf76bca028d74fda698debd44e86c3f84522f1072c7f9222768fedcf234ea8e5e4312f830c1eacac7338e96b026d25b0cdedb6bd8706303619c6b03de754475290207af6ffcd9c6701653433e91db7c30292d0771bd1b445dad93dd5eb995757ac1e5e0754d41db5acc6968a6202ee48ce39576e4886a74221ef8225470faf502818100b94aad61e15849af631443b1a2dc9158ee2ab0b46678d54fb2acaba3a2b2de04c2ddd443953f6427e3c739c08da2130131aaf4128bccc43c9fc64e4b3759667278c6dd968a1518aad75bd7d3e5b9ffb4282adecd93f668e2e59f04af60ca7a945e61381df5c90f0455a79f67971e9361f31acf123bd845e88d68e7c5c2a7eae30281810089ec3b64051d90d022759002925849d4a6d919e71bd5c981137efddc1add508c9196bce7324f48d90d57fb0df15badd586e2dd7074799df42fb33cfe544396da15e1e41f99106b0cb5165e1f5390fcb746d0ebf46637ca4097b29aa7ccbcddd6d3a3703a4492bd9d144a79f3b7fb292ba724e77bbc419577bb399dd3ef53d0d902818100b00b2d74039fd85254765a629973aa7cadbbcdab787871628945d8c55dbd47878a852c3911c1eaaca3931361c8af26134a573c11aad55fd4a190cdae54e61199ccfa5469c4c38a6e36b2c1fa471752c49e2d2d0670fffa6328face7eba1d661d35167534b1e2d6ebad5dd6eb9afea7d4b61ed082686d70ee23fc79c8c0cabd3502818023ea65966872d28d0c5c90da0d59312bd51c1d0ea62dfb31ee9778e58142c1607c4c9ea0ecc41a643fffd938a9d7203eb65ad04f1f6eeaa28bcfbdac0a5c492c9353f4edcc2814c111044bc6c71e13ecb30a09ff174d09e07b528147e570beed99d7dc12b36f6c0b2c8f4a17ed49bb5817a83b85fc2df4786b3ecc0f7688bd43";
 
@@ -31,20 +30,24 @@ const GCM_NONCE: [u8; 12] = [
     0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab,
 ];
 
-fn main_key() -> RsaPrivateKey {
-    RsaPrivateKey::from_pkcs8_der(&hex::decode(MAIN_KEY_HEX).unwrap()).unwrap()
+fn main_key() -> PrivateKey {
+    PrivateKey::from_pkcs8_der(&hex::decode(MAIN_KEY_HEX).unwrap()).unwrap()
 }
 
-fn wrong_key() -> RsaPrivateKey {
-    RsaPrivateKey::from_pkcs8_der(&hex::decode(WRONG_KEY_HEX).unwrap()).unwrap()
+fn wrong_key() -> PrivateKey {
+    PrivateKey::from_pkcs8_der(&hex::decode(WRONG_KEY_HEX).unwrap()).unwrap()
+}
+
+fn public_key(private_key: &PrivateKey) -> PublicEncryptingKey {
+    PublicEncryptingKey::from_der(&private_key.public_key_der().unwrap()).unwrap()
 }
 
 #[test]
 fn kms_cms_private_rsa_decrypt_is_blinded() {
     let source = include_str!("../src/cms.rs");
     assert!(
-        source.contains(".decrypt_blinded(&mut OsRng, Oaep::new::<Sha256>(), encrypted_key)"),
-        "KMS CMS private RSA decrypt must use blinding"
+        source.contains(".decrypt_oaep_sha256(encrypted_key)"),
+        "KMS CMS private RSA decrypt must use the approved provider"
     );
 }
 
@@ -127,15 +130,17 @@ fn pkcs7_pad(data: &[u8], block_size: usize) -> Vec<u8> {
 /// CONSTRUCTED [0] wrapping OCTET STRING segments (the BER shape KMS uses for
 /// larger payloads) instead of a PRIMITIVE [0].
 fn build_kms_like_enveloped_data(
-    pub_key: &RsaPublicKey,
+    pub_key: &PublicEncryptingKey,
     cek: &[u8],
     iv: &[u8],
     plaintext: &[u8],
     wrap: bool,
     segmented: bool,
 ) -> Vec<u8> {
-    let enc_key = pub_key
-        .encrypt(&mut rsa::rand_core::OsRng, Oaep::new::<Sha256>(), cek)
+    let oaep = OaepPublicEncryptingKey::new(pub_key.clone()).unwrap();
+    let mut encrypted_key = vec![0u8; oaep.ciphertext_size()];
+    let enc_key = oaep
+        .encrypt(&OAEP_SHA256_MGF1SHA256, cek, &mut encrypted_key, None)
         .unwrap();
     let padded = pkcs7_pad(plaintext, 16);
     let ct = aes256_cbc_encrypt(cek, iv, &padded);
@@ -145,7 +150,7 @@ fn build_kms_like_enveloped_data(
         // A minimal issuerAndSerialNumber-style rid; the decrypter ignores it.
         &tlv(0x02, &[1]),
         &seq(&[&oid(oid_rsaes_oaep())]),
-        &octet(&enc_key),
+        &octet(enc_key),
     ]);
     let recipient_infos = set(&[&ktri]);
 
@@ -178,14 +183,16 @@ fn build_kms_like_enveloped_data(
 /// as a GCMParameters SEQUENCE or as a bare OCTET STRING; the auth tag is
 /// appended to the ciphertext.
 fn build_gcm_enveloped_data(
-    pub_key: &RsaPublicKey,
+    pub_key: &PublicEncryptingKey,
     cek: &[u8],
     nonce: &[u8],
     plaintext: &[u8],
     sequence_params: bool,
 ) -> Vec<u8> {
-    let enc_key = pub_key
-        .encrypt(&mut rsa::rand_core::OsRng, Oaep::new::<Sha256>(), cek)
+    let oaep = OaepPublicEncryptingKey::new(pub_key.clone()).unwrap();
+    let mut encrypted_key = vec![0u8; oaep.ciphertext_size()];
+    let enc_key = oaep
+        .encrypt(&OAEP_SHA256_MGF1SHA256, cek, &mut encrypted_key, None)
         .unwrap();
     let gcm = Aes256Gcm::new_from_slice(cek).unwrap();
     let ct = gcm
@@ -202,7 +209,7 @@ fn build_gcm_enveloped_data(
         &integer(0),
         &tlv(0x02, &[1]),
         &seq(&[&oid(oid_rsaes_oaep())]),
-        &octet(&enc_key),
+        &octet(enc_key),
     ]);
     let eci = seq(&[
         &oid(oid_data()),
@@ -215,7 +222,7 @@ fn build_gcm_enveloped_data(
 #[test]
 fn round_trip() {
     let priv_key = main_key();
-    let pub_key = priv_key.to_public_key();
+    let pub_key = public_key(&priv_key);
 
     let cases: Vec<(&str, Vec<u8>)> = vec![
         ("short", b"hello nitro".to_vec()),
@@ -238,7 +245,7 @@ fn round_trip() {
 #[test]
 fn round_trip_segmented_encrypted_content() {
     let priv_key = main_key();
-    let pub_key = priv_key.to_public_key();
+    let pub_key = public_key(&priv_key);
     for (name, plaintext) in [
         ("short", b"hello nitro".to_vec()),
         ("multi-block", vec![b'Z'; 55]),
@@ -253,7 +260,7 @@ fn round_trip_segmented_encrypted_content() {
 #[test]
 fn round_trip_aes256_gcm() {
     let priv_key = main_key();
-    let pub_key = priv_key.to_public_key();
+    let pub_key = public_key(&priv_key);
     for name in ["gcm-params", "bare-octet-params"] {
         let der = build_gcm_enveloped_data(
             &pub_key,
@@ -271,7 +278,7 @@ fn round_trip_aes256_gcm() {
 #[test]
 fn wrong_key_is_rejected() {
     let priv_key = main_key();
-    let pub_key = priv_key.to_public_key();
+    let pub_key = public_key(&priv_key);
     let der = build_kms_like_enveloped_data(&pub_key, &CEK, &IV, b"secret", true, false);
     let result = decrypt_cms_enveloped_data(&der, &wrong_key());
     assert!(

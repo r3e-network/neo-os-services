@@ -27,13 +27,9 @@ use std::collections::HashMap;
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use aws_lc_rs::signature::{ParsedPublicKey, RsaPublicKeyComponents, RSA_PKCS1_2048_8192_SHA256};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use rsa::pkcs1v15::{Signature, VerifyingKey};
-use rsa::signature::Verifier;
-use rsa::RsaPublicKey;
-use sha2::Sha256;
-
 use neo_os_compute::core::{normalize_target_chain, sanitize_error_message, EnvReader};
 use neo_os_compute::js::{js_first_truthy, js_trim_string};
 use neo_os_compute::neodid::{
@@ -545,12 +541,10 @@ pub fn verify_rs256_token(
 
     let verifying_keys = select_signing_keys(jwks, kid)?;
     let signature_bytes = b64url_decode(parts[2])?;
-    let signature = Signature::try_from(&signature_bytes[..])
-        .map_err(|_| "signature verification failed".to_string())?;
     let signing_input = format!("{}.{}", parts[0], parts[1]);
     let verified = verifying_keys.iter().any(|verifying_key| {
         verifying_key
-            .verify(signing_input.as_bytes(), &signature)
+            .verify_sig(signing_input.as_bytes(), &signature_bytes)
             .is_ok()
     });
     if !verified {
@@ -619,7 +613,7 @@ fn check_audience(claims: &serde_json::Value, audience: &str) -> Result<(), Stri
 fn select_signing_keys(
     jwks: &serde_json::Value,
     kid: Option<&str>,
-) -> Result<Vec<VerifyingKey<Sha256>>, String> {
+) -> Result<Vec<ParsedPublicKey>, String> {
     let keys = jwks
         .get("keys")
         .and_then(|value| value.as_array())
@@ -665,12 +659,10 @@ fn select_signing_keys(
                     .and_then(|value| value.as_str())
                     .ok_or_else(|| "JWK is missing the exponent".to_string())?,
             )?;
-            let public_key = RsaPublicKey::new(
-                rsa::BigUint::from_bytes_be(&n),
-                rsa::BigUint::from_bytes_be(&e),
-            )
-            .map_err(|_| "JWK modulus/exponent is not a valid RSA key".to_string())?;
-            Ok(VerifyingKey::<Sha256>::new(public_key))
+            let components = RsaPublicKeyComponents { n: &n, e: &e };
+            components
+                .to_parsed_public_key(&RSA_PKCS1_2048_8192_SHA256)
+                .map_err(|_| "JWK modulus/exponent is not a valid RSA key".to_string())
         })
         .collect()
 }

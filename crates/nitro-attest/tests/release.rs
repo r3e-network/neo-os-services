@@ -11,6 +11,7 @@
 use std::sync::{Arc, Mutex};
 
 use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
+use aws_lc_rs::rsa::{OaepPublicEncryptingKey, PublicEncryptingKey, OAEP_SHA256_MGF1SHA256};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use nitro_attest::asn1::{oid_aes256_cbc, oid_data, oid_enveloped_data, oid_rsaes_oaep};
 use nitro_attest::kms::{Credentials, SignedRequest};
@@ -18,9 +19,7 @@ use nitro_attest::release::{
     release_bytes, release_bytes_with_context, release_bytes_with_context_and_key,
     release_master_key, AttestationSource, KmsTransport, ReleaseParams,
 };
-use rsa::{Oaep, RsaPublicKey};
 use serde_json::{json, Value};
-use sha2::Sha256;
 
 const DATA_KEY: [u8; 32] = [7u8; 32];
 const WRAP_CEK: [u8; 32] = [0x5a; 32];
@@ -99,9 +98,11 @@ fn aes256_cbc_encrypt(cek: &[u8], iv: &[u8], plaintext: &[u8]) -> Vec<u8> {
 /// The CiphertextForRecipient shape AWS KMS returns for a Nitro Recipient:
 /// one KeyTransRecipientInfo wrapping the CEK with RSAES-OAEP-SHA256 to the
 /// attested public key, AES-256-CBC content, PKCS#7 padding.
-fn build_kms_response(pub_key: &RsaPublicKey, cek: &[u8], plaintext: &[u8]) -> Value {
-    let enc_key = pub_key
-        .encrypt(&mut rsa::rand_core::OsRng, Oaep::new::<Sha256>(), cek)
+fn build_kms_response(pub_key: &PublicEncryptingKey, cek: &[u8], plaintext: &[u8]) -> Value {
+    let oaep = OaepPublicEncryptingKey::new(pub_key.clone()).unwrap();
+    let mut encrypted_key = vec![0u8; oaep.ciphertext_size()];
+    let enc_key = oaep
+        .encrypt(&OAEP_SHA256_MGF1SHA256, cek, &mut encrypted_key, None)
         .unwrap();
     let padded = pkcs7_pad(plaintext, 16);
     let ct = aes256_cbc_encrypt(cek, &IV, &padded);
@@ -109,7 +110,7 @@ fn build_kms_response(pub_key: &RsaPublicKey, cek: &[u8], plaintext: &[u8]) -> V
         &integer(0),
         &tlv(0x02, &[1]),
         &seq(&[&oid(oid_rsaes_oaep())]),
-        &octet(&enc_key),
+        &octet(enc_key),
     ]);
     let eci = seq(&[
         &oid(oid_data()),
@@ -166,7 +167,7 @@ impl KmsTransport for MockKms {
             .unwrap()
             .clone()
             .expect("the attestation source should have run first");
-        let spki = rsa::pkcs8::DecodePublicKey::from_public_key_der(&public_key)
+        let spki = PublicEncryptingKey::from_der(&public_key)
             .expect("the attested key must be a SPKI DER RSA public key");
         self.seen.lock().unwrap().push(SignedRequest {
             url: url.to_string(),
@@ -435,7 +436,7 @@ impl KmsTransport for ShortKms {
         _body: &str,
     ) -> nitro_attest::AttestResult<(u16, String)> {
         let public_key = self.captured_public_key.lock().unwrap().clone().unwrap();
-        let spki = rsa::pkcs8::DecodePublicKey::from_public_key_der(&public_key).unwrap();
+        let spki = PublicEncryptingKey::from_der(&public_key).unwrap();
         // Wrap with a proper 32-byte CEK; the released plaintext itself is the
         // short content, which is exactly the case release_master_key must refuse.
         Ok((

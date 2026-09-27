@@ -18,9 +18,7 @@
 //! order).
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use nitro_attest::{cms::decrypt_cms_enveloped_data, kms, nsm};
-use rsa::pkcs8::EncodePublicKey;
-use rsa::RsaPrivateKey;
+use nitro_attest::{cms::decrypt_cms_enveloped_data, kms, nsm, rsa_provider::PrivateKey};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
@@ -146,20 +144,19 @@ fn run_kms_decrypt(args: &[String]) {
     }
 
     // a. Ephemeral RSA-2048 keypair (single use, never leaves the enclave).
-    let mut rng = rsa::rand_core::OsRng;
-    let priv_key = match RsaPrivateKey::new(&mut rng, 2048) {
+    let priv_key = match PrivateKey::generate(2048) {
         Ok(key) => key,
-        Err(err) => fail(&format!("generate RSA key: {err}")),
+        Err(err) => fail(&err),
     };
 
     // b. DER SubjectPublicKeyInfo of the RSA public key.
-    let spki = match priv_key.to_public_key().to_public_key_der() {
+    let spki = match priv_key.public_key_der() {
         Ok(doc) => doc,
-        Err(err) => fail(&format!("marshal public key: {err}")),
+        Err(err) => fail(&err),
     };
 
     // c. Attestation document binding that public key.
-    let attestation_doc = match nsm::attest(None, None, Some(spki.as_bytes())) {
+    let attestation_doc = match nsm::attest(None, None, Some(&spki)) {
         Ok(doc) => doc,
         Err(err) => fail(&err),
     };

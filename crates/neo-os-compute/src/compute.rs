@@ -8,15 +8,17 @@
 //! Host I/O is injected: `cryptoRandomUnit` becomes the `random_unit` closure
 //! and `verifyGroth16ProofWithCli` (temp dir + external snarkjs process)
 //! becomes the `verify_groth16_cli` closure; everything else — validation
-//! chain, BigInt/matrix/merkle math, RSA-SHA256 verification (via the `rsa`
-//! crate, matching Node's `createVerify('RSA-SHA256')` PKCS#1 v1.5 semantics),
+//! chain, BigInt/matrix/merkle math, RSA-SHA256 verification (via AWS-LC,
+//! matching Node's `createVerify('RSA-SHA256')` PKCS#1 v1.5 semantics),
 //! digest lanes and the zERC20 statement checks — runs in-enclave.
 
+use aws_lc_rs::{
+    rsa::PublicKey,
+    signature::{ParsedPublicKey, RSA_PKCS1_1024_8192_SHA256_FOR_LEGACY_USE_ONLY},
+};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
-use rsa::pkcs1v15::{Signature, VerifyingKey};
-use rsa::signature::Verifier;
-use rsa::{pkcs1::DecodeRsaPublicKey, pkcs8::DecodePublicKey, RsaPublicKey};
 use serde_json::{json, Map, Value as Json};
 use sha2::{Digest, Sha256};
 use sha3::Keccak256;
@@ -572,19 +574,25 @@ fn verify_rsa_signature(
     else {
         return false;
     };
-    let key = match RsaPublicKey::from_public_key_pem(pem) {
-        Ok(key) => key,
-        Err(_) => match RsaPublicKey::from_pkcs1_pem(pem) {
-            Ok(key) => key,
-            Err(_) => return false,
-        },
-    };
-    let signature_bytes = hex_decode_stop_at_invalid(signature_hex);
-    let Ok(signature) = Signature::try_from(signature_bytes.as_slice()) else {
+    let der = pem
+        .lines()
+        .filter(|line| !line.starts_with("---"))
+        .collect::<String>();
+    let Ok(der) = BASE64.decode(der.as_bytes()) else {
         return false;
     };
-    let verifying_key = VerifyingKey::<Sha256>::new(key);
-    verifying_key.verify(payload.as_bytes(), &signature).is_ok()
+    let signature_bytes = hex_decode_stop_at_invalid(signature_hex);
+    let Ok(public_key) = PublicKey::from_der(&der) else {
+        return false;
+    };
+    // Preserve the Node `createVerify('RSA-SHA256')` compatibility boundary, which
+    // accepts the existing 1024-bit fixture, while still rejecting keys outside
+    // the AWS-LC 1024-8192-bit range.
+    ParsedPublicKey::new(
+        &RSA_PKCS1_1024_8192_SHA256_FOR_LEGACY_USE_ONLY,
+        public_key.as_ref(),
+    )
+    .is_ok_and(|key| key.verify_sig(payload.as_bytes(), &signature_bytes).is_ok())
 }
 
 fn normalize_hex_string(value: Option<&Json>, field_name: &str) -> Result<String, String> {

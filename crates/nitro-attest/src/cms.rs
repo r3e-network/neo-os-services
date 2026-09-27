@@ -10,19 +10,16 @@
 //!
 //! ASN.1 is parsed by hand on top of [`crate::asn1`] — no external CMS/ASN.1
 //! dependency on the security-critical path, mirroring cms.go's stdlib-only
-//! posture (Rust has no crypto stdlib, so the crypto primitives themselves are
-//! the RustCrypto `rsa`/`aes`/`aes-gcm` crates). The BER→DER transcode from
+//! posture (the crypto primitives are AWS-LC for RSA and dedicated AES crates).
+//! The BER→DER transcode from
 //! cms.go lives in [`crate::ber`] and runs first, because KMS emits
 //! indefinite-length BER.
 
-use aes::cipher::{generic_array::GenericArray, BlockDecrypt, KeyInit};
-use aes_gcm::{aead::Aead, Aes256Gcm};
-use rsa::{rand_core::OsRng, Oaep, RsaPrivateKey};
-use sha2::Sha256;
-
 use crate::asn1::{self, Tlv};
 use crate::ber::{ber_to_der, concat_octet_segments};
-use crate::AttestResult;
+use crate::{rsa_provider::PrivateKey, AttestResult};
+use aes::cipher::{generic_array::GenericArray, BlockDecrypt, KeyInit};
+use aes_gcm::{aead::Aead, Aes256Gcm};
 
 /// AlgorithmIdentifier ::= SEQUENCE { algorithm OID, parameters ANY OPTIONAL }
 struct AlgorithmIdentifier<'a> {
@@ -56,7 +53,7 @@ fn parse_algorithm_identifier<'a>(tlv: &Tlv<'a>) -> Result<AlgorithmIdentifier<'
 /// plaintext. The wrapping key is unwrapped with RSAES-OAEP (SHA-256); the
 /// content is decrypted with AES-256-CBC (CEK + IV from the algorithm
 /// parameters). Error strings carry the Go tool's `cms: ...` prefixes.
-pub fn decrypt_cms_enveloped_data(cms: &[u8], priv_key: &RsaPrivateKey) -> AttestResult<Vec<u8>> {
+pub fn decrypt_cms_enveloped_data(cms: &[u8], priv_key: &PrivateKey) -> AttestResult<Vec<u8>> {
     if cms.is_empty() {
         return Err("cms: empty input".to_string());
     }
@@ -151,7 +148,7 @@ pub fn decrypt_cms_enveloped_data(cms: &[u8], priv_key: &RsaPrivateKey) -> Attes
     // private operation because this input is supplied by the KMS response and
     // the key is held inside the enclave.
     let cek = priv_key
-        .decrypt_blinded(&mut OsRng, Oaep::new::<Sha256>(), encrypted_key)
+        .decrypt_oaep_sha256(encrypted_key)
         .map_err(|e| format!("cms: RSA-OAEP unwrap CEK: {e}"))?;
 
     let eci_kids =

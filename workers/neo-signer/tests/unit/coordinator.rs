@@ -3,7 +3,11 @@ use crate::durable::{
     canonical_operation, canonical_receipt, AuthorityHead, CommitCandidate, CommitReceipt,
 };
 use crate::snapshot::{SnapshotHead, SnapshotPosition};
-use rsa::{pkcs8::DecodePublicKey, traits::PublicKeyParts, Oaep, Pss, RsaPublicKey};
+use aws_lc_rs::{
+    digest::{digest, SHA256},
+    rsa::{OaepPublicEncryptingKey, PublicEncryptingKey, OAEP_SHA256_MGF1SHA256},
+    signature::{ParsedPublicKey, RSA_PSS_2048_8192_SHA256},
+};
 use serde::Deserialize;
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -535,13 +539,22 @@ impl HttpTransport for SessionAuthority {
                 BASE64.encode(b"attestation-document")
             );
             let der = self.public_key.lock().unwrap().clone();
-            let key = RsaPublicKey::from_public_key_der(&der)?;
-            assert_eq!(key.n().bits(), 3072);
+            let key = PublicEncryptingKey::from_der(&der)?;
+            assert_eq!(key.key_size_bits(), 3072);
             let exchange = self
                 .exchanges
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let token = if exchange == 0 { "S" } else { "R" }.repeat(43);
-            let ciphertext = key.encrypt(&mut OsRng, Oaep::new::<Sha256>(), token.as_bytes())?;
+            let oaep = OaepPublicEncryptingKey::new(key)?;
+            let mut ciphertext = vec![0u8; oaep.ciphertext_size()];
+            let ciphertext = oaep
+                .encrypt(
+                    &OAEP_SHA256_MGF1SHA256,
+                    token.as_bytes(),
+                    &mut ciphertext,
+                    None,
+                )?
+                .to_vec();
             let key_hash = hex::encode(Sha256::digest(&der));
             return Ok(response(
                 201,
@@ -611,7 +624,7 @@ fn session_is_unsealed_only_with_exact_rsa_3072_oaep_sha256() {
 
     let original_owner = client.owner_id().to_owned();
     let original_der = client.session_key.public_key_der().unwrap();
-    let original_key = RsaPublicKey::from_public_key_der(&original_der).unwrap();
+    let original_key = ParsedPublicKey::new(&RSA_PSS_2048_8192_SHA256, &original_der).unwrap();
     client.session.lock().unwrap().expires_at_ms = 0;
     let client = Arc::new(client);
     let requests = std::thread::scope(|scope| {
@@ -656,9 +669,8 @@ fn session_is_unsealed_only_with_exact_rsa_3072_oaep_sha256() {
         )
         .unwrap();
         original_key
-            .verify(
-                Pss::new_with_salt::<Sha256>(32),
-                &Sha256::digest(canonical),
+            .verify_digest_sig(
+                &digest(&SHA256, &canonical),
                 &BASE64
                     .decode(&request.headers[REQUEST_PROOF_SIGNATURE_HEADER])
                     .unwrap(),
