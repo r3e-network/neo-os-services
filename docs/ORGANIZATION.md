@@ -42,6 +42,7 @@ This repository owns gateway-layer (L3) services:
 ## Planned Cross-Repo Moves
 
 Per ARCHITECTURE.md v2:
+
 - `contracts/` sources → neo-os-contracts (C05) - keep pinned artifacts only
 - `apps/web` → neo-os-admin (C20)
 - `config/networks` → neo-os-workspace (C08)
@@ -51,6 +52,7 @@ Per ARCHITECTURE.md v2:
 Paths removed with proof of no production/build/deploy/runtime use:
 
 ### services/neoswap/ (64 files, deleted 2026-09-26)
+
 - **Last commit**: b880823 (2026-09-26)
 - **Reason**: Declared "delete" in ARCHITECTURE.md v2; generic services outside npm workspaces
 - **Cross-repo check**: Only referenced in neo-os-web v2 architecture proposals (design docs)
@@ -59,6 +61,7 @@ Paths removed with proof of no production/build/deploy/runtime use:
 - **Proof**: Searched all sibling repos' origin default branches - no consumers
 
 ### Tool state directories (deleted 2026-09-26)
+
 - `.planning/` - audit/roadmap notes moved to docs/
 - `.workbuddy/memory/` - session memory, not durable documentation
 
