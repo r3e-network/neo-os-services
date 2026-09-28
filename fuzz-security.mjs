@@ -270,9 +270,10 @@ function fuzzSsrf() {
   }
 
   // P7: Transition-tunnelled IPv4 must classify exactly like the bare IPv4 —
-  // 6to4 (2002::/16), Teredo (2001:0::/32, client stored obfuscated), NAT64
-  // (64:ff9b::/96) and mapped all carry the IPv4 in their low bits, and the
-  // production classifier has to decode each form.
+  // 6to4 (2002::/16), Teredo (2001:0::/32), NAT64 (64:ff9b::/96) and mapped
+  // all carry an IPv4, and the production classifier has to decode each form.
+  // Teredo carries two: the client (stored obfuscated) with a public server
+  // (65.54.227.120), and the server with a public client (8.8.8.8).
   {
     let fail = null;
     for (let i = 0; i < N && !fail; i++) {
@@ -283,7 +284,8 @@ function fuzzSsrf() {
       const expected = isBlockedIpAddress(v4);
       const variants = {
         '6to4': `2002:${hi.toString(16)}:${lo.toString(16)}::`,
-        teredo: `2001:0::${(hi ^ 0xffff).toString(16)}:${(lo ^ 0xffff).toString(16)}`,
+        'teredo-client': `2001:0:4136:e378::${(hi ^ 0xffff).toString(16)}:${(lo ^ 0xffff).toString(16)}`,
+        'teredo-server': `2001:0:${hi.toString(16)}:${lo.toString(16)}::f7f7:f7f7`,
         nat64: `64:ff9b::${hi.toString(16)}:${lo.toString(16)}`,
         mapped: `::ffff:${hi.toString(16)}:${lo.toString(16)}`,
       };
@@ -293,6 +295,36 @@ function fuzzSsrf() {
       }
     }
     report('SSRF', 'P7 transition-tunnelled IPv4 classifies like the bare IPv4', N, !fail, fail);
+  }
+
+  // P8: NAT64 outside the well-known 64:ff9b::/96 is refused whatever it
+  // embeds. The RFC 8215 local-use prefix 64:ff9b:1::/48 may place the IPv4
+  // at bit 96, 64, 56 or 48 (the RFC 6052 layouts), and the rest of
+  // 64:ff9b::/32 has no defined layout at all.
+  {
+    let fail = null;
+    const layouts = ['lu96', 'lu64', 'lu56', 'lu48', 'other'];
+    for (let i = 0; i < N && !fail; i++) {
+      const [a, b, c, d] = [randOctet(), randOctet(), randOctet(), randOctet()];
+      const layout = layouts[i % layouts.length];
+      const r16 = () => randInt(0, 0xffff);
+      let groups;
+      if (layout === 'lu96') {
+        groups = [0x64, 0xff9b, 1, r16(), r16(), r16(), (a << 8) | b, (c << 8) | d];
+      } else if (layout === 'lu64') {
+        groups = [0x64, 0xff9b, 1, r16(), a, (b << 8) | c, (d << 8) | randOctet(), r16()];
+      } else if (layout === 'lu56') {
+        groups = [0x64, 0xff9b, 1, (randOctet() << 8) | a, b, (c << 8) | d, r16(), r16()];
+      } else if (layout === 'lu48') {
+        groups = [0x64, 0xff9b, 1, (a << 8) | b, c, (d << 8) | randOctet(), r16(), r16()];
+      } else {
+        groups = [0x64, 0xff9b, r16(), r16(), r16(), r16(), r16(), r16()];
+        if (groups.slice(2, 6).every((group) => group === 0)) groups[2] = 1;
+      }
+      const address = groups.map((group) => group.toString(16)).join(':');
+      if (!isBlockedIpAddress(address)) fail = { layout, address, embedded: `${a}.${b}.${c}.${d}` };
+    }
+    report('SSRF', 'P8 NAT64 outside 64:ff9b::/96 is refused', N, !fail, fail);
   }
 
   // P6: No crash on random 16-byte IPv6

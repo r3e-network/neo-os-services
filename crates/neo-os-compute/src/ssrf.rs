@@ -119,8 +119,9 @@ fn is_ipv6_literal(address: &str) -> bool {
 
 /// `isBlockedIpAddress(rawAddress)` — true when an IP literal must be rejected
 /// (private/loopback/link-local/CGNAT/multicast/reserved, plus IPv4 embedded
-/// in the IPv4-mapped/SIIT/NAT64/6to4/Teredo transition forms). Unparseable
-/// input is treated as unsafe.
+/// in the IPv4-mapped/SIIT/NAT64/6to4/Teredo transition forms, and all of
+/// NAT64 64:ff9b::/32 outside the well-known /96). Unparseable input is
+/// treated as unsafe.
 pub fn is_blocked_ip_address(raw_address: &Json) -> bool {
     let mut address = js_trim_string(Some(raw_address)).to_lowercase();
     if address.is_empty() {
@@ -160,6 +161,11 @@ fn is_blocked_ipv4(address: &str) -> bool {
         || a >= 224
 }
 
+/// Dotted-quad text of the IPv4 carried in two hextets (`ipv4FromHextets`).
+fn ipv4_from_hextets(hi: u32, lo: u32) -> String {
+    format!("{}.{}.{}.{}", hi >> 8, hi & 0xff, lo >> 8, lo & 0xff)
+}
+
 fn is_blocked_ipv6(address: &str) -> bool {
     let Some(groups) = expand_ipv6(address) else {
         return true;
@@ -167,48 +173,39 @@ fn is_blocked_ipv6(address: &str) -> bool {
     let groups: Vec<u32> = groups.iter().map(|g| u32::from(*g)).collect();
     // The /96 tunnel prefixes carry an IPv4 in the low 32 bits:
     // IPv4-compatible (::/96), IPv4-mapped (::ffff:0:0/96), SIIT
-    // IPv4-translated (::ffff:0:0:0/96) and NAT64 (64:ff9b::/96). 6to4
-    // (2002::/16) and Teredo (2001:0::/32) embed an IPv4 as well (the Teredo
-    // client obfuscated, XOR 0xffffffff). A transition translator on the
-    // egress path sends traffic to the embedded IPv4, so every form is
-    // classified with the IPv4 rules.
+    // IPv4-translated (::ffff:0:0:0/96) and the NAT64 well-known prefix
+    // (64:ff9b::/96). 6to4 (2002::/16) embeds an IPv4 in hextets 1-2, and
+    // Teredo (2001:0::/32) embeds two: the server IPv4 in hextets 2-3, where
+    // a Teredo relay or client sends its indirect bubble (UDP 3544), and the
+    // client IPv4, obfuscated (XOR 0xffffffff), in hextets 6-7. A transition
+    // translator on the egress path sends traffic to the embedded IPv4, so
+    // every form is classified with the IPv4 rules and any blocked embedded
+    // IPv4 refuses the address.
     let zero_head = groups[0] == 0 && groups[1] == 0 && groups[2] == 0;
     let is_v4_tunnelled =
         (zero_head && groups[3] == 0 && groups[4] == 0 && (groups[5] == 0 || groups[5] == 0xffff))
             || (zero_head && groups[3] == 0 && groups[4] == 0xffff && groups[5] == 0);
     let is_nat64 = groups[0] == 0x64 && groups[1] == 0xff9b;
-    if is_v4_tunnelled || is_nat64 {
+    let is_nat64_well_known = is_nat64 && groups[2..6].iter().all(|g| *g == 0);
+    // The rest of 64:ff9b::/32 has no fixed IPv4 position: the RFC 8215
+    // local-use prefix 64:ff9b:1::/48 may use any RFC 6052 layout (/48, /56,
+    // /64 or /96) and may carry non-global IPv4. Refuse it outright.
+    if is_nat64 && !is_nat64_well_known {
+        return true;
+    }
+    if is_v4_tunnelled || is_nat64_well_known {
         if groups[6] == 0 && groups[7] == 0 {
             // Bare ::ffff:0:0 / :: with no embedded host is itself unroutable.
             return true;
         }
-        let v4 = format!(
-            "{}.{}.{}.{}",
-            groups[6] >> 8,
-            groups[6] & 0xff,
-            groups[7] >> 8,
-            groups[7] & 0xff
-        );
-        return is_blocked_ipv4(&v4);
+        return is_blocked_ipv4(&ipv4_from_hextets(groups[6], groups[7]));
     }
     if groups[0] == 0x2002 {
-        return is_blocked_ipv4(&format!(
-            "{}.{}.{}.{}",
-            groups[1] >> 8,
-            groups[1] & 0xff,
-            groups[2] >> 8,
-            groups[2] & 0xff
-        ));
+        return is_blocked_ipv4(&ipv4_from_hextets(groups[1], groups[2]));
     }
     if groups[0] == 0x2001 && groups[1] == 0 {
-        let (hi, lo) = (groups[6] ^ 0xffff, groups[7] ^ 0xffff);
-        return is_blocked_ipv4(&format!(
-            "{}.{}.{}.{}",
-            hi >> 8,
-            hi & 0xff,
-            lo >> 8,
-            lo & 0xff
-        ));
+        return is_blocked_ipv4(&ipv4_from_hextets(groups[2], groups[3]))
+            || is_blocked_ipv4(&ipv4_from_hextets(groups[6] ^ 0xffff, groups[7] ^ 0xffff));
     }
     let first = groups[0];
     let all_zero = groups.iter().all(|g| *g == 0);
@@ -378,15 +375,60 @@ mod tests {
             "2002:a01:203::1",
             "2002::",
             "2001:0:4136:e378:8000:63bf:f5fe:fdfc",
-            "2001:0:0:0:0:0:80ff:fffe",
+            "2001:0:4136:e378:8000:63bf:80ff:fffe",
             "2001:0::",
             "::ffff:0:127.0.0.1",
         ] {
             assert!(blocked(address), "expected blocked: {address}");
         }
-        // Public embedded IPv4 stays allowed on every transition prefix.
-        for address in ["2002:808:808::1", "2001:0:0:0:0:0:f7f7:f7f7"] {
+        // Public embedded IPv4 stays allowed on every transition prefix
+        // (Teredo: server 65.54.227.120, client 8.8.8.8).
+        for address in [
+            "2002:808:808::1",
+            "2001:0:4136:e378:8000:63bf:f7f7:f7f7",
+            "64:ff9b::808:808",
+        ] {
             assert!(!blocked(address), "expected allowed: {address}");
+        }
+    }
+
+    #[test]
+    fn teredo_refuses_a_blocked_server_ipv4() {
+        // A Teredo relay or client sends its indirect bubble (UDP 3544) to
+        // the server IPv4 in hextets 2-3, so a public client does not make
+        // the address safe.
+        for address in [
+            "2001:0:a9fe:a9fe::f7f7:f7f7", // server 169.254.169.254
+            "2001:0:7f00:1::f7f7:f7f7",    // server 127.0.0.1
+            "2001:0:a00:1::f7f7:f7f7",     // server 10.0.0.1
+            "2001:0:c0a8:1::f7f7:f7f7",    // server 192.168.0.1
+            "2001:0:6440:1::f7f7:f7f7",    // server 100.64.0.1 (CGNAT)
+            "2001:0:0:0::f7f7:f7f7",       // server 0.0.0.0
+        ] {
+            assert!(blocked(address), "expected blocked: {address}");
+        }
+    }
+
+    #[test]
+    fn nat64_is_decoded_only_in_the_well_known_prefix() {
+        // 64:ff9b::/96 carries the IPv4 in the low 32 bits.
+        assert!(blocked("64:ff9b::a01:203"));
+        assert!(!blocked("64:ff9b::808:808"));
+        // The rest of 64:ff9b::/32, including the RFC 8215 local-use prefix
+        // 64:ff9b:1::/48 whose RFC 6052 layout (/48, /56, /64 or /96) is
+        // chosen by the operator, is refused whatever it seems to embed.
+        for address in [
+            "64:ff9b:1:0:7f:0:100:0",    // /64 layout, 127.0.0.1
+            "64:ff9b:1:0:a:102:300:0",   // /64 layout, 10.1.2.3
+            "64:ff9b:1:0:c0:a801:100:0", // /64 layout, 192.168.1.1
+            "64:ff9b:1:0:64:4000:100:0", // /64 layout, 100.64.0.1
+            "64:ff9b:1:a01:2:300::",     // /48 layout, 10.1.2.3
+            "64:ff9b:1:a:1:203::",       // /56 layout, 10.1.2.3
+            "64:ff9b:1::a01:203",        // /96 layout, 10.1.2.3
+            "64:ff9b:1::808:808",        // /96 layout, public 8.8.8.8
+            "64:ff9b:ffff::808:808",     // outside the local-use /48
+        ] {
+            assert!(blocked(address), "expected blocked: {address}");
         }
     }
 

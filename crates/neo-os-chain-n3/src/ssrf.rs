@@ -9,8 +9,12 @@
 //! * rejected: unspecified, loopback, private (RFC1918), link-local,
 //!   CGNAT (100.64/10), ULA (fc00::/7), multicast, reserved/documentation;
 //! * IPv4 hidden inside IPv6 transition forms (IPv4-mapped/compatible/SIIT,
-//!   NAT64 64:ff9b::/96, 6to4 2002::/16, Teredo 2001:0::/32) is classified by
-//!   the embedded IPv4 so a private target cannot bypass by spelling;
+//!   6to4 2002::/16, and both the server and the client IPv4 of Teredo
+//!   2001:0::/32) is classified by the embedded IPv4 so a private target
+//!   cannot bypass by spelling;
+//! * NAT64 64:ff9b::/32 is refused outright, the well-known /96 included
+//!   (stricter than the worker and compute classifiers, which decode the
+//!   /96);
 //! * IPv4 written as decimal / hex / octal single numbers or mixed-radix
 //!   dotted forms (`2130706433`, `0x7f000001`, `0177.0.0.1`, `127.1`) is
 //!   canonicalized before classification so it cannot bypass by spelling.
@@ -202,52 +206,46 @@ fn is_blocked_ipv4(ip: Ipv4Addr) -> bool {
         || a >= 240 // reserved + broadcast
 }
 
+/// The IPv4 carried in two IPv6 segments (high, low).
+fn embedded_ipv4(hi: u16, lo: u16) -> Ipv4Addr {
+    let [a, b] = hi.to_be_bytes();
+    let [c, d] = lo.to_be_bytes();
+    Ipv4Addr::new(a, b, c, d)
+}
+
 fn is_blocked_ipv6(ip: Ipv6Addr) -> bool {
     let segments = ip.segments();
     if ip.is_loopback() || ip.is_unspecified() {
         return true;
     }
     // The /96 tunnel prefixes (::/96 compatible, ::ffff:0:0/96 mapped,
-    // ::ffff:0:0:0/96 SIIT-translated, 64:ff9b::/96 NAT64) carry an IPv4 in
-    // the low 32 bits — classify the embedded IPv4.
+    // ::ffff:0:0:0/96 SIIT-translated) carry an IPv4 in the low 32 bits —
+    // classify the embedded IPv4.
     if segments[..5] == [0, 0, 0, 0, 0] && (segments[5] == 0 || segments[5] == 0xffff) {
-        return is_blocked_ipv4(Ipv4Addr::new(
-            (segments[6] >> 8) as u8,
-            (segments[6] & 0xff) as u8,
-            (segments[7] >> 8) as u8,
-            (segments[7] & 0xff) as u8,
-        ));
+        return is_blocked_ipv4(embedded_ipv4(segments[6], segments[7]));
     }
     if segments[..4] == [0, 0, 0, 0] && segments[4] == 0xffff && segments[5] == 0 {
-        return is_blocked_ipv4(Ipv4Addr::new(
-            (segments[6] >> 8) as u8,
-            (segments[6] & 0xff) as u8,
-            (segments[7] >> 8) as u8,
-            (segments[7] & 0xff) as u8,
-        ));
+        return is_blocked_ipv4(embedded_ipv4(segments[6], segments[7]));
     }
+    // NAT64 64:ff9b::/32 is refused outright, the well-known /96 included.
+    // This is stricter than the worker and compute classifiers, which decode
+    // the IPv4 of 64:ff9b::/96 and refuse only the rest of the /32.
     if segments[0] == 0x64 && segments[1] == 0xff9b {
         return true;
     }
     // Transition tunnels carry an IPv4 inside the literal as well: 6to4
-    // (2002::/16) in segments 1-2, Teredo (2001:0::/32) the client IPv4
-    // obfuscated (XOR 0xffff per hextet) in segments 6-7. A translator on the
-    // egress path targets that IPv4, so classify it with the IPv4 rules.
+    // (2002::/16) in segments 1-2, and Teredo (2001:0::/32) two of them: the
+    // server IPv4 in segments 2-3, where a Teredo relay or client sends its
+    // indirect bubble (UDP 3544), and the client IPv4, obfuscated (XOR 0xffff
+    // per segment), in segments 6-7. A translator on the egress path targets
+    // those IPv4, so each is classified with the IPv4 rules and any blocked
+    // one refuses the address.
     if segments[0] == 0x2002 {
-        return is_blocked_ipv4(Ipv4Addr::new(
-            (segments[1] >> 8) as u8,
-            (segments[1] & 0xff) as u8,
-            (segments[2] >> 8) as u8,
-            (segments[2] & 0xff) as u8,
-        ));
+        return is_blocked_ipv4(embedded_ipv4(segments[1], segments[2]));
     }
     if segments[0] == 0x2001 && segments[1] == 0 {
-        return is_blocked_ipv4(Ipv4Addr::new(
-            ((segments[6] ^ 0xffff) >> 8) as u8,
-            ((segments[6] ^ 0xffff) & 0xff) as u8,
-            ((segments[7] ^ 0xffff) >> 8) as u8,
-            ((segments[7] ^ 0xffff) & 0xff) as u8,
-        ));
+        return is_blocked_ipv4(embedded_ipv4(segments[2], segments[3]))
+            || is_blocked_ipv4(embedded_ipv4(segments[6] ^ 0xffff, segments[7] ^ 0xffff));
     }
     (segments[0] & 0xfe00) == 0xfc00        // ULA fc00::/7
         || (segments[0] & 0xffc0) == 0xfe80 // link-local fe80::/10
@@ -398,16 +396,29 @@ mod tests {
     fn shared_js_rust_vectors_hold() {
         // crates/neo-os-core/tests/vectors/ssrf_addresses.json is the one case
         // list shared with the worker's JS classifier and the compute port, so
-        // the transport guard cannot drift from them on these verdicts. Every
-        // shared case is a canonical literal, hence std-parseable.
+        // the transport guard cannot drift from them on these verdicts. A case
+        // may carry chain_n3_blocked where this guard's documented policy is
+        // stricter than the worker's; it can only tighten a verdict.
         let raw = include_str!("../../neo-os-core/tests/vectors/ssrf_addresses.json");
         let vector: serde_json::Value =
             serde_json::from_str(raw).expect("valid shared ssrf vectors");
         let cases = vector["cases"].as_array().expect("cases array");
         assert!(cases.len() >= 40);
+        let no_dns = FakeResolver(HashMap::new());
         for case in cases {
             let address = case["address"].as_str().expect("case address");
-            let expected = case["blocked"].as_bool().expect("case blocked flag");
+            let shared = case["blocked"].as_bool().expect("case blocked flag");
+            let expected = match case.get("chain_n3_blocked") {
+                None => shared,
+                Some(stricter) => {
+                    assert_eq!(
+                        (stricter.as_bool(), shared),
+                        (Some(true), false),
+                        "chain_n3_blocked may only tighten an allowed case: {address}"
+                    );
+                    true
+                }
+            };
             let ip: IpAddr = address
                 .parse()
                 .unwrap_or_else(|error| panic!("shared vector {address} must parse: {error}"));
@@ -415,6 +426,17 @@ mod tests {
                 is_blocked_ip(ip),
                 expected,
                 "shared vector case mismatch: {address}"
+            );
+            // The URL path must reach the same verdict without DNS.
+            let url = if address.contains(':') {
+                format!("http://[{address}]/")
+            } else {
+                format!("http://{address}/")
+            };
+            assert_eq!(
+                matches!(classify_url(&url, &no_dns), SsrfDecision::Rejected(_)),
+                expected,
+                "shared vector URL mismatch: {url}"
             );
         }
     }
@@ -430,17 +452,53 @@ mod tests {
             "2002:a01:203::1",
             "2002::",
             "2001:0:4136:e378:8000:63bf:f5fe:fdfc",
-            "2001:0:0:0:0:0:80ff:fffe",
+            "2001:0:4136:e378:8000:63bf:80ff:fffe",
             "2001:0::",
             "::ffff:0:127.0.0.1",
         ] {
             let ip: IpAddr = address.parse().unwrap();
             assert!(is_blocked_ip(ip), "expected blocked: {address}");
         }
-        // Public embedded IPv4 stays allowed on every transition prefix.
-        for address in ["2002:808:808::1", "2001:0:0:0:0:0:f7f7:f7f7"] {
+        // Public embedded IPv4 stays allowed on every transition prefix
+        // (Teredo: server 65.54.227.120, client 8.8.8.8).
+        for address in ["2002:808:808::1", "2001:0:4136:e378:8000:63bf:f7f7:f7f7"] {
             let ip: IpAddr = address.parse().unwrap();
             assert!(!is_blocked_ip(ip), "expected allowed: {address}");
+        }
+    }
+
+    #[test]
+    fn teredo_refuses_a_blocked_server_ipv4() {
+        // A Teredo relay or client sends its indirect bubble (UDP 3544) to
+        // the server IPv4 in segments 2-3, so a public client does not make
+        // the address safe.
+        for address in [
+            "2001:0:a9fe:a9fe::f7f7:f7f7", // server 169.254.169.254
+            "2001:0:7f00:1::f7f7:f7f7",    // server 127.0.0.1
+            "2001:0:a00:1::f7f7:f7f7",     // server 10.0.0.1
+            "2001:0:c0a8:1::f7f7:f7f7",    // server 192.168.0.1
+            "2001:0:6440:1::f7f7:f7f7",    // server 100.64.0.1 (CGNAT)
+            "2001:0:0:0::f7f7:f7f7",       // server 0.0.0.0
+        ] {
+            let ip: IpAddr = address.parse().unwrap();
+            assert!(is_blocked_ip(ip), "expected blocked: {address}");
+        }
+    }
+
+    #[test]
+    fn nat64_is_refused_outright() {
+        // Stricter than the worker and compute classifiers: the well-known
+        // 64:ff9b::/96 is refused even when it embeds a public IPv4, and so is
+        // every other 64:ff9b::/32 layout.
+        for address in [
+            "64:ff9b::808:808",
+            "64:ff9b::a01:203",
+            "64:ff9b:1:0:7f:0:100:0",
+            "64:ff9b:1::808:808",
+            "64:ff9b:ffff::808:808",
+        ] {
+            let ip: IpAddr = address.parse().unwrap();
+            assert!(is_blocked_ip(ip), "expected blocked: {address}");
         }
     }
 }

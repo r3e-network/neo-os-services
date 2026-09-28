@@ -100,8 +100,8 @@ test('isBlockedIpAddress classifies transition IPv6 on its embedded IPv4', () =>
     '2002:a01:203::1', // 6to4 -> 10.1.2.3
     '2002::', // 6to4 bare prefix embeds 0.0.0.0
     '2001:0:4136:e378:8000:63bf:f5fe:fdfc', // Teredo client 10.1.2.3
-    '2001:0:0:0:0:0:80ff:fffe', // Teredo client 127.0.0.1 (stored obfuscated)
-    '2001:0::', // Teredo bare prefix: de-obfuscated client 255.255.255.255
+    '2001:0:4136:e378:8000:63bf:80ff:fffe', // Teredo client 127.0.0.1 (stored obfuscated)
+    '2001:0::', // Teredo bare prefix: server 0.0.0.0, client 255.255.255.255
     '::ffff:0:127.0.0.1', // SIIT form of loopback
   ]) {
     assert.equal(isBlockedIpAddress(address), true, address);
@@ -109,8 +109,47 @@ test('isBlockedIpAddress classifies transition IPv6 on its embedded IPv4', () =>
   // Public embedded IPv4 stays allowed on every transition prefix.
   for (const address of [
     '2002:808:808::1', // 6to4 -> 8.8.8.8
-    '2001:0:0:0:0:0:f7f7:f7f7', // Teredo client 8.8.8.8
+    '2001:0:4136:e378:8000:63bf:f7f7:f7f7', // Teredo server 65.54.227.120, client 8.8.8.8
+    '64:ff9b::808:808', // NAT64 well-known prefix -> 8.8.8.8
   ]) {
     assert.equal(isBlockedIpAddress(address), false, address);
+  }
+});
+
+test('isBlockedIpAddress refuses Teredo whose server IPv4 is blocked', () => {
+  // A Teredo relay or client sends its indirect bubble (UDP 3544) to the
+  // server IPv4 in hextets 2-3, so a public client does not make the
+  // address safe.
+  for (const address of [
+    '2001:0:a9fe:a9fe::f7f7:f7f7', // server 169.254.169.254
+    '2001:0:7f00:1::f7f7:f7f7', // server 127.0.0.1
+    '2001:0:a00:1::f7f7:f7f7', // server 10.0.0.1
+    '2001:0:c0a8:1::f7f7:f7f7', // server 192.168.0.1
+    '2001:0:6440:1::f7f7:f7f7', // server 100.64.0.1 (CGNAT)
+    '2001:0:0:0::f7f7:f7f7', // server 0.0.0.0
+  ]) {
+    assert.equal(isBlockedIpAddress(address), true, address);
+  }
+});
+
+test('isBlockedIpAddress decodes NAT64 only in the well-known /96', () => {
+  // 64:ff9b::/96 carries the IPv4 in the low 32 bits.
+  assert.equal(isBlockedIpAddress('64:ff9b::a01:203'), true);
+  assert.equal(isBlockedIpAddress('64:ff9b::808:808'), false);
+  // The rest of 64:ff9b::/32, including the RFC 8215 local-use prefix
+  // 64:ff9b:1::/48 whose RFC 6052 layout (/48, /56, /64 or /96) is chosen by
+  // the operator, is refused whatever it seems to embed.
+  for (const address of [
+    '64:ff9b:1:0:7f:0:100:0', // /64 layout, 127.0.0.1
+    '64:ff9b:1:0:a:102:300:0', // /64 layout, 10.1.2.3
+    '64:ff9b:1:0:c0:a801:100:0', // /64 layout, 192.168.1.1
+    '64:ff9b:1:0:64:4000:100:0', // /64 layout, 100.64.0.1
+    '64:ff9b:1:a01:2:300::', // /48 layout, 10.1.2.3
+    '64:ff9b:1:a:1:203::', // /56 layout, 10.1.2.3
+    '64:ff9b:1::a01:203', // /96 layout, 10.1.2.3
+    '64:ff9b:1::808:808', // /96 layout, public 8.8.8.8
+    '64:ff9b:ffff::808:808', // outside the local-use /48
+  ]) {
+    assert.equal(isBlockedIpAddress(address), true, address);
   }
 });

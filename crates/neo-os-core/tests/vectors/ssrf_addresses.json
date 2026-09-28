@@ -1,6 +1,6 @@
 {
   "family": "ssrf_ip_classification",
-  "description": "Shared SSRF classifier vectors for workers/nitro-worker/src/platform/ssrf.js, crates/neo-os-compute/src/ssrf.rs and crates/neo-os-chain-n3/src/ssrf.rs. Every case is a canonical IP literal that all three implementations must classify identically (blocked true/false).",
+  "description": "Shared SSRF classifier vectors for workers/nitro-worker/src/platform/ssrf.js, crates/neo-os-compute/src/ssrf.rs and crates/neo-os-chain-n3/src/ssrf.rs. Every case is an IP literal with the verdict all three implementations must return (blocked true/false), except where the chain-n3 transport guard for operator-configured RPC URLs is deliberately stricter: it refuses all of NAT64 64:ff9b::/32, while the worker and compute classifiers decode the IPv4 of the well-known prefix 64:ff9b::/96 and refuse the rest of 64:ff9b::/32. A case where that difference applies carries chain_n3_blocked, which the chain-n3 suite checks instead of blocked.",
   "cases": [
     { "name": "v4 loopback", "address": "127.0.0.1", "blocked": true },
     { "name": "v4 private 10/8", "address": "10.1.2.3", "blocked": true },
@@ -39,6 +39,10 @@
     { "name": "NAT64 private dotted tail", "address": "64:ff9b::10.0.0.5", "blocked": true },
     { "name": "NAT64 metadata dotted tail", "address": "64:ff9b::169.254.169.254", "blocked": true },
     { "name": "NAT64 loopback hex", "address": "64:ff9b::7f00:1", "blocked": true },
+    { "name": "NAT64 public", "address": "64:ff9b::808:808", "blocked": false, "chain_n3_blocked": true },
+    { "name": "NAT64 local-use /64 layout loopback", "address": "64:ff9b:1:0:7f:0:100:0", "blocked": true },
+    { "name": "NAT64 local-use /96 layout private", "address": "64:ff9b:1::a01:203", "blocked": true },
+    { "name": "NAT64 local-use public refused outright", "address": "64:ff9b:1::808:808", "blocked": true },
     { "name": "6to4 loopback", "address": "2002:7f00:1::1", "blocked": true },
     { "name": "6to4 metadata", "address": "2002:a9fe:a9fe::1", "blocked": true },
     { "name": "6to4 private", "address": "2002:a01:203::1", "blocked": true },
@@ -47,9 +51,13 @@
     { "name": "6to4 bare prefix embeds 0.0.0.0", "address": "2002::", "blocked": true },
     { "name": "6to4 public embedded", "address": "2002:808:808::1", "blocked": false },
     { "name": "6to4 relay anycast embedded", "address": "2002:c058:6301::", "blocked": false },
-    { "name": "Teredo private client", "address": "2001:0:4136:e378:8000:63bf:f5fe:fdfc", "blocked": true },
-    { "name": "Teredo loopback client obfuscated", "address": "2001:0:0:0:0:0:80ff:fffe", "blocked": true },
-    { "name": "Teredo public client obfuscated", "address": "2001:0:0:0:0:0:f7f7:f7f7", "blocked": false },
-    { "name": "Teredo bare prefix embeds 255.255.255.255", "address": "2001:0::", "blocked": true }
+    { "name": "Teredo private client, public server", "address": "2001:0:4136:e378:8000:63bf:f5fe:fdfc", "blocked": true },
+    { "name": "Teredo loopback client, public server", "address": "2001:0:4136:e378:8000:63bf:80ff:fffe", "blocked": true },
+    { "name": "Teredo public server and public client", "address": "2001:0:4136:e378:8000:63bf:f7f7:f7f7", "blocked": false },
+    { "name": "Teredo metadata server, public client", "address": "2001:0:a9fe:a9fe::f7f7:f7f7", "blocked": true },
+    { "name": "Teredo loopback server, public client", "address": "2001:0:7f00:1::f7f7:f7f7", "blocked": true },
+    { "name": "Teredo private 10/8 server, public client", "address": "2001:0:a00:1::f7f7:f7f7", "blocked": true },
+    { "name": "Teredo private 192.168/16 server, public client", "address": "2001:0:c0a8:1::f7f7:f7f7", "blocked": true },
+    { "name": "Teredo bare prefix (server 0.0.0.0, client 255.255.255.255)", "address": "2001:0::", "blocked": true }
   ]
 }
