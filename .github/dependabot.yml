@@ -40,6 +40,29 @@ updates:
       prefix: 'deps'
       include: 'scope'
 
+  # The root Cargo workspace: the signer, enclave host and relayer images are
+  # built from it. A Cargo.lock change also needs a new enclave measurement
+  # manifest (ci.yml `measurements`), so these PRs are reviewed, not merged
+  # blind.
+  - package-ecosystem: 'cargo'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'tuesday'
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-and-patch:
+        patterns:
+          - '*'
+        update-types:
+          - 'minor'
+          - 'patch'
+    labels:
+      - 'dependencies'
+    commit-message:
+      prefix: 'deps'
+      include: 'scope'
+
   # Anchored on neo-morpheus-oracle.sln at the repo root, which references all seven csproj files.
   - package-ecosystem: 'nuget'
     directory: '/'

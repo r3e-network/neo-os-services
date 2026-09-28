@@ -23,6 +23,11 @@
 #      will anchor on it. neo-os-contracts pointed nuget at "/contracts", which
 #      holds Directory.Build.props but no .csproj/.sln; that one still passes
 #      here and was fixed by inspection instead.
+#   5. A manifest at the repository root whose ecosystem has no entry
+#      targeting "/". neo-os-services has a Cargo workspace at its root (the
+#      signer, enclave host and relayer images are built from it) and had no
+#      cargo entry, so Rust advisories were tracked only by hand-written
+#      Cargo.lock floors.
 #
 # Parsing: dependabot.yml has a fixed, shallow shape, so this reads it line by
 # line rather than pulling in a YAML library the runner may not have. Anything
@@ -48,6 +53,7 @@ has_manifest() {
   local eco="$1" dir="$2"
   case "$eco" in
     npm)    compgen -G "$dir/package.json" >/dev/null ;;
+    cargo)  compgen -G "$dir/Cargo.toml" >/dev/null ;;
     gomod)  compgen -G "$dir/go.mod" >/dev/null ;;
     nuget)  compgen -G "$dir/*.csproj" >/dev/null ||
             compgen -G "$dir/*.fsproj" >/dev/null ||
@@ -147,6 +153,7 @@ parse() {
 }
 
 entries=0
+covered=" "
 cur=""
 has_limit=0
 has_groups=0
@@ -181,6 +188,7 @@ while IFS=' ' read -r kind value; do
       ;;
     PATH)
       has_path=1
+      covered="${covered}${cur}:${value} "
       target="$ROOT_DIR/${value#/}"
       if case "$value" in *[*?]*) true ;; *) false ;; esac; then
         dirs=$(compgen -G "$target" || true)
@@ -212,6 +220,15 @@ done < <(parse)
 finish_entry
 
 [ "$entries" -gt 0 ] || fail "dependabot.yml declares no update entries"
+
+for eco in npm cargo nuget gomod docker github-actions; do
+  if has_manifest "$eco" "$ROOT_DIR"; then
+    case "$covered" in
+      *" $eco:/ "*) ;;
+      *) fail "the repository root holds a $eco manifest but no '$eco' entry targets '/'; its dependencies never get an update PR" ;;
+    esac
+  fi
+done
 
 echo "checked $entries dependabot update entries, all enabled, grouped and pointing at real paths"
 echo "dependabot config tests passed"
