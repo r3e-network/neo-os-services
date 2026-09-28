@@ -1,110 +1,21 @@
 /**
  * Fuzz tests for the oracle worker's security modules.
  *
- * Inlines the pure logic from:
- *   - src/platform/ssrf.js (IP classification)
+ * The SSRF suite imports the PRODUCTION classifier
+ * (workers/nitro-worker/src/platform/ssrf.js isBlockedIpAddress) so every
+ * property is evidence about shipped behavior, not about a local copy.
+ * The remaining suites inline pure logic from:
  *   - src/platform/auth.js (safeEqual)
  *   - src/platform/nitro-signer.js (key derivation)
  *   - src/platform/permission-guard.js (allowlist validation)
  *
- * Run: cd /Users/jinghuiliao/git/neo-os/neo-os-services && node fuzz-security.mjs
+ * Run: node fuzz-security.mjs
+ * Deterministic: the PRNG is seeded; FUZZ_SEED overrides the fixed default.
  */
 
 import { createHash, timingSafeEqual, randomBytes } from 'node:crypto';
-import { isIP } from 'node:net';
 
-// ─── Inlined: ssrf.js logic ───────────────────────────────────────────────────
-
-function trimString(value) {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function isBlockedIpv4(address) {
-  const octets = address.split('.').map((part) => Number.parseInt(part, 10));
-  if (
-    octets.length !== 4 ||
-    octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
-  ) {
-    return true;
-  }
-  const [a, b] = octets;
-  return (
-    a === 0 ||
-    a === 127 ||
-    a === 10 ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    (a === 169 && b === 254) ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    a >= 224
-  );
-}
-
-function expandIpv6(address) {
-  let value = address;
-  const trailingV4 = value.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-  if (trailingV4) {
-    const parts = trailingV4[1].split('.').map((part) => Number.parseInt(part, 10));
-    if (parts.length === 4 && parts.every((part) => part >= 0 && part <= 255)) {
-      const hi = ((parts[0] << 8) | parts[1]).toString(16);
-      const lo = ((parts[2] << 8) | parts[3]).toString(16);
-      value = value.slice(0, trailingV4.index) + `${hi}:${lo}`;
-    }
-  }
-  const [head, tail] = value.split('::');
-  const headGroups = head ? head.split(':').filter(Boolean) : [];
-  const tailGroups = tail !== undefined ? tail.split(':').filter(Boolean) : [];
-  const missing = 8 - headGroups.length - tailGroups.length;
-  const groups =
-    tail === undefined
-      ? headGroups
-      : [...headGroups, ...new Array(Math.max(missing, 0)).fill('0'), ...tailGroups];
-  if (groups.length !== 8) return null;
-  return groups.map((group) => Number.parseInt(group || '0', 16));
-}
-
-function isBlockedIpv6(address) {
-  const groups = expandIpv6(address);
-  if (!groups || groups.some((group) => !Number.isInteger(group) || group < 0 || group > 0xffff)) {
-    return true;
-  }
-  const isV4Mapped =
-    groups[0] === 0 &&
-    groups[1] === 0 &&
-    groups[2] === 0 &&
-    groups[3] === 0 &&
-    groups[4] === 0 &&
-    (groups[5] === 0 || groups[5] === 0xffff);
-  const isNat64 = groups[0] === 0x64 && groups[1] === 0xff9b;
-  if (isV4Mapped || isNat64) {
-    const a = groups[6] >> 8;
-    const b = groups[6] & 0xff;
-    const c = groups[7] >> 8;
-    const d = groups[7] & 0xff;
-    if (groups[6] === 0 && groups[7] === 0) return true;
-    return isBlockedIpv4(`${a}.${b}.${c}.${d}`);
-  }
-  const first = groups[0];
-  return (
-    groups.every((group) => group === 0) ||
-    (groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1) ||
-    (first & 0xffc0) === 0xfe80 ||
-    (first & 0xffc0) === 0xfec0 ||
-    (first & 0xfe00) === 0xfc00 ||
-    (first & 0xff00) === 0xff00
-  );
-}
-
-function isBlockedIpAddress(rawAddress) {
-  let address = trimString(rawAddress).toLowerCase();
-  if (!address) return true;
-  const zoneIndex = address.indexOf('%');
-  if (zoneIndex !== -1) address = address.slice(0, zoneIndex);
-  const family = isIP(address);
-  if (family === 4) return isBlockedIpv4(address);
-  if (family === 6) return isBlockedIpv6(address);
-  return true;
-}
+import { isBlockedIpAddress } from './workers/nitro-worker/src/platform/ssrf.js';
 
 // ─── Inlined: auth.js safeEqual ───────────────────────────────────────────────
 
@@ -178,8 +89,18 @@ function parseAllowNet(raw) {
 
 // ─── Fuzz helpers ─────────────────────────────────────────────────────────────
 
+// Deterministic PRNG (LCG, same construction as scripts/export-rust-vectors.mjs)
+// so runs are reproducible: a failure found with seed S replays exactly. The
+// default seed is fixed so scheduled runs are comparable; FUZZ_SEED overrides.
+const FUZZ_SEED = Number.parseInt(process.env.FUZZ_SEED ?? '', 10) || 20260928;
+let prngState = FUZZ_SEED >>> 0;
+function random() {
+  prngState = (Math.imul(prngState, 1664525) + 1013904223) >>> 0;
+  return prngState / 0x100000000;
+}
+
 function randInt(min, max) {
-  return min + Math.floor(Math.random() * (max - min + 1));
+  return min + Math.floor(random() * (max - min + 1));
 }
 
 function randOctet() {
@@ -346,6 +267,32 @@ function fuzzSsrf() {
       if (v4Result !== mappedResult) fail = { v4, mapped, v4Result, mappedResult };
     }
     report('SSRF', 'P5 IPv4-mapped consistency', N, !fail, fail);
+  }
+
+  // P7: Transition-tunnelled IPv4 must classify exactly like the bare IPv4 —
+  // 6to4 (2002::/16), Teredo (2001:0::/32, client stored obfuscated), NAT64
+  // (64:ff9b::/96) and mapped all carry the IPv4 in their low bits, and the
+  // production classifier has to decode each form.
+  {
+    let fail = null;
+    for (let i = 0; i < N && !fail; i++) {
+      const v4 = randIpv4();
+      const [a, b, c, d] = v4.split('.').map(Number);
+      const hi = (a << 8) | b;
+      const lo = (c << 8) | d;
+      const expected = isBlockedIpAddress(v4);
+      const variants = {
+        '6to4': `2002:${hi.toString(16)}:${lo.toString(16)}::`,
+        teredo: `2001:0::${(hi ^ 0xffff).toString(16)}:${(lo ^ 0xffff).toString(16)}`,
+        nat64: `64:ff9b::${hi.toString(16)}:${lo.toString(16)}`,
+        mapped: `::ffff:${hi.toString(16)}:${lo.toString(16)}`,
+      };
+      for (const [kind, address] of Object.entries(variants)) {
+        const actual = isBlockedIpAddress(address);
+        if (actual !== expected) fail = { v4, kind, address, expected, actual };
+      }
+    }
+    report('SSRF', 'P7 transition-tunnelled IPv4 classifies like the bare IPv4', N, !fail, fail);
   }
 
   // P6: No crash on random 16-byte IPv6
@@ -603,6 +550,7 @@ function fuzzPermissionGuard() {
 console.log('╔══════════════════════════════════════════════════════════╗');
 console.log('║   Fuzz Security Tests - Oracle Worker Security Modules  ║');
 console.log('╚══════════════════════════════════════════════════════════╝');
+console.log(`  seed: ${FUZZ_SEED} (override with FUZZ_SEED)`);
 
 const start = performance.now();
 
