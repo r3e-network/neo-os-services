@@ -12,25 +12,41 @@ namespace MorpheusOracle.Contracts
 {
     public partial class MorpheusOracle : SmartContract
     {
-        private static BigInteger SubmitMiniAppRequestInternal(UInt160 requester, string appId, string moduleId, string operation, ByteString payload)
+        // Fee authority for one request: whose credit pays, and on whose consent (R-01).
+        private const int FEE_BASIS_NONE = 0;             // no fee configured, nothing debited
+        private const int FEE_BASIS_APP_SPONSOR = 1;      // app fee payer, under the sponsorship policy
+        private const int FEE_BASIS_REQUESTER = 2;        // requester witnessed, or is the app fee payer
+        private const int FEE_BASIS_AUTOMATION_SPEND = 3; // requester's on-chain automation approval
+
+        // requesterWitnessed: Runtime.CheckWitness(requester) evaluated in this contract at the
+        // entry point. The direct lane asserts it; the integration and updater lanes name an
+        // arbitrary requester and pass the real result. automationRegistrationId is non-zero
+        // only on the updater's automation lane: the job whose requester-signed spend approval
+        // may cover the fee. Neither lets an account's credit be debited without its consent.
+        private static BigInteger SubmitMiniAppRequestInternal(UInt160 requester, string appId, string moduleId, string operation, ByteString payload, bool requesterWitnessed, BigInteger automationRegistrationId)
         {
             // ValidateRequestInputs returns the active MiniAppRecord it already read, so
             // we reuse it here instead of reading + deserializing the record a second time
             // (no AppMap write happens between the two, so the re-read was pure overhead).
             MiniAppRecord app = ValidateRequestInputs(appId, moduleId, operation, payload);
 
-            UInt160 sponsor = ResolveFeePayer(appId, requester, app.FeePayer);
+            int feeBasis = ResolveFeeBasis(appId, requester, app.FeePayer, requesterWitnessed, automationRegistrationId);
+            UInt160 sponsor = feeBasis == FEE_BASIS_APP_SPONSOR ? app.FeePayer : requester;
             BigInteger feePaid = ConsumeRequestFeeFromPayer(sponsor);
 
-            // When the fee payer actually covered this request (i.e. the sponsor differs from the
-            // requester), record the spend against any configured per-requester cap so a capped
-            // requester can only ever be sponsored up to its budget.
-            if (feePaid > 0 && sponsor != requester)
+            // When the fee payer actually covered this request, record the spend against any
+            // configured per-requester cap so a capped requester can only ever be sponsored up
+            // to its budget.
+            if (feePaid > 0 && feeBasis == FEE_BASIS_APP_SPONSOR)
             {
                 RecordSponsoredSpend(appId, requester, feePaid);
             }
 
             BigInteger requestId = NextRequestId();
+            if (feePaid > 0 && feeBasis == FEE_BASIS_AUTOMATION_SPEND)
+            {
+                RecordAutomationSpend(automationRegistrationId, requestId, feePaid);
+            }
             KernelRequest req = new KernelRequest
             {
                 Id = requestId,
@@ -57,21 +73,46 @@ namespace MorpheusOracle.Contracts
             return requestId;
         }
 
-        private static UInt160 ResolveFeePayer(string appId, UInt160 requester, UInt160 sponsor)
+        private static int ResolveFeeBasis(string appId, UInt160 requester, UInt160 feePayer, bool requesterWitnessed, BigInteger automationRegistrationId)
         {
             BigInteger fee = SystemRequestFee();
-            if (fee <= 0) return requester;
+            // No fee configured: ConsumeRequestFeeFromPayer debits nothing, so no account's
+            // credit is touched and the payer identity is immaterial.
+            if (fee <= 0) return FEE_BASIS_NONE;
 
-            if (sponsor != null
-                && sponsor.IsValid
-                && sponsor != requester
-                && FeeCreditOf(sponsor) >= fee
+            // 1. The app fee payer consented to fund this app's requests when the app was
+            //    registered or configured (ValidateFeePayerAuthorization); the sponsorship
+            //    policy bounds what one requester can draw from it.
+            if (feePayer != null
+                && feePayer.IsValid
+                && feePayer != requester
+                && FeeCreditOf(feePayer) >= fee
                 && IsRequesterSponsorable(appId, requester, fee))
             {
-                return sponsor;
+                return FEE_BASIS_APP_SPONSOR;
             }
 
-            return requester;
+            // 2. The requester's own credit, with its consent: its witness in this contract,
+            //    or it IS the app fee payer, which draws on that fee payer's app consent rather
+            //    than on a third party's credit. UInt160.Zero means "no fee payer".
+            if (requesterWitnessed
+                || (feePayer != null && feePayer.IsValid && feePayer != UInt160.Zero && requester == feePayer))
+            {
+                return FEE_BASIS_REQUESTER;
+            }
+
+            // 3. The updater's automation lane: the requester's signed, capped, expiring
+            //    approval for this one job (MorpheusOracle.Automation.cs).
+            if (automationRegistrationId > 0)
+            {
+                AssertAutomationSpendAllowed(automationRegistrationId, appId, requester, fee);
+                return FEE_BASIS_AUTOMATION_SPEND;
+            }
+
+            // Anything else would debit an account that never consented: an attacker-run app
+            // whose fee payer holds no credit must not fall back to a named victim (R-01).
+            ExecutionEngine.Assert(false, "requester witness required");
+            return FEE_BASIS_NONE;
         }
 
         // Decides whether the app fee payer is willing to cover this requester's fee.

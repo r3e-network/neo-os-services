@@ -57,6 +57,22 @@ The old oracle-shaped entrypoints still exist in the kernel for migration:
 
 These methods now map into the kernel model and should be treated as compatibility shims, not the preferred long-term API.
 
+## Fee consent
+
+A request fee is charged to one account's prepaid credit, and only with that account's consent
+(R-01, `docs/security/ORACLE-INTEGRATION-WITNESS-20260928.md`):
+
+- the app fee payer, under the sponsorship policy, when it sponsors the requester;
+- the requester, when its witness holds inside the kernel (an integration contract's caller
+  signs with `CustomContracts` listing the kernel, or `Global`; `CalledByEntry` stops at the
+  integration contract) or when it is the app's own fee payer;
+- for an automation execution, the requester under its own approval for that job:
+  `ApproveAutomationSpend(registrationRequestId, cap, expiresAt)` or
+  `SubmitAutomationRegistration(appId, payload, cap, expiresAt)`, drawn only by the updater's
+  `QueueAutomationExecution(registrationRequestId, requester, requestType, payload)`.
+
+Anything else reverts with `requester witness required`.
+
 ## Build
 
 ```bash
@@ -71,6 +87,15 @@ dotnet test __tests__/NeoContracts.Tests.csproj
 ```
 
 ## Next-upgrade notes (deployed N3 kernel `0xf54d8584`; tracked from the 2026-06-11 review)
+
+- **Fee consent on the integration and updater lanes (R-01; fixed in source, pending Update)**:
+  `SubmitMiniAppRequestFromIntegration`/`RequestFromCallback` and
+  `QueueSystemRequest`/`QueueAutomationRequest` accepted a named requester and, when the app fee
+  payer did not cover the fee, charged that requester's credit without its witness. The source
+  enforces the rules in "Fee consent" above and adds `ApproveAutomationSpend`,
+  `SubmitAutomationRegistration`, `QueueAutomationExecution`, `GetAutomationSpendApproval`
+  (storage prefixes `0x36`/`0x37`). Owners of self-paid automation jobs must approve each job
+  after the upgrade; see the security note for the owner steps and rollback.
 
 The deployed kernel is upgradeable (admin-gated `Update`), but until the next upgrade ships
 the following are live behaviors integrators must account for — and required fixes for the

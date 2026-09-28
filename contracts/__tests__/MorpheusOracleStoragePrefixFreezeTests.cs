@@ -66,6 +66,10 @@ namespace MorpheusOracle.Contracts.Tests
             // Appended with the bounded default sponsorship cap (SVC-E-8), declared in
             // the MorpheusOracle.Sponsorship.cs partial. Claimed from free slot 0x35.
             ("PREFIX_SPONSOR_DEFAULT_CAP", (byte)0x35),
+            // Appended with the requester spend approval for automation self-pay (R-01),
+            // declared in the MorpheusOracle.Automation.cs partial. Claimed from 0x36/0x37.
+            ("PREFIX_AUTOMATION_SPEND", (byte)0x36),
+            ("PREFIX_AUTOMATION_CHARGE", (byte)0x37),
         };
 
         private static readonly Regex PrefixDecl = new(
@@ -112,7 +116,7 @@ namespace MorpheusOracle.Contracts.Tests
         [Fact]
         public void FrozenLayout_UsedBytesStayInDocumentedRanges()
         {
-            // USED ranges per the frozen map: 0x01-0x09, 0x10-0x19, 0x20-0x35.
+            // USED ranges per the frozen map: 0x01-0x09, 0x10-0x19, 0x20-0x37.
             // New prefixes must not silently appear outside the frozen set —
             // any addition fails FrozenLayout_ExactNameByteMap anyway, but this
             // guard documents the append-only intent explicitly.
@@ -122,7 +126,7 @@ namespace MorpheusOracle.Contracts.Tests
                 bool inRange =
                     (kv.Value >= 0x01 && kv.Value <= 0x09) ||
                     (kv.Value >= 0x10 && kv.Value <= 0x19) ||
-                    (kv.Value >= 0x20 && kv.Value <= 0x35);
+                    (kv.Value >= 0x20 && kv.Value <= 0x37);
                 Assert.True(inRange, $"{kv.Key} uses byte 0x{kv.Value:X2} outside the frozen used ranges");
             }
         }

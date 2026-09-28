@@ -97,9 +97,11 @@ namespace MorpheusOracle.Contracts
         //                INDEX_REBUILD_REQUIRED, INDEX_REBUILD_CURSOR
         //     0x2F-0x34  PENDING_ADMIN, PENDING_ADMIN_TIME, UPGRADE_TIME,
         //                UPGRADE_HASH, PENDING_RUNTIME_KEY, PENDING_RUNTIME_VERIFIER
+        //     0x35-0x37  SPONSOR_DEFAULT_CAP (Sponsorship.cs), AUTOMATION_SPEND,
+        //                AUTOMATION_CHARGE (Automation.cs)
         //
         //   FREE (safe to claim next, in this order):
-        //     0x35, then 0x36+ … (and the skipped 0x0A-0x0F, 0x1A-0x1F).
+        //     0x38+ … (and the skipped 0x0A-0x0F, 0x1A-0x1F).
         //
         //   NOTE: FULFILLMENT_SIGNATURE_DOMAIN below is a multi-byte ASCII signing-domain
         //   constant, NOT a storage prefix — it does not consume a prefix byte.
@@ -1011,6 +1013,8 @@ namespace MorpheusOracle.Contracts
             {
                 ReleaseSponsoredSpend(req.AppId, req.Requester, req.FeePaid);
             }
+            // Same reversal for a fee taken under a requester's automation spend approval.
+            ReleaseAutomationSpend(requestId, req.FeePaid);
 
             // The request has left the pending state, so release its reserved fee regardless of
             // whether a refund was paid (no valid sponsor => the fee simply becomes earned surplus).
@@ -1218,7 +1222,8 @@ namespace MorpheusOracle.Contracts
             ExecutionEngine.Assert(requester != null && requester.IsValid, "requester required");
             ExecutionEngine.Assert(Runtime.CheckWitness(requester), "unauthorized requester");
 
-            return SubmitMiniAppRequestInternal(requester, appId, moduleId, operation, payload);
+            // The requester is the witnessed transaction sender: authorized to self-pay.
+            return SubmitMiniAppRequestInternal(requester, appId, moduleId, operation, payload, true, 0);
         }
 
         public static BigInteger SubmitMiniAppRequestFromIntegration(UInt160 requester, string appId, string moduleId, string operation, ByteString payload)
@@ -1229,7 +1234,13 @@ namespace MorpheusOracle.Contracts
             ExecutionEngine.Assert(app.CallbackContract != null && app.CallbackContract.IsValid, "integration contract not set");
             ExecutionEngine.Assert(Runtime.CallingScriptHash == app.CallbackContract, "only integration contract");
 
-            return SubmitMiniAppRequestInternal(requester, appId, moduleId, operation, payload);
+            // The integration contract vouches for the call, not for the named requester.
+            // Its own credit pays only when its witness holds HERE, in the kernel: a signer
+            // scope that reaches this contract (Global, or CustomContracts listing it).
+            // CalledByEntry stops at the integration contract. Otherwise the app fee payer
+            // must sponsor it (R-01 — never debit an account without its consent).
+            bool requesterWitnessed = Runtime.CheckWitness(requester);
+            return SubmitMiniAppRequestInternal(requester, appId, moduleId, operation, payload, requesterWitnessed, 0);
         }
 
         // Legacy alias kept for compatibility with callback-contract mediated flows.
@@ -1247,7 +1258,12 @@ namespace MorpheusOracle.Contracts
         {
             ValidateUpdater();
             ExecutionEngine.Assert(requester != null && requester.IsValid, "requester required");
-            return SubmitMiniAppRequestInternal(requester, appId, moduleId, operation, payload);
+            // The updater is trusted to relay, not to spend third-party credit. The named
+            // requester self-pays only when it witnessed the transaction; otherwise the app
+            // fee payer must sponsor it (R-01 — same rule as the integration lane). A job's
+            // requester-approved self-pay goes through QueueAutomationExecution instead.
+            bool requesterWitnessed = Runtime.CheckWitness(requester);
+            return SubmitMiniAppRequestInternal(requester, appId, moduleId, operation, payload, requesterWitnessed, 0);
         }
 
         // Legacy alias kept for automation pipelines that still target the old method name.
