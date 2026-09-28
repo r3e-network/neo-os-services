@@ -26,11 +26,12 @@ fn is_ascii_digit_byte(byte: u8) -> bool {
     byte.is_ascii_digit()
 }
 
-/// `net.isIP(address)` — 0, 4 or 6. IPv4 accepts 1-3 digit decimal octets
-/// including leading zeros (Node's regex), IPv6 follows the RFC 5952 literal
-/// grammar with an optional embedded dotted-quad tail. Anything the validator
-/// cannot confidently parse is NOT an IP literal, which the caller treats as a
-/// hostname (and the blocked-address gate stays fail-closed).
+/// `net.isIP(address)` — 0, 4 or 6. IPv4 accepts four decimal octets 0-255
+/// without leading zeros (Node's regex rejects `010.0.0.1`, which could be
+/// read as octal), IPv6 follows the RFC 5952 literal grammar with an optional
+/// embedded dotted-quad tail held to the same octet rule. Anything the
+/// validator cannot confidently parse is NOT an IP literal, which the caller
+/// treats as a hostname (and the blocked-address gate stays fail-closed).
 pub fn net_is_ip(address: &str) -> u8 {
     if is_ipv4_literal(address) {
         return 4;
@@ -48,6 +49,7 @@ fn is_ipv4_literal(address: &str) -> bool {
             !part.is_empty()
                 && part.len() <= 3
                 && part.bytes().all(is_ascii_digit_byte)
+                && (part.len() == 1 || !part.starts_with('0'))
                 && part.parse::<u32>().map(|v| v <= 255).unwrap_or(false)
         })
 }
@@ -435,8 +437,17 @@ mod tests {
     #[test]
     fn net_is_ip_matches_node_literal_rules() {
         assert_eq!(net_is_ip("8.8.8.8"), 4);
-        // Node accepts leading-zero octets as decimal
-        assert_eq!(net_is_ip("010.0.0.1"), 4);
+        assert_eq!(net_is_ip("0.0.0.0"), 4);
+        // Node rejects an octet with a leading zero (it could be read as
+        // octal), both in IPv4 and in an IPv6 dotted tail.
+        assert_eq!(net_is_ip("010.0.0.1"), 0);
+        assert_eq!(net_is_ip("08.8.8.8"), 0);
+        assert_eq!(net_is_ip("00.0.0.0"), 0);
+        assert_eq!(net_is_ip("::ffff:08.8.8.8"), 0);
+        assert_eq!(net_is_ip("::ffff:010.0.0.1"), 0);
+        assert_eq!(net_is_ip("::ffff:0.0.0.0"), 6);
+        // Leading zeros inside a hextet are fine.
+        assert_eq!(net_is_ip("0064:ff9b::0808:0808"), 6);
         assert_eq!(net_is_ip("::1"), 6);
         assert_eq!(net_is_ip("2606:4700:4700::1111"), 6);
         assert_eq!(net_is_ip("::ffff:8.8.8.8"), 6);

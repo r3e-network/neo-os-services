@@ -1,6 +1,6 @@
 {
   "family": "ssrf_ip_classification",
-  "description": "Shared SSRF classifier vectors for workers/nitro-worker/src/platform/ssrf.js, crates/neo-os-compute/src/ssrf.rs and crates/neo-os-chain-n3/src/ssrf.rs. Every case has the verdict all three implementations must return (blocked true/false), except where the chain-n3 transport guard for operator-configured RPC URLs is deliberately stricter: it refuses all of NAT64 64:ff9b::/32 (the worker and compute classifiers decode the IPv4 of the well-known prefix 64:ff9b::/96 and refuse the rest of the /32), the IPv4 ranges 192.0.0.0/24, 192.0.2.0/24, 198.51.100.0/24 and 203.0.113.0/24, and the IPv6 documentation prefix 2001:db8::/32. A case where that difference applies carries chain_n3_blocked, which the chain-n3 suite checks instead of blocked.",
+  "description": "Shared SSRF classifier vectors for workers/nitro-worker/src/platform/ssrf.js, crates/neo-os-compute/src/ssrf.rs and crates/neo-os-chain-n3/src/ssrf.rs. Every case has the verdict all three implementations must return (blocked true/false), except where the chain-n3 transport guard for operator-configured RPC URLs is deliberately stricter: it refuses all of NAT64 64:ff9b::/32 (the worker and compute classifiers decode the IPv4 of the well-known prefix 64:ff9b::/96 and refuse the rest of the /32), the IPv4 ranges 192.0.0.0/24, 192.0.2.0/24, 198.51.100.0/24 and 203.0.113.0/24, and the IPv6 documentation prefix 2001:db8::/32. A case where that difference applies carries chain_n3_blocked, which the chain-n3 suite checks instead of blocked. A case that Node's net.isIP does not accept as a literal (a leading-zero octet) must be refused by all three; the chain-n3 suite checks it through classify_url.",
   "cases": [
     { "name": "v4 loopback", "address": "127.0.0.1", "blocked": true },
     { "name": "v4 private 10/8", "address": "10.1.2.3", "blocked": true },
@@ -24,6 +24,7 @@
     { "name": "v4 public, fourth octet as in TEST-NET-1", "address": "192.0.5.2", "blocked": false },
     { "name": "v4 public, fourth octet as in TEST-NET-2", "address": "198.51.7.100", "blocked": false },
     { "name": "v4 public, fourth octet as in TEST-NET-3", "address": "203.0.9.113", "blocked": false },
+    { "name": "v4 leading-zero octet is not a literal", "address": "08.8.8.8", "blocked": true },
     { "name": "v6 unspecified", "address": "::", "blocked": true },
     { "name": "v6 loopback", "address": "::1", "blocked": true },
     { "name": "v6 ULA fc00::/7", "address": "fc00::1", "blocked": true },
@@ -38,6 +39,7 @@
     { "name": "mapped metadata", "address": "::ffff:169.254.169.254", "blocked": true },
     { "name": "mapped public", "address": "::ffff:8.8.8.8", "blocked": false },
     { "name": "mapped bare prefix", "address": "::ffff:0:0", "blocked": true },
+    { "name": "mapped leading-zero dotted tail is not a literal", "address": "::ffff:08.8.8.8", "blocked": true },
     { "name": "compatible loopback", "address": "::127.0.0.1", "blocked": true },
     { "name": "compatible private", "address": "::10.0.0.1", "blocked": true },
     { "name": "compatible metadata", "address": "::169.254.169.254", "blocked": true },
