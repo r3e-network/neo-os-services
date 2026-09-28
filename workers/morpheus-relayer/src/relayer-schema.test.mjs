@@ -6,7 +6,7 @@ import test from 'node:test';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const MIGRATION = readFileSync(
-  resolve(REPO_ROOT, 'supabase/migrations/0016_allow_neox_relayer_jobs.sql'),
+  resolve(REPO_ROOT, 'db/services/migrations/0016_allow_neox_relayer_jobs.sql'),
   'utf8'
 );
 const NEOX_ADAPTER = readFileSync(

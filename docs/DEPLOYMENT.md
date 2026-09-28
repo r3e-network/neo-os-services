@@ -51,27 +51,13 @@ Recommended operator rules:
 
 ## Step 1: Apply Supabase
 
-Apply migrations in order:
-
-1. `supabase/migrations/0001_morpheus_schema.sql`
-2. `supabase/migrations/0002_morpheus_policies_and_seeds.sql`
-3. `supabase/migrations/0003_provider_configs.sql`
-4. `supabase/migrations/0004_relayer_ops.sql`
-5. `supabase/migrations/0005_operation_logs.sql`
-6. `supabase/migrations/0006_automation.sql`
-7. `supabase/migrations/0007_system_backups.sql`
-8. `supabase/migrations/0008_network_isolation.sql`
-9. `supabase/migrations/0009_relayer_durable_queue_indexes.sql`
-10. `supabase/migrations/0010_control_plane_jobs.sql`
-11. `supabase/migrations/0011_workflow_runtime.sql`
-12. `supabase/migrations/0012_policy_and_risk_controls.sql`
-13. `supabase/migrations/0013_automation_processing_claims.sql`
-14. `supabase/migrations/0014_tighten_request_job_rls.sql`
-15. `supabase/migrations/0015_harden_operational_table_rls.sql`
+Apply every migration in `db/services/migrations/` in filename order. The
+ordered list, including the dated migrations after `0020`, is maintained in
+`db/services/README.md`.
 
 Optional:
 
-- `supabase/seed.sql`
+- `db/services/seed.sql`
 
 Key durable tables:
 

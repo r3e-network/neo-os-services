@@ -120,7 +120,7 @@ ${updateFields.join('\n')}
     enumEntries.push(`      ${enumName}: ${values.map((v) => `'${v}'`).join(' | ')};`);
   }
 
-  const output = `// Auto-generated from \`supabase/migrations/\` via a temporary PostgreSQL instance.
+  const output = `// Auto-generated from \`db/services/migrations/\` via a temporary PostgreSQL instance.
 // Do not edit manually. Regenerate after schema changes using the documented
 // workflow in \`docs/DEVELOPMENT.md\`.
 

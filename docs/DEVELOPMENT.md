@@ -3,7 +3,7 @@
 ## Regenerating Supabase Types
 
 The `apps/web/lib/supabase-types.ts` file is generated from the SQL migrations in
-`supabase/migrations/`. When the schema changes, regenerate the types before
+`db/services/migrations/`. When the schema changes, regenerate the types before
 committing.
 
 ### Requirements
@@ -27,7 +27,7 @@ createdb -h localhost -p 5434 -U postgres morpheus
 2. Run all migrations:
 
 ```bash
-for f in supabase/migrations/*.sql; do
+for f in db/services/migrations/*.sql; do
   psql -h localhost -p 5434 -U postgres -d morpheus -f "$f"
 done
 ```

@@ -13,7 +13,12 @@ initdb -D "$test_dir/data" -A trust --no-locale >/dev/null
 pg_ctl -D "$test_dir/data" -l "$test_dir/server.log" -o "-k $test_dir -h '' -p 56449" -w start >/dev/null
 export PGHOST="$test_dir" PGPORT=56449 PGDATABASE=postgres PGUSER="$(id -un)"
 psql -X -v ON_ERROR_STOP=1 -q -c 'create role service_role bypassrls; create role anon; alter default privileges in schema public grant execute on functions to anon;'
-for migration in "$repo"/supabase/migrations/*_relayer_delivery_*.sql; do
+migrations=("$repo"/db/services/migrations/*_relayer_delivery_*.sql)
+if [ ! -f "${migrations[0]}" ]; then
+  echo "no *_relayer_delivery_*.sql migrations under $repo/db/services/migrations" >&2
+  exit 1
+fi
+for migration in "${migrations[@]}"; do
   echo "applying $(basename "$migration")"
   psql -X -v ON_ERROR_STOP=1 -q -f "$migration"
 done

@@ -22,7 +22,7 @@ and fault-injection gates pass. No production rollout is implied.
   stages must be objects with non-blank string `tx_hash`/`raw`; every refusal
   is SQLSTATE `22023` and leaves the row untouched, while lease loss stays
   `P0002`. This is enforced by
-  `supabase/migrations/20260920102300_relayer_delivery_completion_identity.sql`
+  `db/services/migrations/20260920102300_relayer_delivery_completion_identity.sql`
   and exercised on real PostgreSQL by `scripts/test-relayer-delivery-v2.sh`.
 - Due time and terminal outcomes are enforced in the store. Replay is explicit.
 - Account-level nonce ownership serializes sends across instances.
@@ -74,8 +74,8 @@ restart. Local processed/dead-letter caches never override a v2 job's state.
 2. Back up the existing state file and export `morpheus_relayer_jobs`, including
    transaction hashes, retries and dead letters. Preserve immutable copies.
 3. Apply the additive migration
-   `supabase/migrations/20260908040427_relayer_delivery_v2.sql` and its follow-up
-   `supabase/migrations/20260920102300_relayer_delivery_completion_identity.sql`
+   `db/services/migrations/20260908040427_relayer_delivery_v2.sql` and its follow-up
+   `db/services/migrations/20260920102300_relayer_delivery_completion_identity.sql`
    through the normal reviewed database release process. No migration has been
    applied to a remote database by the remediation task.
 4. Configure v2 and run `neo-os-relayer config:validate`. The first v2 tick imports

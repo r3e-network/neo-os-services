@@ -99,7 +99,7 @@
 
 ### P2 — 战略方向（可选，视定位）
 
-**10. 多链支持**：CRE 的 "any chain" 是其最大卖点；若 NeoOS 定位 Neo N3 生态则降优先级，可作为 capability 层预留（`target_chain` 字段已存在于请求 payload 与 secrets schema：`docs/ASYNC_PRIVACY_ORACLE_SPEC.md:135`、`supabase/migrations/0001_morpheus_schema.sql`）。
+**10. 多链支持**：CRE 的 "any chain" 是其最大卖点；若 NeoOS 定位 Neo N3 生态则降优先级，可作为 capability 层预留（`target_chain` 字段已存在于请求 payload 与 secrets schema：`docs/ASYNC_PRIVACY_ORACLE_SPEC.md:135`、`db/services/migrations/0001_morpheus_schema.sql`）。
 **11. WASM 执行升级**：isolated-vm/QuickJS 替换裸 `node:vm`（对齐 CRE 的 Wasmtime 隔离声明与 100MB WASM 配额），并公开 per-workflow 隔离边界。
 **12. Confidential Workflow 模式**（借鉴：`HandlerInTee`）：支持整个 handler（含跨请求状态）驻留 TEE，解锁做市/撮合/策略类场景；同时**照抄 CRE 的诚实边界声明**（不保护源码/二进制、多 workflow 共享 enclave）。
 
@@ -130,7 +130,7 @@
 - attestation 模型：`docs/ATTESTATION_SPEC.md`
 - JS 沙箱：`workers/nitro-worker/src/platform/script-child.cjs`、`script-runner.js`
 - workflow catalog：`apps/web/public/morpheus-runtime-catalog.json`、`packages/shared/src/workflow-catalog.js`
-- secrets 表/RLS：`supabase/migrations/0001_morpheus_schema.sql`、`0002_morpheus_policies_and_seeds.sql`
+- secrets 表/RLS：`db/services/migrations/0001_morpheus_schema.sql`、`0002_morpheus_policies_and_seeds.sql`
 - 已知短板：`docs/USER_GUIDE.md:34`（仅 N3）、`docs/EXAMPLES.md:39`、`workers/nitro-worker/src/platform/script-source.js:74`（script_ref 仅 neo_n3）、`docs/ENVIRONMENT.md:354-356`（自定义 JS 默认关闭）、`apps/web/app/docs/quickstart/page.tsx:158-163`（requestId 坑）
 
 ## 附录 B：CRE 关键来源索引

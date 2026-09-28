@@ -29,7 +29,7 @@ Apply the migrations in order:
 
 Optional:
 
-- `supabase/seed.sql`
+- `seed.sql` (in this directory)
 
 ## What gets created
 

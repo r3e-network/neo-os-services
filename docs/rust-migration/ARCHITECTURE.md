@@ -367,7 +367,7 @@ baselines/js-parity/
 | 状态文件原子写      | tmp + rename，崩溃不留半写文件                                                                                                                                    | 多实例部署                                                 |
 | env 变量名          | 109 个逻辑 key / **149 个 env 名**，`MORPHEUS_*` 与 `NITRO_*` 双前缀                                                                                              | `deploy/nitro/*.env.example`、`scripts/render-nitro-*.mjs` |
 | 别名优先级          | `process.env` 全别名优先 → `MORPHEUS_RUNTIME_CONFIG_JSON`；网络 scoped 变体 `envForNetwork` 优先 `<NAME>_<NETWORK>`                                               | `config-schema.js` 明确声明                                |
-| Supabase 表（6 张） | `morpheus_relayer_jobs`、`morpheus_relayer_runs`、`morpheus_automation_jobs`、`morpheus_automation_runs`、`morpheus_encrypted_secrets`、`morpheus_feed_snapshots` | `supabase/`、apps/web                                      |
+| Supabase 表（6 张） | `morpheus_relayer_jobs`、`morpheus_relayer_runs`、`morpheus_automation_jobs`、`morpheus_automation_runs`、`morpheus_encrypted_secrets`、`morpheus_feed_snapshots` | `db/services/`、apps/web                                   |
 | CLI 输出            | `loop` / `once` / `metrics` / `metrics:prom` / `serve:metrics` / `config:validate` / `config:dump`，含 JSON 缩进与退出码（`config:validate` 非法时 1）            | ops runbook                                                |
 
 ### 5.4 链上契约（硬约束，已向量化）

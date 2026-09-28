@@ -40,6 +40,10 @@ jobs:
               - 'vendor/**'
               - 'vendor/neo-os-did.pin.json'
               - 'config/**'
+              # Migrations and the SQL acceptance suite: the rust job applies
+              # them on PostgreSQL and the morpheus-relayer suite reads them.
+              - 'db/**'
+              - 'tests/**'
               - 'package.json'
               - 'package-lock.json'
               - 'Cargo.toml'
@@ -73,6 +77,10 @@ jobs:
       - run: node scripts/export-public-runtime-catalog.mjs --output /tmp/morpheus-runtime-catalog.json >/dev/null
       - run: cmp -s /tmp/morpheus-runtime-catalog.json apps/web/public/morpheus-runtime-catalog.json
       - run: node scripts/check-web-consistency.mjs
+      # Unconditional (lint-and-format has no path filter), so a pull request
+      # that moves db/services/migrations is caught even when the path-filtered
+      # rust and web-and-worker jobs would not run.
+      - run: node --test scripts/db-migration-paths.test.mjs
       - run: npm run format:check
       - run: npm run lint
       - run: npm run check:rust-migration

@@ -159,7 +159,7 @@ test('automation scheduler has database-backed claim semantics', () => {
     'utf8'
   );
   const migration = fs.readFileSync(
-    path.join(repoRoot, 'supabase/migrations/0013_automation_processing_claims.sql'),
+    path.join(repoRoot, 'db/services/migrations/0013_automation_processing_claims.sql'),
     'utf8'
   );
 

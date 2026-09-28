@@ -39,7 +39,7 @@ Run:
 - `db/services/migrations/0004_relayer_ops.sql`
 - `db/services/migrations/0005_operation_logs.sql`
 - `db/services/migrations/0006_automation.sql`
-- optional `supabase/seed.sql`
+- optional `db/services/seed.sql`
 
 ## 4. Build contracts
 
