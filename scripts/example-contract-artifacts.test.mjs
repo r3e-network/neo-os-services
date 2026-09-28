@@ -5,12 +5,25 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
-const gitignorePath = path.join(repoRoot, '.gitignore');
 
 test('example N3 contract build outputs stay ignored and untracked', () => {
-  const gitignore = fs.readFileSync(gitignorePath, 'utf8');
-  assert.match(gitignore, /^examples\/contracts\/n3\/bin\/$/m);
-  assert.match(gitignore, /^examples\/contracts\/n3\/obj\/$/m);
+  // Asked of the ignore rules, not of how they are spelled: the root
+  // .gitignore covers .NET output with **/bin/ and **/obj/ rather than with
+  // per-project lines.
+  const outputs = [
+    'examples/contracts/n3/bin/sc/UserConsumerN3.nef',
+    'examples/contracts/n3/bin/sc/FeedReaderN3.manifest.json',
+    'examples/contracts/n3/bin/Release/net10.0/UserConsumerN3.dll',
+    'examples/contracts/n3/obj/project.assets.json',
+  ];
+  const ignored = spawnSync('git', ['check-ignore', '--no-index', '--stdin'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    input: `${outputs.join('\n')}\n`,
+  });
+  // check-ignore exits 1 when none of the paths is ignored.
+  assert.ok([0, 1].includes(ignored.status), ignored.stderr);
+  assert.deepEqual(ignored.stdout.split('\n').filter(Boolean).sort(), [...outputs].sort());
 
   const tracked = spawnSync(
     'git',
