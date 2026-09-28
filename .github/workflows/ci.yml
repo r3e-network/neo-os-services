@@ -21,7 +21,6 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
       evm: ${{ steps.filter.outputs.evm }}
-      services: ${{ steps.filter.outputs.services }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
@@ -49,13 +48,6 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - '.github/workflows/**'
-            services:
-              - 'services/**'
-              - 'apps/web/**'
-              - 'package.json'
-              - 'package-lock.json'
-              - 'scripts/dependency-security.test.mjs'
-              - '.github/workflows/**'
             evm:
               - 'contracts-evm/**'
               - '.github/workflows/**'
@@ -74,6 +66,12 @@ jobs:
         run: |
           npm install --package-lock-only
           git diff --exit-code package-lock.json
+      # The audit and drift guard above cover every workspace, apps/web
+      # included: all of them install from the root lock. This pins the
+      # patched versions of the apps/web closure and keeps that lock the only
+      # one (the NeoSwap job that used to audit a separate apps/web lock was
+      # deleted with services/neoswap).
+      - run: node --test scripts/dependency-security.test.mjs
       - run: node scripts/export-public-runtime-catalog.mjs --output /tmp/morpheus-runtime-catalog.json >/dev/null
       - run: cmp -s /tmp/morpheus-runtime-catalog.json apps/web/public/morpheus-runtime-catalog.json
       - run: node scripts/check-web-consistency.mjs

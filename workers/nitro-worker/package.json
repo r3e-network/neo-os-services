@@ -15,10 +15,5 @@
     "ethers": "^6.16.0",
     "jose": "^6.2.1",
     "undici": "^8.10.0"
-  },
-  "overrides": {
-    "@cityofzion/neon-core": {
-      "lodash": "4.18.1"
-    }
   }
 }
