@@ -105,6 +105,27 @@ test('every workspace installs from the root lock and nothing else', () => {
   }
 });
 
+test('the declared Node range is one every installed package supports', () => {
+  // `>=22 <25` admitted Node versions below the undici@8 floor (>=22.19.0) that
+  // workers/nitro-worker runs on, and odd-numbered Node 23, which vite, vitest
+  // and rolldown do not support.
+  const declared = rootManifest.engines?.node;
+  assert.ok(semver.validRange(declared), `engines.node ${declared} is not a valid range`);
+  assert.equal(rootLock.packages?.['']?.engines?.node, declared, 'the root lock records engines');
+  const unsupported = [];
+  for (const [key, value] of Object.entries(rootLock.packages ?? {})) {
+    const floor = value.engines?.node;
+    if (!key || typeof floor !== 'string') continue;
+    // Platform binaries for systems this repository never builds on (for
+    // example the optional win32/ia32 sharp build) are never installed.
+    if (Array.isArray(value.os) && !value.os.some((os) => os === 'linux' || os === 'darwin'))
+      continue;
+    if (!semver.subset(declared, floor))
+      unsupported.push(`${key.replace(/^.*node_modules\//, '')}@${value.version} needs ${floor}`);
+  }
+  assert.deepEqual(unsupported, [], `engines.node ${declared} admits unsupported Node versions`);
+});
+
 test('the apps/web closure resolves to patched versions', () => {
   assert.equal(webManifest.dependencies?.next, '^15.5.26');
   assert.equal(webManifest.devDependencies?.['eslint-config-next'], '^15.5.26');
