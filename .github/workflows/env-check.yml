@@ -42,11 +42,12 @@ jobs:
 
       - name: Check Morpheus Network Configuration
         id: network-check
+        env:
+          NETWORK: ${{ github.event.inputs.network }}
         run: |
           echo "🔍 Validating MORPHEUS_NETWORK configuration..."
 
           # Get network from input or skip explicit check
-          NETWORK="${{ github.event.inputs.network }}"
           if [[ -z "$NETWORK" ]]; then
             echo "⚠️ No explicit network specified, skipping targeted validation"
             exit 0
@@ -60,8 +61,10 @@ jobs:
             exit 1
           fi
 
-          # Run the actual environment check
-          npm run check:env || {
+          # Run the actual environment check for the chosen network. The
+          # script reads the process environment over any .env file, so the
+          # network and any deployment variables given to this job count.
+          MORPHEUS_NETWORK="$NETWORK" npm run check:env || {
             echo "❌ Environment validation failed"
             exit 1
           }
@@ -73,6 +76,11 @@ jobs:
       # as long as the string existed anywhere in the file).
       - name: networks.ts fails closed without an explicit network
         run: npm --prefix apps/web run test:run -- __tests__/networks.test.ts
+
+      # check:env must honour the dispatched network and the job environment,
+      # not only .env files: a runner has no .env.
+      - name: check:env reads the process environment
+        run: node --test scripts/check-root-env.test.mjs
 
   validate-web-app-env:
     runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}

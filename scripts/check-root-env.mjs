@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { readMergedDotEnvFiles } from './lib-env.mjs';
+import { trimString } from './lib-strings.mjs';
 import { reportPinnedNeoN3Roles, normalizeMorpheusNetwork } from './lib-neo-signers.mjs';
 import {
   ROOT_ENV_REQUIRED_GROUPS,
@@ -10,7 +11,14 @@ import {
 
 const envPaths = [path.resolve(process.cwd(), '.env'), path.resolve(process.cwd(), '.env.local')];
 
+// The dotenv files, overridden by the process environment: a CI runner or a
+// deployment injects variables rather than writing a .env, and an explicit
+// MORPHEUS_NETWORK must select the network the signers are checked against.
+// Same precedence as loadDotEnv (a set process value wins over the file).
 const env = await readMergedDotEnvFiles(envPaths);
+for (const [key, value] of Object.entries(process.env)) {
+  if (trimString(value)) env[key] = value;
+}
 
 const report = {
   env_path: envPaths[0],
