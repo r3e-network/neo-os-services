@@ -144,8 +144,11 @@ describe('control-plane custody relay wrappers', () => {
       tx_hash: '0x' + 'ab'.repeat(32),
       request_id: 'job-7-run-3',
       target_chain: 'neo_n3',
+      queue_method: 'queueAutomationRequest',
     });
 
+    // A job without a registration id never reads the kernel ABI.
+    expect(fetchCalls).toHaveLength(1);
     const body = JSON.parse(String(fetchCalls[0].init.body));
     expect(body.method).toBe('queueAutomationRequest');
     expect(body.request_id).toBe('web-queue-job-7-run-3');
@@ -158,6 +161,102 @@ describe('control-plane custody relay wrappers', () => {
       { type: 'string', value: 'onCallback' },
     ]);
     expect(JSON.stringify(body)).not.toMatch(/"(wif|private_key|privateKey)"/);
+  });
+
+  function stubKernelAbi(methods: { name: string; parameters: unknown[] }[] | null) {
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit = {}) => {
+      fetchCalls.push({ url, init });
+      if (url === 'https://rpc.test') {
+        const rpc = JSON.parse(String(init.body));
+        expect(rpc.method).toBe('getcontractstate');
+        expect(rpc.params).toEqual([ORACLE_HASH]);
+        return relayResponse({
+          jsonrpc: '2.0',
+          id: 1,
+          result: methods
+            ? { hash: ORACLE_HASH, manifest: { abi: { methods } } }
+            : { hash: ORACLE_HASH },
+        });
+      }
+      return relayResponse({
+        request_id: 'web-relay-1',
+        tx_hash: '0x' + 'ab'.repeat(32),
+        vm_state: 'HALT',
+        exception: null,
+      });
+    });
+  }
+
+  const LEGACY_QUEUE = { name: 'queueAutomationRequest', parameters: [{}, {}, {}, {}, {}] };
+  const EXECUTION_QUEUE = { name: 'queueAutomationExecution', parameters: [{}, {}, {}, {}] };
+
+  it('queues a registered job through the R-01 execution lane on an upgraded kernel', async () => {
+    stubKernelAbi([LEGACY_QUEUE, EXECUTION_QUEUE]);
+    const { queueNeoN3AutomationViaBackend } = await import('../lib/neo-control-plane');
+    const payloadText = JSON.stringify({ raw_payload: 'ping' });
+    const result = await queueNeoN3AutomationViaBackend({
+      network: 'testnet',
+      requester: '0x' + '11'.repeat(20),
+      requestType: 'privacy_oracle',
+      payloadText,
+      callbackContract: '0x' + '22'.repeat(20),
+      callbackMethod: 'onCallback',
+      requestId: 'job-7-run-3',
+      registrationRequestId: '57',
+    });
+
+    expect(result.queue_method).toBe('queueAutomationExecution');
+    expect(fetchCalls.map((call) => call.url)).toEqual([
+      'https://rpc.test',
+      'https://runtime.test/txproxy/invoke',
+    ]);
+    const body = JSON.parse(String(fetchCalls[1].init.body));
+    expect(body.method).toBe('queueAutomationExecution');
+    expect(body.request_id).toBe('web-queue-job-7-run-3');
+    expect(body.params).toEqual([
+      { type: 'integer', value: '57' },
+      { type: 'hash160', value: '0x' + '11'.repeat(20) },
+      { type: 'string', value: 'privacy_oracle' },
+      { type: 'bytearray', value: Buffer.from(payloadText, 'utf8').toString('hex') },
+    ]);
+    expect(JSON.stringify(body)).not.toMatch(/"(wif|private_key|privateKey)"/);
+  });
+
+  it('keeps a registered job on the legacy lane while the kernel lacks the execution lane', async () => {
+    stubKernelAbi([LEGACY_QUEUE]);
+    const { queueNeoN3AutomationViaBackend } = await import('../lib/neo-control-plane');
+    const result = await queueNeoN3AutomationViaBackend({
+      network: 'testnet',
+      requester: '0x' + '11'.repeat(20),
+      requestType: 'privacy_oracle',
+      payloadText: '{}',
+      callbackContract: '0x' + '22'.repeat(20),
+      callbackMethod: 'onCallback',
+      requestId: '1',
+      registrationRequestId: '57',
+    });
+    expect(result.queue_method).toBe('queueAutomationRequest');
+    const body = JSON.parse(String(fetchCalls[1].init.body));
+    expect(body.method).toBe('queueAutomationRequest');
+    expect(body.params).toHaveLength(5);
+  });
+
+  it('refuses to queue when the kernel ABI cannot be read', async () => {
+    stubKernelAbi(null);
+    const { queueNeoN3AutomationViaBackend } = await import('../lib/neo-control-plane');
+    await expect(
+      queueNeoN3AutomationViaBackend({
+        network: 'testnet',
+        requester: '0x' + '11'.repeat(20),
+        requestType: 'privacy_oracle',
+        payloadText: '{}',
+        callbackContract: '0x' + '22'.repeat(20),
+        callbackMethod: 'onCallback',
+        requestId: '1',
+        registrationRequestId: '57',
+      })
+    ).rejects.toThrow(/no ABI/);
+    expect(fetchCalls.map((call) => call.url)).toEqual(['https://rpc.test']);
   });
 
   it('surfaces the worker refusal so duplicate queueing maps to already-queued', async () => {

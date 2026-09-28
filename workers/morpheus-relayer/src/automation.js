@@ -18,6 +18,7 @@ import {
 } from './persistence.js';
 import { fetchNeoN3FeedRecord, queueNeoN3AutomationRequest } from './neo-n3.js';
 import { buildUpkeepDispatch, buildUpkeepExecutionPayload } from './automation-supervisor.js';
+import { isTerminalAutomationQueueFailure } from '@r3e-network/neo-os-services-shared/automation-supervisor';
 import { normalizeRequestType, parseNonNegativeInteger, trimString } from './lib/strings.js';
 
 export function resolveSupabaseNetwork(value) {
@@ -567,11 +568,12 @@ function computeNextIntervalRun(job, nowMs) {
 
 function classifyAutomationExecutionFailure(error, options = {}) {
   const message = trimString(error instanceof Error ? error.message : String(error));
-  const normalized = message.toLowerCase();
 
   // These failures are terminal for the current job state and should stop
-  // scheduler retries until an operator/user explicitly reactivates the job.
-  if (normalized.includes('request fee not paid')) {
+  // scheduler retries until an operator/user explicitly reactivates the job: the
+  // payer has no credit, or no account consented to pay (R-01: no witness, no or an
+  // expired or spent approval), or the job no longer matches its registration.
+  if (isTerminalAutomationQueueFailure(message)) {
     return {
       terminal: true,
       patch: {
@@ -723,7 +725,10 @@ async function queueAutomationExecution(config, job, dispatch, deps = {}) {
       payloadText,
       job.callback_contract,
       job.callback_method,
-      dispatch.request_id
+      dispatch.request_id,
+      // The on-chain automation_register request this job was created from. On a kernel
+      // with the R-01 execution lane it ties the execution to the owner's spend approval.
+      job.registration_request_id
     )),
   };
 }

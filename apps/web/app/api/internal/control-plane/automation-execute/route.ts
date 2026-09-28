@@ -170,6 +170,7 @@ export async function POST(request: Request) {
         callbackContract: trimString(job.callback_contract || ''),
         callbackMethod: trimString(job.callback_method || ''),
         requestId: dispatch.request_id,
+        registrationRequestId: trimString(job.registration_request_id || ''),
       });
     } catch (error) {
       if (!isDuplicateQueueError(error)) throw error;

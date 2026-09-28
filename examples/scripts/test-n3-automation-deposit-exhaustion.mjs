@@ -2,11 +2,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { experimental, rpc as neoRpc, sc, tx, u, wallet } from '@cityofzion/neon-js';
+import { experimental, rpc as neoRpc, sc, tx, wallet } from '@cityofzion/neon-js';
 import { createRelayerConfig } from '../../workers/morpheus-relayer/src/config.js';
 import { processAutomationJobs } from '../../workers/morpheus-relayer/src/automation.js';
 import { patchAutomationJob } from '../../workers/morpheus-relayer/src/persistence.js';
 import {
+  approveAutomationSpendIfSupported,
   encodeUtf8Base64,
   loadExampleEnv,
   normalizeHash160,
@@ -29,11 +30,6 @@ const EXAMPLE_CONSUMER_ARTIFACT = 'UserConsumerN3OracleExample';
 
 function assertCondition(condition, message) {
   if (!condition) throw new Error(message);
-}
-
-function hash160ByteArrayParam(value) {
-  const hashParam = sc.ContractParam.hash160(String(value).replace(/^0x/i, ''));
-  return sc.ContractParam.byteArray(u.HexString.fromHex(hashParam.value.toLittleEndian(), true));
 }
 
 function shellQuote(value) {
@@ -215,6 +211,16 @@ async function deployProbeMiniApp({
     signers
   );
   assertHalt(await waitForApplicationLog(rpcClient, grantOracleFetchTxid), 'grantModuleToMiniApp');
+  // automation_register requests route to automation.run, which the app must hold.
+  const grantAutomationTxid = await oracleContract.invoke(
+    'grantModuleToMiniApp',
+    [sc.ContractParam.string(appId), sc.ContractParam.string('automation.run')],
+    signers
+  );
+  assertHalt(
+    await waitForApplicationLog(rpcClient, grantAutomationTxid),
+    'grantModuleToMiniApp automation.run'
+  );
 
   return {
     app_id: appId,
@@ -224,6 +230,7 @@ async function deployProbeMiniApp({
     set_oracle_txid: setOracleTxid,
     register_miniapp_txid: registerMiniAppTxid,
     grant_oracle_fetch_txid: grantOracleFetchTxid,
+    grant_automation_txid: grantAutomationTxid,
   };
 }
 
@@ -264,93 +271,6 @@ async function waitForCallback(rpcClient, consumerHash, requestId, timeoutMs = 1
     await sleep(2000);
   }
   throw new Error(`timed out waiting for callback ${requestId}`);
-}
-
-async function ensureFeeCredit(
-  account,
-  rpcUrl,
-  networkMagic,
-  rpcClient,
-  oracleHash,
-  payerHash,
-  requiredRequests,
-  { viaConsumer = false, creditRecipientHash = payerHash } = {}
-) {
-  const currentCredit = BigInt(
-    (await invokeRead(rpcClient, oracleHash, 'feeCreditOf', [
-      { type: 'Hash160', value: creditRecipientHash },
-    ])) || '0'
-  );
-  const requestFee = BigInt((await invokeRead(rpcClient, oracleHash, 'requestFee', [])) || '0');
-  const requiredCredit = requestFee * BigInt(requiredRequests);
-  if (requestFee <= 0n || currentCredit >= requiredCredit) {
-    return {
-      request_fee: requestFee.toString(),
-      current_credit: currentCredit.toString(),
-      deposit_amount: '0',
-    };
-  }
-
-  const gas = new experimental.SmartContract(GAS_HASH, {
-    rpcAddress: rpcUrl,
-    networkMagic,
-    account,
-  });
-  const deficit = requiredCredit - currentCredit;
-  const beneficiaryData =
-    !viaConsumer && normalizeHash160(creditRecipientHash) !== normalizeHash160(`0x${account.scriptHash}`)
-      ? hash160ByteArrayParam(creditRecipientHash)
-      : sc.ContractParam.any(null);
-  await gas.invoke('transfer', [
-    sc.ContractParam.hash160(`0x${account.scriptHash}`),
-    sc.ContractParam.hash160(viaConsumer ? payerHash : oracleHash),
-    sc.ContractParam.integer(deficit.toString()),
-    beneficiaryData,
-  ]);
-
-  if (viaConsumer) {
-    const deadlineBalance = Date.now() + 60000;
-    while (Date.now() < deadlineBalance) {
-      const contractBalanceRaw = await invokeRead(rpcClient, GAS_HASH, 'balanceOf', [
-        { type: 'Hash160', value: payerHash },
-      ]);
-      if (BigInt(contractBalanceRaw || '0') >= deficit) break;
-      await sleep(2000);
-    }
-
-    const consumer = new experimental.SmartContract(payerHash, {
-      rpcAddress: rpcUrl,
-      networkMagic,
-      account,
-    });
-    const signers = [
-      new tx.Signer({ account: account.scriptHash, scopes: tx.WitnessScope.Global }),
-    ];
-    await consumer.invoke(
-      'depositOracleCredits',
-      [sc.ContractParam.integer(deficit.toString())],
-      signers
-    );
-  }
-
-  const deadline = Date.now() + 60000;
-  while (Date.now() < deadline) {
-    const updatedCredit = BigInt(
-      (await invokeRead(rpcClient, oracleHash, 'feeCreditOf', [
-        { type: 'Hash160', value: creditRecipientHash },
-      ])) || '0'
-    );
-    if (updatedCredit >= requiredCredit) {
-      return {
-        request_fee: requestFee.toString(),
-        current_credit: updatedCredit.toString(),
-        deposit_amount: deficit.toString(),
-      };
-    }
-    await sleep(2000);
-  }
-
-  throw new Error('timed out waiting for Neo N3 automation fee credit');
 }
 
 async function fetchAutomationRecord(baseUrl, apiKey, automationId, network = 'testnet') {
@@ -402,7 +322,8 @@ async function waitForExhaustionRecords(baseUrl, apiKey, automationIds, timeoutM
     last = { records, queuedRuns, failedRuns };
     if (
       queuedRuns.length === 1 &&
-      failedRuns.some((item) => /request fee not paid/i.test(String(item.error || '')))
+      failedRuns.some((item) => /request fee not paid/i.test(String(item.error || ''))) &&
+      failedRuns.some((item) => /automation spend not approved/i.test(String(item.error || '')))
     ) {
       return last;
     }
@@ -421,7 +342,7 @@ async function cancelExhaustionProbeJobs(baseUrl, apiKey, reason) {
   };
   const url = new URL(`${baseUrl.replace(/\/$/, '')}/rest/v1/morpheus_automation_jobs`);
   url.searchParams.set('network', 'eq.testnet');
-  url.searchParams.set('execution_payload->>tag', 'in.(exhaustion-a,exhaustion-b)');
+  url.searchParams.set('execution_payload->>tag', 'in.(exhaustion-a,exhaustion-b,exhaustion-c)');
   url.searchParams.set('status', 'in.(active,paused,processing,error)');
   const response = await fetch(url, {
     method: 'PATCH',
@@ -573,6 +494,55 @@ async function startRelayer({ appId, phalaApiToken, handle }) {
   await waitForRelayerState({ appId, phalaApiToken, pid: handle.pid, shouldBeRunning: true });
 }
 
+async function readFeeCredit(rpcClient, oracleHash, accountHash) {
+  return BigInt(
+    (await invokeRead(rpcClient, oracleHash, 'feeCreditOf', [
+      { type: 'Hash160', value: accountHash },
+    ])) || '0'
+  );
+}
+
+// The requester deposits GAS for its own credit (OnNEP17Payment credits the sender) and
+// waits until exactly that amount landed.
+async function depositOwnCredit({ requester, rpcUrl, networkMagic, rpcClient, oracleHash, amount }) {
+  const requesterHash = `0x${requester.scriptHash}`;
+  const before = await readFeeCredit(rpcClient, oracleHash, requesterHash);
+  const gas = new experimental.SmartContract(GAS_HASH, {
+    rpcAddress: rpcUrl,
+    networkMagic,
+    account: requester,
+  });
+  const txid = await gas.invoke('transfer', [
+    sc.ContractParam.hash160(requesterHash),
+    sc.ContractParam.hash160(oracleHash),
+    sc.ContractParam.integer(amount.toString()),
+    sc.ContractParam.any(null),
+  ]);
+  assertHalt(await waitForApplicationLog(rpcClient, txid), 'requester credit deposit');
+  const after = await readFeeCredit(rpcClient, oracleHash, requesterHash);
+  assertCondition(
+    after === before + amount,
+    `requester credit moved from ${before} to ${after}, expected +${amount}`
+  );
+  return { txid, before: before.toString(), after: after.toString() };
+}
+
+async function fundRequesterGas({ account, requester, rpcUrl, networkMagic, rpcClient, amount }) {
+  const gas = new experimental.SmartContract(GAS_HASH, {
+    rpcAddress: rpcUrl,
+    networkMagic,
+    account,
+  });
+  const txid = await gas.invoke('transfer', [
+    sc.ContractParam.hash160(`0x${account.scriptHash}`),
+    sc.ContractParam.hash160(`0x${requester.scriptHash}`),
+    sc.ContractParam.integer(amount.toString()),
+    sc.ContractParam.any(null),
+  ]);
+  assertHalt(await waitForApplicationLog(rpcClient, txid), 'requester GAS funding');
+  return txid;
+}
+
 async function main() {
   await loadExampleEnv();
   const networkConfig = JSON.parse(
@@ -604,18 +574,26 @@ async function main() {
   assertCondition(oracleHash, 'testnet oracle hash is required');
   assertCondition(supabaseUrl && serviceRoleKey, 'Supabase secret or service-role env is required');
   assertCondition(phalaApiToken && appId, 'Phala API token and CVM id are required');
+
+  const account = new wallet.Account(signerWif);
+  const rpcClient = new neoRpc.RPCClient(rpcUrl);
+  const probeOperatorHash = `0x${account.scriptHash}`;
+  assertCondition(
+    await contractSupportsMethod(rpcClient, oracleHash, 'registerMiniApp', 6),
+    'testnet oracle deployment is legacy_callback and lacks registerMiniApp/6; upgrade the testnet MorpheusOracle before running isolated MiniApp automation fee exhaustion validation'
+  );
+  // R-01: a requester's credit pays an automation execution only under its own approval for
+  // that job. This probe validates that generation; against an older kernel the updater
+  // lane charged the named requester with no approval at all.
+  assertCondition(
+    (await contractSupportsMethod(rpcClient, oracleHash, 'approveAutomationSpend', 3)) &&
+      (await contractSupportsMethod(rpcClient, oracleHash, 'queueAutomationExecution', 4)),
+    'testnet oracle lacks the automation spend approval lane (approveAutomationSpend/3, queueAutomationExecution/4); upgrade the testnet MorpheusOracle first (docs/security/ORACLE-INTEGRATION-WITNESS-20260928.md)'
+  );
   const staleProbeCleanup = await cancelExhaustionProbeJobs(
     supabaseUrl,
     serviceRoleKey,
     `cancelled stale deposit exhaustion probes before ${new Date().toISOString()}`
-  );
-
-  const account = new wallet.Account(signerWif);
-  const rpcClient = new neoRpc.RPCClient(rpcUrl);
-  const requesterHash = `0x${account.scriptHash}`;
-  assertCondition(
-    await contractSupportsMethod(rpcClient, oracleHash, 'registerMiniApp', 6),
-    'testnet oracle deployment is legacy_callback and lacks registerMiniApp/6; upgrade the testnet MorpheusOracle before running isolated MiniApp automation fee exhaustion validation'
   );
   const probeMiniApp = await deployProbeMiniApp({
     rpcClient,
@@ -623,17 +601,32 @@ async function main() {
     rpcUrl,
     networkMagic,
     oracleHash,
-    appAdminHash: requesterHash,
+    appAdminHash: probeOperatorHash,
   });
   const resolvedConsumerHash = normalizeHash160(probeMiniApp.consumer_hash);
-  const sharedRequesterHash = normalizeHash160(`0x${wallet.generatePrivateKey().slice(0, 40)}`);
+  const requestFee = BigInt((await invokeRead(rpcClient, oracleHash, 'requestFee', [])) || '0');
+  assertCondition(requestFee > 0n, 'the probe needs a non-zero request fee');
+
+  // A fresh requester that owns its jobs: it signs the registrations and the approvals, and
+  // its credit is the shared pool the two approved jobs draw on.
+  const requester = new wallet.Account(wallet.generatePrivateKey());
+  const requesterHash = `0x${requester.scriptHash}`;
+  const requesterGasTxid = await fundRequesterGas({
+    account,
+    requester,
+    rpcUrl,
+    networkMagic,
+    rpcClient,
+    amount: 10n * 100_000_000n,
+  });
   const consumer = new experimental.SmartContract(resolvedConsumerHash, {
     rpcAddress: rpcUrl,
     networkMagic,
-    account,
+    account: requester,
   });
-  const signers = [new tx.Signer({ account: account.scriptHash, scopes: tx.WitnessScope.Global })];
-  const requestFee = BigInt((await invokeRead(rpcClient, oracleHash, 'requestFee', [])) || '0');
+  // The consumer calls the kernel's direct lane, which checks the requester's witness in the
+  // kernel, so the requester signs with a scope that reaches it.
+  const signers = [new tx.Signer({ account: requester.scriptHash, scopes: tx.WitnessScope.Global })];
 
   const buildPayload = (label) =>
     JSON.stringify({
@@ -661,114 +654,111 @@ async function main() {
       signers
     );
     const requestId = await waitForRequestId(rpcClient, txid);
-    return { label, txid, request_id: String(requestId), callback: null, automation_id: '' };
+    return {
+      label,
+      txid,
+      request_id: String(requestId),
+      callback: null,
+      automation_id: '',
+      spend_approval: null,
+    };
   };
 
   const registrationPauseHandle = await stopRelayer({ appId, phalaApiToken });
-  let registrationA;
-  let registrationB;
-  let registrationFeeStatus = null;
+  let registrations;
+  let registrationDeposit;
   try {
-    // Registration consumes the external requester credit path.
-    registrationFeeStatus = await ensureFeeCredit(
-      account,
+    // The probe app has no fee payer, so each registration is the requester's own
+    // witnessed spend: deposit exactly three fees and spend them on three registrations.
+    registrationDeposit = await depositOwnCredit({
+      requester,
       rpcUrl,
       networkMagic,
       rpcClient,
       oracleHash,
-      requesterHash,
-      4,
-      {
-        viaConsumer: false,
-        creditRecipientHash: requesterHash,
-      }
-    );
-    registrationA = await registerOne('exhaustion-a');
-    registrationB = await registerOne('exhaustion-b');
+      amount: requestFee * 3n,
+    });
+    registrations = [
+      await registerOne('exhaustion-a'),
+      await registerOne('exhaustion-b'),
+      await registerOne('exhaustion-c'),
+    ];
   } finally {
     await startRelayer({ appId, phalaApiToken, handle: registrationPauseHandle }).catch(() => {});
   }
+  const [registrationA, registrationB, registrationC] = registrations;
 
-  registrationA.callback = await waitForCallback(
-    rpcClient,
-    resolvedConsumerHash,
-    registrationA.request_id,
-    180000
-  );
-  registrationB.callback = await waitForCallback(
-    rpcClient,
-    resolvedConsumerHash,
-    registrationB.request_id,
-    180000
-  );
-  assertCondition(
-    registrationA.callback?.success === true,
-    'automation register callback should succeed for exhaustion-a'
-  );
-  assertCondition(
-    registrationB.callback?.success === true,
-    'automation register callback should succeed for exhaustion-b'
-  );
-  registrationA.automation_id = trimString(
-    registrationA.callback.result_json?.result?.automation_id ||
-      registrationA.callback.result_json?.automation_id ||
-      registrationA.automation_id ||
-      ''
-  );
-  registrationB.automation_id = trimString(
-    registrationB.callback.result_json?.result?.automation_id ||
-      registrationB.callback.result_json?.automation_id ||
-      registrationB.automation_id ||
-      ''
-  );
-  assertCondition(
-    registrationA.automation_id,
-    'automation register callback did not return automation_id for exhaustion-a'
-  );
-  assertCondition(
-    registrationB.automation_id,
-    'automation register callback did not return automation_id for exhaustion-b'
-  );
+  for (const registration of registrations) {
+    registration.callback = await waitForCallback(
+      rpcClient,
+      resolvedConsumerHash,
+      registration.request_id,
+      180000
+    );
+    assertCondition(
+      registration.callback?.success === true,
+      `automation register callback should succeed for ${registration.label}`
+    );
+    registration.automation_id = trimString(
+      registration.callback.result_json?.result?.automation_id ||
+        registration.callback.result_json?.automation_id ||
+        ''
+    );
+    assertCondition(
+      registration.automation_id,
+      `automation register callback did not return automation_id for ${registration.label}`
+    );
+    const onChain = await invokeRead(rpcClient, oracleHash, 'getRequest', [
+      { type: 'Integer', value: registration.request_id },
+    ]);
+    assertCondition(
+      normalizeHash160(onChain?.[5] || '') === normalizeHash160(requesterHash),
+      `${registration.label} was not registered by the probe requester`
+    );
+  }
+
+  // A and B carry the requester's approval (cap: one fee each, one hour); C carries none.
+  const approvalExpiresAtMs = Date.now() + 60 * 60 * 1000;
+  for (const registration of [registrationA, registrationB]) {
+    registration.spend_approval = await approveAutomationSpendIfSupported({
+      rpcUrl,
+      networkMagic,
+      oracleHash,
+      account: requester,
+      registrationRequestId: registration.request_id,
+      cap: requestFee,
+      expiresAtMs: approvalExpiresAtMs,
+    });
+    assertCondition(
+      registration.spend_approval.supported === true,
+      `approveAutomationSpend was not available for ${registration.label}`
+    );
+  }
 
   const pausedRelayerHandle = await stopRelayer({ appId, phalaApiToken });
   try {
-    const sharedRequesterFeeStatus = await ensureFeeCredit(
-      account,
+    const poolDeposit = await depositOwnCredit({
+      requester,
       rpcUrl,
       networkMagic,
       rpcClient,
       oracleHash,
-      sharedRequesterHash,
-      1,
-      {
-        viaConsumer: false,
-        creditRecipientHash: sharedRequesterHash,
-      }
-    );
-    const creditBeforeQueue = BigInt(
-      (await invokeRead(rpcClient, oracleHash, 'feeCreditOf', [
-        { type: 'Hash160', value: sharedRequesterHash },
-      ])) || '0'
-    );
+      amount: requestFee,
+    });
+    const creditBeforeQueue = await readFeeCredit(rpcClient, oracleHash, requesterHash);
     assertCondition(
       creditBeforeQueue === requestFee,
-      `expected exactly one request fee on the shared requester before queueing, got ${creditBeforeQueue}`
+      `expected exactly one request fee on the requester before queueing, got ${creditBeforeQueue}`
     );
 
-    await patchAutomationJob(registrationA.automation_id, {
-      status: 'active',
-      requester: sharedRequesterHash,
-      next_run_at: new Date(0).toISOString(),
-      execution_count: 0,
-      last_error: null,
-    });
-    await patchAutomationJob(registrationB.automation_id, {
-      status: 'active',
-      requester: sharedRequesterHash,
-      next_run_at: new Date(0).toISOString(),
-      execution_count: 0,
-      last_error: null,
-    });
+    for (const registration of registrations) {
+      await patchAutomationJob(registration.automation_id, {
+        status: 'active',
+        next_run_at: new Date(0).toISOString(),
+        execution_count: 0,
+        last_error: null,
+      });
+    }
 
     process.env.MORPHEUS_NETWORK = 'testnet';
     process.env.MORPHEUS_AUTOMATION_BATCH_SIZE = '200';
@@ -780,66 +770,87 @@ async function main() {
     process.env.MORPHEUS_RELAYER_NEO_N3_WIF = signerWif;
 
     const config = createRelayerConfig();
-    const targetRecordA = await fetchAutomationRecord(
-      supabaseUrl,
-      serviceRoleKey,
-      registrationA.automation_id,
-      'testnet'
-    );
-    const targetRecordB = await fetchAutomationRecord(
-      supabaseUrl,
-      serviceRoleKey,
-      registrationB.automation_id,
-      'testnet'
-    );
-    const targetJobs = [targetRecordA.job, targetRecordB.job].filter(Boolean);
-    assertCondition(targetJobs.length === 2, 'expected both target automation jobs before local tick');
+    const targetJobs = (
+      await Promise.all(
+        registrations.map((registration) =>
+          fetchAutomationRecord(supabaseUrl, serviceRoleKey, registration.automation_id, 'testnet')
+        )
+      )
+    )
+      .map((record) => record.job)
+      .filter(Boolean);
+    assertCondition(targetJobs.length === 3, 'expected all three target automation jobs before the tick');
     const localTick = await processAutomationJobs(config, { info() {}, warn() {} }, {
       fetchActiveAutomationJobs: async () => targetJobs,
     });
-    const outcome = await waitForExhaustionRecords(supabaseUrl, serviceRoleKey, [
-      registrationA.automation_id,
-      registrationB.automation_id,
-    ]);
-    const [recordA, recordB] = outcome?.records || [
-      await fetchAutomationRecord(supabaseUrl, serviceRoleKey, registrationA.automation_id, 'testnet'),
-      await fetchAutomationRecord(supabaseUrl, serviceRoleKey, registrationB.automation_id, 'testnet'),
-    ];
-    const queuedRuns = [...recordA.runs, ...recordB.runs].filter(
-      (item) => item.status === 'queued'
+    const automationIds = registrations.map((registration) => registration.automation_id);
+    const outcome = await waitForExhaustionRecords(supabaseUrl, serviceRoleKey, automationIds);
+    const records =
+      outcome?.records ||
+      (await Promise.all(
+        automationIds.map((automationId) =>
+          fetchAutomationRecord(supabaseUrl, serviceRoleKey, automationId, 'testnet')
+        )
+      ));
+    const [recordA, recordB, recordC] = records;
+    const queuedRuns = records.flatMap((record) =>
+      record.runs.filter((item) => item.status === 'queued')
     );
-    const failedRuns = [...recordA.runs, ...recordB.runs].filter(
-      (item) => item.status === 'failed'
+    const failedRuns = records.flatMap((record) =>
+      record.runs.filter((item) => item.status === 'failed')
     );
 
     assertCondition(
       queuedRuns.length === 1,
-      `expected exactly one queued automation run under exhausted shared credit, got ${queuedRuns.length}`
+      `expected exactly one queued automation run, got ${queuedRuns.length}`
     );
     assertCondition(
-      failedRuns.length >= 1,
-      'expected at least one failed automation run under exhausted shared credit'
+      [registrationA.automation_id, registrationB.automation_id].includes(
+        queuedRuns[0].automation_id
+      ),
+      'the queued run must belong to an approved job'
+    );
+    assertCondition(
+      trimString(queuedRuns[0]?.queue_tx?.queue_method || '') === 'queueAutomationExecution',
+      'the queued run must use the approval lane (queueAutomationExecution)'
+    );
+    assertCondition(
+      recordC.runs.some(
+        (item) =>
+          item.status === 'failed' && /automation spend not approved/i.test(String(item.error || ''))
+      ),
+      'the unapproved job must fail with automation spend not approved'
     );
     assertCondition(
       failedRuns.some((item) => /request fee not paid/i.test(String(item.error || ''))),
-      'expected failed automation run to mention request fee not paid'
+      'the second approved job must fail with request fee not paid once the pool is spent'
     );
 
-    const executionCountTotal =
-      Number(recordA.job?.execution_count || 0) + Number(recordB.job?.execution_count || 0);
-    assertCondition(
-      executionCountTotal === 1,
-      `expected total execution_count=1 across both jobs, got ${executionCountTotal}`
-    );
-
-    const creditAfterQueue = BigInt(
-      (await invokeRead(rpcClient, oracleHash, 'feeCreditOf', [
-        { type: 'Hash160', value: sharedRequesterHash },
-      ])) || '0'
-    );
+    const creditAfterQueue = await readFeeCredit(rpcClient, oracleHash, requesterHash);
     assertCondition(
       creditAfterQueue === 0n,
-      `expected shared requester credit to be exhausted after one queue, got ${creditAfterQueue}`
+      `expected the requester pool to hold 0 after one queue, got ${creditAfterQueue}`
+    );
+    const approvals = {};
+    for (const registration of registrations) {
+      const approval = await invokeRead(rpcClient, oracleHash, 'getAutomationSpendApproval', [
+        { type: 'Integer', value: registration.request_id },
+      ]);
+      approvals[registration.label] = {
+        cap: String(approval?.[3] ?? '0'),
+        spent: String(approval?.[4] ?? '0'),
+        expires_at_ms: String(approval?.[5] ?? '0'),
+      };
+    }
+    const spentTotal =
+      BigInt(approvals['exhaustion-a'].spent) + BigInt(approvals['exhaustion-b'].spent);
+    assertCondition(
+      spentTotal === requestFee,
+      `approved spend should total one fee, got ${spentTotal}`
+    );
+    assertCondition(
+      approvals['exhaustion-c'].cap === '0' && approvals['exhaustion-c'].spent === '0',
+      'the unapproved job must have no approval and no recorded spend'
     );
 
     await startRelayer({ appId, phalaApiToken, handle: pausedRelayerHandle });
@@ -870,20 +881,23 @@ async function main() {
       network_magic: networkMagic,
       oracle_hash: oracleHash,
       probe_miniapp: probeMiniApp,
-      shared_requester_hash: sharedRequesterHash,
+      requester_hash: requesterHash,
+      requester_gas_txid: requesterGasTxid,
       callback_consumer_hash: resolvedConsumerHash,
       request_fee: requestFee.toString(),
       stale_probe_cleanup_count: Array.isArray(staleProbeCleanup) ? staleProbeCleanup.length : 0,
       final_probe_cleanup_count: Array.isArray(finalProbeCleanup) ? finalProbeCleanup.length : 0,
-      registration_fee_status: registrationFeeStatus,
-      shared_requester_fee_status: sharedRequesterFeeStatus,
+      registration_deposit: registrationDeposit,
+      pool_deposit: poolDeposit,
       credit_before_queue: creditBeforeQueue.toString(),
       credit_after_queue: creditAfterQueue.toString(),
-      registrations: [registrationA, registrationB],
+      registrations,
+      approvals,
       local_tick: localTick,
       automation_records: {
         [registrationA.automation_id]: recordA,
         [registrationB.automation_id]: recordB,
+        [registrationC.automation_id]: recordC,
       },
       queued_runs: queuedRuns,
       failed_runs: failedRuns,
@@ -898,11 +912,11 @@ async function main() {
       '',
       '## Scope',
       '',
-      'This probe registers two due automation jobs that intentionally share the same requester fee-credit pool, then leaves only one request fee available before running a local scheduler tick.',
+      'One requester registers three due automation jobs and signs a spend approval (cap one fee, one hour) for two of them. Its credit pool then holds exactly one request fee before a local scheduler tick.',
       '',
       '## Result',
       '',
-      `- Shared requester hash: \`${sharedRequesterHash}\``,
+      `- Requester hash: \`${requesterHash}\``,
       `- Probe miniapp: \`${probeMiniApp.app_id}\``,
       `- Request fee: \`${requestFee}\``,
       `- Credit before queue: \`${creditBeforeQueue}\``,
@@ -913,12 +927,12 @@ async function main() {
       `- Final probe cleanup: \`${Array.isArray(finalProbeCleanup) ? finalProbeCleanup.length : 0}\``,
       queuedTxHash ? `- Queued tx: \`${queuedTxHash}\`` : null,
       queuedChainRequestId ? `- Queued chain request id: \`${queuedChainRequestId}\`` : null,
-      failedRuns[0]?.error ? `- Failed error: \`${failedRuns[0].error}\`` : null,
       '',
       '## Conclusion',
       '',
-      '- Under a shared requester fee-credit pool with only one remaining request fee, the scheduler queued exactly one automation execution.',
-      '- The second due automation did not overrun the pool; it failed with `request fee not paid`.',
+      '- The scheduler queued exactly one execution, through `queueAutomationExecution` under that job’s approval.',
+      '- The second approved job did not overrun the pool; it failed with `request fee not paid`.',
+      '- The job without an approval was not charged; it failed with `automation spend not approved`.',
       '- The funded queued execution still fulfilled successfully after the relayer resumed.',
       '',
     ]
@@ -940,7 +954,7 @@ async function main() {
           queued_runs: queuedRuns.length,
           failed_runs: failedRuns.length,
           queued_chain_request_id: String(queuedChainRequestId),
-          failed_error: failedRuns[0]?.error || null,
+          failed_errors: failedRuns.map((item) => item.error || null),
         },
         null,
         2

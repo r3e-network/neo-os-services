@@ -23,3 +23,23 @@ export function buildUpkeepExecutionPayload(
   payload?: Record<string, unknown>,
   job?: Record<string, unknown>
 ): Record<string, unknown>;
+
+export const AUTOMATION_EXECUTION_QUEUE_METHOD: 'queueAutomationExecution';
+export const LEGACY_AUTOMATION_QUEUE_METHOD: 'queueAutomationRequest';
+
+export function normalizeAutomationRegistrationRequestId(value: unknown): string;
+
+export function kernelManifestSupportsAutomationExecution(manifest: unknown): boolean;
+
+export type AutomationQueueLane =
+  | { method: 'queueAutomationExecution'; registrationRequestId: string }
+  | { method: 'queueAutomationRequest'; registrationRequestId: '' };
+
+export function selectAutomationQueueLane(input?: {
+  supportsExecutionLane?: boolean;
+  registrationRequestId?: unknown;
+}): AutomationQueueLane;
+
+export const TERMINAL_AUTOMATION_QUEUE_REVERTS: readonly string[];
+
+export function isTerminalAutomationQueueFailure(message: unknown): boolean;

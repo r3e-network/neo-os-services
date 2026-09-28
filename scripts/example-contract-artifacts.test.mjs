@@ -155,11 +155,29 @@ test('automation deposit exhaustion uses registered consumer without privileged 
   assert.match(script, /EXAMPLE_CONSUMER_ARTIFACT = 'UserConsumerN3OracleExample'/);
   assert.match(script, /sc\.ContractParam\.hash160\(ZERO_HASH\)/);
   assert.match(script, /'grantModuleToMiniApp'/);
-  assert.match(script, /wallet\.generatePrivateKey\(\)\.slice\(0, 40\)/);
-  assert.match(script, /hash160ByteArrayParam/);
-  assert.match(script, /viaConsumer: false/);
   assert.doesNotMatch(script, /'addAllowedCallback'/);
   assert.doesNotMatch(script, /requires-privileged-callback-registration/);
+});
+
+test('automation deposit exhaustion spends a keyed requester pool only under its approvals', () => {
+  const script = fs.readFileSync(
+    path.join(repoRoot, 'examples/scripts/test-n3-automation-deposit-exhaustion.mjs'),
+    'utf8'
+  );
+
+  // R-01: the pool belongs to a requester that signs its registrations and approvals. A
+  // keyless address (the former random 20-byte "shared requester") cannot consent, so the
+  // upgraded kernel would never charge it.
+  assert.match(script, /new wallet\.Account\(wallet\.generatePrivateKey\(\)\)/);
+  assert.doesNotMatch(script, /generatePrivateKey\(\)\.slice\(0, 40\)/);
+  assert.match(script, /approveAutomationSpendIfSupported/);
+  assert.match(script, /'approveAutomationSpend', 3/);
+  assert.match(script, /'queueAutomationExecution', 4/);
+  assert.match(script, /automation spend not approved/);
+  assert.match(script, /request fee not paid/);
+  // Job records are not re-pointed at another requester: the kernel binds an execution to
+  // the owner recorded on its registration.
+  assert.doesNotMatch(script, /requester: sharedRequesterHash/);
 });
 
 test('automation scheduler has database-backed claim semantics', () => {

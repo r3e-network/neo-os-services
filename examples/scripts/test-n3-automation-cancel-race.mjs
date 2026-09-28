@@ -8,6 +8,7 @@ import { processAutomationJobs } from '../../workers/morpheus-relayer/src/automa
 import { patchAutomationJob } from '../../workers/morpheus-relayer/src/persistence.js';
 import {
   DEFAULT_REMOTE_COMMAND_TIMEOUT_MS,
+  approveAutomationSpendIfSupported,
   encodeUtf8Base64,
   logValidationStep,
   loadExampleEnv,
@@ -464,6 +465,17 @@ async function main() {
       signers
     );
     const registerRequestId = await waitForRequestId(rpcClient, registerTx);
+    // The requester pays its own executions, so the upgraded kernel needs its approval for
+    // this job (R-01); an older kernel reports it unsupported and charges it as before.
+    const spendApproval = await approveAutomationSpendIfSupported({
+      rpcUrl,
+      networkMagic,
+      oracleHash,
+      account,
+      registrationRequestId: registerRequestId,
+      cap: BigInt((await invokeRead(rpcClient, oracleHash, 'requestFee', [])) || '0') * 25n,
+      expiresAtMs: Date.now() + 2 * 60 * 60 * 1000,
+    });
     const registerCallback = await waitForCallback(
       rpcClient,
       consumerHash,
@@ -561,6 +573,7 @@ async function main() {
           request_id: String(registerRequestId),
           callback: registerCallback,
           automation_id: automationId,
+          spend_approval: spendApproval,
         },
         local_tick: localTick,
         queued_run_count_before_cancel: queuedRuns.length,

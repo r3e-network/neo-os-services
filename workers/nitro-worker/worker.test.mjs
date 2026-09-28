@@ -1727,7 +1727,7 @@ test.after(() => {
   __resetNeoDidStateForTests();
 });
 
-test('txproxy allowlist permits Oracle fulfillRequest and queueAutomationRequest', async () => {
+test('txproxy allowlist permits Oracle fulfillRequest and both automation queue lanes', async () => {
   assert.equal(
     allowlistAllows('0xf54d8584ef82315c1800373272ab08ae0db2d5ef', 'fulfillRequest'),
     true
@@ -1736,6 +1736,14 @@ test('txproxy allowlist permits Oracle fulfillRequest and queueAutomationRequest
     allowlistAllows('0xf54d8584ef82315c1800373272ab08ae0db2d5ef', 'queueAutomationRequest'),
     true
   );
+  // R-01: the upgraded kernel queues an automation execution under the job owner's
+  // spend approval through queueAutomationExecution; the control plane relays it here.
+  assert.equal(
+    allowlistAllows('0xf54d8584ef82315c1800373272ab08ae0db2d5ef', 'queueAutomationExecution'),
+    true
+  );
+  // Only the listed oracle methods: an admin entry point is still refused.
+  assert.equal(allowlistAllows('0xf54d8584ef82315c1800373272ab08ae0db2d5ef', 'update'), false);
 });
 
 test('createByteArrayParam decodes base64 payloads into raw bytes', async () => {

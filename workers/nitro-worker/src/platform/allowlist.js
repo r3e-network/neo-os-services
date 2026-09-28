@@ -163,7 +163,9 @@ export function buildTxProxyAllowlist(networkInput = 'testnet') {
     allowlist,
     envForNetwork(network, 'CONTRACT_MORPHEUS_ORACLE_HASH'),
     'fulfillRequest',
-    'queueAutomationRequest'
+    'queueAutomationRequest',
+    // R-01 kernel lane for an automation execution under the job owner's spend approval.
+    'queueAutomationExecution'
   );
   addAllow(allowlist, envForNetwork(network, 'CONTRACT_PAYMENTHUB_HASH'), 'pay');
   addAllow(

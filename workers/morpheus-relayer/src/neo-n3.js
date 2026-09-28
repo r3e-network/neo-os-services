@@ -5,6 +5,12 @@ import {
   resolveScanConcurrency,
 } from '@r3e-network/neo-os-services-shared/utils';
 import { LEGACY_CALLBACK_METHOD } from '@r3e-network/neo-os-services-shared/callback-methods';
+import {
+  AUTOMATION_EXECUTION_QUEUE_METHOD,
+  kernelManifestSupportsAutomationExecution,
+  normalizeAutomationRegistrationRequestId,
+  selectAutomationQueueLane,
+} from '@r3e-network/neo-os-services-shared/automation-supervisor';
 import { custodyKeyId, custodyKeyInfo, custodySignTransaction } from './custody.js';
 import { strip0x as stripHexPrefix, trimString } from './lib/strings.js';
 
@@ -1038,6 +1044,53 @@ export async function fulfillNeoN3Request(
   };
 }
 
+// Reads the deployed kernel ABI and reports whether it has the R-01 execution lane
+// (queueAutomationExecution/4). Fails closed: an RPC error or a response without an ABI
+// throws, so the scheduler retries instead of guessing a lane; the legacy lane on an
+// upgraded kernel cannot charge an unsponsored requester and would park the job.
+export async function neoN3KernelSupportsAutomationExecution(config) {
+  const state = await neoRpcCall(config, 'getcontractstate', [config.neo_n3.oracleContract]);
+  return kernelManifestSupportsAutomationExecution(state?.manifest);
+}
+
+// Pure: the kernel entry point and arguments for one automation execution. On a kernel
+// with the execution lane and a job that carries its registration id, the execution is
+// tied to the job's on-chain registration and names the job owner the kernel must find
+// there; otherwise the legacy lane names the requester and the callback contract.
+export function buildNeoN3AutomationQueueInvocation({
+  supportsExecutionLane,
+  registrationRequestId,
+  requester,
+  requestType,
+  payloadText,
+  callbackContract,
+  callbackMethod,
+}) {
+  const payloadBase64 = Buffer.from(payloadText || '', 'utf8').toString('base64');
+  const lane = selectAutomationQueueLane({ supportsExecutionLane, registrationRequestId });
+  if (lane.method === AUTOMATION_EXECUTION_QUEUE_METHOD) {
+    return {
+      operation: lane.method,
+      args: [
+        sc.ContractParam.integer(lane.registrationRequestId),
+        sc.ContractParam.hash160(requester),
+        sc.ContractParam.string(requestType),
+        sc.ContractParam.byteArray(payloadBase64),
+      ],
+    };
+  }
+  return {
+    operation: lane.method,
+    args: [
+      sc.ContractParam.hash160(requester),
+      sc.ContractParam.string(requestType),
+      sc.ContractParam.byteArray(payloadBase64),
+      sc.ContractParam.hash160(callbackContract),
+      sc.ContractParam.string(callbackMethod),
+    ],
+  };
+}
+
 export async function queueNeoN3AutomationRequest(
   config,
   requester,
@@ -1045,9 +1098,24 @@ export async function queueNeoN3AutomationRequest(
   payloadText,
   callbackContract,
   callbackMethod,
-  requestIdOverride = ''
+  requestIdOverride = '',
+  registrationRequestId = ''
 ) {
   const requestId = trimString(requestIdOverride) || `automation:n3:${Date.now()}`;
+  // Only a job that carries its registration id can use the execution lane, so only then
+  // is the deployed ABI read.
+  const supportsExecutionLane = normalizeAutomationRegistrationRequestId(registrationRequestId)
+    ? await neoN3KernelSupportsAutomationExecution(config)
+    : false;
+  const invocation = buildNeoN3AutomationQueueInvocation({
+    supportsExecutionLane,
+    registrationRequestId,
+    requester,
+    requestType,
+    payloadText,
+    callbackContract,
+    callbackMethod,
+  });
   const updater = await resolveCustodyUpdater(config);
   // Best-effort fee top-up before submission, mirroring fulfillNeoN3Request.
   // Fail-soft for the same reason: a manually-funded deployment provisions no
@@ -1060,14 +1128,8 @@ export async function queueNeoN3AutomationRequest(
   }
   const script = sc.createScript({
     scriptHash: strip0x(config.neo_n3.oracleContract),
-    operation: 'queueAutomationRequest',
-    args: [
-      sc.ContractParam.hash160(requester),
-      sc.ContractParam.string(requestType),
-      sc.ContractParam.byteArray(Buffer.from(payloadText || '', 'utf8').toString('base64')),
-      sc.ContractParam.hash160(callbackContract),
-      sc.ContractParam.string(callbackMethod),
-    ],
+    operation: invocation.operation,
+    args: invocation.args,
   });
   try {
     const { txHash } = await buildSignAndBroadcastNeoN3Tx(
@@ -1097,6 +1159,7 @@ export async function queueNeoN3AutomationRequest(
       vm_state: outcome.vm_state,
       target_chain: 'neo_n3',
       signer_source: 'custody_updater',
+      queue_method: invocation.operation,
     };
   } catch (error) {
     if (/request_id already used/i.test(String(error?.message || ''))) {

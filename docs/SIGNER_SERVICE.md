@@ -822,7 +822,8 @@ Order matters: there must never be a moment when nothing owns custody.
    `loadNeoN3Context` resolves a lazy signing identity from
    `GET /keys/{SIGNER_ROLE_UPDATER_KEY_ID}` — the updater account, because the lane
    relays the oracle-contract invocations the relayer fulfills under (`fulfillRequest`
-   / `queueAutomationRequest`, the txproxy allowlist) — with the public key ↔ script
+   / `queueAutomationRequest` / `queueAutomationExecution`, the txproxy allowlist; a
+   contract-method whitelist on the updater key must list all three) — with the public key ↔ script
    hash cross-checked locally, so read-only consumers (on-chain baseline loads,
    raw-transaction broadcasts) never require custody provisioning; signing lanes force
    it with `required: true`. `relayNeoN3Invocation` builds the transaction locally,

@@ -82,3 +82,75 @@ export function buildUpkeepExecutionPayload(payload = {}, job = {}) {
     delivery_mode: dispatch.delivery_mode,
   };
 }
+
+// ── Kernel lane for one automation execution (R-01) ─────────────────────────────
+//
+// The kernel generation that closes R-01 (docs/security/ORACLE-INTEGRATION-WITNESS-20260928.md)
+// no longer lets the updater charge a requester that did not consent. It adds
+// queueAutomationExecution(registrationRequestId, requester, requestType, payload): the
+// requester and app come from the job's on-chain automation_register request (a named
+// requester that differs from it reverts), and the requester's own credit pays only under
+// its signed, capped, expiring approval for that job. Earlier generations expose only
+// queueAutomationRequest(requester, requestType, payload, callbackContract, callbackMethod),
+// which on an upgraded kernel only the app fee payer (or the requester acting as the app's
+// fee payer) can pay. Both dispatch lanes (relayer, control plane) choose the lane here so
+// the same job is always queued the same way.
+export const AUTOMATION_EXECUTION_QUEUE_METHOD = 'queueAutomationExecution';
+export const LEGACY_AUTOMATION_QUEUE_METHOD = 'queueAutomationRequest';
+const AUTOMATION_EXECUTION_QUEUE_ARITY = 4;
+
+// The kernel request id of the job's automation_register request as a canonical positive
+// decimal string, or '' when the job carries none (the lane then stays legacy).
+export function normalizeAutomationRegistrationRequestId(value) {
+  let text = '';
+  if (typeof value === 'string') text = value.trim();
+  else if (typeof value === 'bigint') text = value.toString();
+  else if (typeof value === 'number' && Number.isSafeInteger(value)) text = String(value);
+  return /^[1-9][0-9]*$/.test(text) ? text : '';
+}
+
+// Reads a getcontractstate manifest. Throws when there is no ABI so a caller never guesses a
+// lane from a malformed response.
+export function kernelManifestSupportsAutomationExecution(manifest) {
+  const methods = manifest?.abi?.methods;
+  if (!Array.isArray(methods)) {
+    throw new Error('oracle kernel manifest carries no ABI');
+  }
+  return methods.some(
+    (method) =>
+      method?.name === AUTOMATION_EXECUTION_QUEUE_METHOD &&
+      Array.isArray(method.parameters) &&
+      method.parameters.length === AUTOMATION_EXECUTION_QUEUE_ARITY
+  );
+}
+
+export function selectAutomationQueueLane({ supportsExecutionLane, registrationRequestId } = {}) {
+  const registration = normalizeAutomationRegistrationRequestId(registrationRequestId);
+  if (supportsExecutionLane === true && registration) {
+    return { method: AUTOMATION_EXECUTION_QUEUE_METHOD, registrationRequestId: registration };
+  }
+  return { method: LEGACY_AUTOMATION_QUEUE_METHOD, registrationRequestId: '' };
+}
+
+// Kernel reverts that retrying cannot fix: the payer has no credit, no account consented
+// to pay (no witness, no approval, approval expired or spent), or the job record no longer
+// matches its on-chain registration. They hold until the job owner approves or tops up,
+// the app fee payer sponsors the requester, or an operator repairs the job, so a scheduler
+// parks the job instead of re-queuing it every tick.
+export const TERMINAL_AUTOMATION_QUEUE_REVERTS = Object.freeze([
+  'request fee not paid',
+  'requester witness required',
+  'automation spend not approved',
+  'automation spend approval expired',
+  'automation spend cap exceeded',
+  'automation registration failed',
+  'automation requester mismatch',
+  'not an automation registration',
+  'registration not found',
+  'invalid automation execution',
+]);
+
+export function isTerminalAutomationQueueFailure(message) {
+  const normalized = String(message ?? '').toLowerCase();
+  return TERMINAL_AUTOMATION_QUEUE_REVERTS.some((reason) => normalized.includes(reason));
+}

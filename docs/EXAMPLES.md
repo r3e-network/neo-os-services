@@ -477,9 +477,11 @@ Fee note:
 
 - Neo N3 currently consumes prepaid Oracle credit at `0.01 GAS` per request.
 - Neo N3 reference contracts use `requestFee()` and `msg.value`.
+- The fee is paid by the MiniApp's registered fee payer when it sponsors the requester, otherwise by the requester's own credit, and the requester's credit is charged only when its signature reaches the Oracle kernel. A contract that calls the kernel for a user (as above) needs that user to sign with `CustomContracts` listing the kernel hash, or `Global`; a default `CalledByEntry` signature stops at the calling contract, and the request then reverts unless the fee payer sponsors it.
 
 - Neo N3 现在每次请求消耗预存的 `0.01 GAS` Oracle credit。
 - Neo N3 参考合约通过 `requestFee()` 和 `msg.value` 支付。
+- 手续费由 MiniApp 注册的 fee payer 在其赞助该请求者时支付，否则由请求者自己的 credit 支付；只有当请求者的签名作用域到达 Oracle 内核合约时，才会扣除请求者的 credit。代用户调用内核的合约（如上例）需要用户以列出内核哈希的 `CustomContracts` 或 `Global` 作用域签名；默认的 `CalledByEntry` 签名只在调用合约中有效，此时若 fee payer 不赞助，请求会被回滚。
 
 ## 7. Oracle + Encrypted Token / 预言机 + 加密 token
 
@@ -999,14 +1001,20 @@ Fee model:
 手续费模型：
 
 - each automation execution queues a normal Oracle request
-- every queued execution consumes the standard `requestFee`
-- Neo N3 uses prepaid GAS credits already stored in the Oracle contract
-- Neo N3 uses prepaid fee credits through `depositFeeCredit`
+- every queued execution consumes the standard `requestFee` from prepaid credit held by the Oracle contract (credit is deposited by transferring GAS to the Oracle contract)
+- the MiniApp's fee payer pays when it sponsors the job owner; otherwise the job owner pays, but only under its own approval for that job
+- the job owner approves with `approveAutomationSpend(registrationRequestId, cap, expiresAt)`: `registrationRequestId` is the request id of the job's `automation_register` request, `cap` the total fee (in GAS fractions) the job may draw, and `expiresAt` a `Runtime.Time` in milliseconds; `submitAutomationRegistration(appId, payload, cap, expiresAt)` registers and approves in one transaction
+- `cap = 0` revokes the approval; cancelling the job does not revoke it
+- the approval must be signed by the job owner; when the owner is a contract (for example an AA account), that contract calls `approveAutomationSpend` itself
+- without an approval, after its expiry, or once its cap is spent, the execution is not queued and the scheduler parks the job with `automation spend not approved`, `automation spend approval expired` or `automation spend cap exceeded`; approve (or top up) and reactivate the job
 
 - 每次自动化执行都会排队成一个普通 Oracle 请求
-- 每次排队执行都会消耗标准 `requestFee`
-- Neo N3 直接消耗 Oracle 合约里的预存 GAS credit
-- Neo N3 通过 `depositFeeCredit` 预存手续费
+- 每次排队执行都会从 Oracle 合约中的预存 credit 扣除标准 `requestFee`（向 Oracle 合约转入 GAS 即可预存 credit）
+- MiniApp 的 fee payer 赞助任务所有者时由 fee payer 支付；否则由任务所有者支付，但只能在其对该任务的授权范围内扣费
+- 任务所有者通过 `approveAutomationSpend(registrationRequestId, cap, expiresAt)` 授权：`registrationRequestId` 是该任务 `automation_register` 请求的 request id，`cap` 是该任务可累计扣除的手续费上限（以 GAS 最小单位计），`expiresAt` 是以毫秒计的 `Runtime.Time`；也可以用 `submitAutomationRegistration(appId, payload, cap, expiresAt)` 在同一笔交易中注册并授权
+- `cap = 0` 表示撤销授权；取消任务不会撤销授权
+- 授权必须由任务所有者签名；所有者是合约（例如 AA 账户）时，由该合约自己调用 `approveAutomationSpend`
+- 没有授权、授权已过期或上限已用完时，执行不会排队，调度器会以 `automation spend not approved`、`automation spend approval expired` 或 `automation spend cap exceeded` 暂停该任务；授权（或充值）后重新激活任务即可
 
 Validated on Neo N3 mainnet:
 

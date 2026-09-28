@@ -3,7 +3,7 @@ import path from 'node:path';
 import { webcrypto } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { rpc as neoRpc, wallet } from '@cityofzion/neon-js';
+import { experimental, rpc as neoRpc, sc, wallet } from '@cityofzion/neon-js';
 import { loadDotEnv } from '../../scripts/lib-env.mjs';
 import {
   assertNoRetiredPlaintextSigner,
@@ -551,4 +551,65 @@ export function runLocalRelayerOnce({ neoN3StartBlock = null } = {}) {
     throw new Error(result.stderr || result.stdout || 'local relayer once failed');
   }
   return result.stdout;
+}
+
+// R-01: the oracle kernel that closes the updater-lane credit theft charges a requester for
+// its automation executions only under the requester's own signed approval for that one job
+// (a total spend cap and an expiry), recorded by approveAutomationSpend. The requester signs
+// it here as the transaction sender, so a CalledByEntry witness reaches the kernel. Returns
+// { supported: false } against an older kernel, whose updater lane charged the named
+// requester without any approval.
+export async function approveAutomationSpendIfSupported({
+  rpcUrl,
+  networkMagic,
+  oracleHash,
+  account,
+  registrationRequestId,
+  cap,
+  expiresAtMs,
+  timeoutMs = 180000,
+}) {
+  const client = new neoRpc.RPCClient(rpcUrl);
+  const state = await withRetries('getContractState:oracle', () =>
+    client.getContractState(oracleHash)
+  );
+  const supported = Boolean(
+    state?.manifest?.abi?.methods?.some(
+      (method) => method?.name === 'approveAutomationSpend' && method.parameters?.length === 3
+    )
+  );
+  if (!supported) return { supported: false };
+
+  const oracle = new experimental.SmartContract(oracleHash, {
+    rpcAddress: rpcUrl,
+    networkMagic,
+    account,
+  });
+  const txid = await oracle.invoke('approveAutomationSpend', [
+    sc.ContractParam.integer(String(registrationRequestId)),
+    sc.ContractParam.integer(String(cap)),
+    sc.ContractParam.integer(String(expiresAtMs)),
+  ]);
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const log = await client.getApplicationLog(txid).catch(() => null);
+    const execution = log?.executions?.[0];
+    if (execution) {
+      const vmState = String(execution.vmstate || execution.state || '');
+      if (!vmState.includes('HALT')) {
+        throw new Error(
+          `approveAutomationSpend did not HALT: ${vmState} ${execution.exception || ''}`.trim()
+        );
+      }
+      return {
+        supported: true,
+        txid,
+        registration_request_id: String(registrationRequestId),
+        cap: String(cap),
+        expires_at_ms: String(expiresAtMs),
+      };
+    }
+    await sleep(2000);
+  }
+  throw new Error(`timed out waiting for approveAutomationSpend ${txid}`);
 }

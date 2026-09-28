@@ -1,3 +1,9 @@
+import {
+  AUTOMATION_EXECUTION_QUEUE_METHOD,
+  kernelManifestSupportsAutomationExecution,
+  normalizeAutomationRegistrationRequestId,
+  selectAutomationQueueLane,
+} from '@r3e-network/neo-os-services-shared/automation-supervisor';
 import { getServerSupabaseClient, type MorpheusNetwork } from './server-supabase';
 import { appConfig } from './config';
 import { isRetryableStatus } from './nitro';
@@ -179,6 +185,35 @@ export async function fulfillNeoN3RequestViaBackend(input: {
   };
 }
 
+// Reads the deployed kernel ABI (getcontractstate) to learn whether it has the R-01
+// execution lane. Fails closed: a transport, RPC or ABI error throws, so the dispatch fails
+// and is retried rather than guessing a lane (the legacy lane on an upgraded kernel cannot
+// charge a requester the app fee payer does not sponsor).
+async function kernelSupportsAutomationExecution(network: MorpheusNetwork): Promise<boolean> {
+  const runtime = resolveNeoN3Runtime(network);
+  if (!runtime.rpcUrl || !runtime.oracleHash) {
+    throw new Error(`Neo N3 runtime is not configured for ${network}`);
+  }
+  const response = await fetch(runtime.rpcUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'getcontractstate',
+      params: [runtime.oracleHash],
+    }),
+    cache: 'no-store',
+    signal: AbortSignal.timeout(10000),
+  });
+  const body: unknown = await response.json().catch(() => null);
+  if (!response.ok || !isPlainObject(body) || body.error !== undefined) {
+    throw new Error(`Neo N3 getcontractstate failed for the oracle kernel (${response.status})`);
+  }
+  const result = isPlainObject(body.result) ? body.result : {};
+  return kernelManifestSupportsAutomationExecution(result.manifest);
+}
+
 export async function queueNeoN3AutomationViaBackend(input: {
   network: MorpheusNetwork;
   requester: string;
@@ -187,17 +222,40 @@ export async function queueNeoN3AutomationViaBackend(input: {
   callbackContract: string;
   callbackMethod: string;
   requestId: string;
+  // The kernel request id of the job's automation_register request. With a kernel that
+  // has the R-01 execution lane, the execution is tied to that registration so the job
+  // owner's spend approval (not a bare requester name) is what can pay for it.
+  registrationRequestId?: string;
 }) {
+  const registrationRequestId = normalizeAutomationRegistrationRequestId(
+    input.registrationRequestId
+  );
+  const lane = selectAutomationQueueLane({
+    supportsExecutionLane: registrationRequestId
+      ? await kernelSupportsAutomationExecution(input.network)
+      : false,
+    registrationRequestId,
+  });
+  const payloadHex = Buffer.from(input.payloadText, 'utf8').toString('hex');
+  const params =
+    lane.method === AUTOMATION_EXECUTION_QUEUE_METHOD
+      ? [
+          { type: 'integer', value: lane.registrationRequestId },
+          { type: 'hash160', value: input.requester },
+          { type: 'string', value: input.requestType },
+          { type: 'bytearray', value: payloadHex },
+        ]
+      : [
+          { type: 'hash160', value: input.requester },
+          { type: 'string', value: input.requestType },
+          { type: 'bytearray', value: payloadHex },
+          { type: 'hash160', value: input.callbackContract },
+          { type: 'string', value: input.callbackMethod },
+        ];
   const relayed = await relayNeoN3InvocationViaWorker(input.network, {
     request_id: `web-queue-${input.requestId}`,
-    method: 'queueAutomationRequest',
-    params: [
-      { type: 'hash160', value: input.requester },
-      { type: 'string', value: input.requestType },
-      { type: 'bytearray', value: Buffer.from(input.payloadText, 'utf8').toString('hex') },
-      { type: 'hash160', value: input.callbackContract },
-      { type: 'string', value: input.callbackMethod },
-    ],
+    method: lane.method,
+    params,
     wait: false,
   });
 
@@ -205,6 +263,7 @@ export async function queueNeoN3AutomationViaBackend(input: {
     tx_hash: String(relayed.tx_hash),
     request_id: input.requestId,
     target_chain: 'neo_n3' as const,
+    queue_method: lane.method,
   };
 }
 

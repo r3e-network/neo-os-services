@@ -114,7 +114,8 @@ Checkpoint note:
 
 Neo N3 txproxy note:
 
-- the Neo N3 txproxy allowlist now permits both `fulfillRequest` and `queueAutomationRequest` on the Morpheus kernel contract so automation executions can be queued on-chain through the compatibility path
+- the Neo N3 txproxy allowlist now permits `fulfillRequest`, `queueAutomationRequest` and `queueAutomationExecution` on the Morpheus kernel contract so automation executions can be queued on-chain through the compatibility path
+- automation dispatch (relayer and control plane) reads the kernel ABI: with `queueAutomationExecution/4` present and a job carrying its `registration_request_id`, the execution is queued under the job owner's spend approval; otherwise through `queueAutomationRequest`. Consent and credit reverts park the job (R-01, `docs/security/ORACLE-INTEGRATION-WITNESS-20260928.md`)
 - that automation statement describes the frozen Node compatibility path; the
   production Rust relayer rejects `MORPHEUS_AUTOMATION_ENABLED=true`
 
