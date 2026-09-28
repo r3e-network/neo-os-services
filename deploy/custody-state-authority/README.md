@@ -37,8 +37,9 @@ failure. AWS role credential renewal is a separate, still-open deployment gate.
 
 RSA private operations live in `nitro-attest::session_key::SessionTransportKey`,
 not in the signer coordinator. The key has no import/export/clone API, token
-opening uses blinded OAEP-SHA256, and request signing requires the custody proof
-domain with a 32-byte PSS salt. The existing Rust ownership gate remains intact.
+opening uses blinded OAEP-SHA256, and request signing uses blinded RSA-PSS-SHA256
+over the custody proof domain with a 32-byte salt. The existing Rust ownership
+gate remains intact.
 
 The intended release ordering is:
 

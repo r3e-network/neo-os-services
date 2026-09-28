@@ -15,11 +15,21 @@ the only RSA private-key operation is a single-use KMS unwrap, which the
 analysis below refutes. This branch withdraws it, so RUSTSEC-2023-0071 is not
 ignored or allowed anywhere, and its disposition is owner decision O22.
 
-| Advisory          | Package before the fix | Dependency path                                                                        | Action                                                                                                       | Status on this branch                                                  |
-| ----------------- | ---------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| RUSTSEC-2026-0285 | rustls 0.23.43         | reqwest / hyper-rustls / tokio-rustls into neo-signer, relayer, compute and Nitro host | c73b8a5 pinned 0.23.45 in Cargo.lock                                                                         | Fixed; `scripts/rust-security-dependency.test.mjs` keeps the floor     |
-| RUSTSEC-2024-0437 | protobuf 2.28.0        | prometheus 0.13.4 into neo-signer                                                      | c73b8a5 moved prometheus to 0.14.0, which takes protobuf 3.7.2                                               | Fixed; the same test keeps the floor and the neo-signer prometheus pin |
-| RUSTSEC-2023-0071 | rsa 0.9.10             | neo-signer, nitro-attest, Nitro host and compute                                       | No fixed release in the advisory database; both OAEP decryptions are blinded, the PSS request proofs are not | OPEN: owner decision O22; do not claim audit clear or release approval |
+**Update 2026-09-28.** Option 1 below is now in source: the custody request
+proofs are signed with `Pss::new_blinded_with_salt::<Sha256>(32)`, so every RSA
+private-key operation on a production key in the workspace is blinded. The
+signature format is unchanged and the existing verifiers accept it. This
+narrows the channel described below; it does not
+close the advisory. RUSTSEC-2023-0071 stays open until the `rsa` crate is
+replaced or the owner records an acceptance (O22), and the running signer keeps
+signing unblinded until its image is rebuilt and re-measured, which is an owner
+action.
+
+| Advisory          | Package before the fix | Dependency path                                                                        | Action                                                                                                                                                              | Status on this branch                                                  |
+| ----------------- | ---------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| RUSTSEC-2026-0285 | rustls 0.23.43         | reqwest / hyper-rustls / tokio-rustls into neo-signer, relayer, compute and Nitro host | c73b8a5 pinned 0.23.45 in Cargo.lock                                                                                                                                | Fixed; `scripts/rust-security-dependency.test.mjs` keeps the floor     |
+| RUSTSEC-2024-0437 | protobuf 2.28.0        | prometheus 0.13.4 into neo-signer                                                      | c73b8a5 moved prometheus to 0.14.0, which takes protobuf 3.7.2                                                                                                      | Fixed; the same test keeps the floor and the neo-signer prometheus pin |
+| RUSTSEC-2023-0071 | rsa 0.9.10             | neo-signer, nitro-attest, Nitro host and compute                                       | No fixed release in the advisory database; both OAEP decryptions and, since 2026-09-28, the PSS request proofs are blinded in source (signer image not yet rebuilt) | OPEN: owner decision O22; do not claim audit clear or release approval |
 
 ## RUSTSEC-2023-0071 (rsa 0.9.10): reachability
 
@@ -77,12 +87,24 @@ signature by itself.
      only at the establish and refresh rate.
    - `sign_request_proof`: an RSA-PSS-SHA256 signature over SHA-256 of the
      domain-prefixed canonical request (`neoos/custody-state-request-proof/v1`),
-     made with `sign_with_rng(&mut OsRng, Pss::new_with_salt::<Sha256>(32), ..)`.
+     made with `sign_with_rng(&mut OsRng, Pss::new_blinded_with_salt::<Sha256>(32), ..)`
+     since 2026-09-28. It used to be made with `Pss::new_with_salt::<Sha256>(32)`.
      That padding value sets `blinded: false` (rsa 0.9.10 `src/pss.rs`,
-     `Pss::new_with_salt`); `Pss::sign` then passes no blinding RNG to
-     `rsa_decrypt_and_check`, and `OsRng` only draws the 32-byte salt. **Every
-     request proof is an unblinded RSA-3072 private exponentiation with the
-     per-process key.**
+     `Pss::new_with_salt`); `Pss::sign` then passed no blinding RNG to
+     `rsa_decrypt_and_check`, and `OsRng` only drew the 32-byte salt, so **every
+     request proof was an unblinded RSA-3072 private exponentiation with the
+     per-process key.** The blinded padding passes `OsRng` on to
+     `rsa_decrypt_and_check`, which exponentiates `EM·r^e mod n` for a fresh
+     random `r` and removes `r` afterwards. The `session_key` unit test
+     `request_proof_signature_is_blinded_and_standard_pss` pins this: an
+     unblinded signature draws only the salt from its RNG, and the test requires
+     more. Blinding changes how the signature is computed, not the signature: the
+     coordinator's verifier (`deploy/custody-state-authority/src/request-proof.mjs`,
+     Node `crypto.verify` with `RSA_PKCS1_PSS_PADDING` and
+     `RSA_PSS_SALTLEN_DIGEST`) accepted 8 of 8 blinded signatures from
+     `SessionTransportKey` on 2026-09-28 and rejected a tampered one, and the
+     Rust `Pss::new_with_salt::<Sha256>(32)` verifiers in the nitro-attest and
+     neo-signer tests accept them unchanged.
    - How often it signs: once per coordinator authority request, `head`,
      `takeover` and `download-tickets` at recovery, and `upload-tickets`,
      `upload-status`, `commits` (each retry signs again) and `renew` while
@@ -98,10 +120,12 @@ signature by itself.
      signer from its own request with a fresh 32-byte nonce, and PSS adds a
      random salt, so no party chooses the input. The coordinator verifies every
      proof, and anyone holding a signature `s` and the session public key can
-     compute the exponentiation input as `s^e mod n`; the coordinator therefore
-     knows the input of every exponentiation after the fact. This is a
-     known-input channel with one sample per request, not a handful of
-     blinded operations.
+     compute the encoded message as `s^e mod n`. Unblinded, that value was the
+     exponentiation input, so the coordinator knew the input of every
+     exponentiation after the fact: a known-input channel with one sample per
+     request. Blinded, the exponentiated value is `EM·r^e mod n` for a secret
+     `r` drawn per signature, so knowing `EM` no longer gives the input; the
+     samples and their timing remain.
    - Who can time it: the coordinator sees when each request arrives, and in
      the multi-step exchanges (an `upload-tickets` response followed by the
      upload, `upload-status` and `commits`) it has its own previous response as
@@ -111,12 +135,15 @@ signature by itself.
      egress proxy against its own probe, but the request travels inside TLS to
      the coordinator, so the parent does not learn the input. A party holding
      both positions (the coordinator colluding with the parent, or one attacker
-     controlling both) gets known inputs, per-operation timing against a
+     controlling both) got known inputs, per-operation timing against a
      reference point it sets, and an unbounded number of samples: the setting
-     the advisory describes. Whether the timing variation of this unblinded
-     CRT exponentiation (followed by the `rsa_decrypt_and_check` re-encryption)
-     can be resolved over that path has not been measured. Exploitation has not
-     been demonstrated, and neither has its impossibility.
+     the advisory describes. Blinding takes away the known inputs; the timing
+     and the unbounded samples remain, and the arithmetic is still not constant
+     time. Whether the timing variation of this CRT exponentiation (followed by
+     the unblinding and the `rsa_decrypt_and_check` re-encryption) can be
+     resolved over that path has not been measured, blinded or not.
+     Exploitation has not been demonstrated, and neither has its
+     impossibility.
    - Impact if the key were recovered: the attacker could open this process's
      session tokens and forge its request proofs, acting as this signer towards
      the custody-state coordinator (head, takeover, renew, commit and
@@ -127,6 +154,14 @@ signature by itself.
 
 Key generation (`RsaPrivateKey::new`) runs once per key inside the enclave and
 is not a repeatable operation on an existing key.
+
+Test code only: `workers/nitro-enclave-host/tests/unit/neodid.rs` signs RS256
+fixture tokens with throwaway RSA-2048 keys through `Signer::sign`, which in
+rsa 0.9.10 does not blind PKCS#1 v1.5 signatures (`RandomizedSigner::sign_with_rng`
+does). No production key is involved. The file is a pinned copy of
+neo-os-did's `runtime/nitro-enclave-host/tests/unit/neodid.rs`
+(`vendor/neo-os-did.pin.json`), so a change to it belongs in neo-os-did and a
+new pin.
 
 ### Public-key-only uses (not affected)
 
@@ -149,6 +184,10 @@ is not a repeatable operation on an existing key.
    the channel rather than closing the advisory. It changes the neo-signer
    binary, and so the measured signer image: new PCR manifests and a KMS
    key-policy update are needed before such a build can release keys.
+   **Done in source on 2026-09-28** (the first form); rebuilding and
+   re-measuring the signer image, publishing its manifest and updating the KMS
+   key policy remain owner actions, and until they happen production signs
+   unblinded.
 2. **Replace the implementation** on the private-key paths with a
    constant-time one. `aws-lc-rs` provides RSA-OAEP decryption and RSA-PSS
    signing (with a FIPS-validated build); it adds a C/assembly build
@@ -164,15 +203,18 @@ is not a repeatable operation on an existing key.
    keys more closely. This bounds the samples per key but not per session, and
    it also changes the measured signer image.
 4. **Written acceptance** of the residual risk (a coordinator-chosen, blinded
-   decryption per session refresh, and one unblinded PSS signature per
-   authority request, whose input the coordinator knows and whose rate the
-   workload and the parent instance's `/health` probes set), with an owner, an
-   expiry and a review trigger such as an upstream fix. Options 1 and 3 can be
-   combined with this one.
+   decryption per session refresh, and one PSS signature per authority request,
+   whose rate the workload and the parent instance's `/health` probes set; the
+   signature is blinded in source since 2026-09-28, and its input was known to
+   the coordinator while it was not), with an owner, an expiry and a review
+   trigger such as an upstream fix. Options 1 and 3 can be combined with this
+   one.
 
-**Status: open owner decision O22.** The two decryption paths are blinded; the
-request-proof signatures are not, and blinding is a partial mitigation, not a
-fix, where it is applied. Until the owner chooses one of the options above, the
-advisory stays open: this branch is not audit clean, no audit ignore entry or
-release waiver exists (the `--ignore` release check formerly in
-`docs/SECURITY_AUDIT.md` is withdrawn), and nothing here approves a release.
+**Status: open owner decision O22.** The two decryption paths and, since
+2026-09-28, the request-proof signatures are blinded in source; blinding is a
+partial mitigation, not a fix. The advisory stays open until the `rsa` crate is
+replaced on the private-key paths (option 2) or the owner records a written
+acceptance of the residual risk (option 4): this tree is not audit clean,
+`cargo audit` still reports RUSTSEC-2023-0071, no audit ignore entry or release
+waiver exists (the `--ignore` release check formerly in `docs/SECURITY_AUDIT.md`
+is withdrawn), and nothing here approves a release.

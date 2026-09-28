@@ -92,9 +92,12 @@ That earlier disposition treated a fresh, single-use RSA-2048 KMS recipient key
 as the only RSA private-key operation and stated that the other `rsa` call sites
 perform public-key verification only. That was wrong. neo-signer's per-process
 RSA-3072 custody session key (`crates/nitro-attest/src/session_key.rs`) also
-decrypts coordinator session tokens (blinded RSA-OAEP) and signs every
+decrypts coordinator session tokens (blinded RSA-OAEP) and signed every
 coordinator authority request with unblinded RSA-PSS, whose exponentiation
-input the coordinator can recompute from each signature. That is a private key
+input the coordinator can recompute from each signature (the signatures are
+blinded in source since 2026-09-28; the running signer image is unchanged until
+it is rebuilt and re-measured, and blinding is a partial mitigation that leaves
+the advisory open). That is a private key
 reused across a remotely repeatable signing operation, the condition under which
 this section said its exception had to be removed. The exception is therefore
 withdrawn: there is no `cargo audit --ignore RUSTSEC-2023-0071` waiver. The
