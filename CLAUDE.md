@@ -3,6 +3,7 @@
 This is the NeoOS confidential services stack repository.
 
 Primary responsibilities:
+
 - Morpheus-compatible Neo N3 oracle/datafeed protocol
 - Edge and control planes, relayers
 - Nitro execution workers
@@ -15,6 +16,7 @@ Primary responsibilities:
 - Durable service kernel (jobs, callbacks, relay policy)
 
 This repo should NOT:
+
 - Own contract source code (owned by neo-os-contracts)
 - Own MiniApp source code (owned by neo-os-miniapps)
 - Own MiniGame source code (owned by neo-os-minigames)
@@ -25,6 +27,7 @@ This repo should NOT:
 - Own NeoDID registry protocol (owned by neo-os-did; this repo runs pinned consumer copies)
 
 Architecture boundary:
+
 - Owns C14 deliver, C15 compute, C17 ingress (v2 layer L3 gateway)
 - Hosts C05 oracle; C04/C16 identity owned by neo-os-did
 - Service keys and custody live here exclusively
@@ -35,6 +38,7 @@ Architecture boundary:
 ## Core Development Principles
 
 ### 1. Test-Driven Development (TDD)
+
 - **ALWAYS** write tests BEFORE implementing any feature or fixing any bug
 - Tests must be written first and must fail initially
 - Implementation should only contain code necessary to make tests pass
@@ -46,6 +50,7 @@ Architecture boundary:
 - Write tests for both success and failure scenarios
 
 ### 2. Document-Driven Development (DDD)
+
 - **ALWAYS** create documentation BEFORE writing code
 - Documentation must include:
   - Purpose and problem being solved
@@ -62,6 +67,7 @@ Architecture boundary:
 - API documentation must include request/response examples
 
 ### 3. Production-Ready Code Only
+
 - **NO PLACEHOLDERS** of any kind are allowed:
   - No `TODO` comments without immediate implementation
   - No `console.log` for debugging (use proper logging)
@@ -85,6 +91,7 @@ Architecture boundary:
 ## Completeness Requirements
 
 ### 1. Project Structure
+
 - **ALWAYS** create proper project structure:
   - Organized directory structure (src/, tests/, docs/, config/)
   - Configuration files (package.json, tsconfig.json, .env.example, etc.)
@@ -96,6 +103,7 @@ Architecture boundary:
   - .gitignore with comprehensive patterns
 
 ### 2. Dependencies and Tooling
+
 - Specify exact versions for all dependencies
 - Include development dependencies
 - Configure linting (ESLint, Prettier, etc.)
@@ -106,6 +114,7 @@ Architecture boundary:
 - Configure security scanning
 
 ### 3. Code Completeness
+
 - Every feature must be 100% complete before moving to next
 - All edge cases must be handled
 - All promised functionality must work
@@ -116,6 +125,7 @@ Architecture boundary:
 - Graceful degradation for optional features
 
 ### 4. Integration Requirements
+
 - Database migrations must be included
 - API integrations must handle all response codes
 - External service failures must be handled
@@ -128,6 +138,7 @@ Architecture boundary:
 ## Correctness Standards
 
 ### 1. Algorithm Correctness
+
 - Use proven algorithms and data structures
 - Include complexity analysis in comments
 - Optimize for both time and space
@@ -137,6 +148,7 @@ Architecture boundary:
 - Use appropriate data types
 
 ### 2. Concurrency and Threading
+
 - Proper synchronization mechanisms
 - Avoid race conditions
 - Prevent deadlocks
@@ -146,6 +158,7 @@ Architecture boundary:
 - Use async/await correctly
 
 ### 3. Memory Management
+
 - No memory leaks
 - Proper resource disposal
 - Efficient memory usage
@@ -155,6 +168,7 @@ Architecture boundary:
 - Implement pagination where needed
 
 ### 4. Security Requirements
+
 - Input sanitization on ALL inputs
 - SQL injection prevention
 - XSS prevention
@@ -170,6 +184,7 @@ Architecture boundary:
 ## Professional Standards
 
 ### 1. Code Style and Conventions
+
 - Follow language-specific style guides
 - Consistent naming conventions
 - Proper code organization
@@ -180,6 +195,7 @@ Architecture boundary:
 - Change logs maintenance
 
 ### 2. Error Handling
+
 - Never swallow exceptions
 - Specific error types for different scenarios
 - User-friendly error messages
@@ -190,6 +206,7 @@ Architecture boundary:
 - Graceful shutdown handling
 
 ### 3. Performance Standards
+
 - Response time under 200ms for APIs
 - Database queries optimized with indexes
 - Caching strategies implemented
@@ -200,6 +217,7 @@ Architecture boundary:
 - Performance monitoring setup
 
 ### 4. Monitoring and Observability
+
 - Structured logging with levels
 - Distributed tracing setup
 - Metrics collection
@@ -212,6 +230,7 @@ Architecture boundary:
 ## Implementation Requirements
 
 ### Before Writing Any Code:
+
 1. Research and understand the problem domain completely
 2. Design the complete system architecture
 3. Write comprehensive tests that define expected behavior
@@ -222,6 +241,7 @@ Architecture boundary:
 8. Review security implications
 
 ### Code Quality Standards:
+
 - Proper error handling with specific error types and recovery strategies
 - Input validation on all external data
 - Secure coding practices (no SQL injection, XSS, etc.)
@@ -235,6 +255,7 @@ Architecture boundary:
 - YAGNI (You Aren't Gonna Need It) principle
 
 ### Forbidden Patterns:
+
 - `// TODO: implement later`
 - `throw new Error("Not implemented")`
 - `return null; // placeholder`
@@ -252,6 +273,7 @@ Architecture boundary:
 - Magic numbers/strings
 
 ### Required Patterns:
+
 - Comprehensive error handling with recovery
 - Proper async/await usage
 - Resource cleanup (close connections, clear timers)
@@ -268,6 +290,7 @@ Architecture boundary:
 ## Database Standards
 
 ### 1. Schema Design
+
 - Normalized database design (3NF minimum)
 - Proper indexes on all foreign keys
 - Composite indexes for common queries
@@ -278,6 +301,7 @@ Architecture boundary:
 - Audit trails for sensitive data
 
 ### 2. Query Optimization
+
 - Explain plan analysis
 - Query performance testing
 - Avoid N+1 queries
@@ -290,6 +314,7 @@ Architecture boundary:
 ## API Standards
 
 ### 1. RESTful Design
+
 - Proper HTTP methods usage
 - Resource-based URLs
 - Consistent naming conventions
@@ -300,6 +325,7 @@ Architecture boundary:
 - Filtering and sorting support
 
 ### 2. API Documentation
+
 - OpenAPI/Swagger specification
 - Request/response examples
 - Error response documentation
@@ -312,6 +338,7 @@ Architecture boundary:
 ## Testing Standards
 
 ### 1. Test Categories
+
 - Unit tests for all functions
 - Integration tests for APIs
 - End-to-end tests for workflows
@@ -322,6 +349,7 @@ Architecture boundary:
 - Regression tests
 
 ### 2. Test Quality
+
 - Tests must be deterministic
 - No flaky tests allowed
 - Test data factories
@@ -334,6 +362,7 @@ Architecture boundary:
 ## Deployment Standards
 
 ### 1. Container Requirements
+
 - Multi-stage Docker builds
 - Non-root user execution
 - Health check endpoints
@@ -344,6 +373,7 @@ Architecture boundary:
 - Minimal base images
 
 ### 2. Infrastructure as Code
+
 - All infrastructure in code
 - Terraform/CloudFormation templates
 - Environment parity
@@ -370,6 +400,7 @@ Architecture boundary:
 ## Enforcement
 
 These rules apply to:
+
 - All new code
 - All code modifications
 - All bug fixes
@@ -382,6 +413,7 @@ These rules apply to:
 ## Quality Gates
 
 Before considering any task complete:
+
 1. All tests must pass
 2. Code coverage must be >90%
 3. No linting errors
@@ -405,6 +437,7 @@ Before considering any task complete:
 ## Git Commit Standards
 
 ### 1. Commit Message Rules
+
 - **NEVER** mention "Claude", "AI", "assistant", or any AI-related terms in commits
 - Write commit messages as if a human developer wrote them
 - Use conventional commit format: type(scope): description
@@ -414,6 +447,7 @@ Before considering any task complete:
 - Reference issue numbers when applicable
 
 ### 2. Forbidden Git Patterns
+
 - No "Generated by Claude" or similar messages
 - No "AI-assisted" mentions
 - No assistant attribution
@@ -422,13 +456,16 @@ Before considering any task complete:
 - Write commits as a professional developer would
 
 ### 3. Example Commit Messages
+
 ✅ Good:
+
 - `feat(auth): implement JWT token refresh`
 - `fix(api): handle null response in user endpoint`
 - `refactor(database): optimize query performance`
 - `test(payment): add integration tests for Stripe`
 
 ❌ Bad:
+
 - `feat: added feature as requested by user via Claude`
 - `fix: AI-generated fix for bug`
 - `update: changes made by assistant`

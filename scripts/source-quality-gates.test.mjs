@@ -21,28 +21,13 @@ for (const path of [
   });
 }
 
-for (const path of [
-]) {
-  test(`service source satisfies lint rules: ${path}`, async () => {
-    const results = await eslint.lintFiles([path]);
-    assert.equal(
-      results.reduce((count, result) => count + result.errorCount, 0),
-      0
-    );
-  });
-}
-
-for (const path of [
-  'dist/index.js',
-]) {
+for (const path of ['dist/index.js']) {
   test(`lint excludes generated output: ${path}`, async () => {
     assert.equal(await eslint.isPathIgnored(path), true);
   });
 }
 
-for (const path of [
-  'scripts/source-quality-gates.test.mjs',
-]) {
+for (const path of ['scripts/source-quality-gates.test.mjs']) {
   test(`lint retains authored source: ${path}`, async () => {
     assert.equal(await eslint.isPathIgnored(path), false);
   });
