@@ -35,12 +35,15 @@ Repository layer: `L3` (gateway).
 | ------------------------------- | ----------- |
 | `contracts`                     | C05         |
 | `apps/web`                      | C20         |
-| `services/neoswap`              | delete      |
+| `services/neoswap`              | deleted     |
 | `workers/morpheus-relayer`      | delete      |
 | `workers/morpheus-relater-rs`   | delete      |
 | `contracts-evm`                 | archive     |
 | `workers/nitro-worker/src/game` | retire      |
 | `config/networks`               | C08         |
+
+Only `services/neoswap` has moved: it was deleted in 7f430ab, and `docs/ORGANIZATION.md` records the
+checks made before the deletion. Every other path above is still in this repository.
 
 C04's `NeoDIDRegistry` has already moved to `neo-os-did`; this repository keeps only the pinned NEF and manifest
 under `vendor/neo-os-did/contracts/build/`, which its testnet registry probes deploy.
