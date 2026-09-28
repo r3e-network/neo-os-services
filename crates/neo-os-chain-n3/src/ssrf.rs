@@ -15,9 +15,12 @@
 //! * NAT64 64:ff9b::/32 is refused outright, the well-known /96 included
 //!   (stricter than the worker and compute classifiers, which decode the
 //!   /96);
-//! * IPv4 written as decimal / hex / octal single numbers or mixed-radix
-//!   dotted forms (`2130706433`, `0x7f000001`, `0177.0.0.1`, `127.1`) is
-//!   canonicalized before classification so it cannot bypass by spelling.
+//! * the URL is parsed with the WHATWG URL parser of the `url` crate, which
+//!   reqwest applies to the same string, so the guard classifies the host
+//!   the transport would connect to: IPv4 written as decimal / hex / octal
+//!   numbers or short dotted forms (`2130706433`, `0x7f000001`,
+//!   `0177.0.0.1`, `127.1`, `10.0.0.01`) arrives canonicalized, and a
+//!   backslash or userinfo cannot make the guard read a different host.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -48,25 +51,36 @@ pub enum SsrfDecision {
     Rejected(String),
 }
 
-/// http/https + host classification for one URL. Returns the decision; the
-/// caller turns a rejection into its own error shape.
+/// http/https + host classification for one URL, parsed with the WHATWG
+/// parser of the `url` crate (the parser reqwest applies to the same string)
+/// so the classified host is the one the transport would connect to. Returns
+/// the decision; the caller turns a rejection into its own error shape.
 pub fn classify_url(raw_url: &str, resolver: &dyn Resolve) -> SsrfDecision {
-    let Some((scheme, host)) = split_scheme_and_host(raw_url) else {
-        return SsrfDecision::Rejected("url must be absolute with an http/https scheme".into());
+    let parsed = match url::Url::parse(raw_url) {
+        Ok(parsed) => parsed,
+        Err(url::ParseError::RelativeUrlWithoutBase) => {
+            return SsrfDecision::Rejected("url must be absolute with an http/https scheme".into());
+        }
+        Err(url::ParseError::EmptyHost) => {
+            return SsrfDecision::Rejected("url host is empty".into());
+        }
+        Err(error) => return SsrfDecision::Rejected(format!("url is not valid: {error}")),
     };
-    if scheme != "http" && scheme != "https" {
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return SsrfDecision::Rejected("url must use http or https".into());
     }
-    if host.is_empty() {
-        return SsrfDecision::Rejected("url host is empty".into());
+    match parsed.host() {
+        // An IP literal, in any spelling the parser accepts, is classified
+        // without DNS.
+        Some(url::Host::Ipv4(ip)) => classify_ip(IpAddr::V4(ip)),
+        Some(url::Host::Ipv6(ip)) => classify_ip(IpAddr::V6(ip)),
+        Some(url::Host::Domain(name)) => classify_name(name, resolver),
+        None => SsrfDecision::Rejected("url host is empty".into()),
     }
+}
 
-    // An IP literal (in any spelling) is classified without DNS.
-    if let Some(ip) = parse_host_as_ip(&host) {
-        return classify_ip(ip);
-    }
-
-    match resolver.resolve(&host) {
+fn classify_name(name: &str, resolver: &dyn Resolve) -> SsrfDecision {
+    match resolver.resolve(name) {
         Ok(addresses) => {
             if addresses.is_empty() {
                 return SsrfDecision::Rejected("host resolved to no addresses".into());
@@ -82,95 +96,6 @@ pub fn classify_url(raw_url: &str, resolver: &dyn Resolve) -> SsrfDecision {
     }
 }
 
-fn split_scheme_and_host(raw_url: &str) -> Option<(String, String)> {
-    let (scheme, rest) = raw_url.split_once("://")?;
-    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let authority = &rest[..authority_end];
-    // Strip userinfo — a URL like https://evil@internal.host/ must classify on
-    // the HOST, and userinfo in an RPC endpoint is itself suspicious but the
-    // classification target is still the host part.
-    let host_port = authority.rsplit('@').next()?;
-    let host = host_port
-        .strip_prefix('[')
-        .and_then(|rest| rest.split_once(']').map(|(v6, _)| v6.to_string()))
-        .unwrap_or_else(|| {
-            host_port
-                .rsplit_once(':')
-                .map(|(host, _port)| host.to_string())
-                .unwrap_or_else(|| host_port.to_string())
-        });
-    Some((scheme.to_lowercase(), host.to_lowercase()))
-}
-
-/// Parse a host string as an IP literal, including IPv4 spellings std rejects:
-/// pure decimal/hex/octal 32-bit numbers, and dotted quads with 1-4 parts in
-/// mixed decimal/hex/octal radix (classic SSRF bypass spellings).
-fn parse_host_as_ip(host: &str) -> Option<IpAddr> {
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return Some(ip);
-    }
-    // Strip a trailing dot (FQDN spelling) — "127.0.0.1." would otherwise be
-    // treated as a name.
-    let host = host.strip_suffix('.').unwrap_or(host);
-    if host.is_empty() {
-        return None;
-    }
-
-    let parse_part = |part: &str| -> Option<u32> {
-        let value = if let Some(hex) = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")) {
-            u32::from_str_radix(hex, 16).ok()?
-        } else if part.len() > 1 && part.starts_with('0') {
-            u32::from_str_radix(part, 8).ok()?
-        } else {
-            part.parse::<u32>().ok()?
-        };
-        Some(value)
-    };
-
-    // Single-number forms: the whole host is one 32-bit value in decimal, hex,
-    // or octal.
-    if !host.contains('.') {
-        let value = if let Some(hex) = host.strip_prefix("0x").or_else(|| host.strip_prefix("0X")) {
-            u32::from_str_radix(hex, 16).ok()?
-        } else if host.len() > 1 && host.starts_with('0') {
-            u32::from_str_radix(host, 8).ok()?
-        } else {
-            host.parse::<u32>().ok()?
-        };
-        return Some(IpAddr::V4(Ipv4Addr::from(value)));
-    }
-
-    // Dotted forms with 1-4 mixed-radix parts: the last part fills the
-    // remaining bytes (classic inet_aton behavior).
-    let parts: Vec<&str> = host.split('.').collect();
-    if parts.len() > 4 {
-        return None;
-    }
-    let mut values = Vec::with_capacity(4);
-    for part in parts.iter() {
-        if part.is_empty() {
-            return None;
-        }
-        let parsed = parse_part(part)?;
-        let max = 1u32 << (8 * (4 - parts.len() + 1));
-        if parsed >= max {
-            return None;
-        }
-        values.push(parsed);
-    }
-    let mut word = 0u32;
-    for (index, value) in values.iter().enumerate() {
-        let last = index == values.len() - 1;
-        if last {
-            let remaining = 4 - values.len() + 1;
-            word |= value << (8 * (4 - remaining));
-        } else {
-            word |= value << (8 * (3 - index));
-        }
-    }
-    Some(IpAddr::V4(Ipv4Addr::from(word)))
-}
-
 fn classify_ip(ip: IpAddr) -> SsrfDecision {
     if is_blocked_ip(ip) {
         SsrfDecision::Rejected(format!("host resolves to a blocked address ({ip})"))
@@ -179,9 +104,11 @@ fn classify_ip(ip: IpAddr) -> SsrfDecision {
     }
 }
 
-/// True for every address class the worker's SSRF guard blocks: unspecified,
+/// True for every address class the worker's SSRF guard blocks (unspecified,
 /// loopback, private (RFC1918), link-local, CGNAT, ULA, multicast, reserved,
-/// documentation, broadcast — for both families.
+/// broadcast, and IPv4 embedded in transition forms), plus the classes this
+/// guard alone refuses: 192.0.0.0/24, the IPv4 and IPv6 documentation ranges
+/// and all of NAT64 64:ff9b::/32.
 pub fn is_blocked_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_blocked_ipv4(v4),
@@ -190,7 +117,7 @@ pub fn is_blocked_ip(ip: IpAddr) -> bool {
 }
 
 fn is_blocked_ipv4(ip: Ipv4Addr) -> bool {
-    let [a, b, _c, d] = ip.octets();
+    let [a, b, c, _d] = ip.octets();
     a == 0                                   // "this network"
         || a == 10                            // RFC1918 private
         || (a == 100 && (0x40..=0x7f).contains(&b)) // CGNAT 100.64/10
@@ -198,10 +125,10 @@ fn is_blocked_ipv4(ip: Ipv4Addr) -> bool {
         || (a == 169 && b == 254)             // link-local
         || (a == 172 && (16..=31).contains(&b)) // RFC1918 private
         || (a == 192 && b == 168)             // RFC1918 private
-        || (a == 192 && b == 0 && d == 0)     // TEST-NET-1-ish (192.0.0.0/24)
-        || (a == 192 && b == 0 && d == 2)     // documentation 192.0.2/24
-        || (a == 198 && b == 51 && d == 100)  // documentation 198.51.100/24
-        || (a == 203 && b == 0 && d == 113)   // documentation 203.0.113/24
+        || (a == 192 && b == 0 && c == 0)     // IETF protocol assignments 192.0.0.0/24
+        || (a == 192 && b == 0 && c == 2)     // documentation 192.0.2/24
+        || (a == 198 && b == 51 && c == 100)  // documentation 198.51.100/24
+        || (a == 203 && b == 0 && c == 113)   // documentation 203.0.113/24
         || (224..=239).contains(&a)   // multicast
         || a >= 240 // reserved + broadcast
 }
@@ -360,6 +287,85 @@ mod tests {
     }
 
     #[test]
+    fn classifies_the_address_the_url_parser_resolves_a_spelling_to() {
+        // Each spelling is the address the WHATWG parser (the url crate that
+        // reqwest uses) turns it into: the last part fills the low bytes, a
+        // leading 0 is octal, 0x is hex, and a trailing dot is dropped.
+        for (url, canonical) in [
+            ("http://10.0.0.01/", "10.0.0.1"),
+            ("http://192.168.0.01/", "192.168.0.1"),
+            ("http://0x0a.0.0.1/", "10.0.0.1"),
+            ("http://012.0.0.1/", "10.0.0.1"),
+            ("http://192.168.1/", "192.168.0.1"),
+            ("http://192.168.257/", "192.168.1.1"),
+            ("http://169.254.169/", "169.254.0.169"),
+            ("http://127.0.0.1./", "127.0.0.1"),
+        ] {
+            assert_eq!(
+                classify_url(url, &guard()),
+                SsrfDecision::Rejected(format!("host resolves to a blocked address ({canonical})")),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_the_host_the_transport_connects_to() {
+        // For http(s) a backslash ends the authority, so the host here is
+        // 127.0.0.1 and "@public.example/" is path, not userinfo + host.
+        assert_eq!(
+            classify_url("http://127.0.0.1\\@public.example/", &guard()),
+            SsrfDecision::Rejected("host resolves to a blocked address (127.0.0.1)".into())
+        );
+        // The mirror image connects to public.example, so it is classified
+        // as public.example.
+        assert_eq!(
+            classify_url("http://public.example\\@127.0.0.1/", &guard()),
+            SsrfDecision::Allowed
+        );
+        // Userinfo is not the host.
+        assert_eq!(
+            classify_url("https://127.0.0.1@public.example/rpc", &guard()),
+            SsrfDecision::Allowed
+        );
+        assert!(matches!(
+            classify_url("https://public.example@127.0.0.1/rpc", &guard()),
+            SsrfDecision::Rejected(_)
+        ));
+    }
+
+    #[test]
+    fn rejects_urls_the_transport_cannot_parse() {
+        for url in [
+            "http://public.example:99999/", // port out of range
+            "http://08.8.8.8/",             // 08 is not an octal number
+            "http://[::ffff:08.8.8.8]/",    // leading zero in an embedded IPv4
+            "http://[fe80::1%25eth0]/",     // zone identifier
+            "http://1.2.3.4.5/",            // five-part dotted number
+        ] {
+            assert!(
+                matches!(classify_url(url, &guard()), SsrfDecision::Rejected(_)),
+                "expected rejection for {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_special_ipv4_ranges_by_their_third_octet() {
+        // 192.0.0.0/24, 192.0.2.0/24, 198.51.100.0/24 and 203.0.113.0/24 are
+        // matched on the third octet; a fourth octet that happens to equal
+        // it does not put a public address in the range.
+        for address in ["192.0.0.8", "192.0.2.5", "198.51.100.7", "203.0.113.9"] {
+            let ip: IpAddr = address.parse().unwrap();
+            assert!(is_blocked_ip(ip), "expected blocked: {address}");
+        }
+        for address in ["192.0.1.0", "192.0.5.2", "198.51.7.100", "203.0.9.113"] {
+            let ip: IpAddr = address.parse().unwrap();
+            assert!(!is_blocked_ip(ip), "expected allowed: {address}");
+        }
+    }
+
+    #[test]
     fn rejects_unresolvable_hosts_and_empty_answers() {
         assert!(matches!(
             classify_url("http://nx.example", &guard()),
@@ -419,14 +425,19 @@ mod tests {
                     true
                 }
             };
-            let ip: IpAddr = address
-                .parse()
-                .unwrap_or_else(|error| panic!("shared vector {address} must parse: {error}"));
-            assert_eq!(
-                is_blocked_ip(ip),
-                expected,
-                "shared vector case mismatch: {address}"
-            );
+            match address.parse::<IpAddr>() {
+                Ok(ip) => assert_eq!(
+                    is_blocked_ip(ip),
+                    expected,
+                    "shared vector case mismatch: {address}"
+                ),
+                // Only a spelling Node's net.isIP rejects too (a leading-zero
+                // octet) fails to parse; every implementation must refuse it.
+                Err(_) => assert!(
+                    expected,
+                    "unparseable shared vector must be blocked: {address}"
+                ),
+            }
             // The URL path must reach the same verdict without DNS.
             let url = if address.contains(':') {
                 format!("http://[{address}]/")
