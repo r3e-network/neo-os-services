@@ -5,6 +5,7 @@
 // fulfillRequest with the updater key. Stateless except a block cursor.
 //
 // Env:
+//   NEOX_NET             neox-mainnet | neox-testnet (required, no default)
 //   NEOX_ORACLE          oracle kernel address (default: build record)
 //   NEOX_RPC             RPC (default mainnet-1.rpc.banelabs.org)
 //   NEOX_CHAIN_ID        reviewed registry value
@@ -23,11 +24,33 @@ import { ethers } from 'ethers';
 import {
   readReviewedNetworkRegistry,
   resolveReviewedNeoXChainId,
+  requireNeoXNetworkLabel,
   reviewedNetworkForEvmLabel,
 } from '../../scripts/lib-network-registry.mjs';
 
+// Refuse before reading any configuration: the production exit (78) must not
+// depend on the network or build records being present.
+if (
+  String(process.env.NODE_ENV || '')
+    .trim()
+    .toLowerCase() === 'production'
+) {
+  console.error(
+    'Neo X production signing is disabled in this host-side fulfiller: no custody/enclave ' +
+      'secp256k1 signer is wired. Implement, deploy, and attest that signer path before enabling this service.'
+  );
+  process.exit(78);
+}
+if (!/^(1|true|yes|on)$/i.test(String(process.env.MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER || ''))) {
+  console.error(
+    'Neo X host-side fulfiller is development-only; set ' +
+      'MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER=true for an explicit non-production test.'
+  );
+  process.exit(78);
+}
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const NET = process.env.NEOX_NET || 'neox-mainnet';
+const NET = requireNeoXNetworkLabel(process.env.NEOX_NET);
 const registryNetwork = reviewedNetworkForEvmLabel(NET);
 const registry = await readReviewedNetworkRegistry(ROOT, registryNetwork);
 let recAddr = '';
@@ -51,24 +74,6 @@ const ABI_PATH =
 const abi = JSON.parse(readFileSync(ABI_PATH, 'utf8'));
 
 const log = (m) => console.log(`[${new Date().toISOString()}] ${m}`);
-if (
-  String(process.env.NODE_ENV || '')
-    .trim()
-    .toLowerCase() === 'production'
-) {
-  console.error(
-    'Neo X production signing is disabled in this host-side fulfiller: no custody/enclave ' +
-      'secp256k1 signer is wired. Implement, deploy, and attest that signer path before enabling this service.'
-  );
-  process.exit(78);
-}
-if (!/^(1|true|yes|on)$/i.test(String(process.env.MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER || ''))) {
-  console.error(
-    'Neo X host-side fulfiller is development-only; set ' +
-      'MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER=true for an explicit non-production test.'
-  );
-  process.exit(78);
-}
 const provider = new ethers.JsonRpcProvider(RPC, CHAIN_ID);
 const updaterPk = process.env.NEOX_UPDATER_PK || process.env.NEOX_FEED_PK;
 if (!ADDR || !updaterPk) {

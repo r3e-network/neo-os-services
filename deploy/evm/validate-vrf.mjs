@@ -9,11 +9,12 @@ import { ethers } from 'ethers';
 import {
   readReviewedNetworkRegistry,
   resolveReviewedNeoXChainId,
+  requireNeoXNetworkLabel,
   reviewedNetworkForEvmLabel,
 } from '../../scripts/lib-network-registry.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const NET = process.env.NEOX_NET || 'neox-mainnet';
+const NET = requireNeoXNetworkLabel(process.env.NEOX_NET);
 const registryNetwork = reviewedNetworkForEvmLabel(NET);
 const registry = await readReviewedNetworkRegistry(ROOT, registryNetwork);
 const rec = JSON.parse(

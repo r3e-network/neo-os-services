@@ -11,6 +11,18 @@ export function reviewedNetworkForEvmLabel(label = '') {
   throw new Error(`unsupported EVM network label: ${label}`);
 }
 
+// The Neo X operator tools sign with raw keys, so the chain they write to is an
+// explicit operator choice and never a default. Returns the label unchanged once
+// it names a reviewed network.
+export function requireNeoXNetworkLabel(label) {
+  const value = String(label ?? '').trim();
+  if (!value) {
+    throw new Error('NEOX_NET is required: set neox-mainnet or neox-testnet explicitly');
+  }
+  reviewedNetworkForEvmLabel(value);
+  return value;
+}
+
 export async function readReviewedNetworkRegistry(repoRoot, network) {
   if (!NETWORKS.has(network)) {
     throw new Error(`unsupported network registry: ${network}`);

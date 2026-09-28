@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Deploy a compiled EVM contract to Neo X. Dual-gated: requires DEPLOY_APPLY=1.
-// Usage: NEOX_DEPLOY_PK=0x.. DEPLOY_APPLY=1 node deploy/evm/deploy.mjs MorpheusOracleEVM [constructorArgsJson]
+// Usage: NEOX_NET=neox-mainnet NEOX_DEPLOY_PK=0x.. DEPLOY_APPLY=1 node deploy/evm/deploy.mjs MorpheusOracleEVM [constructorArgsJson]
 //   constructorArgsJson e.g. '["0x0000...0000","0x0000...0000"]'  (defaults to [])
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,7 @@ import { ethers } from 'ethers';
 import {
   readReviewedNetworkRegistry,
   resolveReviewedNeoXChainId,
+  requireNeoXNetworkLabel,
   reviewedNetworkForEvmLabel,
 } from '../../scripts/lib-network-registry.mjs';
 
@@ -21,7 +22,7 @@ if (!name) {
 }
 
 const RPC = process.env.NEOX_RPC || 'https://mainnet-1.rpc.banelabs.org';
-const NET = process.env.NEOX_NET || 'neox-mainnet';
+const NET = requireNeoXNetworkLabel(process.env.NEOX_NET);
 const registryNetwork = reviewedNetworkForEvmLabel(NET);
 const registry = await readReviewedNetworkRegistry(ROOT, registryNetwork);
 const CHAIN_ID = Number(

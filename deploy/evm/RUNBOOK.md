@@ -40,9 +40,13 @@ keccak(appId), keccak(moduleId), keccak(operation), success, keccak(result), kec
 
 ## Build / deploy / bootstrap (local)
 
+Every tool that talks to a chain requires `NEOX_NET` (`neox-mainnet` or `neox-testnet`); none of
+them defaults to mainnet.
+
 ```bash
 # compile (solc 0.8.35, evmVersion=paris for NeoX)
 node deploy/evm/compile.mjs MorpheusOracleEVM
+export NEOX_NET=neox-mainnet
 
 # deploy (dual-gated)
 NEOX_DEPLOY_PK=0x.. DEPLOY_APPLY=1 \

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // E2E: place dice bets on Neo X and wait for the relayer's VRF to settle them via
-// MiniAppDiceGameEVM.onOracleResult. Usage: NEOX_REQUESTER_PK=0x.. node validate-dice.mjs [count] [face] [stake]
+// MiniAppDiceGameEVM.onOracleResult. Usage: NEOX_NET=neox-mainnet NEOX_REQUESTER_PK=0x.. node validate-dice.mjs [count] [face] [stake]
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -8,11 +8,12 @@ import { ethers } from 'ethers';
 import {
   readReviewedNetworkRegistry,
   resolveReviewedNeoXChainId,
+  requireNeoXNetworkLabel,
   reviewedNetworkForEvmLabel,
 } from '../../scripts/lib-network-registry.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const NET = process.env.NEOX_NET || 'neox-mainnet';
+const NET = requireNeoXNetworkLabel(process.env.NEOX_NET);
 const registryNetwork = reviewedNetworkForEvmLabel(NET);
 const registry = await readReviewedNetworkRegistry(ROOT, registryNetwork);
 const rec = JSON.parse(

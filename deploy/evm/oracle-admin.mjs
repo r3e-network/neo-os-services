@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Admin/read helper for the Neo X MorpheusOracleEVM kernel.
-// Usage:
+// Usage (NEOX_NET=neox-mainnet|neox-testnet is required):
 //   node deploy/evm/oracle-admin.mjs info
 //   NEOX_ADMIN_PK=0x.. node deploy/evm/oracle-admin.mjs register-module random.generate
 //   NEOX_ADMIN_PK=0x.. node deploy/evm/oracle-admin.mjs register-app <appId> <admin> [callback]
@@ -13,12 +13,13 @@ import { ethers } from 'ethers';
 import {
   readReviewedNetworkRegistry,
   resolveReviewedNeoXChainId,
+  requireNeoXNetworkLabel,
   reviewedNetworkForEvmLabel,
 } from '../../scripts/lib-network-registry.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const RPC = process.env.NEOX_RPC || 'https://mainnet-1.rpc.banelabs.org';
-const NET = process.env.NEOX_NET || 'neox-mainnet';
+const NET = requireNeoXNetworkLabel(process.env.NEOX_NET);
 const registryNetwork = reviewedNetworkForEvmLabel(NET);
 const registry = await readReviewedNetworkRegistry(ROOT, registryNetwork);
 const CHAIN_ID = Number(

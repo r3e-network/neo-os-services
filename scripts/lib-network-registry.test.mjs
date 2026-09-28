@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   readReviewedNetworkRegistry,
   readReviewedNetworkRegistrySync,
+  requireNeoXNetworkLabel,
   reviewedNetworkForEvmLabel,
   resolveReviewedNeoN3Magic,
   reviewedNeoXChainId,
@@ -41,6 +42,15 @@ test('reviewedNeoXChainId accepts only a positive safe integer from the registry
     () => resolveReviewedNeoN3Magic({ neo_n3: { network_magic: 860833102 } }, 'mainnet', '1'),
     /conflicts with reviewed/
   );
+});
+
+test('Neo X tools get their network only from an explicit NEOX_NET', () => {
+  for (const missing of [undefined, null, '', '   ']) {
+    assert.throws(() => requireNeoXNetworkLabel(missing), /NEOX_NET is required/);
+  }
+  assert.throws(() => requireNeoXNetworkLabel('neox-staging'), /unsupported EVM network label/);
+  assert.equal(requireNeoXNetworkLabel('neox-mainnet'), 'neox-mainnet');
+  assert.equal(requireNeoXNetworkLabel(' neox-testnet '), 'neox-testnet');
 });
 
 test('sync registry loading validates the selected network identities', () => {
