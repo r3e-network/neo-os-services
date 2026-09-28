@@ -90,6 +90,10 @@ const ARTIFACTS = [
   'apps/web/tsconfig.tsbuildinfo',
   'test-results/report.json',
   'apps/web/test-results/report.json',
+  // npm-debug.log* was in the rules before b401ed5; *.log alone misses the
+  // numbered variants.
+  'npm-debug.log',
+  'apps/web/npm-debug.log.1',
   'target/debug/signer_service',
   'workers/neo-signer/target/debug/signer_service',
   '.claude/settings.local.json',
@@ -161,6 +165,9 @@ test('committed examples, Rust binary sources and pinned certificates stay addab
     '.env.development.example',
     '.env.production.example',
     'apps/web/.env.example',
+    // apps/web/.gitignore re-ignores .env* for its own directory, so it needs
+    // the same example exceptions as the root rules.
+    'apps/web/.env.production.example',
     'workers/nitro-worker/.env.example',
     'deploy/evm/neox-fulfiller.env.example',
     'deploy/cloudflare/morpheus-control-plane/vars.example.env',
