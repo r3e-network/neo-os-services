@@ -147,6 +147,9 @@ Required bindings:
 - `MORPHEUS_MAINNET_ORIGIN_URL`
 - `MORPHEUS_TESTNET_ORIGIN_URL`
 - `MORPHEUS_ORIGIN_TOKEN`
+- `MORPHEUS_NETWORK` — the network an unprefixed path such as `/health` is
+  served on (`mainnet` for the production gateway). Unset, unprefixed paths
+  answer `400 network_required`; an unsupported value answers `500`.
 
 Optional:
 

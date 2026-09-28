@@ -23,6 +23,10 @@ Cloudflare Worker gateway for the public Morpheus execution surface.
 - `MORPHEUS_MAINNET_FEED_ORIGIN_URL` / `MORPHEUS_TESTNET_FEED_ORIGIN_URL` for `/oracle/feed`
   publication traffic
 - `MORPHEUS_ORIGIN_TOKEN`
+- `MORPHEUS_NETWORK` — the network an unprefixed path is served on (`mainnet` in
+  `wrangler.meshmini.toml`, whose runtime serves mainnet only). Unset, an
+  unprefixed path answers `400 network_required`; any value other than `mainnet`
+  or `testnet` answers `500 invalid_network_configuration`.
 - optional `TURNSTILE_SECRET_KEY`
 - optional `MORPHEUS_RATE_LIMITER` native binding
 
@@ -54,10 +58,26 @@ Example:
 - `/mainnet/api/runtime/catalog`
 - `/testnet/api/runtime/status`
 
+A path without a prefix (`/health`, `/v1/status`, `/oracle/public-key`, ...) is
+served on `MORPHEUS_NETWORK`, the deployment's own network, and its
+`x-morpheus-network` header says which one answered. Unprefixed paths used to be
+served on testnet whatever the deployment ran, so on the mainnet-only deployment
+`/health` and `/v1/status` reported a healthy runtime as down (`503
+runtime_network_mismatch`). Only `mainnet` and `testnet` are network labels: a
+path such as `/staging/health` is an unknown route, not a network, and answers
+`503 runtime_route_unavailable`. The health and status routes still compare the
+requested network with the one the runtime reports: on the mainnet-only
+deployment `/testnet/health` answers `503 runtime_network_mismatch`, and
+`/testnet/v1/status` and `/testnet/api/runtime/status` report the runtime down.
+
+The network-qualified public routes are listed in
+[RESTORATION-RUNBOOK.md](RESTORATION-RUNBOOK.md#public-routes).
+
 Current public runtime domains:
 
 - `oracle.meshmini.app/*`
 - `edge.meshmini.app/*`
+- `edge.neoos.network` (custom domain)
 
 ## Account / zone discovery
 

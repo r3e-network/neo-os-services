@@ -4,6 +4,45 @@
 in-TEE execution-edge migration (see `../../nitro/AA-EDGE-MIGRATION-RUNBOOK.md`).
 Nothing here changes live behavior until an operator runs the steps below.
 
+**Observed 2026-09-28 (read-only probes):** the live worker already maps the legacy
+paths onto `apps/web` (`mapToAppBackendPath` in `worker.mjs`). On `edge.neoos.network`
+every `GET` route in the [public route list](#public-routes) answered 200 under
+`/mainnet`, as did the routes sampled on `oracle.meshmini.app` and `edge.meshmini.app`;
+the `POST` passthroughs were not probed. Routes that need the full runtime answer `503
+runtime_route_unavailable`. The status line above and the sections after the route
+list are the original plan and its open questions.
+
+## Public routes
+
+Every public route is served under a network prefix; `{net}` is `mainnet` or
+`testnet`. The runtime behind the production deployment serves mainnet only, so
+there `/testnet/health` and `/testnet/v1/status` answer `503
+runtime_network_mismatch` (the edge refuses to present a mainnet runtime as
+testnet).
+
+| Route                                                        | Served from                                                 |
+| ------------------------------------------------------------ | ----------------------------------------------------------- |
+| `GET /{net}/health`                                          | `apps/web` `/api/runtime/health?network={net}`              |
+| `GET /{net}/v1/status`                                       | `apps/web` `/api/runtime/status?network={net}`              |
+| `GET /{net}/api/runtime/status`                              | the edge, from `/health` and `/info` probes of that network |
+| `GET /{net}/api/runtime/catalog`                             | the edge, from the bundled `morpheus-runtime-catalog.json`  |
+| `GET /{net}/oracle/public-key`                               | `apps/web` `/api/oracle/public-key?network={net}`           |
+| `GET /{net}/providers`                                       | `apps/web` `/api/providers?network={net}`                   |
+| `GET /{net}/feeds/catalog`, `GET /{net}/feeds/status`        | `apps/web` `/api/feeds/catalog`, `/api/feeds/status`        |
+| `GET /{net}/feeds/price/<symbol>`                            | `apps/web` `/api/feeds/<symbol>?network={net}`              |
+| `POST /{net}/oracle/decrypt`, `/{net}/oracle/message-reveal` | the attested box, which gates each message in the TEE       |
+
+An unprefixed path is served on the deployment's `MORPHEUS_NETWORK` (`mainnet` in
+`wrangler.meshmini.toml`) and says so in `x-morpheus-network`. Without that variable
+it answers `400 network_required`, naming the `/mainnet` and `/testnet` forms of the
+same path; any value other than `mainnet` or `testnet` answers `500
+invalid_network_configuration`. Before this was configurable, unprefixed paths were
+always served on testnet, so on the mainnet-only deployment `/health` and
+`/v1/status` reported a healthy runtime as down. Monitors, status pages and
+integrators should use the prefixed form. After a redeploy the edge cache can keep
+an unprefixed answer from the previous deployment for up to its TTL (15 s for
+`/health`, 300 s for `/oracle/public-key` and `/feeds/catalog`).
+
 ## Problem
 
 `oracle.meshmini.app` / `edge.meshmini.app` are served by the `morpheus-edge-gateway`
@@ -53,6 +92,10 @@ Covered (re-point works once the path shape is reconciled — see below):
   whether the edge should proxy them at all or whether clients use the control plane.
 
 ## ⚠️ Path-shape mismatch (must resolve before re-point)
+
+Resolved by option 1 below: `mapToAppBackendPath` in `worker.mjs` strips the network
+segment, prefixes `/api` and passes the network as `?network=`. The original
+analysis follows.
 
 `morpheus-edge-gateway` forwards `oracle.meshmini.app/{net}/{path}` →
 `ORIGIN_URL/{net}/{path}` (network segment preserved, no rewrite — `resolveNetworkRoute`

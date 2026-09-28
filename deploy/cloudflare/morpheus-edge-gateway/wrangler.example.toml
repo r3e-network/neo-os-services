@@ -3,6 +3,9 @@ main = "worker.mjs"
 compatibility_date = "2026-03-19"
 
 [vars]
+# Network for unprefixed paths. Leave it unset to answer them 400
+# network_required; any value other than mainnet or testnet answers 500.
+# MORPHEUS_NETWORK = "testnet"
 MORPHEUS_ORIGIN_URL = "https://your-default-nitro-worker.example.com"
 MORPHEUS_MAINNET_ORIGIN_URL = "https://your-mainnet-nitro-worker.example.com"
 MORPHEUS_TESTNET_ORIGIN_URL = "https://your-testnet-nitro-worker.example.com"

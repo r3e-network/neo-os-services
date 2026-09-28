@@ -57,27 +57,34 @@ const UPSTASH_ROUTE_LIMITS = {
   confidential: { limit: 15, windowMs: 60_000 },
 };
 
+const NETWORK_LABELS = new Set(['mainnet', 'testnet']);
+
+// Public routes the edge maps onto apps/web, as a caller must spell them.
+const PUBLIC_ROUTE_HINT =
+  'Public routes (prefix each with /mainnet or /testnet): /health, /v1/status, /oracle/public-key, /providers, /feeds/catalog, /feeds/price/<symbol>.';
+
 function stripLeadingSlash(value) {
   return String(value || '').replace(/^\/+/, '');
 }
 
+// The network an unprefixed path is served on: the deployment's own
+// MORPHEUS_NETWORK. Unprefixed paths used to be pinned to testnet, so on the
+// mainnet-only deployment the public /health and /v1/status asked for testnet
+// and reported a healthy runtime as down. Unset means the deployment names no
+// default and the caller must choose a prefix; any other label is a
+// configuration fault, never a reason to guess a network.
+function resolveDeploymentNetwork(env) {
+  const configured = trimString(env.MORPHEUS_NETWORK).toLowerCase();
+  if (!configured) return { network: null, invalid: false };
+  if (NETWORK_LABELS.has(configured)) return { network: configured, invalid: false };
+  return { network: null, invalid: true };
+}
+
 function resolveNetworkRoute(url, env) {
   const path = url.pathname || '/';
-  if (path === '/' || path === '') {
-    return {
-      network: 'testnet',
-      forwardedPath: '/',
-      routePrefix: '/',
-      originBaseUrl: trimString(env.MORPHEUS_TESTNET_ORIGIN_URL || env.MORPHEUS_ORIGIN_URL).replace(
-        /\/$/,
-        ''
-      ),
-    };
-  }
-
   const segments = stripLeadingSlash(path).split('/');
   const prefix = segments[0]?.toLowerCase();
-  if (prefix === 'mainnet' || prefix === 'testnet') {
+  if (NETWORK_LABELS.has(prefix)) {
     const rest = segments.slice(1).join('/');
     const forwardedPath = `/${rest}`.replace(/\/+$/, '') || '/';
     const originBaseUrl = resolveOriginBaseUrl(env, prefix, forwardedPath);
@@ -89,12 +96,60 @@ function resolveNetworkRoute(url, env) {
     };
   }
 
+  // Only mainnet and testnet are network labels: `/staging/health` is the
+  // unprefixed path `/staging/health`, which no route maps, so it is refused
+  // like any other unknown route rather than served as some network's health.
+  const deployment = resolveDeploymentNetwork(env);
+  if (deployment.invalid) {
+    return { refusal: 'invalid_network_configuration', forwardedPath: path };
+  }
+  if (!deployment.network) {
+    return { refusal: 'network_required', forwardedPath: path };
+  }
   return {
-    network: 'testnet',
+    network: deployment.network,
     forwardedPath: path,
     routePrefix: '',
-    originBaseUrl: resolveOriginBaseUrl(env, 'testnet', path),
+    originBaseUrl: resolveOriginBaseUrl(env, deployment.network, path),
   };
+}
+
+function invalidNetworkConfigurationResponse() {
+  return json(
+    500,
+    {
+      error: 'invalid_network_configuration',
+      message:
+        'MORPHEUS_NETWORK must be mainnet or testnet; paths prefixed with /mainnet or /testnet are unaffected.',
+    },
+    {
+      'cache-control': 'no-store',
+      'x-morpheus-edge': 'cloudflare',
+      'x-morpheus-route': 'invalid-network-configuration',
+    }
+  );
+}
+
+function networkRefusalResponse(routing, url) {
+  if (routing.refusal === 'invalid_network_configuration') {
+    return invalidNetworkConfigurationResponse();
+  }
+  return json(
+    400,
+    {
+      error: 'network_required',
+      message: 'This gateway names no default network; prefix the path with /mainnet or /testnet.',
+      routes: {
+        mainnet: `${url.origin}/mainnet${routing.forwardedPath}`,
+        testnet: `${url.origin}/testnet${routing.forwardedPath}`,
+      },
+    },
+    {
+      'cache-control': 'no-store',
+      'x-morpheus-edge': 'cloudflare',
+      'x-morpheus-route': 'network-required',
+    }
+  );
 }
 
 function resolveOriginBaseUrl(env, network, forwardedPath) {
@@ -351,9 +406,8 @@ async function applyUpstashRateLimitImpl(request, env, routeKey) {
   return json(503, { error: 'rate_limit_backend_unavailable', route: routeKey });
 }
 
-function buildOriginRequest(request, env, appPath) {
+function buildOriginRequest(request, env, routing, appPath) {
   const incomingUrl = new URL(request.url);
-  const routing = resolveNetworkRoute(incomingUrl, env);
   const originBaseUrl = routing.originBaseUrl;
   if (!originBaseUrl) {
     throw new Error(`origin URL is required for network ${routing.network}`);
@@ -569,9 +623,10 @@ function originForbidsCaching(response) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const routing = resolveNetworkRoute(url, env);
 
     if (url.pathname === '/' || url.pathname === '') {
+      const deployment = resolveDeploymentNetwork(env);
+      if (deployment.invalid) return invalidNetworkConfigurationResponse();
       return json(200, {
         service: 'morpheus-edge-gateway',
         domain: url.host,
@@ -579,9 +634,12 @@ export default {
           mainnet: `${url.origin}/mainnet/health`,
           testnet: `${url.origin}/testnet/health`,
         },
-        default_network: routing.network,
+        default_network: deployment.network,
       });
     }
+
+    const routing = resolveNetworkRoute(url, env);
+    if (routing.refusal) return networkRefusalResponse(routing, url);
 
     const publicRuntimeRoute = matchPublicRuntimeRoute(routing.forwardedPath);
     if (publicRuntimeRoute === 'runtime-catalog') {
@@ -741,8 +799,7 @@ export default {
             error: 'runtime_route_unavailable',
             network: routing.network,
             route: routing.forwardedPath,
-            message:
-              'This oracle route requires the full runtime (restoration in progress). Public routes available: /health, /v1/status, /oracle/public-key, /providers, /feeds/catalog, /feeds/price/<symbol>.',
+            message: `This oracle route requires the full runtime (restoration in progress). ${PUBLIC_ROUTE_HINT}`,
           },
           { 'cache-control': 'no-store' }
         ),
@@ -751,7 +808,7 @@ export default {
       );
     }
 
-    const originRequest = buildOriginRequest(request, env, appPath);
+    const originRequest = buildOriginRequest(request, env, routing, appPath);
     const originTimeoutMs = resolveOriginTimeoutMs(
       env.MORPHEUS_EDGE_ORIGIN_TIMEOUT_MS,
       DEFAULT_PROXY_TIMEOUT_MS

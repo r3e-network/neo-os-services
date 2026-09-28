@@ -12,14 +12,6 @@ function readRepoFile(relativePath) {
   return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8').replace(/\r\n/g, '\n');
 }
 
-function extractCloudflareDefaultNetwork(source) {
-  const match = source.match(
-    /if\s*\(path === '\/' \|\| path === ''\)\s*\{\s*return\s*\{\s*network:\s*'([^']+)'/s
-  );
-  assert.ok(match, 'could not find Cloudflare default network');
-  return match[1];
-}
-
 function extractBareCaddyRoute(source) {
   const match = source.match(
     /handle\s*\{\s*reverse_proxy ([a-z0-9-]+):8080\s*\{\s*header_up X-Morpheus-Network ([a-z]+)\s*\}\s*\}/s
@@ -39,25 +31,30 @@ function extractNetworkCaddyRoute(source, network) {
   return match[1];
 }
 
-test('request-hub bare routes stay aligned with the edge default network', () => {
-  const edgeWorker = readRepoFile('deploy/cloudflare/morpheus-edge-gateway/worker.mjs');
-  const standaloneCaddy = readRepoFile('deploy/nitro/Caddyfile.request-hub');
-  const inlineCompose = readRepoFile('deploy/nitro/docker-compose.request-hub.yml');
+// This test used to also pin the edge gateway's default network to testnet, so
+// that an unprefixed path meant the same network at the edge and at the request
+// hub's bare route. The edge no longer leaves that choice to an origin: it serves
+// an unprefixed path on its deployment's MORPHEUS_NETWORK and names the network
+// on every origin request (the `x-morpheus-network` header, with `?network=` on
+// the network-scoped apps/web routes and a `/<network>` prefix for the runtime
+// box), which deploy/cloudflare/morpheus-edge-gateway/worker.test.mjs covers.
+// The two defaults are independent; what stays pinned here is that both copies
+// of the request-hub router agree.
+test('request-hub bare routes stay on the testnet worker in both routers', () => {
+  const routers = {
+    standalone: readRepoFile('deploy/nitro/Caddyfile.request-hub'),
+    inlineCompose: readRepoFile('deploy/nitro/docker-compose.request-hub.yml'),
+  };
 
-  const defaultNetwork = extractCloudflareDefaultNetwork(edgeWorker);
-  assert.equal(defaultNetwork, 'testnet');
-  assert.deepEqual(extractBareCaddyRoute(standaloneCaddy), {
-    service: 'testnet-request-worker',
-    network: defaultNetwork,
-  });
-  assert.equal(extractNetworkCaddyRoute(standaloneCaddy, 'mainnet'), 'mainnet-request-worker');
-  assert.equal(extractNetworkCaddyRoute(standaloneCaddy, 'testnet'), 'testnet-request-worker');
-  assert.deepEqual(extractBareCaddyRoute(inlineCompose), {
-    service: 'testnet-request-worker',
-    network: defaultNetwork,
-  });
-  assert.equal(extractNetworkCaddyRoute(inlineCompose, 'mainnet'), 'mainnet-request-worker');
-  assert.equal(extractNetworkCaddyRoute(inlineCompose, 'testnet'), 'testnet-request-worker');
+  for (const [name, source] of Object.entries(routers)) {
+    assert.deepEqual(
+      extractBareCaddyRoute(source),
+      { service: 'testnet-request-worker', network: 'testnet' },
+      name
+    );
+    assert.equal(extractNetworkCaddyRoute(source, 'mainnet'), 'mainnet-request-worker', name);
+    assert.equal(extractNetworkCaddyRoute(source, 'testnet'), 'testnet-request-worker', name);
+  }
 });
 
 function extractServiceBlock(source, serviceName) {

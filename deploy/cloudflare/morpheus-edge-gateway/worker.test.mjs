@@ -568,6 +568,263 @@ test('edge gateway does not cache a stale feed quote the origin marked no-store'
   assert.equal(cachePutCalls, 0);
 });
 
+// --- R-18: an unprefixed path is served on the deployment's own network ---
+//
+// edge.neoos.network fronts a mainnet-only runtime. Unprefixed paths used to be
+// pinned to testnet, so the documented public /health and /v1/status asked the
+// runtime for testnet, got a mainnet answer, and reported a healthy runtime as
+// down (HTTP 503 runtime_network_mismatch).
+
+// The apps/web origin in front of a runtime that serves mainnet only: health
+// always names mainnet, whichever lane asked, and the status route is only
+// operational for mainnet.
+function mainnetOnlyOrigin(calls) {
+  return async (input, init = {}) => {
+    const request = input instanceof Request ? input : new Request(String(input), init);
+    const target = new URL(request.url);
+    const network = target.searchParams.get('network');
+    calls.push({ path: target.pathname, network });
+    if (target.pathname.endsWith('/api/runtime/health')) {
+      return jsonResponse(200, {
+        status: 'ok',
+        ready: true,
+        runtime: 'morpheus-enclave-server',
+        network: 'mainnet',
+      });
+    }
+    if (target.pathname.endsWith('/api/runtime/info')) {
+      return jsonResponse(200, { version: '1.2.3', dstack: { app_id: 'app-123' } });
+    }
+    if (target.pathname.endsWith('/api/runtime/status')) {
+      return network === 'mainnet'
+        ? jsonResponse(200, { runtime: { status: 'operational' } })
+        : jsonResponse(503, {
+            runtime: { status: 'down', health: { detail: 'runtime_network_mismatch' } },
+          });
+    }
+    if (target.pathname.endsWith('/api/oracle/public-key')) {
+      return jsonResponse(200, { network });
+    }
+    return jsonResponse(404, { error: 'not found', path: target.pathname });
+  };
+}
+
+function refuseOriginFetch() {
+  return async (input) => {
+    throw new Error(
+      `origin fetch must not happen: ${input instanceof Request ? input.url : input}`
+    );
+  };
+}
+
+test('edge gateway serves unprefixed /health on the deployment network (R-18)', async () => {
+  const calls = [];
+  global.fetch = mainnetOnlyOrigin(calls);
+  global.caches = createCaches();
+
+  const response = await worker.fetch(
+    new Request('https://edge.neoos.network/health'),
+    createEnv({ MORPHEUS_NETWORK: 'mainnet' }),
+    createCtx()
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-morpheus-network'), 'mainnet');
+  const payload = await response.json();
+  assert.equal(payload.status, 'ok');
+  assert.equal(payload.network, 'mainnet');
+  assert.deepEqual(calls, [{ path: '/mainnet/api/runtime/health', network: 'mainnet' }]);
+});
+
+test('edge gateway serves unprefixed /v1/status on the deployment network (R-18)', async () => {
+  const calls = [];
+  global.fetch = mainnetOnlyOrigin(calls);
+  global.caches = createCaches();
+
+  const response = await worker.fetch(
+    new Request('https://edge.neoos.network/v1/status'),
+    createEnv({ MORPHEUS_NETWORK: 'mainnet' }),
+    createCtx()
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-morpheus-network'), 'mainnet');
+  assert.equal((await response.json()).runtime.status, 'operational');
+  assert.deepEqual(calls, [{ path: '/mainnet/api/runtime/status', network: 'mainnet' }]);
+});
+
+test('edge gateway runtime status probes the deployment network for an unprefixed path (R-18)', async () => {
+  const calls = [];
+  global.fetch = mainnetOnlyOrigin(calls);
+  global.caches = createCaches();
+
+  const response = await worker.fetch(
+    new Request('https://edge.neoos.network/api/runtime/status'),
+    // The configured label is matched without regard to case or padding.
+    createEnv({ MORPHEUS_NETWORK: ' Mainnet ' }),
+    createCtx()
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-morpheus-network'), 'mainnet');
+  const payload = await response.json();
+  assert.equal(payload.runtime.status, 'operational');
+  assert.deepEqual(calls, [
+    { path: '/mainnet/api/runtime/health', network: 'mainnet' },
+    { path: '/mainnet/api/runtime/info', network: 'mainnet' },
+  ]);
+});
+
+test('edge gateway serves every unprefixed public route on the deployment network (R-18)', async () => {
+  const calls = [];
+  global.fetch = mainnetOnlyOrigin(calls);
+  global.caches = createCaches();
+
+  const response = await worker.fetch(
+    new Request('https://edge.neoos.network/oracle/public-key'),
+    createEnv({ MORPHEUS_NETWORK: 'mainnet' }),
+    createCtx()
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-morpheus-network'), 'mainnet');
+  assert.equal((await response.json()).network, 'mainnet');
+  assert.deepEqual(calls, [{ path: '/mainnet/api/oracle/public-key', network: 'mainnet' }]);
+});
+
+test('edge gateway answers 400 naming /mainnet and /testnet when the deployment names no network (R-18)', async () => {
+  global.fetch = refuseOriginFetch();
+  global.caches = createCaches();
+
+  for (const path of ['/health', '/v1/status', '/api/runtime/status', '/oracle/public-key']) {
+    const response = await worker.fetch(
+      new Request(`https://edge.neoos.network${path}`),
+      createEnv(),
+      createCtx()
+    );
+    assert.equal(response.status, 400, path);
+    assert.equal(response.headers.get('cache-control'), 'no-store', path);
+    assert.equal(response.headers.get('x-morpheus-network'), null, path);
+    const payload = await response.json();
+    assert.equal(payload.error, 'network_required', path);
+    assert.deepEqual(
+      payload.routes,
+      {
+        mainnet: `https://edge.neoos.network/mainnet${path}`,
+        testnet: `https://edge.neoos.network/testnet${path}`,
+      },
+      path
+    );
+  }
+});
+
+test('edge gateway refuses an unsupported MORPHEUS_NETWORK instead of guessing a network (R-18)', async () => {
+  global.fetch = refuseOriginFetch();
+  global.caches = createCaches();
+  const env = createEnv({ MORPHEUS_NETWORK: 'staging' });
+
+  for (const path of ['/', '/health', '/v1/status']) {
+    const response = await worker.fetch(
+      new Request(`https://edge.neoos.network${path}`),
+      env,
+      createCtx()
+    );
+    assert.equal(response.status, 500, path);
+    assert.equal(response.headers.get('cache-control'), 'no-store', path);
+    assert.equal((await response.json()).error, 'invalid_network_configuration', path);
+  }
+
+  // An explicit network label does not depend on the deployment default.
+  const calls = [];
+  global.fetch = mainnetOnlyOrigin(calls);
+  const explicit = await worker.fetch(
+    new Request('https://edge.neoos.network/mainnet/health'),
+    env,
+    createCtx()
+  );
+  assert.equal(explicit.status, 200);
+  assert.equal(explicit.headers.get('x-morpheus-network'), 'mainnet');
+  assert.deepEqual(calls, [{ path: '/mainnet/api/runtime/health', network: 'mainnet' }]);
+});
+
+test('edge gateway never treats an unknown path label as a network (R-18)', async () => {
+  global.fetch = refuseOriginFetch();
+  global.caches = createCaches();
+
+  for (const path of ['/staging/health', '/devnet/v1/status', '/mainnet-x/health']) {
+    const response = await worker.fetch(
+      new Request(`https://edge.neoos.network${path}`),
+      createEnv({ MORPHEUS_NETWORK: 'mainnet' }),
+      createCtx()
+    );
+    assert.equal(response.status, 503, path);
+    const payload = await response.json();
+    assert.equal(payload.error, 'runtime_route_unavailable', path);
+    assert.equal(payload.network, 'mainnet', path);
+    assert.equal(payload.route, path, path);
+    // The refusal lists the public routes in their network-qualified form.
+    assert.match(payload.message, /\/mainnet or \/testnet/, path);
+  }
+});
+
+test('edge gateway index reports the deployment network as its default (R-18)', async () => {
+  global.fetch = refuseOriginFetch();
+  global.caches = createCaches();
+
+  const configured = await worker.fetch(
+    new Request('https://edge.neoos.network/'),
+    createEnv({ MORPHEUS_NETWORK: 'mainnet' }),
+    createCtx()
+  );
+  assert.equal(configured.status, 200);
+  const payload = await configured.json();
+  assert.equal(payload.default_network, 'mainnet');
+  assert.deepEqual(payload.routes, {
+    mainnet: 'https://edge.neoos.network/mainnet/health',
+    testnet: 'https://edge.neoos.network/testnet/health',
+  });
+
+  const unconfigured = await worker.fetch(
+    new Request('https://edge.neoos.network/'),
+    createEnv(),
+    createCtx()
+  );
+  assert.equal(unconfigured.status, 200);
+  assert.equal((await unconfigured.json()).default_network, null);
+});
+
+test('edge gateway sends an unprefixed confidential passthrough to the deployment network lane (R-18)', async () => {
+  // The runtime box is the one origin the edge addresses by path prefix rather
+  // than by ?network=, so an unprefixed decrypt must reach the deployment
+  // network's lane, not whichever lane a bare path used to default to.
+  const calls = [];
+  global.fetch = async (input) => {
+    const request = input instanceof Request ? input : new Request(String(input));
+    calls.push({ url: request.url, network: request.headers.get('x-morpheus-network') });
+    return jsonResponse(200, { status: 'revealed' });
+  };
+  global.caches = createCaches();
+
+  const response = await worker.fetch(
+    new Request('https://edge.neoos.network/oracle/decrypt', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ciphertext: 'opaque' }),
+    }),
+    createEnv({
+      MORPHEUS_NETWORK: 'mainnet',
+      MORPHEUS_RUNTIME_BOX_URL: 'https://box.test',
+      MORPHEUS_RATE_LIMITER: { limit: async () => ({ success: true }) },
+    }),
+    createCtx()
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-morpheus-network'), 'mainnet');
+  assert.equal(response.headers.get('x-morpheus-route'), 'runtime-box');
+  assert.deepEqual(calls, [{ url: 'https://box.test/mainnet/oracle/decrypt', network: 'mainnet' }]);
+});
+
 test('edge gateway still caches a fresh feed quote for its configured ttl', async () => {
   let cachePutCalls = 0;
   global.caches = {
