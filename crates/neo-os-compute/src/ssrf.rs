@@ -118,8 +118,9 @@ fn is_ipv6_literal(address: &str) -> bool {
 }
 
 /// `isBlockedIpAddress(rawAddress)` — true when an IP literal must be rejected
-/// (private/loopback/link-local/CGNAT/multicast/reserved, plus IPv4-mapped and
-/// NAT64-tunnelled equivalents). Unparseable input is treated as unsafe.
+/// (private/loopback/link-local/CGNAT/multicast/reserved, plus IPv4 embedded
+/// in the IPv4-mapped/SIIT/NAT64/6to4/Teredo transition forms). Unparseable
+/// input is treated as unsafe.
 pub fn is_blocked_ip_address(raw_address: &Json) -> bool {
     let mut address = js_trim_string(Some(raw_address)).to_lowercase();
     if address.is_empty() {
@@ -164,17 +165,19 @@ fn is_blocked_ipv6(address: &str) -> bool {
         return true;
     };
     let groups: Vec<u32> = groups.iter().map(|g| u32::from(*g)).collect();
-    // IPv4-mapped (::ffff:0:0/96), IPv4-compatible (::/96) and NAT64
-    // (64:ff9b::/96) tunnel an IPv4 address in the low 32 bits — classify on
-    // the embedded IPv4.
-    let is_v4_mapped = groups[0] == 0
-        && groups[1] == 0
-        && groups[2] == 0
-        && groups[3] == 0
-        && groups[4] == 0
-        && (groups[5] == 0 || groups[5] == 0xffff);
+    // The /96 tunnel prefixes carry an IPv4 in the low 32 bits:
+    // IPv4-compatible (::/96), IPv4-mapped (::ffff:0:0/96), SIIT
+    // IPv4-translated (::ffff:0:0:0/96) and NAT64 (64:ff9b::/96). 6to4
+    // (2002::/16) and Teredo (2001:0::/32) embed an IPv4 as well (the Teredo
+    // client obfuscated, XOR 0xffffffff). A transition translator on the
+    // egress path sends traffic to the embedded IPv4, so every form is
+    // classified with the IPv4 rules.
+    let zero_head = groups[0] == 0 && groups[1] == 0 && groups[2] == 0;
+    let is_v4_tunnelled =
+        (zero_head && groups[3] == 0 && groups[4] == 0 && (groups[5] == 0 || groups[5] == 0xffff))
+            || (zero_head && groups[3] == 0 && groups[4] == 0xffff && groups[5] == 0);
     let is_nat64 = groups[0] == 0x64 && groups[1] == 0xff9b;
-    if is_v4_mapped || is_nat64 {
+    if is_v4_tunnelled || is_nat64 {
         if groups[6] == 0 && groups[7] == 0 {
             // Bare ::ffff:0:0 / :: with no embedded host is itself unroutable.
             return true;
@@ -187,6 +190,25 @@ fn is_blocked_ipv6(address: &str) -> bool {
             groups[7] & 0xff
         );
         return is_blocked_ipv4(&v4);
+    }
+    if groups[0] == 0x2002 {
+        return is_blocked_ipv4(&format!(
+            "{}.{}.{}.{}",
+            groups[1] >> 8,
+            groups[1] & 0xff,
+            groups[2] >> 8,
+            groups[2] & 0xff
+        ));
+    }
+    if groups[0] == 0x2001 && groups[1] == 0 {
+        let (hi, lo) = (groups[6] ^ 0xffff, groups[7] ^ 0xffff);
+        return is_blocked_ipv4(&format!(
+            "{}.{}.{}.{}",
+            hi >> 8,
+            hi & 0xff,
+            lo >> 8,
+            lo & 0xff
+        ));
     }
     let first = groups[0];
     let all_zero = groups.iter().all(|g| *g == 0);
@@ -322,6 +344,50 @@ mod tests {
         assert!(!blocked("fe00::1"));
         assert!(!blocked("fbff::1"));
         assert!(blocked("fc00::1"));
+    }
+
+    #[test]
+    fn shared_js_rust_vectors_hold() {
+        // crates/neo-os-core/tests/vectors/ssrf_addresses.json is the one case
+        // list shared with the JS classifier (workers/nitro-worker
+        // src/platform/ssrf.test.mjs) and the chain-n3 transport guard, so all
+        // three implementations are pinned to the same verdicts.
+        let raw = include_str!("../../neo-os-core/tests/vectors/ssrf_addresses.json");
+        let vector: Json = serde_json::from_str(raw).expect("valid shared ssrf vectors");
+        let cases = vector["cases"].as_array().expect("cases array");
+        assert!(cases.len() >= 40);
+        for case in cases {
+            let address = case["address"].as_str().expect("case address");
+            let expected = case["blocked"].as_bool().expect("case blocked flag");
+            assert_eq!(
+                blocked(address),
+                expected,
+                "shared vector case mismatch: {address}"
+            );
+        }
+    }
+
+    #[test]
+    fn transition_ipv6_classifies_on_the_embedded_ipv4() {
+        // FZ-16 reproducers: 6to4, Teredo and SIIT spellings of loopback,
+        // private, link-local and metadata IPv4 must refuse even though the
+        // surrounding hextets look public.
+        for address in [
+            "2002:7f00:1::1",
+            "2002:a9fe:a9fe::1",
+            "2002:a01:203::1",
+            "2002::",
+            "2001:0:4136:e378:8000:63bf:f5fe:fdfc",
+            "2001:0:0:0:0:0:80ff:fffe",
+            "2001:0::",
+            "::ffff:0:127.0.0.1",
+        ] {
+            assert!(blocked(address), "expected blocked: {address}");
+        }
+        // Public embedded IPv4 stays allowed on every transition prefix.
+        for address in ["2002:808:808::1", "2001:0:0:0:0:0:f7f7:f7f7"] {
+            assert!(!blocked(address), "expected allowed: {address}");
+        }
     }
 
     #[test]

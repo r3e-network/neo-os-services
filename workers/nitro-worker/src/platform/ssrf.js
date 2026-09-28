@@ -20,7 +20,8 @@ function trimString(value) {
 }
 
 // Returns true when an IP literal must be rejected (private/loopback/link-local/
-// CGNAT/multicast/reserved, plus IPv4-mapped/NAT64-tunnelled equivalents).
+// CGNAT/multicast/reserved, plus IPv4-mapped/6to4/Teredo/NAT64-tunnelled
+// equivalents).
 export function isBlockedIpAddress(rawAddress) {
   let address = trimString(rawAddress).toLowerCase();
   if (!address) return true;
@@ -86,17 +87,15 @@ function isBlockedIpv6(address) {
   if (!groups || groups.some((group) => !Number.isInteger(group) || group < 0 || group > 0xffff)) {
     return true;
   }
-  // IPv4-mapped (::ffff:0:0/96), IPv4-compatible (::/96) and NAT64 (64:ff9b::/96)
-  // tunnel an IPv4 address in the low 32 bits — classify on the embedded IPv4.
-  const isV4Mapped =
-    groups[0] === 0 &&
-    groups[1] === 0 &&
-    groups[2] === 0 &&
-    groups[3] === 0 &&
-    groups[4] === 0 &&
-    (groups[5] === 0 || groups[5] === 0xffff);
+  // The /96 tunnel prefixes carry an IPv4 in the low 32 bits: IPv4-compatible
+  // (::/96), IPv4-mapped (::ffff:0:0/96), SIIT IPv4-translated
+  // (::ffff:0:0:0/96) and NAT64 (64:ff9b::/96). Classify on the embedded IPv4.
+  const zeroHead = groups[0] === 0 && groups[1] === 0 && groups[2] === 0;
+  const isV4Tunnelled =
+    (zeroHead && groups[3] === 0 && groups[4] === 0 && (groups[5] === 0 || groups[5] === 0xffff)) ||
+    (zeroHead && groups[3] === 0 && groups[4] === 0xffff && groups[5] === 0);
   const isNat64 = groups[0] === 0x64 && groups[1] === 0xff9b;
-  if (isV4Mapped || isNat64) {
+  if (isV4Tunnelled || isNat64) {
     const a = groups[6] >> 8;
     const b = groups[6] & 0xff;
     const c = groups[7] >> 8;
@@ -104,6 +103,20 @@ function isBlockedIpv6(address) {
     // Bare ::ffff:0:0 / :: with no embedded host is itself unroutable.
     if (groups[6] === 0 && groups[7] === 0) return true;
     return isBlockedIpv4(`${a}.${b}.${c}.${d}`);
+  }
+  // 6to4 (2002::/16) embeds an IPv4 in hextets 1-2 and Teredo (2001:0::/32)
+  // embeds the client IPv4 (obfuscated, XOR 0xffffffff) in hextets 6-7: a
+  // transition translator on the egress path sends the traffic to that
+  // embedded IPv4, so it is classified with the IPv4 rules too.
+  if (groups[0] === 0x2002) {
+    return isBlockedIpv4(
+      `${groups[1] >> 8}.${groups[1] & 0xff}.${groups[2] >> 8}.${groups[2] & 0xff}`
+    );
+  }
+  if (groups[0] === 0x2001 && groups[1] === 0) {
+    const hi = groups[6] ^ 0xffff;
+    const lo = groups[7] ^ 0xffff;
+    return isBlockedIpv4(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
   }
   const first = groups[0];
   return (
