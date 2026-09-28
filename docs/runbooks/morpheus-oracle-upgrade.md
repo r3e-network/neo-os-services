@@ -2,13 +2,23 @@
 
 Ships the prepared kernel generation onto the deployed hash
 `0xf54d8584ef82315c1800373272ab08ae0db2d5ef` (same hash on testnet AND mainnet,
-both currently `updatecounter=0`) via the contract's admin-gated
+both `updatecounter=1` as of 2026-09-28) via the contract's admin-gated
 `update(nefFile, manifest)` -> `ContractManagement.Update`. Storage persists across
 the update; the contract hash does NOT change, so no client or relayer config needs
 repointing.
 
-What this generation adds over the deployed one (verified by the upgrade script's
-method diff):
+Update gates. The deployed generation's `update` is not timelocked (its ABI has no
+`scheduleUpdate`/`cancelUpdate`), so this upgrade applies in one transaction. The generation
+it installs accepts `update` only after `scheduleUpdate(nef, manifest)` pinned
+`sha256(nef || manifest)` and 24 h elapsed; every later update, a rollback included, takes that
+path. The fee-consent fix that this generation carries (R-01), its owner steps, the testnet
+rehearsal and the rollback are in `docs/security/ORACLE-INTEGRATION-WITNESS-20260928.md`.
+
+What this generation added over the kernel deployed when this runbook was first written
+(the live kernel has since gained `reservedRequestFees`, `withdrawableFees` and
+`rebuildIndexes`; the diff against the live ABI as of 2026-09-28 is 29 methods added and
+`setAdmin`, `setRuntimeEncryptionKey`, `setRuntimeVerificationPublicKey` removed, listed in the
+security note above; the upgrade script prints the current diff):
 
 | Change                                                                                      | Why                                                                                                                                                                                                                                                                         |
 | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -26,16 +36,25 @@ canonical delivery record.
 
 ## Tooling
 
-`scripts/upgrade-morpheus-oracle.mjs` - DRY RUN by default (read-only RPC):
+`scripts/upgrade-morpheus-oracle.mjs` - DRY RUN by default (read-only RPC). It reads the
+deployed update gate and any pending schedule and plans one step: `update` (untimelocked
+gate), `schedule`, `wait`, `execute`, or `cancel` (`--cancel`). A pending schedule for a
+different artifact is refused unless `--reschedule` replaces it (the timelock restarts). The
+planning logic is `scripts/lib-oracle-upgrade.mjs` (unit-tested).
 
 ```sh
-# Preview: deployed vs local checksum/method diff, gas estimate, rebuild chunk plan.
-# Also archives the CURRENT on-chain NEF+manifest (the rollback artifact) to
-# private-backups/upgrades/morpheus-oracle.<network>.uc<N>.<timestamp>.*
+# Preview: gate, deployed vs local checksum/method diff, sha256(nef || manifest), the plan,
+# a test invoke of the planned call, and the rebuild chunk plan. Also archives the CURRENT
+# on-chain NEF + compact manifest (the rollback artifact, with a .rollback.json naming its
+# sha256) to private-backups/upgrades/morpheus-oracle.<network>.uc<N>.<timestamp>.*
 node scripts/upgrade-morpheus-oracle.mjs --network testnet
 
-# Send the update transaction (admin key required; post-update reads run automatically)
+# Send the planned step (admin key required; post-update reads run automatically)
 UPGRADE_APPLY=1 MORPHEUS_ORACLE_ADMIN_WIF=... node scripts/upgrade-morpheus-oracle.mjs --network testnet
+
+# Another artifact (a rollback): --nef/--manifest instead of contracts/build
+UPGRADE_APPLY=1 MORPHEUS_ORACLE_ADMIN_WIF=... node scripts/upgrade-morpheus-oracle.mjs --network testnet \
+  --nef private-backups/upgrades/<archive>.nef --manifest private-backups/upgrades/<archive>.manifest.json
 
 # Backfill the new reverse indexes in chunks, resuming from the on-chain cursor,
 # then verify them via getstorage
@@ -99,26 +118,30 @@ is NOT an error. Post-upgrade implications:
 
 ## Rollback
 
-Rollback = `update` again with the PREVIOUS artifact. The script archives the
-current on-chain state BEFORE every run (dry or apply) to
-`private-backups/upgrades/morpheus-oracle.<network>.uc<N>.<timestamp>.{nef,manifest.json,contractstate.json}` -
-the `.nef` is reconstructed byte-exact (checksum-validated against the on-chain
-value). To roll back:
+Rollback = update again with the PREVIOUS artifact. The script archives the current on-chain
+state BEFORE every run (dry or apply) to
+`private-backups/upgrades/morpheus-oracle.<network>.uc<N>.<timestamp>.{nef,manifest.json,contractstate.json,rollback.json}` -
+the `.nef` is reconstructed byte-exact (checksum-validated against the on-chain value) and the
+manifest is the compact RPC JSON the rollback submits.
+
+Once the timelocked generation is live, a rollback cannot be instant:
 
 ```sh
-cp private-backups/upgrades/morpheus-oracle.<network>.uc0.<ts>.nef      contracts/build/MorpheusOracle.nef
-cp private-backups/upgrades/morpheus-oracle.<network>.uc0.<ts>.manifest.json contracts/build/MorpheusOracle.manifest.json
-UPGRADE_APPLY=1 MORPHEUS_ORACLE_ADMIN_WIF=... node scripts/upgrade-morpheus-oracle.mjs --network <network>
+# 1. schedule the archived artifact (plan "schedule"; the tool verifies the pinned hash)
+UPGRADE_APPLY=1 MORPHEUS_ORACLE_ADMIN_WIF=... node scripts/upgrade-morpheus-oracle.mjs --network <network> \
+  --nef private-backups/upgrades/morpheus-oracle.<network>.uc<N>.<ts>.nef \
+  --manifest private-backups/upgrades/morpheus-oracle.<network>.uc<N>.<ts>.manifest.json
+# 2. after 24 h, the same command executes it (plan "execute"); earlier runs plan "wait" and send nothing
+# 3. to withdraw a pending rollback: the same command with --cancel
 ```
 
-Then restore the current build with `contracts/build.sh`. Storage writes made by the
-new generation (reserved-fee ledger `0x26`, callback index `0x27`, account membership
-`0x28`, index migration lock/cursor `0x2D`/`0x2E`) are simply ignored by the old code
-(it never reads those prefixes), so a
-rollback is state-safe. Do NOT roll back after fees have been reserved AND withdrawn
-under the new accounting without checking `accruedRequestFees >= reservedRequestFees`
-first (the old code has no reserve and would allow draining pending-request backing
-again - the original finding).
+Against an untimelocked generation the same command plans `update` and applies at once. Then
+rebuild the current artifact with `contracts/build.sh`. Storage written by a newer generation
+is left in place; the older code simply does not read the prefixes it never knew. Do NOT roll
+back after fees have been reserved AND withdrawn under the new accounting without checking
+`accruedRequestFees >= reservedRequestFees` first (the old code has no reserve and would allow
+draining pending-request backing again - the original finding). Rehearse the full rollback
+on testnet before mainnet depends on it (see the security note above).
 
 ## Storage compatibility (analysis summary)
 

@@ -2,31 +2,54 @@
 /**
  * MorpheusOracle (MiniApp OS kernel) in-place upgrade via ContractManagement.Update.
  *
- * Ships the prepared kernel generation (reserved-fee pool + gated WithdrawAccruedFees,
- * O(1) callback reverse index with the uniqueness assert, RebuildIndexes backfill) onto
- * the deployed kernel hash. See docs/runbooks/morpheus-oracle-upgrade.md for the full
- * operational order (testnet -> smoke -> backfill -> mainnet).
+ * Two update gates exist on chain (scripts/lib-oracle-upgrade.mjs):
+ *   - the generation deployed as of 2026-09-28 applies an admin-signed
+ *     update(nef, manifest) immediately;
+ *   - the generation that replaces it accepts update(nef, manifest) only after
+ *     scheduleUpdate(nef, manifest) pinned sha256(nef || manifest) and 24 h elapsed
+ *     (cancelUpdate clears the schedule). Every later update, a rollback included, takes
+ *     this path.
+ * The tool reads the deployed ABI and the pending schedule and plans the one step to take
+ * now: update (immediate gate), schedule, wait, execute, or cancel (--cancel). See
+ * docs/runbooks/morpheus-oracle-upgrade.md and
+ * docs/security/ORACLE-INTEGRATION-WITNESS-20260928.md for the operational order.
  *
  * Usage:
- *   node scripts/upgrade-morpheus-oracle.mjs [--network testnet|mainnet]
- *                                            [--batch-size 16] [--rpc <url>]
+ *   node scripts/upgrade-morpheus-oracle.mjs [--network testnet|mainnet] [--rpc <url>]
+ *       [--oracle <hash>] [--nef <path>] [--manifest <path>] [--archive-dir <dir>]
+ *       [--batch-size 16] [--probe-app <appId>]
+ *       [--cancel] [--reschedule] [--allow-same-artifact]
  *
- * Safety model (mirrors the repo's deploy gates):
- *   - DRY RUN by default: read-only RPC only. Reports the deployed state (updatecounter,
- *     checksum, admin/updater), diffs the local contracts/build artifact against it,
- *     archives the current on-chain state to private-backups/upgrades/ (the rollback
- *     artifact), test-invokes `update` for a gas estimate, and prints the RebuildIndexes
- *     chunk plan. Nothing is signed or broadcast.
- *   - UPGRADE_APPLY=1: signs and broadcasts the `update` transaction with the admin key
- *     (MORPHEUS_ORACLE_ADMIN_WIF, falling back to the pinned updater role), then runs the
- *     post-update verification reads.
+ * Safety model:
+ *   - DRY RUN by default: read-only RPC only. Reports the deployed state, the local artifact
+ *     and its sha256(nef || manifest), the pending schedule and the planned step; archives
+ *     the current on-chain NEF + manifest (the rollback artifact) under --archive-dir;
+ *     test-invokes the planned call with the admin as signer; prints the RebuildIndexes plan.
+ *     Nothing is signed or broadcast.
+ *   - UPGRADE_APPLY=1: signs and broadcasts the planned step with the admin key
+ *     (MORPHEUS_ORACLE_ADMIN_WIF, falling back to the pinned updater role) and verifies it.
+ *     A running timelock or a conflicting schedule is refused, never worked around.
  *   - REBUILD_APPLY=1: runs the chunked rebuildIndexes backfill (requires the upgraded
  *     contract on-chain) and verifies the callback index against the registry via
  *     getstorage. Independent of UPGRADE_APPLY so the backfill can be resumed.
  */
 import { trimString } from './lib-strings.mjs';
 import { buildIndexRebuildChunks } from './lib-index-rebuild-plan.mjs';
-import { createHash } from 'node:crypto';
+import {
+  PREFIX_UPGRADE_HASH,
+  PREFIX_UPGRADE_TIME,
+  TIMELOCK_DELAY_MS,
+  UPGRADE_ACTIONS,
+  assertNefChecksum,
+  computeUpgradeArtifactHash,
+  decodePendingUpgrade,
+  describeUpgradeGate,
+  manifestsEquivalent,
+  reconstructNefFile,
+  planKernelUpgrade,
+  storageKeyBase64,
+  upgradeInvocation,
+} from './lib-oracle-upgrade.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -42,6 +65,7 @@ const DEFAULT_ORACLE_HASH = '0xf54d8584ef82315c1800373272ab08ae0db2d5ef';
 const PREFIX_CALLBACK_INDEX = 0x27; // MorpheusOracle.cs PREFIX_CALLBACK_INDEX
 const TX_POLL_ATTEMPTS = 18;
 const TX_POLL_INTERVAL_MS = 5_000;
+const NO_PENDING = Object.freeze({ scheduled: false, executeAfterMs: null, hashHex: null });
 
 const { values: flags } = parseArgs({
   options: {
@@ -49,6 +73,13 @@ const { values: flags } = parseArgs({
     'batch-size': { type: 'string' },
     rpc: { type: 'string' },
     'probe-app': { type: 'string' },
+    oracle: { type: 'string' },
+    nef: { type: 'string' },
+    manifest: { type: 'string' },
+    'archive-dir': { type: 'string' },
+    cancel: { type: 'boolean', default: false },
+    reschedule: { type: 'boolean', default: false },
+    'allow-same-artifact': { type: 'boolean', default: false },
   },
 });
 
@@ -75,7 +106,9 @@ const networkMagic = Number(
     process.env.NEO_NETWORK_MAGIC || ''
   )
 );
-const oracleHash = trimString(process.env.CONTRACT_MORPHEUS_ORACLE_HASH || DEFAULT_ORACLE_HASH);
+const oracleHash = trimString(
+  flags.oracle || process.env.CONTRACT_MORPHEUS_ORACLE_HASH || DEFAULT_ORACLE_HASH
+);
 const batchSize = Math.max(1, Number(flags['batch-size'] || 16));
 const applyUpdate = process.env.UPGRADE_APPLY === '1';
 const applyRebuild = process.env.REBUILD_APPLY === '1';
@@ -115,69 +148,12 @@ function booleanFromStackItem(item) {
   return item.value === true || item.value === 'true';
 }
 
-// Rebuilds the raw NEF *file* bytes from the getcontractstate `nef` JSON so a rollback
-// is simply `update` with this exact file. neon-js' NEF.fromJson does not round-trip
-// the RPC shape (base64 script, named callflags, big-endian token hashes), so the file
-// is assembled manually per the NEF3 layout and validated against the on-chain checksum.
-function reconstructNefFile(nefJson) {
-  const CALL_FLAGS = {
-    None: 0,
-    ReadStates: 1,
-    WriteStates: 2,
-    AllowCall: 4,
-    AllowNotify: 8,
-    States: 3,
-    ReadOnly: 5,
-    All: 15,
-  };
-  const varInt = (n) => {
-    if (n < 0xfd) return Buffer.from([n]);
-    if (n <= 0xffff) {
-      const b = Buffer.alloc(3);
-      b[0] = 0xfd;
-      b.writeUInt16LE(n, 1);
-      return b;
-    }
-    const b = Buffer.alloc(5);
-    b[0] = 0xfe;
-    b.writeUInt32LE(n, 1);
-    return b;
-  };
-  const varBytes = (buf) => Buffer.concat([varInt(buf.length), buf]);
-  const varStr = (s) => varBytes(Buffer.from(s ?? '', 'utf8'));
-
-  const parts = [Buffer.from('NEF3', 'ascii')];
-  const compiler = Buffer.alloc(64);
-  Buffer.from(nefJson.compiler ?? '', 'utf8').copy(compiler);
-  parts.push(compiler);
-  parts.push(varStr(nefJson.source || ''));
-  parts.push(Buffer.from([0])); // reserved
-  parts.push(varInt(nefJson.tokens.length));
-  for (const token of nefJson.tokens) {
-    parts.push(Buffer.from(token.hash.replace(/^0x/, ''), 'hex').reverse()); // LE
-    parts.push(varStr(token.method));
-    const paramCount = Buffer.alloc(2);
-    paramCount.writeUInt16LE(token.paramcount);
-    parts.push(paramCount);
-    parts.push(Buffer.from([token.hasreturnvalue ? 1 : 0]));
-    const callFlags =
-      typeof token.callflags === 'string' ? CALL_FLAGS[token.callflags] : token.callflags;
-    if (callFlags === undefined) throw new Error(`unknown call flags '${token.callflags}'`);
-    parts.push(Buffer.from([callFlags]));
-  }
-  parts.push(Buffer.alloc(2)); // reserved u16
-  parts.push(varBytes(Buffer.from(nefJson.script, 'base64')));
-  const body = Buffer.concat(parts);
-  const checksum = createHash('sha256')
-    .update(createHash('sha256').update(body).digest())
-    .digest()
-    .readUInt32LE(0);
-  if (checksum !== nefJson.checksum) {
-    throw new Error(`reconstructed checksum ${checksum} != reported ${nefJson.checksum}`);
-  }
-  const tail = Buffer.alloc(4);
-  tail.writeUInt32LE(checksum);
-  return Buffer.concat([body, tail]);
+function jsonSafe(value) {
+  return JSON.stringify(
+    value,
+    (_key, entry) => (typeof entry === 'bigint' ? entry.toString() : entry),
+    2
+  );
 }
 
 async function readMethod(method, params = [], signers = []) {
@@ -186,6 +162,25 @@ async function readMethod(method, params = [], signers = []) {
     throw new Error(`${method} test invoke FAULTed: ${result.exception || 'unknown'}`);
   }
   return result;
+}
+
+async function readPendingUpgrade() {
+  const [timeBase64, hashBase64] = await Promise.all([
+    rpc('getstorage', [oracleHash, storageKeyBase64(PREFIX_UPGRADE_TIME)]),
+    rpc('getstorage', [oracleHash, storageKeyBase64(PREFIX_UPGRADE_HASH)]),
+  ]);
+  return decodePendingUpgrade({ timeBase64, hashBase64 });
+}
+
+// Runtime.Time of the next block is at least the latest header's timestamp (ms).
+async function readChainTimeMs() {
+  const count = Number(await rpc('getblockcount', []));
+  const header = await rpc('getblockheader', [count - 1, true]);
+  const time = Number(header?.time);
+  if (!Number.isSafeInteger(time) || time <= 0) {
+    throw new Error('getblockheader returned no block time');
+  }
+  return BigInt(time);
 }
 
 async function waitForTransaction(txid) {
@@ -214,13 +209,8 @@ async function waitForTransaction(txid) {
 
 // --- 1. Current deployed state (read-only) ------------------------------------------
 const state = await rpc('getcontractstate', [oracleHash]);
+const gate = describeUpgradeGate(state.manifest);
 const deployedMethods = state.manifest.abi.methods.map((m) => m.name);
-const updateAbi = state.manifest.abi.methods.find((m) => m.name === 'update');
-if (!updateAbi || updateAbi.parameters.length !== 2) {
-  throw new Error(
-    'deployed kernel does not expose update(nefFile, manifest); cannot upgrade in place'
-  );
-}
 
 const adminInvoke = await readMethod('admin');
 const updaterInvoke = await readMethod('updater');
@@ -228,86 +218,145 @@ const onChainAdmin = hash160FromStackItem(adminInvoke.stack?.[0]);
 const onChainUpdater = hash160FromStackItem(updaterInvoke.stack?.[0]);
 
 // --- 2. Local artifact ----------------------------------------------------------------
-const nefPath = path.resolve('contracts/build/MorpheusOracle.nef');
-const manifestPath = path.resolve('contracts/build/MorpheusOracle.manifest.json');
+const nefPath = path.resolve(flags.nef || 'contracts/build/MorpheusOracle.nef');
+const manifestPath = path.resolve(flags.manifest || 'contracts/build/MorpheusOracle.manifest.json');
 const [nefBytes, manifestRaw] = await Promise.all([
   fs.readFile(nefPath),
   fs.readFile(manifestPath, 'utf8'),
 ]);
+const localChecksum = assertNefChecksum(nefBytes);
 const localManifest = JSON.parse(manifestRaw);
+if (localManifest.name !== state.manifest.name) {
+  throw new Error(
+    `local manifest name '${localManifest.name}' differs from the deployed '${state.manifest.name}'; ContractManagement.Update refuses a rename`
+  );
+}
 const localMethods = localManifest.abi.methods.map((m) => m.name);
-const localChecksum = nefBytes.readUInt32LE(nefBytes.length - 4);
 const addedMethods = localMethods.filter((m) => !deployedMethods.includes(m));
 const removedMethods = deployedMethods.filter((m) => !localMethods.includes(m));
+// The exact bytes scheduleUpdate pins and update must repeat.
+const localArtifactHash = computeUpgradeArtifactHash(nefBytes, manifestRaw);
+const sameAsDeployed =
+  localChecksum === state.nef.checksum && manifestsEquivalent(state.manifest, localManifest);
+
+// --- 3. Pending schedule and the plan ---------------------------------------------------
+const pending = gate.timelocked ? await readPendingUpgrade() : NO_PENDING;
+const chainTimeMs = gate.timelocked ? await readChainTimeMs() : null;
+const plan = planKernelUpgrade({
+  gate,
+  sameAsDeployed,
+  localArtifactHash,
+  pending,
+  chainTimeMs,
+  cancel: flags.cancel,
+  reschedule: flags.reschedule,
+  allowSameArtifact: flags['allow-same-artifact'],
+});
 
 console.log(
-  JSON.stringify(
-    {
-      network,
-      rpc: rpcAddress,
-      oracle_hash: oracleHash,
-      deployed: {
-        updatecounter: state.updatecounter,
-        nef_checksum: state.nef.checksum,
-        method_count: deployedMethods.length,
-        admin: onChainAdmin,
-        updater: onChainUpdater,
-        update_gate: 'admin witness (ValidateAdmin)',
-      },
-      local: {
-        nef: nefPath,
-        nef_checksum: localChecksum,
-        method_count: localMethods.length,
-        methods_added: addedMethods,
-        methods_removed: removedMethods,
-      },
-      checksum_changed: localChecksum !== state.nef.checksum,
-      mode: applyUpdate ? 'APPLY' : 'DRY RUN',
+  jsonSafe({
+    network,
+    rpc: rpcAddress,
+    oracle_hash: oracleHash,
+    deployed: {
+      updatecounter: state.updatecounter,
+      nef_checksum: state.nef.checksum,
+      method_count: deployedMethods.length,
+      admin: onChainAdmin,
+      updater: onChainUpdater,
+      update_gate: gate.timelocked
+        ? `scheduleUpdate -> ${TIMELOCK_DELAY_MS / 3_600_000} h -> update (admin witness)`
+        : 'immediate update (admin witness)',
     },
-    null,
-    2
-  )
+    local: {
+      nef: nefPath,
+      manifest: manifestPath,
+      nef_checksum: localChecksum,
+      artifact_sha256: localArtifactHash,
+      method_count: localMethods.length,
+      methods_added: addedMethods,
+      methods_removed: removedMethods,
+      same_as_deployed: sameAsDeployed,
+    },
+    pending_upgrade: pending,
+    chain_time_ms: chainTimeMs,
+    plan,
+    mode: applyUpdate ? 'APPLY' : 'DRY RUN',
+  })
 );
 
-if (localChecksum === state.nef.checksum) {
-  console.log('local NEF checksum equals the deployed checksum; nothing to update.');
-}
-
-// --- 3. Archive the current on-chain state (rollback artifact) ------------------------
+// --- 4. Archive the current on-chain state (rollback artifact) ------------------------
 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-const archiveDir = path.resolve('private-backups', 'upgrades');
+const archiveDir = path.resolve(flags['archive-dir'] || path.join('private-backups', 'upgrades'));
 await fs.mkdir(archiveDir, { recursive: true });
 const archiveBase = path.join(
   archiveDir,
   `morpheus-oracle.${network}.uc${state.updatecounter}.${timestamp}`
 );
 await fs.writeFile(`${archiveBase}.contractstate.json`, JSON.stringify(state, null, 2));
+// Compact JSON: the rollback submits this exact text, and scheduleUpdate pins its bytes.
+const rollbackManifestText = JSON.stringify(state.manifest);
+await fs.writeFile(`${archiveBase}.manifest.json`, rollbackManifestText);
 try {
-  // Reconstruct the raw NEF file bytes so a rollback is `update` with this exact file.
-  await fs.writeFile(`${archiveBase}.nef`, reconstructNefFile(state.nef));
+  // Byte-exact NEF so a rollback can submit the deployed code (checksum-validated).
+  const rollbackNef = reconstructNefFile(state.nef);
+  await fs.writeFile(`${archiveBase}.nef`, rollbackNef);
+  await fs.writeFile(
+    `${archiveBase}.rollback.json`,
+    jsonSafe({
+      network,
+      oracle_hash: oracleHash,
+      updatecounter: state.updatecounter,
+      nef_checksum: state.nef.checksum,
+      artifact_sha256: computeUpgradeArtifactHash(rollbackNef, rollbackManifestText),
+      nef: `${archiveBase}.nef`,
+      manifest: `${archiveBase}.manifest.json`,
+    })
+  );
 } catch (error) {
   console.warn(`NEF reconstruction skipped (${error.message}); contractstate JSON archived.`);
 }
-await fs.writeFile(`${archiveBase}.manifest.json`, JSON.stringify(state.manifest, null, 2));
 console.log(`archived current on-chain state to ${archiveBase}.*`);
 
-// --- 4. Update preview (test invoke; no signature, no broadcast) -----------------------
-const updateParams = [
+// --- 5. Preview of the planned call (test invoke; no signature, no broadcast) ----------
+const artifactParams = [
   { type: 'ByteArray', value: nefBytes.toString('base64') },
   { type: 'String', value: manifestRaw },
 ];
 const adminSigner = [{ account: onChainAdmin, scopes: 'CalledByEntry' }];
-const preview = await rpc('invokefunction', [oracleHash, 'update', updateParams, adminSigner]);
-console.log(
-  `update preview: state=${preview.state} gasconsumed=${preview.gasconsumed}${
-    preview.exception ? ` exception=${preview.exception}` : ''
-  }`
-);
-if (preview.state !== 'HALT') {
-  throw new Error('update test invoke FAULTed; refusing to continue');
+const invocation = upgradeInvocation(plan.action);
+if (plan.action === UPGRADE_ACTIONS.BLOCKED) {
+  console.error(`refusing: ${plan.reason}`);
+  process.exit(1);
+}
+if (invocation) {
+  const preview = await rpc('invokefunction', [
+    oracleHash,
+    invocation.method,
+    invocation.withArtifact ? artifactParams : [],
+    adminSigner,
+  ]);
+  console.log(
+    `${invocation.method} preview: state=${preview.state} gasconsumed=${preview.gasconsumed}${
+      preview.exception ? ` exception=${preview.exception}` : ''
+    }`
+  );
+  if (preview.state !== 'HALT') {
+    throw new Error(`${invocation.method} test invoke FAULTed; refusing to continue`);
+  }
+} else if (plan.action === UPGRADE_ACTIONS.WAIT) {
+  // Show the kernel's own verdict on an early update.
+  const early = await rpc('invokefunction', [oracleHash, 'update', artifactParams, adminSigner]);
+  console.log(
+    `update preview (timelock running, ${plan.remainingMs} ms left): state=${early.state}${
+      early.exception ? ` exception=${early.exception}` : ''
+    }`
+  );
+} else {
+  console.log(`nothing to send: ${plan.reason}`);
 }
 
-// --- 5. RebuildIndexes chunk plan -------------------------------------------------------
+// --- 6. RebuildIndexes chunk plan -------------------------------------------------------
 const appCountInvoke = await readMethod('getMiniAppCount');
 const appCount = Number(integerFromStackItem(appCountInvoke.stack?.[0]) ?? 0n);
 let plannedStart = 0;
@@ -331,12 +380,21 @@ if (appCount === 0) {
 }
 
 if (!applyUpdate && !applyRebuild) {
-  console.log('DRY RUN complete. Set UPGRADE_APPLY=1 to send the update transaction;');
-  console.log('after it confirms, run again with REBUILD_APPLY=1 to backfill the indexes.');
+  console.log(
+    invocation
+      ? `DRY RUN complete. Set UPGRADE_APPLY=1 to send ${invocation.method}.`
+      : 'DRY RUN complete.'
+  );
+  if (plan.action === UPGRADE_ACTIONS.SCHEDULE) {
+    console.log(
+      `after it confirms, wait ${TIMELOCK_DELAY_MS / 3_600_000} h and run again with the same --nef/--manifest to execute.`
+    );
+  }
+  console.log('after an update confirms, run again with REBUILD_APPLY=1 to backfill the indexes.');
   process.exit(0);
 }
 
-// --- 6. Signer (apply paths only) -------------------------------------------------------
+// --- 7. Signer (apply paths only) -------------------------------------------------------
 let wif = trimString(process.env.MORPHEUS_ORACLE_ADMIN_WIF || '');
 if (!wif) {
   const signer = resolvePinnedNeoN3Role(network, 'updater', { env: process.env });
@@ -349,7 +407,7 @@ const account = new wallet.Account(wif);
 const accountHash = `0x${account.scriptHash}`;
 if (accountHash.toLowerCase() !== String(onChainAdmin).toLowerCase()) {
   throw new Error(
-    `signer ${account.address} (${accountHash}) is not the on-chain admin ${onChainAdmin}; the update would FAULT`
+    `signer ${account.address} (${accountHash}) is not the on-chain admin ${onChainAdmin}; the call would FAULT`
   );
 }
 const contract = new experimental.SmartContract(oracleHash, {
@@ -358,71 +416,100 @@ const contract = new experimental.SmartContract(oracleHash, {
   account,
 });
 
-// --- 7. Apply the update ----------------------------------------------------------------
-if (applyUpdate) {
-  if (localChecksum === state.nef.checksum) {
-    console.log('skipping update transaction: checksum unchanged.');
-  } else {
-    const txid = await contract.invoke('update', [
-      sc.ContractParam.byteArray(u.HexString.fromHex(nefBytes.toString('hex'), true)),
-      sc.ContractParam.string(manifestRaw),
-    ]);
-    console.log(`MorpheusOracle update tx: ${txid}`);
-    await waitForTransaction(txid);
-
-    const updated = await rpc('getcontractstate', [oracleHash]);
-    if (
-      updated.updatecounter !== state.updatecounter + 1 ||
-      updated.nef.checksum !== localChecksum
-    ) {
-      throw new Error(
-        `post-update state mismatch: updatecounter=${updated.updatecounter} checksum=${updated.nef.checksum}`
-      );
-    }
-    console.log(
-      `update confirmed: updatecounter=${updated.updatecounter} checksum=${updated.nef.checksum}`
-    );
-  }
-
-  // Post-update verification reads: the new fee views must answer and the registry
-  // must still resolve (storage carried across the update untouched).
-  const verification = {};
-  for (const method of [
-    'accruedRequestFees',
-    'reservedRequestFees',
-    'withdrawableFees',
-    'getMiniAppCount',
-    'getTotalRequests',
-    'isIndexRebuildRequired',
-    'indexRebuildCursor',
-  ]) {
-    const result = await readMethod(method);
-    verification[method] = String(integerFromStackItem(result.stack?.[0]) ?? 'null');
-  }
-  let probeAppId = trimString(flags['probe-app'] || '');
-  if (!probeAppId && appCount > 0) {
-    const firstId = await readMethod('getMiniAppIdByIndex', [{ type: 'Integer', value: '0' }]);
-    probeAppId = b64ToBuf(firstId.stack?.[0]?.value || '').toString('utf8');
-  }
-  if (probeAppId) {
-    const probe = await readMethod('getMiniApp', [{ type: 'String', value: probeAppId }]);
-    const fields = probe.stack?.[0]?.value || [];
-    verification.getMiniApp = {
-      appId: probeAppId,
-      admin: hash160FromStackItem(fields[1]),
-      callback: hash160FromStackItem(fields[3]),
-      created_at: String(integerFromStackItem(fields[7]) ?? 'null'),
-    };
-    if (!verification.getMiniApp.created_at || verification.getMiniApp.created_at === '0') {
-      throw new Error(
-        `GetMiniApp probe for '${probeAppId}' returned an empty record after the update`
-      );
-    }
-  }
-  console.log(`post-update verification: ${JSON.stringify(verification, null, 2)}`);
+function artifactContractParams() {
+  return [
+    sc.ContractParam.byteArray(u.HexString.fromHex(nefBytes.toString('hex'), true)),
+    sc.ContractParam.string(manifestRaw),
+  ];
 }
 
-// --- 8. Chunked RebuildIndexes backfill ---------------------------------------------------
+// --- 8. Apply the planned step ------------------------------------------------------------
+let updated = false;
+if (applyUpdate) {
+  if (plan.action === UPGRADE_ACTIONS.WAIT) {
+    throw new Error(
+      `the scheduled upgrade is still timelocked for ${plan.remainingMs} ms; run again after ${plan.executeAfterMs}`
+    );
+  }
+  if (!invocation) {
+    console.log(`skipping the upgrade transaction: ${plan.reason}`);
+  } else {
+    const txid = await contract.invoke(
+      invocation.method,
+      invocation.withArtifact ? artifactContractParams() : []
+    );
+    console.log(`MorpheusOracle ${invocation.method} tx: ${txid}`);
+    await waitForTransaction(txid);
+
+    if (invocation.method === 'update') {
+      const after = await rpc('getcontractstate', [oracleHash]);
+      if (after.updatecounter !== state.updatecounter + 1 || after.nef.checksum !== localChecksum) {
+        throw new Error(
+          `post-update state mismatch: updatecounter=${after.updatecounter} checksum=${after.nef.checksum}`
+        );
+      }
+      console.log(
+        `update confirmed: updatecounter=${after.updatecounter} checksum=${after.nef.checksum}`
+      );
+      updated = true;
+    } else if (invocation.method === 'scheduleUpdate') {
+      const scheduled = await readPendingUpgrade();
+      if (!scheduled.scheduled || scheduled.hashHex !== localArtifactHash) {
+        throw new Error(
+          `schedule not recorded as expected: ${jsonSafe(scheduled)} (wanted ${localArtifactHash})`
+        );
+      }
+      console.log(
+        `upgrade scheduled: artifact ${scheduled.hashHex} executable at ${scheduled.executeAfterMs} (Runtime.Time ms)`
+      );
+    } else if (invocation.method === 'cancelUpdate') {
+      const cleared = await readPendingUpgrade();
+      if (cleared.scheduled) throw new Error('cancelUpdate confirmed but a schedule remains');
+      console.log('scheduled upgrade cancelled.');
+    }
+  }
+
+  if (updated) {
+    // Post-update verification reads: the fee views must answer and the registry must still
+    // resolve (storage carried across the update untouched).
+    const verification = {};
+    for (const method of [
+      'accruedRequestFees',
+      'reservedRequestFees',
+      'withdrawableFees',
+      'getMiniAppCount',
+      'getTotalRequests',
+      'isIndexRebuildRequired',
+      'indexRebuildCursor',
+    ]) {
+      const result = await readMethod(method);
+      verification[method] = String(integerFromStackItem(result.stack?.[0]) ?? 'null');
+    }
+    let probeAppId = trimString(flags['probe-app'] || '');
+    if (!probeAppId && appCount > 0) {
+      const firstId = await readMethod('getMiniAppIdByIndex', [{ type: 'Integer', value: '0' }]);
+      probeAppId = b64ToBuf(firstId.stack?.[0]?.value || '').toString('utf8');
+    }
+    if (probeAppId) {
+      const probe = await readMethod('getMiniApp', [{ type: 'String', value: probeAppId }]);
+      const fields = probe.stack?.[0]?.value || [];
+      verification.getMiniApp = {
+        appId: probeAppId,
+        admin: hash160FromStackItem(fields[1]),
+        callback: hash160FromStackItem(fields[3]),
+        created_at: String(integerFromStackItem(fields[7]) ?? 'null'),
+      };
+      if (!verification.getMiniApp.created_at || verification.getMiniApp.created_at === '0') {
+        throw new Error(
+          `GetMiniApp probe for '${probeAppId}' returned an empty record after the update`
+        );
+      }
+    }
+    console.log(`post-update verification: ${JSON.stringify(verification, null, 2)}`);
+  }
+}
+
+// --- 9. Chunked RebuildIndexes backfill ---------------------------------------------------
 if (applyRebuild) {
   const current = await rpc('getcontractstate', [oracleHash]);
   const currentMethods = current.manifest.abi.methods.map((m) => m.name);
