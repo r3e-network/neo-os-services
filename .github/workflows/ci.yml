@@ -85,6 +85,9 @@ jobs:
       # ES module and fails on a relative import of a missing file or of a name
       # the target does not export.
       - run: node --test scripts/module-imports.test.mjs
+      # Representative secret and build-output paths stay ignored anywhere in
+      # the tree, and no tracked source is hidden by an ignore rule.
+      - run: node --test scripts/gitignore-protections.test.mjs
       - run: npm run check:rust-migration
       - run: npm run check:production-topology
       - run: npm run check:cargo-lock-provenance

@@ -4,6 +4,8 @@ node_modules/
 **/next-env.d.ts
 .vercel/
 .serena/
+# CodeGraph index (ignored for git by the tracked .codegraph/.gitignore).
+.codegraph/
 coverage/
 npm-debug.log*
 .DS_Store

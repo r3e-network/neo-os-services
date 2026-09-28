@@ -1,51 +1,55 @@
 # === NeoOS Standard .gitignore ===
+#
+# Directory patterns are unanchored on purpose: tool state, dependencies and
+# build output appear under apps/*, workers/* and packages/* as well as at the
+# root. scripts/gitignore-protections.test.mjs checks representative secret and
+# artifact paths against these rules, and that no tracked source is ignored.
 
 # Tool State (NEVER commit)
-/.claude/
-/.codegraph/
-/.serena/
-/.planning/
-/.workbuddy/
-/.omx/
-/.worktrees/
-/graphify-out/
-/.vercel/
-/.turbo/
+.claude/
+.serena/
+.planning/
+.workbuddy/
+.omx/
+.codex/
+.opencode/
+.worktrees/
+graphify-out/
+.vercel/
+.turbo/
+# .codegraph/ is not listed: the tracked .codegraph/.gitignore ignores its
+# own contents, and a pattern here would also match that tracked file.
 
 # Build Outputs
-/dist/
-/coverage/
-/.next/
-/test-results/
+dist/
+coverage/
+.next/
+test-results/
+playwright-report/
 *.neopkg
 *.wasm
+*.tsbuildinfo
+**/next-env.d.ts
 
 # Cargo build output (workspace target dir at repo root)
 /target/
 workers/neo-signer/target
 
-# .NET
-/bin/
-/obj/
+# .NET build output, wherever a project lives. Rust binary targets use
+# src/bin/, which must stay tracked.
 **/bin/
 **/obj/
-contracts/**/bin
-contracts/**/obj
-examples/contracts/n3/bin/
-examples/contracts/n3/obj/
+!**/src/bin/
 
 # Dependencies
-/node_modules/
-workers/phala-worker/node_modules
-contracts/neox/node_modules
+node_modules/
 
-# Environment
-.env
-.env.*
-.env.local
-.env.*.local
-.env.ci
+# Environment: every dotenv variant and *.env file, except committed examples.
+.env*
+*.env
 !.env.example
+!.env.*.example
+!*.example.env
 
 # Secrets
 *.pem
@@ -54,10 +58,14 @@ contracts/neox/node_modules
 *.pfx
 id_rsa*
 *.gpg
+.npmrc
+.secrets/
+# Public AWS Nitro Enclaves root certificate, pinned for attestation checks.
+!apps/web/lib/attestation/aws-nitro-root.pem
 
 # Editor/IDE
-/.vscode/
-/.idea/
+.vscode/
+.idea/
 *.swp
 *.swo
 *~
@@ -77,12 +85,6 @@ desktop.ini
 # === Repository-Specific Patterns ===
 
 # Build outputs
-node_modules
-.npmrc
-npm-debug.log*
-*.tsbuildinfo
-**/next-env.d.ts
-dist
 contracts/build
 examples/build
 contracts/neox/artifacts
@@ -103,12 +105,14 @@ deploy/nitro/*.env
 
 # Backups
 private-backups/
+.ops-backups/
 
 # Reports
 docs/reports/
 docs/*_20??-??-??.md
 
-# Deployments
+# Deployments (the tracked *.latest.json files are curated evidence; new
+# live-run outputs stay local)
 examples/deployments/*.20??-??-??.json
 examples/deployments/control-plane-smoke.*.latest.json
 examples/deployments/*.latest.json
@@ -117,17 +121,11 @@ examples/deployments/*.latest.json
 /MorpheusOracle.nef
 /MorpheusOracle.manifest.json
 
-# Secrets directory
-.secrets/
-
-# Operations backups
-.ops-backups/
-
 # Automation logs
 .automation-logs/
 
 # Mimosa state
 **/.mimosa/
-contracts-evm/build/*.bin
-.env*
+
+# Supabase CLI state
 supabase/.temp
