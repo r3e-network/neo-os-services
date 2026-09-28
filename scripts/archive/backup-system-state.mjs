@@ -4,8 +4,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 
-import { loadDotEnv, parseDotEnv } from './lib-env.mjs';
-import { trimString } from './lib-strings.mjs';
+import { loadDotEnv, parseDotEnv } from '../lib-env.mjs';
+import { trimString } from '../lib-strings.mjs';
 
 const execFileAsync = promisify(execFile);
 

@@ -11,6 +11,8 @@
  *   node scripts/check-network-config.mjs --expected mainnet
  */
 
+import { trimString } from './lib-strings.mjs';
+
 // Parse command-line arguments. Both `--expected X` and `--expected=X` are
 // accepted; malformed usage fails the run instead of silently disabling the
 // expected-network check. `--fail-on-missing` is consumed for compatibility;
@@ -46,15 +48,6 @@ let expectedNetwork = null;
     argError = `unknown argument "${arg}" (supported: --fail-on-missing, --expected mainnet, --expected=mainnet)`;
     break;
   }
-}
-
-// Import trimString utility if available, otherwise define simple fallback
-let trimString;
-try {
-  const utils = await import('./lib-utils.mjs');
-  trimString = utils.trimString || ((s) => s?.trim() || '');
-} catch {
-  trimString = (s) => s?.trim() || '';
 }
 
 /**

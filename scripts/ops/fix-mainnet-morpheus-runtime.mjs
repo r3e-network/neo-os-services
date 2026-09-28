@@ -2,15 +2,15 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { experimental, rpc as neoRpc, sc, tx, u, wallet } from '@cityofzion/neon-js';
-import { loadDotEnv } from './lib-env.mjs';
+import { loadDotEnv } from '../lib-env.mjs';
 import {
   normalizeHash160,
   normalizeMorpheusNetwork,
   resolvePinnedNeoN3Role,
-} from './lib-neo-signers.mjs';
-import { parseGasToRaw } from './lib-gas-units.mjs';
-import { trimString } from './lib-strings.mjs';
-import { withRetries } from './lib-verify-morpheus-n3.mjs';
+} from '../lib-neo-signers.mjs';
+import { parseGasToRaw } from '../lib-gas-units.mjs';
+import { trimString } from '../lib-strings.mjs';
+import { withRetries } from '../lib-verify-morpheus-n3.mjs';
 import {
   readReviewedNetworkRegistrySync,
   resolveReviewedNeoN3Magic,

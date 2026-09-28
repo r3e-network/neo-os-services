@@ -1,6 +1,6 @@
-import { trimString } from './lib-strings.mjs';
+import { trimString } from '../lib-strings.mjs';
 import path from 'node:path';
-import { loadDotEnv } from './lib-env.mjs';
+import { loadDotEnv } from '../lib-env.mjs';
 
 function parseArgs(argv = process.argv.slice(2)) {
   const parsed = {

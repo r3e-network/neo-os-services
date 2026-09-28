@@ -1,4 +1,4 @@
-import { trimString } from './lib-strings.mjs';
+import { trimString } from '../lib-strings.mjs';
 import { wallet } from '@cityofzion/neon-js';
 
 const CVM_URL =
