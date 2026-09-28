@@ -7,17 +7,25 @@
  *   3. Overload Guard Slot Accounting (100,000 iterations)
  *   4. Error Classifier Determinism (50,000 iterations)
  *
- * Run: cd /Users/jinghuiliao/git/neo-os/neo-os-services && node fuzz-os-infra.mjs
+ * Run (from the repository root): node fuzz-os-infra.mjs
+ * Deterministic: every input comes from one PRNG seeded with FUZZ_SEED (a
+ * decimal integer from 1 to 4294967295, default 20260928), so a run replays
+ * exactly from the seed it prints.
  */
+
+import { readFuzzSeed } from './fuzz-testing/seed.mjs';
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
-let seed = Date.now() ^ 0xdeadbeef;
+const FUZZ_SEED = readFuzzSeed();
+let seed = FUZZ_SEED | 0;
 function xorshift32() {
   seed ^= seed << 13;
   seed ^= seed >>> 17;
   seed ^= seed << 5;
-  return (seed >>> 0) / 0xffffffff;
+  // Divide by 2^32 so the result stays below 1: randInt(min, max) must never
+  // return max + 1 (xorshift32 can emit 0xffffffff).
+  return (seed >>> 0) / 0x100000000;
 }
 function randInt(min, max) {
   return min + Math.floor(xorshift32() * (max - min + 1));
@@ -832,7 +840,8 @@ function fuzzClassifier(iterations) {
     } else if (msgType < 0.8) {
       message = pick(RANDOM_WORDS) + ' ' + pick(RANDOM_WORDS);
     } else {
-      message = `error code ${randInt(100, 599)} at ${Date.now()}`;
+      // A seeded millisecond timestamp, so the message replays from FUZZ_SEED.
+      message = `error code ${randInt(100, 599)} at ${randInt(1_600_000_000_000, 1_900_000_000_000)}`;
     }
 
     // E1: Determinism - same input → same output
@@ -957,7 +966,8 @@ function fuzzClassifier(iterations) {
 console.log('╔══════════════════════════════════════════════════════════════════════════════╗');
 console.log('║         OS-LEVEL ORACLE INFRASTRUCTURE FUZZ TESTS                          ║');
 console.log('╠══════════════════════════════════════════════════════════════════════════════╣');
-console.log(`║  Seed: ${String(seed >>> 0).padEnd(69)}║`);
+const seedLabel = `${FUZZ_SEED} (override with FUZZ_SEED)`;
+console.log(`║  Seed: ${seedLabel.padEnd(69)}║`);
 console.log('╚══════════════════════════════════════════════════════════════════════════════╝');
 console.log('');
 

@@ -10,11 +10,14 @@
  *   - src/platform/permission-guard.js (allowlist validation)
  *
  * Run: node fuzz-security.mjs
- * Deterministic: the PRNG is seeded; FUZZ_SEED overrides the fixed default.
+ * Deterministic: every input, random bytes included, comes from one PRNG
+ * seeded with FUZZ_SEED (a decimal integer from 1 to 4294967295, default
+ * 20260928), so a run replays exactly from the seed it prints.
  */
 
-import { createHash, timingSafeEqual, randomBytes } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 
+import { readFuzzSeed } from './fuzz-testing/seed.mjs';
 import { isBlockedIpAddress } from './workers/nitro-worker/src/platform/ssrf.js';
 
 // ─── Inlined: auth.js safeEqual ───────────────────────────────────────────────
@@ -90,9 +93,8 @@ function parseAllowNet(raw) {
 // ─── Fuzz helpers ─────────────────────────────────────────────────────────────
 
 // Deterministic PRNG (LCG, same construction as scripts/export-rust-vectors.mjs)
-// so runs are reproducible: a failure found with seed S replays exactly. The
-// default seed is fixed so scheduled runs are comparable; FUZZ_SEED overrides.
-const FUZZ_SEED = Number.parseInt(process.env.FUZZ_SEED ?? '', 10) || 20260928;
+// so runs are reproducible: a failure found with seed S replays exactly.
+const FUZZ_SEED = readFuzzSeed();
 let prngState = FUZZ_SEED >>> 0;
 function random() {
   prngState = (Math.imul(prngState, 1664525) + 1013904223) >>> 0;
@@ -105,6 +107,13 @@ function randInt(min, max) {
 
 function randOctet() {
   return randInt(0, 255);
+}
+
+// Seeded stand-in for crypto.randomBytes, so byte inputs replay too.
+function randBytes(length) {
+  const bytes = Buffer.alloc(length);
+  for (let i = 0; i < length; i++) bytes[i] = randOctet();
+  return bytes;
 }
 
 function randIpv4() {
@@ -331,7 +340,7 @@ function fuzzSsrf() {
   {
     let fail = null;
     for (let i = 0; i < N && !fail; i++) {
-      const buf = randomBytes(16);
+      const buf = randBytes(16);
       const ip = formatIpv6FromBytes(buf);
       try {
         isBlockedIpAddress(ip);
@@ -425,7 +434,7 @@ function fuzzKeyDerivation() {
   {
     let fail = null;
     for (let i = 0; i < N && !fail; i++) {
-      const master = randomBytes(32);
+      const master = randBytes(32);
       const path = randString(randInt(1, 64));
       const purpose = randString(randInt(0, 32));
       const r1 = derive(master, path, purpose);
@@ -439,7 +448,7 @@ function fuzzKeyDerivation() {
   {
     let fail = null;
     for (let i = 0; i < N && !fail; i++) {
-      const master = randomBytes(32);
+      const master = randBytes(32);
       const path1 = randString(randInt(1, 64));
       let path2 = randString(randInt(1, 64));
       if (path1 === path2) path2 += 'x';
@@ -455,7 +464,7 @@ function fuzzKeyDerivation() {
   {
     let fail = null;
     for (let i = 0; i < N && !fail; i++) {
-      const master = randomBytes(32);
+      const master = randBytes(32);
       const path = randString(randInt(1, 64));
       const p1 = randString(randInt(1, 32));
       let p2 = randString(randInt(1, 32));
@@ -471,8 +480,8 @@ function fuzzKeyDerivation() {
   {
     let fail = null;
     for (let i = 0; i < N && !fail; i++) {
-      const m1 = randomBytes(32);
-      let m2 = randomBytes(32);
+      const m1 = randBytes(32);
+      let m2 = randBytes(32);
       if (m1.equals(m2)) m2[0] ^= 0xff;
       const path = randString(randInt(1, 64));
       const purpose = randString(randInt(0, 32));
@@ -487,7 +496,7 @@ function fuzzKeyDerivation() {
   {
     let fail = null;
     for (let i = 0; i < N && !fail; i++) {
-      const master = randomBytes(randInt(16, 64));
+      const master = randBytes(randInt(16, 64));
       const path = randString(randInt(1, 128));
       const purpose = randString(randInt(0, 64));
       const out = derive(master, path, purpose);
