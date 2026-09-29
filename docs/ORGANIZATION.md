@@ -60,7 +60,7 @@ Paths removed with proof of no production/build/deploy/runtime use:
 
 ### services/neoswap/ (64 files, deleted 2026-09-26)
 
-- **Last commit**: b880823 (2026-09-26)
+- **Deletion commit**: 7f430ab (2026-09-26)
 - **Reason**: Declared "delete" in ARCHITECTURE.md v2; generic services outside npm workspaces
 - **Cross-repo check**: No runtime consumer in the sibling repositories' default branches
   (neo-os-minigames not inspected). Documentation still names it: neo-os-web's v2 architecture
