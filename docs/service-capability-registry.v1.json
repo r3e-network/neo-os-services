@@ -1,0 +1,79 @@
+{
+  "schemaVersion": "neoos.service-capability-registry.v1",
+  "repository": "neo-os-services",
+  "status": "retired-compatibility-record",
+  "entries": [
+    {
+      "id": "neoswap.api-gateway",
+      "legacyPath": "services/neoswap/api-gateway",
+      "plannedCanonicalPath": "services/api-gateway",
+      "status": "retired",
+      "runtimeEnabled": false,
+      "compatibility": {
+        "mode": "read-only-registry",
+        "runtimeAlias": null,
+        "evidencePath": "docs/legacy-unverified/neoswap-v2.cy.js.txt"
+      }
+    },
+    {
+      "id": "neoswap.oracle-aggregator",
+      "legacyPath": "services/neoswap/oracle-aggregator",
+      "plannedCanonicalPath": "services/oracle-aggregator",
+      "status": "retired",
+      "runtimeEnabled": false,
+      "compatibility": {
+        "mode": "read-only-registry",
+        "runtimeAlias": null,
+        "evidencePath": "docs/legacy-unverified/neoswap-v2.cy.js.txt"
+      }
+    },
+    {
+      "id": "neoswap.price-feed",
+      "legacyPath": "services/neoswap/price-feed",
+      "plannedCanonicalPath": "services/price-feed",
+      "status": "retired",
+      "runtimeEnabled": false,
+      "compatibility": {
+        "mode": "read-only-registry",
+        "runtimeAlias": null,
+        "evidencePath": "docs/legacy-unverified/neoswap-v2.cy.js.txt"
+      }
+    },
+    {
+      "id": "neoswap.analytics-api",
+      "legacyPath": "services/neoswap/analytics-api",
+      "plannedCanonicalPath": "services/analytics-api",
+      "status": "retired",
+      "runtimeEnabled": false,
+      "compatibility": {
+        "mode": "read-only-registry",
+        "runtimeAlias": null,
+        "evidencePath": "docs/legacy-unverified/neoswap-v2.cy.js.txt"
+      }
+    },
+    {
+      "id": "neoswap.order-matcher",
+      "legacyPath": "services/neoswap/order-matcher",
+      "plannedCanonicalPath": "services/order-matcher",
+      "status": "retired",
+      "runtimeEnabled": false,
+      "compatibility": {
+        "mode": "read-only-registry",
+        "runtimeAlias": null,
+        "evidencePath": "docs/legacy-unverified/neoswap-v2.cy.js.txt"
+      }
+    },
+    {
+      "id": "neoswap.routing-engine",
+      "legacyPath": "services/neoswap/routing-engine",
+      "plannedCanonicalPath": "services/routing-engine",
+      "status": "retired",
+      "runtimeEnabled": false,
+      "compatibility": {
+        "mode": "read-only-registry",
+        "runtimeAlias": null,
+        "evidencePath": "docs/legacy-unverified/neoswap-v2.cy.js.txt"
+      }
+    }
+  ]
+}

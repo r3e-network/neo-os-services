@@ -80,6 +80,22 @@ Paths removed with proof of no production/build/deploy/runtime use:
   `.planning/` and `.workbuddy/` is in the tree; they are recoverable from history at cc2e500)
 - `.workbuddy/memory/` - session memory, not durable documentation
 
+### NeoSwap capability compatibility registry
+
+The six former `services/neoswap` packages are recorded in
+`docs/service-capability-registry.v1.json` as retired compatibility entries:
+`api-gateway`, `oracle-aggregator`, `price-feed`, `analytics-api`,
+`order-matcher`, and `routing-engine`. The registry preserves each old path
+and planned canonical `services/<package>` path for migration and dependency
+lookups.
+
+These entries are metadata-only. They are `runtimeEnabled: false`, expose no
+filesystem or runtime alias, and point only to the preserved non-executable
+compatibility evidence. The checker fails if the old path returns or if a
+retired entry is re-enabled. A future reintroduction requires a separate
+reviewed package move with its own manifest, tests, deploy owner, and
+compatibility read-back.
+
 ### Top-level Supabase directory (moved 2026-09-26)
 
 - Migrations and `seed.sql` moved byte-identically to `db/services/` in 7f430ab.

@@ -141,7 +141,9 @@
     "test:scripts": "node --test scripts/*.test.mjs",
     "fuzz:daily": "bash fuzz-testing/run-daily-fuzz.sh",
     "test:web": "npm --prefix apps/web run test:run",
-    "check:neodid-vendor": "node scripts/check-neodid-vendor.mjs"
+    "check:neodid-vendor": "node scripts/check-neodid-vendor.mjs",
+    "check:service-capability-registry": "node scripts/check-service-capability-registry.mjs",
+    "test:service-capability-registry": "node --test scripts/check-service-capability-registry.test.mjs"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.57.1",
