@@ -3,7 +3,7 @@
 //
 // REFRESH: to update the pinned `github.com/hf/nsm` version, run inside a Go
 // toolchain (Go is intentionally NOT required on the host; the EIF build runs Go
-// in the `golang:1.22-bookworm@sha256:...` stage):
+// in the `golang:1.24.13-bookworm@sha256:...` stage):
 //
 //   cd deploy/nitro/nsm-attest
 //   GOFLAGS=-mod=mod go get github.com/hf/nsm@<commit-or-pseudo-version>
@@ -14,7 +14,7 @@
 //   proxy.golang.org/github.com/hf/nsm/@latest -> v0.0.0-20220930140112-cd181bd646b9
 module nsm-attest
 
-go 1.22
+go 1.24
 
 require (
 	github.com/aws/aws-sdk-go-v2/config v1.31.12

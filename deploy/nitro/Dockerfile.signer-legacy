@@ -6,22 +6,19 @@
 # signer_service binary inside a Node-free enclave — and that is what
 # build-custody-eif.sh measures.
 #
-# Deliberately NOT digest-pinned, unlike Dockerfile.enclave and Dockerfile.signer.
-# Pinning today's digests here would not recover the measurement this image was
-# originally built with — it would produce a different rootfs that merely looked
-# pinned. The Go stage below is the harder case anyway: `go get …@latest` with an
-# in-image `go mod init` has no lockfile, so this image is not bit-reproducible at
-# all any more. Treat it as a build target for a rollback *decision*: redeploy an
-# EIF that was measured when it shipped, and only rebuild from this file if you
-# accept that the result is a new, newly-measured image.
+# This rollback target is still an enclave input, so its toolchain and module
+# graph must be reproducible. Updating either changes the EIF measurement: the
+# owner must rebuild the EIF, record new PCRs and update the KMS policy before
+# this legacy image can be used. The current Go builder is pinned to the
+# linux/amd64 Go 1.24.13 Bookworm image; it replaces the EOL Go 1.22 builder.
 #
 # Stage 1: build the static NSM attestation helper (no host Go toolchain needed).
-FROM golang:1.22-bookworm AS nsmbuild
+FROM golang:1.24.13-bookworm@sha256:98d673f18a1aac43da744209873cb79323e11706f909251bcfb131828b95559d AS nsmbuild
 WORKDIR /build
-COPY deploy/nitro/nsm-attest/main.go ./main.go
-RUN go mod init nsm-attest \
-  && go get github.com/hf/nsm@latest \
-  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /nsm-attest .
+COPY deploy/nitro/nsm-attest/go.mod deploy/nitro/nsm-attest/go.sum ./
+RUN go mod download
+COPY deploy/nitro/nsm-attest/*.go ./
+RUN CGO_ENABLED=0 go build -trimpath -mod=readonly -ldflags="-s -w" -o /nsm-attest .
 
 # Stage 2: the Rust signer service of docs/SIGNER_SERVICE.md. `rusqlite` is built
 # with its `bundled` feature, so this needs a C toolchain — the full `rust` image
