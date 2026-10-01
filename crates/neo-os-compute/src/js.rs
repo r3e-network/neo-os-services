@@ -98,55 +98,11 @@ pub fn js_number_value(f: f64) -> Json {
     }
 }
 
-/// ECMAScript `Number(value)` for string inputs — `Number.isFinite` gates every
-/// caller, so the exact NaN payload never matters, only finite-vs-not.
-///
-/// Grammar differences that matter: `''` and whitespace-only are `0`; `0x1f`/
-/// `0o17`/`0b101` are radix literals (no sign allowed); `Infinity`/`NaN` are
-/// recognized ONLY in exact case, so `Number('inf')` is NaN — unlike Rust's
-/// `f64::from_str`, which would happily accept it.
+/// ECMAScript `Number(value)` for string inputs — use the shared parser so the
+/// compute lane rejects double signs and signed radix literals exactly like
+/// the host and JavaScript reference paths.
 pub fn js_number(input: &str) -> f64 {
-    let trimmed = js_trim(input);
-    if trimmed.is_empty() {
-        return 0.0;
-    }
-    // Radix literals never carry a sign in the JS grammar — `Number('-0x10')`
-    // is NaN, not -16 — so the 0x/0o/0b branch is tried on the raw string
-    // before any sign split.
-    let (radix, digits) = if let Some(hex) =
-        trimmed.strip_prefix("0x").or(trimmed.strip_prefix("0X"))
-    {
-        (16u32, hex)
-    } else if let Some(oct) = trimmed.strip_prefix("0o").or(trimmed.strip_prefix("0O")) {
-        (8, oct)
-    } else if let Some(bin) = trimmed.strip_prefix("0b").or(trimmed.strip_prefix("0B")) {
-        (2, bin)
-    } else {
-        let (negative, rest) = match trimmed.as_bytes().first() {
-            Some(b'-') => (true, &trimmed[1..]),
-            Some(b'+') => (false, &trimmed[1..]),
-            _ => (false, trimmed),
-        };
-        // Exact-case Infinity/NaN carry the sign; anything else that Rust's
-        // parser would take but the JS grammar would not (case-insensitive
-        // inf/nan) is rejected.
-        let magnitude = match rest {
-            "Infinity" => f64::INFINITY,
-            "NaN" => f64::NAN,
-            _ => {
-                let lower = rest.to_ascii_lowercase();
-                if lower.contains("inf") || lower.contains("nan") {
-                    return f64::NAN;
-                }
-                return rest.parse::<f64>().unwrap_or(f64::NAN) * if negative { -1.0 } else { 1.0 };
-            }
-        };
-        return if negative { -magnitude } else { magnitude };
-    };
-    match u128::from_str_radix(digits, radix) {
-        Ok(value) => value as f64,
-        Err(_) => f64::NAN,
-    }
+    neo_os_core::js_number::parse_js_number(input)
 }
 
 /// ECMAScript `Number(value)` over a JSON value: primitives coerce directly,
@@ -181,63 +137,10 @@ fn js_array_join(items: &[Json]) -> String {
         .join(",")
 }
 
-/// ECMAScript `Number::toString` — the exact string JS produces for a double.
-/// Rust's `LowerExp` supplies the shortest round-trip digits, then the four
-/// ECMA-262 layout rules apply, keyed on the decimal-point position `n`
-/// against the digit count `k`: positional with appended zeros when
-/// `k ≤ n ≤ 21`, a decimal point inside the digits when `0 < n ≤ 21`, a
-/// leading `0.` when `-6 < n ≤ 0`, exponential `d.ddd e±(n-1)` otherwise —
-/// so `String(1e21)` is `"1e+21"` and `String(1e-7)` is `"1e-7"`.
+/// ECMAScript `Number::toString` — use the shared core implementation so
+/// compute and host paths apply the same shortest-round-trip and tie rules.
 pub fn js_number_to_string(x: f64) -> String {
-    if x.is_nan() {
-        return "NaN".to_string();
-    }
-    if x == 0.0 {
-        return "0".to_string();
-    }
-    let sign = if x < 0.0 { "-" } else { "" };
-    let magnitude = x.abs();
-    if magnitude.is_infinite() {
-        return format!("{sign}Infinity");
-    }
-    let sci = format!("{magnitude:e}");
-    let (mantissa, exponent) = sci.split_once('e').expect("LowerExp output carries 'e'");
-    let exponent: i32 = exponent.parse().expect("LowerExp exponent is an integer");
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
-    let k = digits.len() as i32;
-    let n = exponent + 1;
-
-    let mut out = String::from(sign);
-    if k <= n && n <= 21 {
-        out.push_str(&digits);
-        for _ in 0..(n - k) {
-            out.push('0');
-        }
-    } else if 0 < n && n <= 21 {
-        let point = n as usize;
-        out.push_str(&digits[..point]);
-        out.push('.');
-        out.push_str(&digits[point..]);
-    } else if -6 < n && n <= 0 {
-        out.push_str("0.");
-        for _ in 0..(-n) {
-            out.push('0');
-        }
-        out.push_str(&digits);
-    } else {
-        out.push_str(&digits[..1]);
-        if k > 1 {
-            out.push('.');
-            out.push_str(&digits[1..]);
-        }
-        out.push('e');
-        let e = n - 1;
-        if e >= 0 {
-            out.push('+');
-        }
-        out.push_str(&e.to_string());
-    }
-    out
+    neo_os_core::js_number::number_to_string(x)
 }
 
 /// ECMAScript `Number.prototype.toFixed(f)` — exact round-half-UP on the
@@ -487,6 +390,10 @@ mod tests {
         assert_eq!(js_number("-Infinity"), f64::NEG_INFINITY);
         assert_eq!(js_number("0x10"), 16.0);
         assert!(js_number("-0x10").is_nan());
+        assert!(js_number("--5").is_nan());
+        assert!(js_number("+-5").is_nan());
+        assert!(js_number("0x+1f").is_nan());
+        assert!(js_number("++93547700290E4").is_nan());
         assert_eq!(js_number("0"), 0.0);
         assert_eq!(js_number("-3.5"), -3.5);
     }
@@ -517,6 +424,13 @@ mod tests {
             js_number_to_string(1.7976931348623157e308),
             "1.7976931348623157e+308"
         );
+    }
+
+    #[test]
+    fn number_to_string_uses_ecmascript_tie_choice() {
+        let value = f64::from_bits(0x4313_f424_38fa_d979);
+        assert_eq!(js_number_to_string(value), "1404115242366558.2");
+        assert_eq!(js_number_to_string(-value), "-1404115242366558.2");
     }
 
     #[test]

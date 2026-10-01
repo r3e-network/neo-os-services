@@ -1,10 +1,11 @@
 //! ECMAScript `Number::toString(10)` formatting (ECMA-262 §7.1.12.1) plus the
 //! JSON.stringify number mapping.
 //!
-//! serde_json/ryu prints `1e21` where V8 prints `1e+21`, and Rust's `{}`
-//! expands large doubles digit by digit. Both would change digest-bound bytes,
-//! so every number that reaches a JSON.stringify-equivalent path goes through
-//! this module.
+//! The standard Rust JSON formatter does not use the ECMAScript rendering
+//! rules for every exponent and tie boundary, so every number that reaches a
+//! JSON.stringify-equivalent path goes through this module.
+
+use num_traits::ToPrimitive;
 
 /// ECMAScript ToString for a finite or special double. `NaN` -> `"NaN"`,
 /// `-0` -> `"0"`, `Infinity` -> `"Infinity"`.
@@ -25,39 +26,8 @@ pub fn number_to_string(x: f64) -> String {
         };
     }
 
-    // Rust's LowerExp emits the shortest round-trip digits in exponent form
-    // ("1.2345e2"), which gives exactly the digit string ECMA-262 needs.
-    let exp_form = format!("{magnitude:e}");
-    let Some((mantissa, exponent)) = exp_form.split_once('e') else {
-        // Unreachable: LowerExp always emits an exponent.
-        return format!("{magnitude}");
-    };
-    let exponent: i32 = exponent.parse().unwrap_or(0);
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
-    let k = digits.len() as i32;
-    // value == 0.<digits> * 10^n
-    let n = exponent + 1;
-
-    let body = if k <= n && n <= 21 {
-        let mut s = digits.clone();
-        for _ in 0..(n - k) {
-            s.push('0');
-        }
-        s
-    } else if 0 < n && n <= 21 {
-        let n = n as usize;
-        format!("{}.{}", &digits[..n], &digits[n..])
-    } else if -6 < n && n <= 0 {
-        format!("0.{}{}", "0".repeat((-n) as usize), digits)
-    } else {
-        let exp_val = n - 1;
-        let sign = if exp_val < 0 { '-' } else { '+' };
-        if k == 1 {
-            format!("{digits}e{sign}{}", exp_val.abs())
-        } else {
-            format!("{}.{}e{sign}{}", &digits[..1], &digits[1..], exp_val.abs())
-        }
-    };
+    let mut buffer = ryu_js::Buffer::new();
+    let body = buffer.format_finite(magnitude).to_owned();
 
     if negative {
         format!("-{body}")
@@ -110,11 +80,25 @@ pub fn parse_js_number(raw: &str) -> f64 {
     ] {
         if let Some(digits) = s.strip_prefix(prefix) {
             if !digits.is_empty() && digits.bytes().all(|b| (b as char).is_digit(radix)) {
-                // u128 covers every literal the vectors exercise; larger
-                // literals would need bignum rounding (documented gap).
-                return u128::from_str_radix(digits, radix)
-                    .map(|v| v as f64)
-                    .unwrap_or(f64::NAN);
+                let digits = digits.trim_start_matches('0');
+                if digits.is_empty() {
+                    return 0.0;
+                }
+                // A non-zero radix literal above 2^1024 is necessarily
+                // outside the finite f64 domain. Check the bit length before
+                // constructing a BigUint so attacker-controlled strings do
+                // not cause an unbounded allocation. Leading zeroes remain
+                // accepted and are discarded before this bound is evaluated.
+                if radix_literal_bit_length(digits, radix)
+                    .is_none_or(|bits| bits > f64::MAX_EXP as usize)
+                {
+                    return f64::INFINITY;
+                }
+                let value = num_bigint::BigUint::parse_bytes(digits.as_bytes(), radix)
+                    .expect("validated radix digits are parseable");
+                // BigUint's conversion is correctly rounded for finite values
+                // and reports overflow as None, which is JS Number's Infinity.
+                return value.to_f64().unwrap_or(f64::INFINITY);
             }
             return f64::NAN;
         }
@@ -127,6 +111,26 @@ pub fn parse_js_number(raw: &str) -> f64 {
     body.parse::<f64>()
         .map(|v| if v == 0.0 { v.copysign(sign) } else { sign * v })
         .unwrap_or(f64::NAN)
+}
+
+fn radix_literal_bit_length(digits: &str, radix: u32) -> Option<usize> {
+    let bits_per_digit = match radix {
+        2 => 1,
+        8 => 3,
+        16 => 4,
+        _ => return None,
+    };
+    let first = digits.as_bytes().first()?.to_ascii_lowercase();
+    let value = match first {
+        b'0'..=b'9' => u32::from(first - b'0'),
+        b'a'..=b'f' => u32::from(first - b'a') + 10,
+        _ => return None,
+    };
+    if value == 0 {
+        return None;
+    }
+    let first_bits = (u32::BITS - value.leading_zeros()) as usize;
+    first_bits.checked_add((digits.len() - 1).checked_mul(bits_per_digit)?)
 }
 
 /// ECMA-262 StrDecimalLiteral: `[+-]?` was already peeled; accept
@@ -206,5 +210,36 @@ mod tests {
         assert_eq!(number_to_string(f64::NAN), "NaN");
         assert_eq!(json_number_to_string(f64::NAN), "null");
         assert_eq!(json_number_to_string(f64::INFINITY), "null");
+    }
+
+    #[test]
+    fn number_to_string_uses_ecmascript_tie_choice() {
+        // V8 chooses the even shortest round-trip candidate at this exact
+        // binary/decimal boundary. Keep this vector pinned to the ECMAScript
+        // formatter used by the consensus path.
+        let value = f64::from_bits(0x4313_f424_38fa_d979);
+        assert_eq!(number_to_string(value), "1404115242366558.2");
+        assert_eq!(number_to_string(-value), "-1404115242366558.2");
+    }
+
+    #[test]
+    fn parses_arbitrarily_long_radix_literals_like_v8() {
+        assert_eq!(parse_js_number("0x1f"), 31.0);
+        assert_eq!(parse_js_number("0b101"), 5.0);
+
+        let finite_hex = format!("0x{}", "f".repeat(130));
+        assert_eq!(parse_js_number(&finite_hex), 3.432398830065305e156_f64);
+
+        let overflow_hex = format!("0x{}", "f".repeat(400));
+        assert_eq!(parse_js_number(&overflow_hex), f64::INFINITY);
+
+        let long_binary = format!("0b{}", "1".repeat(400));
+        assert_eq!(parse_js_number(&long_binary), 2.5822498780869086e120_f64);
+
+        let long_leading_zeroes = format!("0x{}1", "0".repeat(100_000));
+        assert_eq!(parse_js_number(&long_leading_zeroes), 1.0);
+
+        let bounded_overflow = format!("0x1{}", "0".repeat(300));
+        assert_eq!(parse_js_number(&bounded_overflow), f64::INFINITY);
     }
 }

@@ -42,6 +42,19 @@ fn error_body(message: &str) -> serde_json::Value {
     json!({ "status": "error", "error": message, "runtime": RUNTIME_NAME })
 }
 
+#[test]
+fn parse_body_matches_ecmascript_trim_and_classifies_bad_json_as_client_error() {
+    assert_eq!(
+        parse_body("\u{feff}{\"ok\":true}").expect("ECMAScript trim removes FEFF"),
+        json!({ "ok": true })
+    );
+    assert!(
+        parse_body("\u{0085}{}").is_err(),
+        "U+0085 is not JS whitespace"
+    );
+    assert_eq!(parse_body("{").unwrap_err().status, 400);
+}
+
 // ---------------------------------------------------------------------------
 // Routing + 404
 // ---------------------------------------------------------------------------
@@ -590,7 +603,7 @@ fn an_unconfigured_signer_is_a_503_with_the_exact_message() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_malformed_body_renders_through_the_catch_all_shape() {
+fn a_malformed_body_is_a_client_error_with_the_catch_all_shape() {
     let harness = test_state(
         &healthy_overlay(),
         FakeAttest::with_document(b"doc"),
@@ -605,7 +618,7 @@ fn a_malformed_body_renders_through_the_catch_all_shape() {
         &bearer("s3cret"),
         "{not json",
     );
-    assert_eq!(outcome.status, 500);
+    assert_eq!(outcome.status, 400);
     assert_eq!(outcome.body["status"], "error");
     assert_eq!(outcome.body["runtime"], RUNTIME_NAME);
     assert!(outcome.body["error"].is_string());

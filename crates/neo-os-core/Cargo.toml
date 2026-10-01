@@ -11,6 +11,9 @@ serde = { version = "1", features = ["derive"] }
 # builders copy that order into digest-bound bytes; the BTreeMap default would
 # silently sort keys and change every hash.
 serde_json = { version = "1", features = ["preserve_order"] }
+num-bigint = "0.4"
+num-traits = "0.2"
+ryu-js = "1.0"
 sha2 = "0.10"
 # hash160 (script-hash derivation for custody identities) — same version neo-signer pins.
 ripemd = "0.1"

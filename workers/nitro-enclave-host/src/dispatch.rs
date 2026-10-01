@@ -20,14 +20,15 @@ use crate::{DispatchOutcome, RuntimeError};
 use neo_os_compute::overload::{AcquireOutcome, OverloadSlot};
 
 /// `parseBody`: an object passes through (the shim may hand a parsed body);
-/// text is trimmed, empty becomes `{}`, anything else must parse. A malformed
-/// body is a dispatch failure like any other — the catch-all renders it 500.
+/// text is trimmed with ECMAScript's whitespace set, empty becomes `{}`, and
+/// anything else must parse. A malformed request body is a client error, so it
+/// must never be reported as an enclave/runtime failure.
 pub fn parse_body(body: &str) -> Result<Value, RuntimeError> {
-    let text = body.trim();
+    let text = neo_os_core::js_value::js_trim(body);
     if text.is_empty() {
         return Ok(serde_json::json!({}));
     }
-    serde_json::from_str(text).map_err(|error| http_error(500, error.to_string()))
+    serde_json::from_str(text).map_err(|error| http_error(400, error.to_string()))
 }
 
 /// `new URL(rawUrl || '/', \`http://${hostHeader}\`)` — absolute raw URLs

@@ -160,6 +160,31 @@ test('the apps/web closure resolves to patched versions', () => {
   }
 });
 
+test('high severity transitive advisories stay above their remediation floors', () => {
+  const floors = {
+    'brace-expansion': {
+      '1.': '1.1.21',
+      '5.': '5.0.12',
+    },
+    undici: {
+      '8.': '8.10.2',
+    },
+  };
+
+  for (const [name, majorFloors] of Object.entries(floors)) {
+    const versions = lockVersions(name);
+    assert.ok(versions.length > 0, `the root lock no longer resolves ${name}`);
+    for (const { key, version } of versions) {
+      const floor = Object.entries(majorFloors).find(([prefix]) => version.startsWith(prefix))?.[1];
+      assert.ok(floor, `${key} resolves unreviewed ${name}@${version}`);
+      assert.ok(
+        semver.gte(version, floor),
+        `${key} resolves vulnerable ${name}@${version}; expected at least ${floor}`
+      );
+    }
+  }
+});
+
 test('every locked registry package is pinned to its tarball with a SHA-512 digest', () => {
   let checked = 0;
   for (const [key, value] of Object.entries(rootLock.packages ?? {})) {
