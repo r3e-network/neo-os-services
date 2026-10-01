@@ -91,6 +91,11 @@ jobs:
       - run: npm run check:rust-migration
       - run: npm run check:production-topology
       - run: npm run check:cargo-lock-provenance
+      - name: Audit Rust dependencies with reviewed exceptions
+        run: |
+          cargo install cargo-audit --version 0.22.2 --locked
+          npm run check:rust:audit
+      - run: node --test scripts/rust-security-audit-policy.test.mjs
       # Cargo.lock floors for the rustls and protobuf advisories. Runs here, not
       # in the path-filtered jobs, so a Cargo.lock-only change is still checked.
       - run: node --test scripts/rust-security-dependency.test.mjs

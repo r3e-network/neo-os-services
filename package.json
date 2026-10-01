@@ -30,6 +30,7 @@
     "test:worker": "npm --prefix workers/nitro-worker test",
     "test": "npm run test:scripts",
     "check:rust-migration": "node scripts/check-rust-migration.mjs",
+    "check:rust:audit": "node scripts/check-rust-audit.mjs",
     "check:production-topology": "node scripts/check-rust-production-topology.mjs",
     "check:custody-plane": "node scripts/custody-plane-e2e.mjs",
     "test:signer:rust": "cargo test -p neo-signer --all-targets --locked",

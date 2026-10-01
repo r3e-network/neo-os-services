@@ -366,7 +366,7 @@ test('a malformed JSON body is a dispatch failure, not a crash', async () => {
     headers: { 'content-type': 'application/json', authorization: 'Bearer parity-suite-token' },
     body: 'not-json{',
   });
-  assert.equal(response.status, 500);
+  assert.equal(response.status, 400);
   const body = await response.json();
   assert.equal(body.status, 'error');
   assert.equal(body.runtime, RUNTIME);
