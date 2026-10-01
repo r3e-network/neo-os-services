@@ -38,8 +38,8 @@ pub enum JsValue {
     Null,
     Bool(bool),
     Number(f64),
-    /// `v` is the decimal digit string (never signed; BigInt inputs are
-    /// non-negative in every consensus path).
+    /// `v` is the canonical decimal representation. Consensus inputs are
+    /// non-negative, while numeric coercion also accepts signed BigInt values.
     BigInt(String),
     Str(String),
     Array(Vec<JsValue>),

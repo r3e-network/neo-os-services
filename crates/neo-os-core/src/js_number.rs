@@ -182,7 +182,19 @@ pub fn number_of(value: &crate::js_value::JsValue) -> f64 {
         JsValue::Bool(true) => 1.0,
         JsValue::Bool(false) => 0.0,
         JsValue::Number(n) => *n,
-        JsValue::BigInt(v) => v.parse::<u128>().map(|x| x as f64).unwrap_or(f64::NAN),
+        JsValue::BigInt(v) => {
+            let Ok(parsed) = crate::neo_encoding::parse_bigint(v) else {
+                return f64::NAN;
+            };
+            let magnitude = num_bigint::BigUint::from_bytes_be(&parsed.be_bytes)
+                .to_f64()
+                .unwrap_or(f64::INFINITY);
+            if parsed.negative {
+                -magnitude
+            } else {
+                magnitude
+            }
+        }
         JsValue::Str(s) => parse_js_number(s),
         JsValue::Array(_) | JsValue::Object(_) => {
             parse_js_number(&crate::js_value::to_display_string(value))
@@ -241,5 +253,26 @@ mod tests {
 
         let bounded_overflow = format!("0x1{}", "0".repeat(300));
         assert_eq!(parse_js_number(&bounded_overflow), f64::INFINITY);
+    }
+
+    #[test]
+    fn number_of_coerces_signed_bigints_like_javascript() {
+        assert_eq!(
+            number_of(&crate::js_value::JsValue::BigInt("-123".into())),
+            -123.0
+        );
+        assert_eq!(
+            number_of(&crate::js_value::JsValue::BigInt(
+                "-9007199254740993".into()
+            )),
+            -9007199254740992.0,
+        );
+        assert_eq!(
+            number_of(&crate::js_value::JsValue::BigInt(format!(
+                "-{}",
+                "1".repeat(400)
+            ))),
+            f64::NEG_INFINITY,
+        );
     }
 }
