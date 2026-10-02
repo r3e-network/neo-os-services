@@ -40,7 +40,8 @@
     "eslint": "^8.57.0",
     "eslint-config-next": "^15.5.21",
     "typescript": "^5.8.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "brace-expansion": "5.0.12"
   },
   "overrides": {
     "@cityofzion/neon-core": {
@@ -69,12 +70,20 @@
         "picomatch": "4.0.4"
       }
     },
-    "fast-uri": "3.1.5",
+    "fast-uri": "3.1.8",
+    "browserslist": "4.29.3",
+    "baseline-browser-mapping": "2.11.27",
     "sharp": "0.35.4",
     "next": {
       "postcss": "8.5.26"
     },
     "postcss": "8.5.26",
-    "nanoid": "3.3.18"
+    "nanoid": "3.3.18",
+    "minimatch@3.1.5": {
+      "brace-expansion": "1.1.21"
+    },
+    "minimatch@3.1.2": {
+      "brace-expansion": "1.1.21"
+    }
   }
 }
