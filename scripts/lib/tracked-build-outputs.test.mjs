@@ -37,7 +37,12 @@ test("retains reviewed contract artifacts, generated projections and Rust binary
     "workers/neo-signer/src/bin/signer_service.rs",
     "workers/nitro-enclave-host/src/bin/enclave_host.rs",
     "crates/nitro-attest/src/bin/nsm-attest-rs.rs",
-  ]), []);
+    "workers/neo-signer/src/bin/signer_service",
+    "workers/neo-signer/src/bin/generated.js",
+  ]), [
+    "workers/neo-signer/src/bin/generated.js",
+    "workers/neo-signer/src/bin/signer_service",
+  ]);
 });
 
 test("rejects a force-tracked output and passes the repository snapshot", () => {

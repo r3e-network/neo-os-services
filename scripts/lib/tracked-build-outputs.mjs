@@ -29,7 +29,9 @@ function isReviewedBuildInput(path) {
 }
 
 function isRustBinarySource(path) {
-  return path.split("/").includes("src") && path.split("/").includes("bin");
+  const segments = path.split("/");
+  return segments.some((segment, index) => segment === "src" && segments[index + 1] === "bin") &&
+    path.endsWith(".rs");
 }
 
 export function trackedBuildOutputViolations(paths) {
