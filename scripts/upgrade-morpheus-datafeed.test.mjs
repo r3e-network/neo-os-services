@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -19,9 +21,30 @@ function baseEnv() {
   };
 }
 
-test('datafeed upgrade is a read-only dry run by default', () => {
+function artifactFixture(t) {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'morpheus-datafeed-upgrade-'));
+  t.after(() => fs.rmSync(fixture, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(fixture, 'contracts', 'build'), { recursive: true });
+  fs.mkdirSync(path.join(fixture, 'config', 'networks'), { recursive: true });
+  fs.copyFileSync(
+    path.join(ROOT, 'config', 'networks', 'testnet.json'),
+    path.join(fixture, 'config', 'networks', 'testnet.json')
+  );
+  fs.writeFileSync(
+    path.join(fixture, 'contracts', 'build', 'MorpheusDataFeed.nef'),
+    Buffer.from([0, 0, 0, 0])
+  );
+  fs.writeFileSync(
+    path.join(fixture, 'contracts', 'build', 'MorpheusDataFeed.manifest.json'),
+    JSON.stringify({ name: 'MorpheusDataFeed' })
+  );
+  return fixture;
+}
+
+test('datafeed upgrade is a read-only dry run by default', (t) => {
+  const fixture = artifactFixture(t);
   const result = spawnSync(process.execPath, [SCRIPT, '--network', 'testnet'], {
-    cwd: ROOT,
+    cwd: fixture,
     encoding: 'utf8',
     env: baseEnv(),
   });
