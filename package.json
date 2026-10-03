@@ -32,6 +32,7 @@
     "check:rust-migration": "node scripts/check-rust-migration.mjs",
     "check:rust:audit": "node scripts/check-rust-audit.mjs",
     "check:production-topology": "node scripts/check-rust-production-topology.mjs",
+    "check:tracked-build-outputs": "node scripts/check-tracked-build-outputs.mjs",
     "check:custody-plane": "node scripts/custody-plane-e2e.mjs",
     "test:signer:rust": "cargo test -p neo-signer --all-targets --locked",
     "start:signer:rust": "cargo run --locked -p neo-signer --bin signer_service -- serve",
@@ -139,7 +140,7 @@
     "test:workspace:local": "bash scripts/run_workspace_local_validation.sh",
     "test:workspace:live": "bash scripts/run_workspace_live_validation.sh",
     "test:workspace:full": "bash scripts/run_workspace_full_validation.sh",
-    "test:scripts": "node --test scripts/*.test.mjs",
+    "test:scripts": "node --test scripts/*.test.mjs scripts/lib/tracked-build-outputs.test.mjs",
     "fuzz:daily": "bash fuzz-testing/run-daily-fuzz.sh",
     "test:web": "npm --prefix apps/web run test:run",
     "check:neodid-vendor": "node scripts/check-neodid-vendor.mjs"
