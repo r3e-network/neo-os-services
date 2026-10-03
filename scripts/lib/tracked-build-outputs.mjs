@@ -30,8 +30,11 @@ function isReviewedBuildInput(path) {
 
 function isRustBinarySource(path) {
   const segments = path.split("/");
-  return segments.some((segment, index) => segment === "src" && segments[index + 1] === "bin") &&
-    path.endsWith(".rs");
+  const sourceIndex = segments.lastIndexOf("src");
+  return sourceIndex >= 0 &&
+    segments[sourceIndex + 1] === "bin" &&
+    segments.length === sourceIndex + 3 &&
+    segments[sourceIndex + 2].endsWith(".rs");
 }
 
 export function trackedBuildOutputViolations(paths) {

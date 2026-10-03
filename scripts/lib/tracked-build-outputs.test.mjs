@@ -39,7 +39,11 @@ test("retains reviewed contract artifacts, generated projections and Rust binary
     "crates/nitro-attest/src/bin/nsm-attest-rs.rs",
     "workers/neo-signer/src/bin/signer_service",
     "workers/neo-signer/src/bin/generated.js",
+    "foo/src/bin/nested/tool.rs",
+    "foo/src/bin/../target/evil.rs",
   ]), [
+    "foo/src/bin/../target/evil.rs",
+    "foo/src/bin/nested/tool.rs",
     "workers/neo-signer/src/bin/generated.js",
     "workers/neo-signer/src/bin/signer_service",
   ]);
