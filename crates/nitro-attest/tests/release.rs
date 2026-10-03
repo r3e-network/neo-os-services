@@ -11,16 +11,18 @@
 use std::sync::{Arc, Mutex};
 
 use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
+use aws_lc_rs::rsa::{OaepPublicEncryptingKey, PublicEncryptingKey, OAEP_SHA256_MGF1SHA256};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use nitro_attest::asn1::{oid_aes256_cbc, oid_data, oid_enveloped_data, oid_rsaes_oaep};
+use nitro_attest::asn1::{
+    oid_aes256_cbc, oid_data, oid_enveloped_data, oid_mgf1, oid_p_specified, oid_rsaes_oaep,
+    oid_sha256,
+};
 use nitro_attest::kms::{Credentials, SignedRequest};
 use nitro_attest::release::{
     release_bytes, release_bytes_with_context, release_bytes_with_context_and_key,
     release_master_key, AttestationSource, KmsTransport, ReleaseParams,
 };
-use rsa::{Oaep, RsaPublicKey};
 use serde_json::{json, Value};
-use sha2::Sha256;
 
 const DATA_KEY: [u8; 32] = [7u8; 32];
 const WRAP_CEK: [u8; 32] = [0x5a; 32];
@@ -64,6 +66,21 @@ fn octet(content: &[u8]) -> Vec<u8> {
     tlv(0x04, content)
 }
 
+fn null() -> Vec<u8> {
+    tlv(0x05, &[])
+}
+
+fn rsa_oaep_sha256_params() -> Vec<u8> {
+    let hash = seq(&[&oid(oid_sha256()), &null()]);
+    let mgf_hash = seq(&[&oid(oid_sha256()), &null()]);
+    let mgf = seq(&[&oid(oid_mgf1()), &mgf_hash]);
+    let source = seq(&[&oid(oid_p_specified()), &octet(&[])]);
+    let hash_field = tlv(0xa0, &hash);
+    let mgf_field = tlv(0xa1, &mgf);
+    let source_field = tlv(0xa2, &source);
+    seq(&[&hash_field, &mgf_field, &source_field])
+}
+
 fn integer(value: u8) -> Vec<u8> {
     tlv(0x02, &[value])
 }
@@ -99,17 +116,21 @@ fn aes256_cbc_encrypt(cek: &[u8], iv: &[u8], plaintext: &[u8]) -> Vec<u8> {
 /// The CiphertextForRecipient shape AWS KMS returns for a Nitro Recipient:
 /// one KeyTransRecipientInfo wrapping the CEK with RSAES-OAEP-SHA256 to the
 /// attested public key, AES-256-CBC content, PKCS#7 padding.
-fn build_kms_response(pub_key: &RsaPublicKey, cek: &[u8], plaintext: &[u8]) -> Value {
-    let enc_key = pub_key
-        .encrypt(&mut rsa::rand_core::OsRng, Oaep::new::<Sha256>(), cek)
+fn build_kms_response(pub_key: &PublicEncryptingKey, cek: &[u8], plaintext: &[u8]) -> Value {
+    let oaep = OaepPublicEncryptingKey::new(pub_key.clone()).unwrap();
+    let mut encrypted_key = vec![0u8; oaep.ciphertext_size()];
+    let enc_key = oaep
+        .encrypt(&OAEP_SHA256_MGF1SHA256, cek, &mut encrypted_key, None)
         .unwrap();
     let padded = pkcs7_pad(plaintext, 16);
     let ct = aes256_cbc_encrypt(cek, &IV, &padded);
+    let oaep_params = rsa_oaep_sha256_params();
+    let oaep_algorithm = seq(&[&oid(oid_rsaes_oaep()), &oaep_params]);
     let ktri = seq(&[
         &integer(0),
         &tlv(0x02, &[1]),
-        &seq(&[&oid(oid_rsaes_oaep())]),
-        &octet(&enc_key),
+        &oaep_algorithm,
+        &octet(enc_key),
     ]);
     let eci = seq(&[
         &oid(oid_data()),
@@ -166,7 +187,7 @@ impl KmsTransport for MockKms {
             .unwrap()
             .clone()
             .expect("the attestation source should have run first");
-        let spki = rsa::pkcs8::DecodePublicKey::from_public_key_der(&public_key)
+        let spki = PublicEncryptingKey::from_der(&public_key)
             .expect("the attested key must be a SPKI DER RSA public key");
         self.seen.lock().unwrap().push(SignedRequest {
             url: url.to_string(),
@@ -216,10 +237,10 @@ fn releases_the_key_end_to_end() {
 
     let released = release_bytes(&source, &kms, &params(&credentials, "20260831T000000Z"))
         .expect("the mock KMS wrapped to the attested key");
-    assert_eq!(released, DATA_KEY);
+    assert_eq!(released.as_slice(), DATA_KEY);
     assert_eq!(
-        release_master_key(&source, &kms, &params(&credentials, "20260831T000000Z")).unwrap(),
-        DATA_KEY
+        &*release_master_key(&source, &kms, &params(&credentials, "20260831T000000Z")).unwrap(),
+        &DATA_KEY
     );
 
     let seen = kms.seen.into_inner().unwrap();
@@ -287,8 +308,9 @@ fn encrypted_purpose_reaches_kms_and_a_mismatch_is_not_retried_without_context()
             &params,
             &[("neoos:purpose", "master-key/v1")]
         )
-        .unwrap(),
-        DATA_KEY
+        .unwrap()
+        .as_slice(),
+        DATA_KEY.as_slice()
     );
     assert!(release_bytes_with_context(
         &source,
@@ -350,8 +372,9 @@ fn pinned_key_is_sent_to_kms_and_a_different_response_key_releases_nothing() {
             &[("neoos:vault-id", "testnet-primary")],
             Some(KEY_ARN),
         )
-        .unwrap(),
-        DATA_KEY
+        .unwrap()
+        .as_slice(),
+        DATA_KEY.as_slice()
     );
 
     let wrong_key_kms = KeyReportingKms {
@@ -409,8 +432,10 @@ fn master_key_pins_the_32_byte_length() {
     };
     let credentials = credentials();
     assert_eq!(
-        release_bytes(&source, &kms, &params(&credentials, "20260831T000000Z")).unwrap(),
-        short_key
+        release_bytes(&source, &kms, &params(&credentials, "20260831T000000Z"))
+            .unwrap()
+            .as_slice(),
+        short_key.as_slice()
     );
     let error = release_master_key(&source, &kms, &params(&credentials, "20260831T000000Z"))
         .expect_err("a 16-byte release is not a master key");
@@ -435,7 +460,7 @@ impl KmsTransport for ShortKms {
         _body: &str,
     ) -> nitro_attest::AttestResult<(u16, String)> {
         let public_key = self.captured_public_key.lock().unwrap().clone().unwrap();
-        let spki = rsa::pkcs8::DecodePublicKey::from_public_key_der(&public_key).unwrap();
+        let spki = PublicEncryptingKey::from_der(&public_key).unwrap();
         // Wrap with a proper 32-byte CEK; the released plaintext itself is the
         // short content, which is exactly the case release_master_key must refuse.
         Ok((

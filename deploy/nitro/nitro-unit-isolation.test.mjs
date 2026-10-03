@@ -37,7 +37,7 @@ const CUSTODY_DEFAULTS = Object.freeze({
   hostPort: scriptDefault('deploy/nitro/start-nitro-custody.sh', 'MORPHEUS_CUSTODY_HOST_PORT'),
 });
 
-test('testnet nitro env example reuses neither the live frontier nor custody CID / host port', () => {
+test('testnet nitro profile is isolated on the approved single host', () => {
   const assigned = parseEnvFileAssignments(
     readRepo('deploy/nitro/morpheus-nitro-testnet.env.example')
   );
@@ -52,6 +52,10 @@ test('testnet nitro env example reuses neither the live frontier nor custody CID
   );
   assert.equal(assigned.MORPHEUS_RUNTIME_URL, 'http://127.0.0.1:8791');
   assert.equal(assigned.NITRO_API_URL, 'http://127.0.0.1:8791');
+  const envExample = readRepo('deploy/nitro/morpheus-nitro-testnet.env.example');
+  assert.match(envExample, /approved[\s#]+single Nitro host/i);
+  assert.match(envExample, /Do not create a[\s#]+second TestNet server/i);
+  assert.doesNotMatch(envExample, /DISTINCT\s+TestNet host/i);
   // The live frontier (start-nitro-signer.sh defaults)...
   assert.equal(scriptDefault('deploy/nitro/start-nitro-signer.sh', 'MORPHEUS_NITRO_CID'), '16');
   assert.notEqual(assigned.MORPHEUS_NITRO_CID, LIVE_MAINNET.cid);

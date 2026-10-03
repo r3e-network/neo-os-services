@@ -20,6 +20,7 @@ use crate::state::{
 };
 use crate::RuntimeError;
 use rlp::{Rlp, RlpStream};
+use zeroize::Zeroizing;
 
 pub const TEST_NETWORK: &str = "testnet";
 
@@ -562,7 +563,7 @@ impl FakeKms {
 }
 
 impl KmsReleaser for FakeKms {
-    fn decrypt(&self, params: &KmsReleaseParams) -> Result<Vec<u8>, String> {
+    fn decrypt(&self, params: &KmsReleaseParams) -> Result<Zeroizing<Vec<u8>>, String> {
         self.inner
             .calls
             .lock()
@@ -573,7 +574,10 @@ impl KmsReleaser for FakeKms {
             .lock()
             .expect("results lock")
             .get(&params.ciphertext_b64)
-            .cloned()
+            .map(|result| match result {
+                Ok(bytes) => Ok(Zeroizing::new(bytes.clone())),
+                Err(error) => Err(error.clone()),
+            })
             .unwrap_or_else(|| Err("no canned release for this ciphertext".to_string()))
     }
 }

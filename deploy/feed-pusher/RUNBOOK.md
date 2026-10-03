@@ -28,12 +28,13 @@ It does NOT need the compute worker. Runs on the Nitro oracle host
   broadcast the host persists the signed identity and requires application-log
   `HALT` before `ok` / `confirmed` — mempool `sendrawtransaction` accept is
   `submitted` only. Deploy the
-  TestNet writer on a **distinct** Nitro-capable instance with a
-  testnet-pinned EIF (`morpheus-nitro-signer-testnet`, host `:8791`) — do
-  not add a second enclave to `i-0c52851f134db20ee`, rebuild the live
-  mainnet EIF, or enable both paths in one enclave. Local
-  implementation does not make TestNet healthy until that isolated writer is
-  deployed onto a funded signer/writer host. See
+  TestNet writer as a separately supervised profile on the **same approved
+  Nitro host** with a testnet-pinned EIF (`morpheus-nitro-signer-testnet`, host
+  `:8791`) only after the host capacity gate passes. Do not create a second
+  host, add an unreviewed enclave, rebuild the live mainnet EIF, or enable both
+  paths in one enclave. Local implementation does not make TestNet healthy
+  until that profile is deployed onto the approved host with funded identities.
+  See
   [`../../docs/TESTNET-FEED-WRITER.md`](../../docs/TESTNET-FEED-WRITER.md)
   and [`../../docs/FEED-HEALTH-AUDIT.md`](../../docs/FEED-HEALTH-AUDIT.md).
   `UpdateFeeds(...)` only requires the tx be witnessed by the contract **updater** —

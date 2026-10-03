@@ -3,6 +3,22 @@
 Scope: this source branch's Cargo workspace. This is a local source and lockfile
 review; it is not a production deployment, live runtime test, or waiver.
 
+## Addendum — 2026-10-03
+
+The O22 remediation is implemented on this candidate as `aws-lc-rs` 1.18.1.
+Production RSA operations formerly provided by RustCrypto `rsa` now use the
+single provider boundary in `crates/nitro-attest/src/rsa_provider.rs`; compute
+and NeoDID public verification use the same provider. `Cargo.lock` contains no
+`rsa` package, and the dependency test fails if one is reintroduced. Plain
+`cargo audit` is now the release check with no vulnerability ignore.
+
+The historical analysis below is retained as the pre-migration threat model;
+its open-O22 conclusions do not describe this candidate. Source remediation is
+separate from deployment: a Nitro image still needs an operator-approved
+rebuild, PCR re-measurement, manifest publication, and KMS policy update
+before production ciphertext can be released. No cloud or production
+mutation is included here.
+
 `cargo audit --no-fetch` against the RustSec advisory database at commit
 `e2111519` (2026-09-25) reports one vulnerability, RUSTSEC-2023-0071, and two
 unmaintained-crate warnings, RUSTSEC-2024-0436 (`paste` 1.0.15, a proc-macro of

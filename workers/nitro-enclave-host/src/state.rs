@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
+use zeroize::Zeroizing;
 
 use crate::overlay::EnvOverlay;
 use crate::RuntimeError;
@@ -195,7 +196,7 @@ pub trait JwksFetcher: Send + Sync {
 pub trait KmsReleaser: Send + Sync {
     /// Errors are the release-flow message strings (`AttestResult`'s error
     /// type); the provision route maps every failure to its 503.
-    fn decrypt(&self, params: &KmsReleaseParams) -> Result<Vec<u8>, String>;
+    fn decrypt(&self, params: &KmsReleaseParams) -> Result<Zeroizing<Vec<u8>>, String>;
 }
 
 /// What a release call carries — the provision env's projected KMS inputs,

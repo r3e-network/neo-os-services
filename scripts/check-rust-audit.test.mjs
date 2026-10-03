@@ -8,8 +8,8 @@ import test from 'node:test';
 const root = process.cwd();
 const checker = join(root, 'scripts', 'check-rust-audit.mjs');
 const lock = `[[package]]
-name = "rsa"
-version = "0.9.10"
+name = "aws-lc-rs"
+version = "1.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 `;
 

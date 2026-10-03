@@ -7,12 +7,13 @@
 
 use super::*;
 use crate::dispatch::dispatch;
-use rsa::pkcs1v15::SigningKey;
-use rsa::signature::{SignatureEncoding, Signer};
-use rsa::traits::PublicKeyParts;
-use rsa::{RsaPrivateKey, RsaPublicKey};
+use aws_lc_rs::{
+    rand::SystemRandom,
+    rsa::{KeyPair, KeySize},
+    signature::{KeyPair as _, RsaPublicKeyComponents, RSA_PKCS1_SHA256},
+};
 use serde_json::json;
-use sha2::Digest as _;
+use sha2::{Digest as _, Sha256};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
@@ -675,15 +676,14 @@ fn signed_token(claims: &serde_json::Value, kid: &str) -> KeyFixture {
 /// from BOTH the header and the JWK — jose's fallback that verifies against
 /// every eligible candidate key.
 fn build_token(claims: &serde_json::Value, kid: Option<&str>) -> (serde_json::Value, String) {
-    let mut rng = rsa::rand_core::OsRng;
-    let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("keygen");
-    let public_key = RsaPublicKey::from(&private_key);
+    let signing_key = KeyPair::generate(KeySize::Rsa2048).expect("keygen");
+    let public_key: RsaPublicKeyComponents<Vec<u8>> = signing_key.public_key().into();
     let mut jwk = json!({
         "kty": "RSA",
         "use": "sig",
         "alg": "RS256",
-        "n": URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be()),
-        "e": URL_SAFE_NO_PAD.encode(public_key.e().to_bytes_be()),
+        "n": URL_SAFE_NO_PAD.encode(public_key.n),
+        "e": URL_SAFE_NO_PAD.encode(public_key.e),
     });
     if let Some(kid) = kid {
         jwk["kid"] = json!(kid);
@@ -696,8 +696,15 @@ fn build_token(claims: &serde_json::Value, kid: Option<&str>) -> (serde_json::Va
         URL_SAFE_NO_PAD.encode(serde_json::to_string(value).expect("json").as_bytes())
     };
     let signing_input = format!("{}.{}", encode(&header), encode(claims));
-    let signing_key = SigningKey::<Sha256>::new(private_key);
-    let signature = signing_key.sign(signing_input.as_bytes()).to_vec();
+    let mut signature = vec![0u8; signing_key.public_modulus_len()];
+    signing_key
+        .sign(
+            &RSA_PKCS1_SHA256,
+            &SystemRandom::new(),
+            signing_input.as_bytes(),
+            &mut signature,
+        )
+        .expect("sign");
     (
         json!({ "keys": [jwk] }),
         format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(signature)),
@@ -730,6 +737,35 @@ fn a_valid_id_token_verifies_and_returns_its_claims() {
     let claims = verify_rs256_token(&fixture.token, &fixture.jwks, "client-id", None)
         .expect("token verifies");
     assert_eq!(claims["sub"], "user-1");
+}
+
+#[test]
+fn rs256_accepts_legacy_1024_bit_jwk_vectors() {
+    // Web3Auth/JWKS deployments can still publish a 1024-bit RSA key. This
+    // compatibility vector is public-only; the signing key is never stored.
+    let jwks = json!({
+        "keys": [{
+            "kty": "RSA",
+            "n": "s7xoDMsIJN8THAuJ4XkgnrkfXvwPygGN1a_t7l5QboyvgW1VFIKXTKh0CpEwuhKMsPhId5xugDTIVLJ9nPvbPw0E0pym7YAnmJAlc4-FeNPCF5oIrLvdtfyHmhMxNoTMoPy31webqzOOTgOqf_uRDbfgfqioxOnj5nbXb0NQ59k",
+            "e": "AQAB",
+            "use": "sig",
+            "alg": "RS256",
+            "kid": "legacy-1024"
+        }]
+    });
+    let token = [
+        "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImxlZ2FjeS0xMDI0In0",
+        "eyJzdWIiOiJsZWdhY3ktdXNlciIsImF1ZCI6ImNsaWVudC1pZCIsImlzcyI6Imh0dHBzOi8vaXNzdWVyLmV4YW1wbGUuY29tIiwiZXhwIjo0MTAyNDQ0ODAwLCJpYXQiOjE3MDAwMDAwMDB9",
+        "cxjLfuE63jpi9h5IANByDmVIA39RR4N93UDj23jmGy6oEhUhLJ0EIRn99u2Q--qtEvS9O1PkpLadzre-Vji-GOgsKRJDK3yD1Sfqz92jhXs_jJBIlNwJZnBKOAC4yPax6vCm2uVf04qiQO_yVqRKr61ccza21Sd26zlFkSwhkFs",
+    ].join(".");
+    let claims = verify_rs256_token(
+        &token,
+        &jwks,
+        "client-id",
+        Some("https://issuer.example.com"),
+    )
+    .expect("1024-bit legacy RS256 vector verifies");
+    assert_eq!(claims["sub"], "legacy-user");
 }
 
 #[test]
@@ -966,14 +1002,13 @@ fn concurrent_unknown_kid_requests_share_one_refresh() {
 /// revocation, JWKS refresh, precise clock boundaries or arbitrary claim JSON.
 #[test]
 fn rs256_acceptance_domain_model() {
-    let private_key = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).expect("test keygen");
-    let public_key = RsaPublicKey::from(&private_key);
+    let signing_key = KeyPair::generate(KeySize::Rsa2048).expect("test keygen");
+    let public_key: RsaPublicKeyComponents<Vec<u8>> = signing_key.public_key().into();
     let jwks = json!({"keys": [{
         "kty": "RSA", "use": "sig", "alg": "RS256", "kid": "model-test-key",
-        "n": URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be()),
-        "e": URL_SAFE_NO_PAD.encode(public_key.e().to_bytes_be()),
+        "n": URL_SAFE_NO_PAD.encode(public_key.n),
+        "e": URL_SAFE_NO_PAD.encode(public_key.e),
     }]});
-    let signing_key = SigningKey::<Sha256>::new(private_key);
     let encode = |value: &serde_json::Value| {
         URL_SAFE_NO_PAD.encode(serde_json::to_vec(value).expect("fixture json"))
     };
@@ -1001,7 +1036,15 @@ fn rs256_acceptance_domain_model() {
                 let header = json!({"alg": if algorithm_ok { "RS256" } else { "HS256" },
                     "kid": "model-test-key"});
                 let signing_input = format!("{}.{}", encode(&header), encode(&claims));
-                let signature = signing_key.sign(signing_input.as_bytes()).to_vec();
+                let mut signature = vec![0u8; signing_key.public_modulus_len()];
+                signing_key
+                    .sign(
+                        &RSA_PKCS1_SHA256,
+                        &SystemRandom::new(),
+                        signing_input.as_bytes(),
+                        &mut signature,
+                    )
+                    .expect("sign");
                 for signature_ok in [false, true] {
                     let mut bytes = signature.clone();
                     if !signature_ok {

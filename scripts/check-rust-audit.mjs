@@ -2,7 +2,6 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const REVIEWED_ADVISORY = 'RUSTSEC-2023-0071';
 const EXPECTED_UNMAINTAINED = new Set(['RUSTSEC-2024-0436', 'RUSTSEC-2021-0127']);
 const MAX_DATABASE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const root = process.cwd();
@@ -14,7 +13,7 @@ function fail(message) {
 
 const result = spawnSync(
   'cargo',
-  ['audit', '--json', '--ignore', REVIEWED_ADVISORY, '--deny', 'unsound', '--deny', 'yanked'],
+  ['audit', '--json', '--deny', 'unsound', '--deny', 'yanked'],
   { cwd: root, encoding: 'utf8' }
 );
 
@@ -97,7 +96,7 @@ if (result.error) {
     console.log(
       `[check:rust:audit] passed: 0 unreviewed vulnerabilities; ` +
         `${unmaintained.length} reviewed unmaintained warnings; ` +
-        `advisory database ${databaseUpdated}; reviewed ${REVIEWED_ADVISORY}`
+        `advisory database ${databaseUpdated}; no vulnerability exceptions`
     );
   }
 }
@@ -105,6 +104,6 @@ if (result.error) {
 const lock = readFileSync(join(root, 'Cargo.lock'), 'utf8');
 const rsaEntries = lock.match(/\[\[package\]\][\s\S]*?(?=\n\[\[package\]\]|\s*$)/g) || [];
 const rsaPackages = rsaEntries.filter((entry) => /^name = "rsa"$/m.test(entry));
-if (rsaPackages.length !== 1 || !/^version = "0\.9\.10"$/m.test(rsaPackages[0] || '')) {
-  fail('Cargo.lock must contain exactly rsa 0.9.10 for the reviewed advisory boundary');
+if (rsaPackages.length !== 0) {
+  fail('Cargo.lock must not contain RustCrypto rsa; production RSA uses aws-lc-rs');
 }

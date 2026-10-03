@@ -1,5 +1,12 @@
 # Feed health audit
 
+> **Current topology decision (2026-10-03):** The deleted TestNet Nitro host
+> is not being restored. Mainnet and TestNet are separate supervised profiles
+> on one approved Nitro host, with separate identities, state, listeners,
+> metrics, and fail-closed network checks. Follow
+> [`runbooks/NITRO-SINGLE-HOST-DUAL-NETWORK-20261003.md`](runbooks/NITRO-SINGLE-HOST-DUAL-NETWORK-20261003.md).
+> Any distinct-instance wording below is historical evidence only.
+
 ## Overview
 
 Read-only operator command that answers, from this checkout and public Neo N3
@@ -58,9 +65,9 @@ is exported once from `deploy/feed-pusher/lib-feed-network.mjs`
 (`DEFAULT_RETIRED_FEED_PAIRS`) and drift-checked by
 `scripts/check-feed-pair-registries.mjs`.
 
-Deploy the TestNet writer on a **distinct** Nitro-capable instance with a
-testnet-pinned EIF. The live writer `i-0c52851f134db20ee` has no leftover
-enclave CPU/memory (allocator 2 vCPU / 2048 MiB fully used). Do not rebuild
+Deploy the TestNet writer as a **separate supervised profile** on the approved
+single Nitro-capable host with a testnet-pinned EIF. The host must pass the
+shared capacity gate before either profile starts. Do not rebuild
 the live mainnet EIF or enable both write paths in one enclave. See
 [`TESTNET-FEED-WRITER.md`](./TESTNET-FEED-WRITER.md).
 

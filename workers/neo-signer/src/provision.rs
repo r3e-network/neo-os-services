@@ -357,7 +357,6 @@ fn release_envelope_with(
         &context,
         Some(profile.document().custody_kms_key_arn.as_str()),
     )
-    .map(Zeroizing::new)
 }
 
 /// Construct the only production release closure. The validated profile is

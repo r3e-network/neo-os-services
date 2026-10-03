@@ -51,11 +51,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
 sha3 = "0.10"
+zeroize = "1"
 # The neodid fold verifies web3auth id_tokens in-process (RS256 over a JWKS the
 # fold fetches through the enclave egress). The compute engine already uses the
 # same crate for builtin RSA-SHA256 verification, so the lockfile carries no
 # new tree.
-rsa = "0.9"
+aws-lc-rs = "1.18"
 # The oracle folds' ephemeral-key fallback generates real X25519 material —
 # the compute engine already carries this exact version, so no new tree.
 rand = "0.8"

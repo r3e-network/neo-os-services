@@ -23,11 +23,9 @@
 
 use std::time::Duration;
 
+use crate::{cms, kms, rsa_provider::PrivateKey, AttestResult};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use rsa::pkcs8::EncodePublicKey;
-use rsa::RsaPrivateKey;
-
-use crate::{cms, kms, AttestResult};
+use zeroize::Zeroizing;
 
 /// Where attestation documents come from. The enclave host and the custody
 /// service take this as a dependency rather than reaching for /dev/nsm
@@ -122,7 +120,7 @@ pub fn release_bytes(
     source: &dyn AttestationSource,
     transport: &dyn KmsTransport,
     params: &ReleaseParams<'_>,
-) -> AttestResult<Vec<u8>> {
+) -> AttestResult<Zeroizing<Vec<u8>>> {
     release_bytes_with_context(source, transport, params, &[])
 }
 
@@ -133,7 +131,7 @@ pub fn release_bytes_with_context(
     transport: &dyn KmsTransport,
     params: &ReleaseParams<'_>,
     encryption_context: &[(&str, &str)],
-) -> AttestResult<Vec<u8>> {
+) -> AttestResult<Zeroizing<Vec<u8>>> {
     release_bytes_with_context_and_key(source, transport, params, encryption_context, None)
 }
 
@@ -145,15 +143,10 @@ pub fn release_bytes_with_context_and_key(
     params: &ReleaseParams<'_>,
     encryption_context: &[(&str, &str)],
     expected_key_id: Option<&str>,
-) -> AttestResult<Vec<u8>> {
-    let mut rng = rsa::rand_core::OsRng;
-    let priv_key =
-        RsaPrivateKey::new(&mut rng, 2048).map_err(|error| format!("generate RSA key: {error}"))?;
-    let spki = priv_key
-        .to_public_key()
-        .to_public_key_der()
-        .map_err(|error| format!("marshal public key: {error}"))?;
-    let document = source.attest(None, None, Some(spki.as_bytes()))?;
+) -> AttestResult<Zeroizing<Vec<u8>>> {
+    let priv_key = PrivateKey::generate(2048)?;
+    let spki = priv_key.public_key_der()?;
+    let document = source.attest(None, None, Some(&spki))?;
     let signed = kms::build_kms_decrypt_request_with_context_and_key(
         params.region,
         params.credentials,
@@ -176,12 +169,14 @@ pub fn release_master_key(
     source: &dyn AttestationSource,
     transport: &dyn KmsTransport,
     params: &ReleaseParams<'_>,
-) -> AttestResult<[u8; 32]> {
+) -> AttestResult<Zeroizing<[u8; 32]>> {
     let plaintext = release_bytes(source, transport, params)?;
-    <[u8; 32]>::try_from(plaintext.as_slice()).map_err(|_| {
-        format!(
-            "kms released {} bytes; expected the 32-byte master key",
-            plaintext.len()
-        )
-    })
+    <[u8; 32]>::try_from(plaintext.as_slice())
+        .map(Zeroizing::new)
+        .map_err(|_| {
+            format!(
+                "kms released {} bytes; expected the 32-byte master key",
+                plaintext.len()
+            )
+        })
 }

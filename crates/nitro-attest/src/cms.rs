@@ -10,19 +10,17 @@
 //!
 //! ASN.1 is parsed by hand on top of [`crate::asn1`] — no external CMS/ASN.1
 //! dependency on the security-critical path, mirroring cms.go's stdlib-only
-//! posture (Rust has no crypto stdlib, so the crypto primitives themselves are
-//! the RustCrypto `rsa`/`aes`/`aes-gcm` crates). The BER→DER transcode from
+//! posture (the crypto primitives are AWS-LC for RSA and dedicated AES crates).
+//! The BER→DER transcode from
 //! cms.go lives in [`crate::ber`] and runs first, because KMS emits
 //! indefinite-length BER.
 
-use aes::cipher::{generic_array::GenericArray, BlockDecrypt, KeyInit};
-use aes_gcm::{aead::Aead, Aes256Gcm};
-use rsa::{rand_core::OsRng, Oaep, RsaPrivateKey};
-use sha2::Sha256;
-
 use crate::asn1::{self, Tlv};
 use crate::ber::{ber_to_der, concat_octet_segments};
-use crate::AttestResult;
+use crate::{rsa_provider::PrivateKey, AttestResult};
+use aes::cipher::{generic_array::GenericArray, BlockDecrypt, KeyInit};
+use aes_gcm::{aead::Aead, Aes256Gcm};
+use zeroize::Zeroizing;
 
 /// AlgorithmIdentifier ::= SEQUENCE { algorithm OID, parameters ANY OPTIONAL }
 struct AlgorithmIdentifier<'a> {
@@ -40,6 +38,9 @@ fn parse_algorithm_identifier<'a>(tlv: &Tlv<'a>) -> Result<AlgorithmIdentifier<'
     if kids.is_empty() || !kids[0].is_oid() {
         return Err("algorithmIdentifier is missing its algorithm OID".to_string());
     }
+    if kids.len() > 2 {
+        return Err("algorithmIdentifier has unexpected extra fields".to_string());
+    }
     let parameters = if kids.len() > 1 {
         kids[1].to_der()
     } else {
@@ -56,7 +57,10 @@ fn parse_algorithm_identifier<'a>(tlv: &Tlv<'a>) -> Result<AlgorithmIdentifier<'
 /// plaintext. The wrapping key is unwrapped with RSAES-OAEP (SHA-256); the
 /// content is decrypted with AES-256-CBC (CEK + IV from the algorithm
 /// parameters). Error strings carry the Go tool's `cms: ...` prefixes.
-pub fn decrypt_cms_enveloped_data(cms: &[u8], priv_key: &RsaPrivateKey) -> AttestResult<Vec<u8>> {
+pub fn decrypt_cms_enveloped_data(
+    cms: &[u8],
+    priv_key: &PrivateKey,
+) -> AttestResult<Zeroizing<Vec<u8>>> {
     if cms.is_empty() {
         return Err("cms: empty input".to_string());
     }
@@ -136,6 +140,8 @@ pub fn decrypt_cms_enveloped_data(cms: &[u8], priv_key: &RsaPrivateKey) -> Attes
             asn1::format_oid(kek_alg.oid)
         ));
     }
+    validate_rsa_oaep_sha256_parameters(&kek_alg.parameters)
+        .map_err(|error| format!("cms: invalid RSA-OAEP parameters: {error}"))?;
     if !ktri_kids[3].is_octet_string() {
         return Err(
             "cms: parse KeyTransRecipientInfo: encryptedKey is not an OCTET STRING".to_string(),
@@ -151,7 +157,7 @@ pub fn decrypt_cms_enveloped_data(cms: &[u8], priv_key: &RsaPrivateKey) -> Attes
     // private operation because this input is supplied by the KMS response and
     // the key is held inside the enclave.
     let cek = priv_key
-        .decrypt_blinded(&mut OsRng, Oaep::new::<Sha256>(), encrypted_key)
+        .decrypt_oaep_sha256(encrypted_key)
         .map_err(|e| format!("cms: RSA-OAEP unwrap CEK: {e}"))?;
 
     let eci_kids =
@@ -210,7 +216,11 @@ pub fn decrypt_cms_enveloped_data(cms: &[u8], priv_key: &RsaPrivateKey) -> Attes
 
 /// Decrypts AES-256-CBC content. The IV is the algorithm parameter, encoded as
 /// an OCTET STRING. PKCS#7 padding is stripped.
-fn decrypt_aes256_cbc(cek: &[u8], params_der: &[u8], ct: &[u8]) -> AttestResult<Vec<u8>> {
+fn decrypt_aes256_cbc(
+    cek: &[u8],
+    params_der: &[u8],
+    ct: &[u8],
+) -> AttestResult<Zeroizing<Vec<u8>>> {
     if cek.len() != 32 {
         return Err(format!(
             "cms: AES-256-CBC requires a 32-byte CEK, got {}",
@@ -254,7 +264,7 @@ fn decrypt_aes256_cbc(cek: &[u8], params_der: &[u8], ct: &[u8]) -> AttestResult<
         prev.copy_from_slice(chunk);
     }
 
-    Ok(pkcs7_unpad(&out, 16)?.to_vec())
+    Ok(Zeroizing::new(pkcs7_unpad(&out, 16)?.to_vec()))
 }
 
 /// Decrypts AES-256-GCM content (forward-compat path). The parameters carry
@@ -262,7 +272,11 @@ fn decrypt_aes256_cbc(cek: &[u8], params_der: &[u8], ct: &[u8]) -> AttestResult<
 /// KMS does not currently use GCM here. Deliberate divergence from cms.go:
 /// only the standard 12-byte nonce is accepted (cms.go supports any nonce
 /// size via NewGCMWithNonceSize).
-fn decrypt_aes256_gcm(cek: &[u8], params_der: &[u8], ct: &[u8]) -> AttestResult<Vec<u8>> {
+fn decrypt_aes256_gcm(
+    cek: &[u8],
+    params_der: &[u8],
+    ct: &[u8],
+) -> AttestResult<Zeroizing<Vec<u8>>> {
     if cek.len() != 32 {
         return Err(format!(
             "cms: AES-256-GCM requires a 32-byte CEK, got {}",
@@ -301,9 +315,101 @@ fn decrypt_aes256_gcm(cek: &[u8], params_der: &[u8], ct: &[u8]) -> AttestResult<
     }
 
     let cipher = Aes256Gcm::new_from_slice(cek).map_err(|e| format!("cms: new GCM: {e}"))?;
-    cipher
+    let plaintext = cipher
         .decrypt(aes_gcm::Nonce::from_slice(nonce), ct)
-        .map_err(|_| "cms: AES-GCM open: message authentication failed".to_string())
+        .map_err(|_| "cms: AES-GCM open: message authentication failed".to_string())?;
+    Ok(Zeroizing::new(plaintext))
+}
+
+/// Enforce the exact RSAES-OAEP-SHA256 profile used by KMS Nitro Recipient
+/// responses. The ASN.1 defaults for the hash and MGF are SHA-1, so an absent
+/// hash or MGF field is not equivalent to the profile we decrypt below.
+fn validate_rsa_oaep_sha256_parameters(params_der: &[u8]) -> Result<(), String> {
+    if params_der.is_empty() {
+        return Err("parameters are required; absent parameters default to SHA-1".to_string());
+    }
+    let (params, rest) = Tlv::parse(params_der)?;
+    if !rest.is_empty() || !params.is_sequence() {
+        return Err("parameters are not a complete SEQUENCE".to_string());
+    }
+    let fields = asn1::children(params.content)?;
+    let mut saw_hash = false;
+    let mut saw_mgf = false;
+    let mut saw_source = false;
+    for field in fields {
+        if field.tag >> 6 != 2 || !field.is_constructed() {
+            return Err("parameters contain a non-explicit context field".to_string());
+        }
+        let tag = field.tag & 0x1f;
+        let (inner, inner_rest) = Tlv::parse(field.content)?;
+        if !inner_rest.is_empty() {
+            return Err("context field contains extra values".to_string());
+        }
+        match tag {
+            0 => {
+                if saw_hash {
+                    return Err("duplicate hashAlgorithm".to_string());
+                }
+                saw_hash = true;
+                let algorithm = parse_algorithm_identifier(&inner)?;
+                if algorithm.oid != asn1::oid_sha256()
+                    || !algorithm_parameters_are_null_or_absent(&algorithm.parameters)?
+                {
+                    return Err("hashAlgorithm must be SHA-256".to_string());
+                }
+            }
+            1 => {
+                if saw_mgf {
+                    return Err("duplicate maskGenAlgorithm".to_string());
+                }
+                saw_mgf = true;
+                let mgf = parse_algorithm_identifier(&inner)?;
+                if mgf.oid != asn1::oid_mgf1() || mgf.parameters.is_empty() {
+                    return Err("maskGenAlgorithm must be MGF1(SHA-256)".to_string());
+                }
+                let (mgf_hash_tlv, mgf_rest) = Tlv::parse(&mgf.parameters)?;
+                if !mgf_rest.is_empty() {
+                    return Err("MGF1 parameters contain extra values".to_string());
+                }
+                let mgf_hash = parse_algorithm_identifier(&mgf_hash_tlv)?;
+                if mgf_hash.oid != asn1::oid_sha256()
+                    || !algorithm_parameters_are_null_or_absent(&mgf_hash.parameters)?
+                {
+                    return Err("maskGenAlgorithm must be MGF1(SHA-256)".to_string());
+                }
+            }
+            2 => {
+                if saw_source {
+                    return Err("duplicate pSourceAlgorithm".to_string());
+                }
+                saw_source = true;
+                let source = parse_algorithm_identifier(&inner)?;
+                if source.oid != asn1::oid_p_specified() || source.parameters.is_empty() {
+                    return Err(
+                        "pSourceAlgorithm must be pSpecified with an empty label".to_string()
+                    );
+                }
+                let (label, label_rest) = Tlv::parse(&source.parameters)?;
+                if !label_rest.is_empty() || !label.is_octet_string() || !label.content.is_empty() {
+                    return Err("pSourceAlgorithm label must be empty".to_string());
+                }
+            }
+            _ => return Err(format!("unknown context field [{tag}]")),
+        }
+    }
+    if !saw_hash || !saw_mgf {
+        return Err("hashAlgorithm and maskGenAlgorithm are required".to_string());
+    }
+    // pSpecified defaults to the empty label, so an omitted [2] is safe.
+    Ok(())
+}
+
+fn algorithm_parameters_are_null_or_absent(parameters: &[u8]) -> Result<bool, String> {
+    if parameters.is_empty() {
+        return Ok(true);
+    }
+    let (null, rest) = Tlv::parse(parameters)?;
+    Ok(rest.is_empty() && null.tag == 0x05 && null.content.is_empty())
 }
 
 /// Removes and validates PKCS#7 padding for the given block size. Written to

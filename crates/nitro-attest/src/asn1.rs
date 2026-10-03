@@ -153,6 +153,21 @@ pub fn oid_rsaes_oaep() -> &'static [u8] {
     &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x07]
 }
 
+pub fn oid_sha256() -> &'static [u8] {
+    // 2.16.840.1.101.3.4.2.1
+    &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01]
+}
+
+pub fn oid_mgf1() -> &'static [u8] {
+    // 1.2.840.113549.1.1.8
+    &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08]
+}
+
+pub fn oid_p_specified() -> &'static [u8] {
+    // 1.2.840.113549.1.1.9
+    &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x09]
+}
+
 pub fn oid_aes256_cbc() -> &'static [u8] {
     // 2.16.840.1.101.3.4.1.42
     &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x01, 0x2a]
@@ -203,6 +218,9 @@ mod tests {
         assert_eq!(format_oid(oid_aes256_gcm()), "2.16.840.1.101.3.4.1.46");
         assert_eq!(format_oid(oid_data()), "1.2.840.113549.1.7.1");
         assert_eq!(format_oid(oid_rsaes_oaep()), "1.2.840.113549.1.1.7");
+        assert_eq!(format_oid(oid_sha256()), "2.16.840.1.101.3.4.2.1");
+        assert_eq!(format_oid(oid_mgf1()), "1.2.840.113549.1.1.8");
+        assert_eq!(format_oid(oid_p_specified()), "1.2.840.113549.1.1.9");
     }
 
     #[test]

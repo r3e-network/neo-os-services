@@ -1,5 +1,12 @@
 # TestNet per-pair MorpheusDataFeed writer
 
+> **Current topology decision (2026-10-03):** The deleted TestNet Nitro host
+> is not being restored. Use the approved single-host dual-network topology in
+> [`runbooks/NITRO-SINGLE-HOST-DUAL-NETWORK-20261003.md`](runbooks/NITRO-SINGLE-HOST-DUAL-NETWORK-20261003.md).
+> Older separate-host references in this document are historical deployment
+> evidence. The current policy is one approved Nitro host with separate
+> profiles; do not create a second host.
+
 ## Overview
 
 The deployed Neo N3 TestNet `MorpheusDataFeed`
@@ -95,18 +102,15 @@ transaction, and does not fund a wallet.
    running enclave cannot serve both pins. Operators must not rebuild or
    replace the live mainnet EIF, and must not run both write paths in one
    enclave. The Node TestNet pusher is still not a production authority.
-8. **Distinct Nitro-capable instance, not a second enclave on the live
-   writer.** `i-0c52851f134db20ee` is `m6i.xlarge` (4 vCPU / 16 GiB) with
-   allocator `cpu_count: 2` / `memory_mib: 2048` fully consumed by
-   `morpheus-oracle-exec-10` (`NumberOfCPUs=2`, `MemoryMiB=2048`, CID 16).
-   Parent `nproc=2`. A second 2-vCPU enclave cannot coexist without resizing
-   or reallocating the live box. TestNet units therefore
-   `Requires=` `morpheus-nitro-signer-testnet.service`, pin
-   `SIGNER_URL=http://127.0.0.1:8791`, and use CID 18 / a testnet-named EIF
-   so enabling them on the live box fails closed instead of terminating
-   CID 16 or talking to `127.0.0.1:8787`. CID 17 / host port 8789 are
-   custody's defaults (`start-nitro-custody.sh`), so the TestNet frontier
-   stays off them too.
+8. **Single approved Nitro host with separate profiles.** The recorded
+   allocator snapshot was `cpu_count: 2` / `memory_mib: 2048`, fully consumed
+   by the mainnet frontier on CID 16. Do not create a second server; the owner
+   must first confirm or provision enough capacity on this same approved host
+   for a TestNet profile. Once that gate passes, TestNet uses
+   `Requires=morpheus-nitro-signer-testnet.service`,
+   `SIGNER_URL=http://127.0.0.1:8791`, CID 18, a testnet-named EIF, and
+   separately supervised state. CID 17 / host port 8789 remain reserved for
+   custody. The profiles must never share write paths or private state.
 
 ## API Reference
 
@@ -215,34 +219,14 @@ FEED_PUSHER_SKIP_MAIN=1 node --test deploy/feed-pusher/lib-feed-network.test.mjs
   deploy/feed-pusher/feed-write-mode.test.mjs deploy/feed-pusher/feed-pusher.test.mjs \
   deploy/feed-pusher/feed-unit-isolation.test.mjs deploy/nitro/nitro-unit-isolation.test.mjs
 
-# Operator deploy — DISTINCT TestNet Nitro instance (not performed by this checkout)
-# Do NOT rebuild, replace, or retarget the live mainnet EIF on i-0c52851f134db20ee.
-# Do NOT start a second enclave on that instance (allocator is full).
-# Do NOT enable updateFeed and updateFeeds in one enclave.
-# 1. Launch a separate >=4 vCPU Nitro-capable instance.
-# 2. Build a testnet-named EIF (morpheus-oracle-testnet.eif). Do not copy the
-#    live mainnet EIF filename or CID 16 onto a host that already holds it.
-# 3. Install morpheus-nitro-signer-testnet.service +
-#    morpheus-nitro-provision-testnet.service with
-#    deploy/nitro/morpheus-nitro-testnet.env.example (CID 18, host 8791).
-# 4. Atomically install feed-pusher.mjs + lib-feed-network.mjs +
-#    lib-feed-writer-metrics.mjs onto the
-#    TestNet writer host WorkingDirectory.
-# 5. Bake or /provision the TestNet EIF with a matching identity:
-#    FEED_NETWORK=testnet FEED_MAGIC=894710606 MORPHEUS_NETWORK=testnet
-#    plus the TestNet updater ciphertext. Any mismatch fails closed.
-# 6. Enable the isolated TestNet signer only. Leave mainnet units/EIF
-#    untouched. Do not enable the Node feed writer — Rust neo-os-relayer
-#    is the production writer. The Node testnet unit has no [Install]
-#    section and will not start without ENABLE_NODE_FEED_PUSHER_COMPAT.
-systemctl enable --now morpheus-nitro-signer-testnet.service
-# Manual temporary Node compatibility oneshot only, after both Rust
-# relayers are stopped and the compatibility marker exists:
-systemctl stop morpheus-relayer.service morpheus-relayer-nitro.service
-install -m 0600 /dev/null /opt/morpheus/nitro/ENABLE_NODE_FEED_PUSHER_COMPAT
-systemctl start morpheus-feed-pusher-testnet.service
-journalctl -u morpheus-feed-pusher-testnet -n 50 --no-pager
-cat /opt/morpheus/nitro/feed-pusher-testnet-status.json
+# Operator preflight — same approved Nitro host (this checkout performs no
+# host mutation). First confirm capacity, free CID 18 / port 8791, separate
+# profile state, and matching TestNet PCR/KMS/RPC identity alongside mainnet.
+# Do not create a second host, rebuild the live mainnet EIF, enable both write
+# paths in one enclave, or enable the frozen Node writer. After the owner has
+# approved the host evidence, use the current single-host runbook:
+# docs/runbooks/NITRO-SINGLE-HOST-DUAL-NETWORK-20261003.md
+# and the named systemd units for the separately supervised TestNet profile.
 ```
 
 Expected status after a live oneshot (illustrative). `ok` is true only when
@@ -297,13 +281,13 @@ or `systemctl enable` of any Node feed writer. That is a destructive
 in-place cutover or a dual-write. Rollback of an EIF mistake is not
 “toggle an env var”; it is restore the previous mainnet EIF.
 
-1. **Distinct Nitro instance + TestNet-named EIF.** Do not add a second
-   enclave to `i-0c52851f134db20ee`. That box's allocator is exhausted
-   (2 vCPU / 2048 MiB) by `morpheus-oracle-exec-10` on CID 16, and
-   `start-nitro-signer.sh` terminates any occupant of the requested CID.
-   Launch a separate >=4 vCPU Nitro Enclaves instance. Build
-   `morpheus-oracle-testnet.eif`. Leave the live mainnet EIF and
-   `morpheus-feed-pusher.timer` untouched.
+1. **Single approved host + TestNet-named EIF.** Do not create a second
+   server or add an unreviewed enclave. The recorded allocator snapshot is
+   exhausted by the mainnet profile, so an owner must first confirm sufficient
+   capacity on the same approved host. Build `morpheus-oracle-testnet.eif`
+   with CID 18 / host port 8791 and leave the live mainnet EIF and
+   `morpheus-feed-pusher.timer` untouched. `start-nitro-signer.sh` must not
+   terminate an occupant of CID 16 or overwrite mainnet state.
 2. **Atomic file install** into the TestNet unit `WorkingDirectory`
    `/opt/neoos/services/deploy/feed-pusher`: `feed-pusher.mjs`,
    `feed-monitor.mjs`, `feed-topup.mjs`, `db-prune.mjs`,
@@ -351,7 +335,7 @@ in-place cutover or a dual-write. Rollback of an EIF mistake is not
 Rollback is safe **because** the mainnet EIF and mainnet units are left
 untouched.
 
-1. On the TestNet instance only:
+1. On the approved Nitro host, stop only the TestNet profile:
    `systemctl stop morpheus-feed-pusher-testnet.timer morpheus-feed-pusher-testnet.service`
    `systemctl disable --now morpheus-feed-pusher-testnet.timer` (cleans a leftover enable symlink from an older checkout)
    `rm -f /opt/morpheus/nitro/ENABLE_NODE_FEED_PUSHER_COMPAT`

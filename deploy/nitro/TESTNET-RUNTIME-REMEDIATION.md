@@ -1,5 +1,12 @@
 # Testnet runtime isolation: remediation and release gate
 
+> **Current topology decision (2026-10-03):** The deleted TestNet server is
+> not being restored. The target is one approved Nitro host with separately
+> supervised mainnet and TestNet profiles. Follow
+> [`../../docs/runbooks/NITRO-SINGLE-HOST-DUAL-NETWORK-20261003.md`](../../docs/runbooks/NITRO-SINGLE-HOST-DUAL-NETWORK-20261003.md).
+> References below to a second instance or separate host are historical
+> alternatives and must not be executed under the current decision.
+
 Prepared 2026-09-05. No service was deployed, restarted, provisioned, signed, or funded during this investigation. Current public testnet service remains unavailable. Local evidence is in `D:/Git/neo-os/qa-artifacts/network-remediation/`. Project maintenance and remediation are already authorized; the remaining blockers are missing verifiable deployment targets, operational identities and isolated configuration, not another permission step.
 
 ## Confirmed cause
@@ -29,25 +36,27 @@ The checked-in historical dual-network request-hub Compose files are marked **No
 
 No Rust migration, custody implementation, current startup scripts, existing deployment topology, or credentials were overwritten. The original nginx template remains untouched until an operator selects and verifies the actual testnet listener; the renderer creates the concrete replacement only after that proof.
 
-## Required isolated instance configuration
+## Required isolated TestNet profile on the approved host
 
-An operator must first identify or provision the testnet execution instance. The following are requirements, not claims that these resources already exist:
+An operator must first identify or provision the TestNet execution profile on
+the approved host. The following are requirements, not claims that these
+resources already exist:
 
 | Item                 | Required value or proof                                                                                                                                                                                                                                |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Target               | Confirmed testnet EC2/Nitro host and region, or verified spare capacity on the documented mainnet host                                                                                                                                                 |
+| Target               | The single approved Nitro host and region, with verified spare capacity for a separately supervised TestNet profile |
 | Release              | Verifiable execution EIF digest/PCRs and corresponding reproducible source release; do not deploy the mixed uncommitted Rust migration workspace                                                                                                       |
 | Runtime network      | `MORPHEUS_NETWORK=testnet` in the provisioned execution configuration, verified by the instance's own health response                                                                                                                                  |
 | Neo N3 identity      | Testnet RPC whose `getversion.protocol.network` is `894710606`, testnet contract hashes, and testnet-specific signer role IDs/public identities                                                                                                        |
 | Key material         | Independently configured testnet custody authorization and attestation-bound sealed material; do not copy mainnet WIFs, private keys, role IDs, or token envelopes                                                                                     |
 | Storage and config   | Dedicated testnet configuration files, journal/data directories, state/cursor namespaces and service unit; no mainnet default paths                                                                                                                    |
-| Host topology        | Existing frontier is CID 16 / host port 8787; custody is CID 17 / host port 8789; egress uses 8788. None of these is the testnet instance                                                                                                              |
-| Candidate topology   | CID 18 / loopback port 8791 is an **unallocated proposal**, usable only after operator checks show it is free; a separate host may instead use its own isolated defaults                                                                               |
-| Capacity             | Adequate Nitro allocator CPU/memory for the extra execution instance and its custody arrangement; existing mainnet allocation remains intact                                                                                                           |
+| Host topology        | Existing frontier is CID 16 / host port 8787; custody is CID 17 / host port 8789; egress uses 8788. TestNet must use a separately supervised profile on the same approved host, subject to the capacity gate |
+| Candidate topology   | CID 18 / loopback port 8791 is an **unallocated proposal**, usable only after operator checks show it is free on the approved host; no second host is required |
+| Capacity             | Adequate Nitro allocator CPU/memory for both profiles and their custody arrangement; if unavailable, stop and escalate rather than weakening isolation |
 | Startup safety       | Do not invoke the existing startup script with default arguments: it terminates the enclave occupying the configured CID. Its run-report output is also currently global. A reviewed isolated service must avoid CID reuse and mainnet path overwrites |
 | Confidential callers | The control-plane and direct confidential gateway credentials must be authorized for the isolated testnet runtime. A healthy public probe does not establish this. Keep those credentials server-side and validate with a non-signing capability check |
 
-This is not a complete ready-to-start second-instance configuration because a confirmed host, verifiable candidate EIF/release, isolated credentials, allocation, and service identity are not available on this workstation. Do not fill those gaps using mainnet settings.
+This is not a complete ready-to-start TestNet profile because verified host capacity, a verifiable candidate EIF/release, isolated credentials, allocation, and service identity are not available on this workstation. Do not fill those gaps using mainnet settings or by creating a second host.
 
 ## Concrete preparation and cutover sequence
 
@@ -61,7 +70,7 @@ The following commands are a concrete deployment plan. They were **not executed 
    sudo systemctl status morpheus-nitro-signer --no-pager
    ```
 
-   Resolve the independent instance prerequisites above. `describe-enclaves` must show distinct identities; an nginx alias is not sufficient. Do not restart mainnet to change its process network.
+   Resolve the isolated-profile prerequisites above. `describe-enclaves` must show distinct profile identities; an nginx alias is not sufficient. Do not restart mainnet to change its process network.
 
 2. After an isolated testnet listener exists and is ready, create a candidate. Substitute the verified listener if different:
 
@@ -102,7 +111,7 @@ The following commands are a concrete deployment plan. They were **not executed 
 
    All runtime, oracle, edge and web health paths must pass for both networks. Inspect the JSON `actualNetwork` values, not just the exit code or HTTP status. This is identity/liveness verification; it does not send transactions or validate confidential signing workflows. Keep the mainnet results as the regression guard.
 
-6. If the cutover fails, restore the exact previous nginx configuration and web environment values from the operator's backup. Preserve failed probe evidence and the isolated testnet instance for diagnosis. Do not relabel mainnet responses as testnet or disable identity checks to make the gate pass.
+6. If the cutover fails, restore the exact previous nginx configuration and web environment values from the operator's backup. Preserve failed probe evidence and the isolated TestNet profile for diagnosis. Do not relabel mainnet responses as testnet or disable identity checks to make the gate pass.
 
 ## Access still needed
 

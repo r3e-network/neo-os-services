@@ -7,6 +7,7 @@
 
 use nitro_attest::kms::{self, Credentials};
 use nitro_attest::release::{self, HttpKmsTransport, NsmAttestation};
+use zeroize::Zeroizing;
 
 use crate::state::{KmsReleaseParams, KmsReleaser};
 
@@ -36,7 +37,7 @@ impl Default for ProductionKms {
 pub const KMS_CONTEXT_COMPONENT: &str = "frontier";
 
 impl KmsReleaser for ProductionKms {
-    fn decrypt(&self, params: &KmsReleaseParams) -> Result<Vec<u8>, String> {
+    fn decrypt(&self, params: &KmsReleaseParams) -> Result<Zeroizing<Vec<u8>>, String> {
         let credentials = Credentials {
             access_key_id: params.access_key_id.clone(),
             secret_access_key: params.secret_access_key.clone(),
