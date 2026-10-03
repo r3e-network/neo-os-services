@@ -156,3 +156,30 @@ test('docs name the TestNet signer isolation primitive and the live allocator li
   assert.match(docs, /i-0c52851f134db20ee/);
   assert.doesNotMatch(docs, /GET 127\.0\.0\.1:8787\/health/);
 });
+
+test('legacy dedicated-host bootstrap is a blocked historical entry point', () => {
+  const source = readRepo('deploy/nitro/bootstrap-testnet-host.sh');
+  assert.match(source, /legacy.*disabled|single-host.*topology/i);
+  assert.match(source, /exit 78/);
+  assert.match(source, /docs\/runbooks\/NITRO-SINGLE-HOST-DUAL-NETWORK-20261003\.md/);
+  const runbook = readRepo('docs/runbooks/NITRO-SINGLE-HOST-DUAL-NETWORK-20261003.md');
+  assert.match(runbook, /one approved\s+Nitro-capable host/i);
+  assert.match(runbook, /A second TestNet host must not be introduced/i);
+  assert.match(runbook, /old TestNet instance is\s+absent/i);
+
+  const executableLines = source
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'));
+  assert.deepEqual(executableLines.slice(0, 1), ['set -euo pipefail']);
+  assert.equal(executableLines.at(-1), 'exit 78');
+  assert.equal(executableLines.filter((line) => line.startsWith('printf')).length, 1);
+  assert.deepEqual(
+    executableLines.slice(1, -1).map((line) => line.replace(/\\$/u, '').trim()),
+    [
+      "printf '%s\\n'",
+      "'Refusing legacy dedicated-TestNet-host bootstrap: the approved topology is one Nitro host with isolated profiles.'",
+      "'Follow docs/runbooks/NITRO-SINGLE-HOST-DUAL-NETWORK-20261003.md.' >&2",
+    ],
+  );
+});
