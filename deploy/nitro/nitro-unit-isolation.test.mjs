@@ -180,6 +180,6 @@ test('legacy dedicated-host bootstrap is a blocked historical entry point', () =
       "printf '%s\\n'",
       "'Refusing legacy dedicated-TestNet-host bootstrap: the approved topology is one Nitro host with isolated profiles.'",
       "'Follow docs/runbooks/NITRO-SINGLE-HOST-DUAL-NETWORK-20261003.md.' >&2",
-    ],
+    ]
   );
 });

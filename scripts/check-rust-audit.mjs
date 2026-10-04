@@ -11,11 +11,10 @@ function fail(message) {
   process.exitCode = 1;
 }
 
-const result = spawnSync(
-  'cargo',
-  ['audit', '--json', '--deny', 'unsound', '--deny', 'yanked'],
-  { cwd: root, encoding: 'utf8' }
-);
+const result = spawnSync('cargo', ['audit', '--json', '--deny', 'unsound', '--deny', 'yanked'], {
+  cwd: root,
+  encoding: 'utf8',
+});
 
 if (result.error) {
   fail(`could not run cargo audit: ${result.error.message}`);
