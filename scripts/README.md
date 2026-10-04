@@ -68,6 +68,8 @@ checked-in engine parity goldens still run.
 - `bash scripts/run-neo-nexus-signer-contract.sh` (requires a sibling
   `neo-nexus` checkout or `NEO_NEXUS_DIR`; owns a disposable signer/vault)
 - `npm run check:audit:root`
+- `npm run check:npm-audit` (CI's blocking audit: production scope plus dated dev-only exceptions in
+  `config/npm-audit-exceptions.json`; see `docs/security/NPM-DEV-ADVISORY-EXCEPTIONS-20261005.md`)
 - `npm run test:game-engine-sync`
 - `npm run test:worker`
 - `npm run test:relayer`

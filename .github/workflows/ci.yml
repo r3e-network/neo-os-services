@@ -61,7 +61,14 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: npm audit --audit-level=moderate
+      # Blocking, and scoped: production dependencies may carry no advisory at or above
+      # moderate, and every dev-only advisory needs a dated, owner-assigned entry in
+      # config/npm-audit-exceptions.json (today GHSA-vfj7-8cjw-p6xm: braces behind
+      # eslint-config-next, no upstream fix). This replaces a blanket audit that failed on
+      # that advisory and so kept every later step of this job from running. The gate fails
+      # closed when npm cannot produce an audit report.
+      - run: npm run check:npm-audit
+      - run: node --test scripts/check-npm-audit.test.mjs
       - run: npm run check:tracked-build-outputs
       - name: Guard against package-lock drift
         run: |

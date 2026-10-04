@@ -4,8 +4,8 @@
 // package-lock.json: `npm ci` at the root, `cd apps/web && npm ci`, both worker
 // images (they copy only the manifests and the root lock before `npm ci`) and
 // the Vercel build of apps/web, which .vercelignore documents as building from
-// the monorepo root. The root `npm audit` and lockfile drift steps in
-// lint-and-format therefore cover apps/web; this file pins the patched versions
+// the monorepo root. The root audit gate (check:npm-audit) and the lockfile drift step
+// in lint-and-format therefore cover apps/web; this file pins the patched versions
 // the apps/web closure must keep and the invariants that keep one lockfile the
 // only one that matters.
 //
@@ -206,7 +206,15 @@ test('every locked registry package is pinned to its tarball with a SHA-512 dige
 test('lint-and-format audits the root lock, guards its drift and runs this policy', () => {
   const lint = jobBody('lint-and-format');
   assert.match(lint, /^\s*- run: npm ci\s*$/m);
-  assert.match(lint, /^\s*- run: npm audit --audit-level=moderate\s*$/m);
+  // The blocking audit is production-scoped; the one dev-only advisory without an upstream fix is
+  // a dated, owner-assigned exception (config/npm-audit-exceptions.json). The blanket
+  // `npm audit --audit-level=moderate` this replaces failed on that advisory, and a job stops at
+  // its first red step, so every later gate of the job never ran (SVC-V02).
+  assert.match(lint, /^\s*- run: npm run check:npm-audit\s*$/m);
+  assert.match(lint, /^\s*- run: node --test scripts\/check-npm-audit\.test\.mjs\s*$/m);
+  assert.doesNotMatch(lint, /^\s*- run: npm audit\b/m, 'a blanket npm audit step is back');
+  assert.doesNotMatch(lint, /continue-on-error/, 'the audit must stay blocking');
+  assert.equal(rootManifest.scripts?.['check:npm-audit'], 'node scripts/check-npm-audit.mjs');
   assert.match(lint, /npm install --package-lock-only\n\s*git diff --exit-code package-lock\.json/);
   assert.match(lint, /^\s*- run: node --test scripts\/dependency-security\.test\.mjs\s*$/m);
 });

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "exceptions": [
+    {
+      "advisory": "GHSA-vfj7-8cjw-p6xm",
+      "package": "braces",
+      "reason": "Dev-only: braces <=3.0.3 (stack-exhaustion denial of service on deeply nested patterns) is reachable only through the apps/web devDependency eslint-config-next -> @next/eslint-plugin-next -> fast-glob -> micromatch -> braces. Every lock entry on that path is dev:true and npm audit --omit=dev reports no advisory. No patched braces release exists (3.0.3 is the latest and lies inside the vulnerable range) and the only fix npm offers is a semver-major downgrade to eslint-config-next 14.2.35 (apps/web is on Next 15).",
+      "owner": "NeoOS program lead (delegated by the owner)",
+      "expiresOn": "2026-11-05"
+    }
+  ]
+}

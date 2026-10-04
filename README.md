@@ -175,6 +175,7 @@ npm run dev:web
 ```bash
 npm run verify:repo
 npm run check:audit:root
+npm run check:npm-audit
 npm run test:worker
 npm run test:relayer
 npm run test:control-plane
@@ -203,6 +204,10 @@ The current accepted root baseline is the explicitly excluded CityOfZion / Neon 
 - transitive `lodash`
 
 That command enforces no additional production vulnerabilities beyond the excluded CityOfZion baseline and fails if the excluded package set changes unexpectedly.
+
+The blocking audit in CI (`lint-and-format`) is `npm run check:npm-audit`: production dependencies must carry no
+advisory at or above moderate, and every dev-only advisory needs a dated, owner-assigned entry in
+`config/npm-audit-exceptions.json`. See `docs/security/NPM-DEV-ADVISORY-EXCEPTIONS-20261005.md`.
 
 Targeted regression commands:
 

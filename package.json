@@ -121,6 +121,7 @@
     "check:env": "node scripts/check-root-env.mjs",
     "check:network-config": "node scripts/check-network-config.mjs --fail-on-missing",
     "check:audit:root": "node scripts/check-root-audit-allowlist.mjs",
+    "check:npm-audit": "node scripts/check-npm-audit.mjs",
     "audit:signers:files": "node scripts/audit-neo-n3-signer-files.mjs",
     "render:nitro-env": "node scripts/render-nitro-env.mjs",
     "check:control-plane": "node scripts/check-control-plane-env.mjs",
