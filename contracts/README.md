@@ -80,6 +80,9 @@ cd contracts
 ./build.sh
 ```
 
+The compiler must be `nccs` 3.9.1: `$NCCS` (a path) is used when set, else the first `nccs` on
+`PATH`, else `~/.dotnet/tools/nccs`.
+
 ## Test
 
 ```bash

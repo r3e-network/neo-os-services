@@ -147,7 +147,7 @@ receive `401 { error: 'unauthorized' }`; malformed inputs receive
 
 ## Known Environment Caveat
 
-Local developer machines that do not have `dotnet` and `~/.dotnet/tools/nccs` installed will skip the contract compilation regression test. CI must still enforce contract compilation using the pinned compiler before release.
+Local developer machines that do not have `dotnet` and `nccs` (found through `$NCCS`, `PATH` or `~/.dotnet/tools/nccs`) installed will skip the contract compilation regression test. CI must still enforce contract compilation using the pinned compiler before release.
 
 ## Compatibility Child Process Hardening
 
