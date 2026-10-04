@@ -146,6 +146,20 @@ function hasMethod(methods, name, arity) {
   );
 }
 
+// True when the manifest's ABI has a method with this name and parameter count.
+export function manifestHasMethod(manifest, name, arity = 0) {
+  return hasMethod(manifest?.abi?.methods ?? [], name, arity);
+}
+
+// Splits zero-argument getters into those the manifest's ABI has and those it lacks, so a
+// verification never calls a member of another generation (a call to one FAULTs).
+export function splitGettersByAbi(manifest, names) {
+  const present = [];
+  const absent = [];
+  for (const name of names) (manifestHasMethod(manifest, name, 0) ? present : absent).push(name);
+  return { present, absent };
+}
+
 // Which update path the deployed ABI offers. Throws when the kernel cannot be updated in
 // place, or when it exposes only half of the timelock (never guess the gate).
 export function describeUpgradeGate(manifest) {
@@ -176,7 +190,9 @@ export function decodeStorageInteger(base64) {
   return value;
 }
 
-// The pending upgrade read from storage (getstorage returns null for an absent key).
+// The pending upgrade read from storage. null (or an empty string) stands for an absent key: the
+// caller maps the -104 "Unknown storage item" error that neo-go and C# nodes answer for an absent
+// key to null (isUnknownStorageItemError); older nodes answered null themselves.
 export function decodePendingUpgrade({ timeBase64, hashBase64 }) {
   const hasTime = typeof timeBase64 === 'string' && timeBase64.length > 0;
   const hasHash = typeof hashBase64 === 'string' && hashBase64.length > 0;
@@ -322,4 +338,215 @@ export function upgradeInvocation(action) {
     default:
       return null;
   }
+}
+
+// --- What real nodes answer -----------------------------------------------------------------------
+
+// getstorage of a key that is not stored: neo-go (0.121, 0.123 on both public mainnet nodes) and
+// C# Neo (3.10) answer the JSON-RPC error -104 "Unknown storage item" instead of null.
+export const RPC_ERROR_UNKNOWN_STORAGE_ITEM = -104;
+
+export function isUnknownStorageItemError(rpcError) {
+  if (!rpcError || typeof rpcError !== 'object') return false;
+  if (rpcError.code === RPC_ERROR_UNKNOWN_STORAGE_ITEM) return true;
+  return typeof rpcError.message === 'string' && /unknown storage item/i.test(rpcError.message);
+}
+
+// A getter's stack item as a printable value. Integers stay exact decimal strings, booleans are
+// booleans (reading one as an integer printed "null"), and any other type is returned as it came
+// so a verification never hides what it could not decode.
+export function decodeStackItem(item) {
+  if (!item || typeof item !== 'object') return null;
+  if (item.type === 'Integer') return BigInt(item.value).toString();
+  if (item.type === 'Boolean') return item.value === true || item.value === 'true';
+  return { type: item.type, value: item.value };
+}
+
+// --- The system fee margin --------------------------------------------------------------------------
+
+// A transaction's whole system fee is charged whether or not the script uses all of it, and a
+// script that needs more than the fee FAULTs after burning it. The fee is the node's simulation of
+// the call at the time of signing, so state that moves before inclusion can push the real cost
+// over it; the margin is the headroom.
+export const DEFAULT_SYSTEM_FEE_MARGIN_PERCENT = 10;
+
+export function parseSystemFeeMarginPercent(raw) {
+  if (raw === undefined || raw === null) return DEFAULT_SYSTEM_FEE_MARGIN_PERCENT;
+  const text = String(raw).trim();
+  const value = /^\d+(\.\d{1,2})?$/.test(text) ? Number(text) : Number.NaN;
+  if (!Number.isFinite(value) || value > 100) {
+    throw new Error(
+      `--system-fee-margin must be a percentage between 0 and 100 with at most two decimals ` +
+        `(default ${DEFAULT_SYSTEM_FEE_MARGIN_PERCENT}), got '${raw}'`
+    );
+  }
+  return value;
+}
+
+function toFeeBigInt(value) {
+  const fee =
+    typeof value === 'bigint'
+      ? value
+      : typeof value === 'number' && Number.isSafeInteger(value)
+        ? BigInt(value)
+        : typeof value === 'string' && /^[0-9]+$/.test(value.trim())
+          ? BigInt(value.trim())
+          : null;
+  if (fee === null || fee < 0n) throw new Error('system fee must be a non-negative integer');
+  return fee;
+}
+
+// simulated + simulated * percent / 100, with the margin rounded up so it is never below the
+// percentage asked for. percent has at most two decimals (parseSystemFeeMarginPercent).
+export function applySystemFeeMargin(simulatedFee, marginPercent) {
+  const fee = toFeeBigInt(simulatedFee);
+  const basisPoints = BigInt(Math.round(Number(marginPercent) * 100));
+  return fee + (fee * basisPoints + 9_999n) / 10_000n;
+}
+
+// --- The rollback artifact, independent of the node that served it -----------------------------------
+
+function sha256Hex(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+// The manifest as one text that does not depend on who serialised it: JSON with the keys sorted
+// at every level (arrays keep their order, which is content) and no whitespace. A neo-go node and
+// a C# node serve the same manifest in different key orders, so sha256(nef || served text)
+// differs between them for the same contract.
+export function canonicalManifestText(manifest) {
+  if (typeof manifest === 'string' && manifest.trim() === '') {
+    throw new Error('manifest is required');
+  }
+  const parsed = typeof manifest === 'string' ? JSON.parse(manifest) : manifest;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('manifest must be a JSON object');
+  }
+  return JSON.stringify(sortValue(parsed));
+}
+
+export function computeCanonicalArtifactHash(nefBytes, manifest) {
+  return computeUpgradeArtifactHash(nefBytes, canonicalManifestText(manifest));
+}
+
+export const ARTIFACT_FORM =
+  'sha256(nef bytes || canonical manifest text): the manifest JSON with keys sorted at every ' +
+  'level and no whitespace, so the hash is the same whichever node served it; submitting the ' +
+  'archived nef and manifest files makes scheduleUpdate pin exactly this hash';
+
+// The identities of an archived on-chain artifact. artifact_sha256 is over the canonical manifest
+// (the archived .manifest.json) and is the one to compare; served_artifact_sha256 is over the text
+// the serving node emitted, depends on that node's key order, and is kept to match older figures.
+export function describeRollbackArtifact({ nefBytes, servedManifestText }) {
+  const canonical = canonicalManifestText(servedManifestText);
+  return {
+    artifact_form: ARTIFACT_FORM,
+    artifact_sha256: computeUpgradeArtifactHash(nefBytes, canonical),
+    served_artifact_sha256: computeUpgradeArtifactHash(nefBytes, servedManifestText),
+    nef_sha256: sha256Hex(Buffer.from(nefBytes)),
+    manifest_sha256: sha256Hex(canonical),
+    served_manifest_sha256: sha256Hex(servedManifestText),
+    canonical_manifest_text: canonical,
+  };
+}
+
+// --- Which node to trust ------------------------------------------------------------------------------
+
+// Two independent operators per network, both neo-go: COZ and NeoSPCC. Both mainnet nodes and the
+// testnet pair answered getversion with the reviewed magic and agreed on getcontractstate when read
+// on 2026-10-04. They are the default only for reads and a testnet run; a mainnet transaction never
+// uses them without an explicit --rpc.
+export const OFFICIAL_PUBLIC_RPC_URLS = Object.freeze({
+  mainnet: Object.freeze(['https://mainnet1.neo.coz.io:443', 'https://rpc10.n3.nspcc.ru:10331']),
+  testnet: Object.freeze(['https://testnet1.neo.coz.io:443', 'https://rpc.t5.n3.nspcc.ru:20331']),
+});
+
+function normalizeRpcUrls(values, label) {
+  const urls = [];
+  for (const value of values) {
+    const text = typeof value === 'string' ? value.trim() : '';
+    if (!text) continue;
+    let parsed;
+    try {
+      parsed = new URL(text);
+    } catch {
+      throw new Error(`${label} '${text}' is not a valid URL`);
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      throw new Error(`${label} '${text}' must be an http(s) URL`);
+    }
+    const url = text.replace(/\/+$/, '');
+    if (!urls.includes(url)) urls.push(url);
+  }
+  return urls;
+}
+
+// The endpoints a run reads from and the first of which it also sends to. --rpc (repeatable) wins;
+// otherwise NEO_RPC_URL from the real environment; otherwise the two official endpoints. A mainnet
+// apply needs --rpc on the command line: a transaction goes only to a node the operator named.
+export function resolveRpcEndpoints({ network, flagUrls = [], envUrl = '', applying = false }) {
+  const flagged = normalizeRpcUrls(flagUrls, '--rpc');
+  if (flagged.length > 0) return { urls: flagged, source: 'flag' };
+  if (applying && network === 'mainnet') {
+    throw new Error(
+      'mainnet apply requires an explicit --rpc <url> on the command line (pass it twice to ' +
+        'cross-check two nodes); neither NEO_RPC_URL nor the built-in endpoints are accepted ' +
+        'for a mainnet transaction'
+    );
+  }
+  const fromEnv = normalizeRpcUrls([envUrl], 'NEO_RPC_URL');
+  if (fromEnv.length > 0) return { urls: fromEnv, source: 'env' };
+  const defaults = OFFICIAL_PUBLIC_RPC_URLS[network];
+  if (!defaults)
+    throw new Error(`no official public RPC endpoints are known for ${network}; pass --rpc`);
+  return { urls: [...defaults], source: 'default' };
+}
+
+// What an endpoint says about the deployed kernel, reduced to what must be the same everywhere.
+// The manifest is compared canonically: nodes serialise it in different key orders.
+export function observeContractState(rpc, state) {
+  return {
+    rpc,
+    updatecounter: state.updatecounter,
+    nefChecksum: state.nef?.checksum,
+    manifestSha256: sha256Hex(canonicalManifestText(state.manifest)),
+  };
+}
+
+// Every endpoint must report the same updatecounter, NEF checksum and manifest before anything is
+// planned from them. Returns the agreed facts.
+export function assertRpcAgreement(observations) {
+  if (!Array.isArray(observations) || observations.length === 0) {
+    throw new Error('assertRpcAgreement needs at least one observation');
+  }
+  const [first, ...rest] = observations;
+  const fields = [
+    ['updatecounter', 'updatecounter'],
+    ['nef_checksum', 'nefChecksum'],
+    ['manifest', 'manifestSha256'],
+  ];
+  const differing = new Set();
+  for (const other of rest) {
+    for (const [label, key] of fields) if (other[key] !== first[key]) differing.add(label);
+  }
+  if (differing.size > 0) {
+    const table = observations
+      .map(
+        (entry) =>
+          `  ${entry.rpc}: updatecounter=${entry.updatecounter} nef_checksum=${entry.nefChecksum} ` +
+          `manifest_sha256=${entry.manifestSha256}`
+      )
+      .join('\n');
+    throw new Error(
+      `RPC endpoints disagree about the deployed MorpheusOracle (${[...differing].join(', ')}); ` +
+        `nothing was planned:\n${table}`
+    );
+  }
+  return {
+    endpoints: observations.length,
+    cross_checked: observations.length > 1,
+    updatecounter: first.updatecounter,
+    nef_checksum: first.nefChecksum,
+    manifest_sha256: first.manifestSha256,
+  };
 }

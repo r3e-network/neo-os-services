@@ -15,20 +15,31 @@
  * docs/security/ORACLE-INTEGRATION-WITNESS-20260928.md for the operational order.
  *
  * Usage:
- *   node scripts/upgrade-morpheus-oracle.mjs [--network testnet|mainnet] [--rpc <url>]
+ *   node scripts/upgrade-morpheus-oracle.mjs [--network testnet|mainnet]
+ *       [--rpc <url> [--rpc <url2>]] [--env-file <path>]
  *       [--oracle <hash>] [--nef <path>] [--manifest <path>] [--archive-dir <dir>]
- *       [--batch-size 16] [--probe-app <appId>]
- *       [--cancel] [--reschedule] [--allow-same-artifact]
+ *       [--batch-size 16] [--probe-app <appId>] [--system-fee-margin <percent>]
+ *       [--skip-simulation] [--cancel] [--reschedule] [--allow-same-artifact]
  *
  * Safety model:
+ *   - NOTHING is read from the checkout implicitly: neither ./.env nor
+ *     deploy/nitro/morpheus.<network>.env. A file is loaded only when named with --env-file, and
+ *     the real environment wins over it.
+ *   - Endpoints: --rpc (repeatable) names the node(s). The first receives the transactions and
+ *     answers every read; every further one is a read-only cross-check. Without --rpc, NEO_RPC_URL,
+ *     then two independent official public nodes. All endpoints must be on --network and must agree
+ *     about the deployed kernel (updatecounter, NEF checksum, manifest) before anything is planned.
+ *     A mainnet apply requires --rpc on the command line.
  *   - DRY RUN by default: read-only RPC only. Reports the deployed state, the local artifact
  *     and its sha256(nef || manifest), the pending schedule and the planned step; archives
  *     the current on-chain NEF + manifest (the rollback artifact) under --archive-dir;
- *     test-invokes the planned call with the admin as signer; prints the RebuildIndexes plan.
- *     Nothing is signed or broadcast.
+ *     simulates the planned call on the node (an invokefunction: a node-side simulation, not a
+ *     transaction; --skip-simulation skips it) with the admin as signer; prints the RebuildIndexes
+ *     plan. Nothing is signed or broadcast.
  *   - UPGRADE_APPLY=1: signs and broadcasts the planned step with the admin key
  *     (MORPHEUS_ORACLE_ADMIN_WIF, falling back to the pinned updater role) and verifies it.
- *     A running timelock or a conflicting schedule is refused, never worked around.
+ *     The transaction's system fee is the node's simulation plus --system-fee-margin percent
+ *     (default 10). A running timelock or a conflicting schedule is refused, never worked around.
  *   - REBUILD_APPLY=1: runs the chunked rebuildIndexes backfill (requires the upgraded
  *     contract on-chain) and verifies the callback index against the registry via
  *     getstorage. Independent of UPGRADE_APPLY so the backfill can be resumed.
@@ -40,21 +51,32 @@ import {
   PREFIX_UPGRADE_TIME,
   TIMELOCK_DELAY_MS,
   UPGRADE_ACTIONS,
+  applySystemFeeMargin,
   assertNefChecksum,
+  assertRpcAgreement,
+  canonicalManifestText,
   computeUpgradeArtifactHash,
   decodePendingUpgrade,
+  decodeStackItem,
+  describeRollbackArtifact,
   describeUpgradeGate,
+  isUnknownStorageItemError,
+  manifestHasMethod,
   manifestsEquivalent,
+  observeContractState,
+  parseSystemFeeMarginPercent,
   reconstructNefFile,
   planKernelUpgrade,
+  resolveRpcEndpoints,
+  splitGettersByAbi,
   storageKeyBase64,
   upgradeInvocation,
 } from './lib-oracle-upgrade.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { experimental, sc, u, wallet } from '@cityofzion/neon-js';
-import { loadDotEnv } from './lib-env.mjs';
+import { experimental, sc, tx, u, wallet } from '@cityofzion/neon-js';
+import { loadNamedEnvFiles } from './lib-env.mjs';
 import { normalizeMorpheusNetwork, resolvePinnedNeoN3Role } from './lib-neo-signers.mjs';
 import {
   readReviewedNetworkRegistrySync,
@@ -66,39 +88,68 @@ const PREFIX_CALLBACK_INDEX = 0x27; // MorpheusOracle.cs PREFIX_CALLBACK_INDEX
 const TX_POLL_ATTEMPTS = 18;
 const TX_POLL_INTERVAL_MS = 5_000;
 const NO_PENDING = Object.freeze({ scheduled: false, executeAfterMs: null, hashHex: null });
+// Zero-argument getters read after an update, when the target ABI has them.
+const POST_UPDATE_GETTERS = [
+  'accruedRequestFees',
+  'reservedRequestFees',
+  'withdrawableFees',
+  'getMiniAppCount',
+  'getTotalRequests',
+  'isIndexRebuildRequired',
+  'indexRebuildCursor',
+];
+const SIMULATION_NOTE =
+  'a node-side simulation: the node runs the call in a throwaway VM; it is not a transaction, ' +
+  'nothing is signed or broadcast and no state changes';
 
 const { values: flags } = parseArgs({
   options: {
     network: { type: 'string' },
     'batch-size': { type: 'string' },
-    rpc: { type: 'string' },
+    rpc: { type: 'string', multiple: true },
+    'env-file': { type: 'string', multiple: true },
     'probe-app': { type: 'string' },
     oracle: { type: 'string' },
     nef: { type: 'string' },
     manifest: { type: 'string' },
     'archive-dir': { type: 'string' },
+    'system-fee-margin': { type: 'string' },
+    'skip-simulation': { type: 'boolean', default: false },
     cancel: { type: 'boolean', default: false },
     reschedule: { type: 'boolean', default: false },
     'allow-same-artifact': { type: 'boolean', default: false },
   },
 });
 
-const requestedNetwork = normalizeMorpheusNetwork(
+// Environment files are an explicit choice: a populated checkout (./.env,
+// deploy/nitro/morpheus.<network>.env) must not be able to change the RPC, the network magic or the
+// signer of a run that did not ask for it. Node itself also recognises --env-file anywhere on the
+// command line and loads the file before this script starts (a missing file ends the process there,
+// exit 9). Both loaders agree: the real environment wins over a file and a later file wins over an
+// earlier one.
+await loadNamedEnvFiles(flags['env-file'] ?? []);
+
+const network = normalizeMorpheusNetwork(
   flags.network || process.env.MORPHEUS_NETWORK || 'testnet'
 );
-await loadDotEnv();
-const network = normalizeMorpheusNetwork(
-  flags.network || process.env.MORPHEUS_NETWORK || requestedNetwork
-);
-await loadDotEnv(new URL(`../deploy/nitro/morpheus.${network}.env`, import.meta.url), {
-  override: true,
+const applyUpdate = process.env.UPGRADE_APPLY === '1';
+const applyRebuild = process.env.REBUILD_APPLY === '1';
+const skipSimulation = flags['skip-simulation'] === true;
+if (skipSimulation && (applyUpdate || applyRebuild)) {
+  throw new Error(
+    '--skip-simulation is for dry runs: an apply simulates each call before it signs it, and the ' +
+      "simulated gas is the transaction's system fee"
+  );
+}
+const feeMarginPercent = parseSystemFeeMarginPercent(flags['system-fee-margin']);
+const { urls: rpcUrls, source: rpcSource } = resolveRpcEndpoints({
+  network,
+  flagUrls: flags.rpc ?? [],
+  envUrl: trimString(process.env.NEO_RPC_URL),
+  applying: applyUpdate || applyRebuild,
 });
-
-const rpcAddress = trimString(
-  flags.rpc ||
-    process.env.NEO_RPC_URL ||
-    (network === 'mainnet' ? 'https://api.n3index.dev/mainnet' : 'https://api.n3index.dev/testnet')
-);
+const rpcAddress = rpcUrls[0];
+const rpcPeers = rpcUrls.slice(1);
 const networkMagic = Number(
   resolveReviewedNeoN3Magic(
     readReviewedNetworkRegistrySync(process.cwd(), network),
@@ -110,20 +161,59 @@ const oracleHash = trimString(
   flags.oracle || process.env.CONTRACT_MORPHEUS_ORACLE_HASH || DEFAULT_ORACLE_HASH
 );
 const batchSize = Math.max(1, Number(flags['batch-size'] || 16));
-const applyUpdate = process.env.UPGRADE_APPLY === '1';
-const applyRebuild = process.env.REBUILD_APPLY === '1';
+if (network === 'mainnet' && rpcUrls.length === 1) {
+  console.error(
+    'note: a single RPC endpoint is used for planning, sending and verifying, so its answers are ' +
+      'not cross-checked; pass --rpc twice (two independent nodes) to require agreement.'
+  );
+}
 
 let rpcId = 0;
-async function rpc(method, params) {
-  const response = await fetch(rpcAddress, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }),
-  });
-  if (!response.ok) throw new Error(`${method} HTTP ${response.status}`);
-  const body = await response.json();
-  if (body.error) throw new Error(`${method} RPC error: ${JSON.stringify(body.error)}`);
-  return body.result;
+
+class RpcError extends Error {
+  constructor(method, rpcError) {
+    super(`${method} RPC error: ${JSON.stringify(rpcError)}`);
+    this.name = 'RpcError';
+    this.method = method;
+    this.rpcError = rpcError;
+  }
+}
+
+// One JSON-RPC call; `raw` is the response body exactly as the node sent it.
+async function rpcCall(url, method, params) {
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }),
+    });
+  } catch (error) {
+    throw new Error(
+      `${method} request to ${url} failed: ${error.cause?.message || error.message}`,
+      {
+        cause: error,
+      }
+    );
+  }
+  if (!response.ok) throw new Error(`${method} HTTP ${response.status} from ${url}`);
+  const raw = Buffer.from(await response.arrayBuffer());
+  let body;
+  try {
+    body = JSON.parse(raw.toString('utf8'));
+  } catch {
+    throw new Error(`${method} from ${url} did not return JSON`);
+  }
+  if (body.error) throw new RpcError(method, body.error);
+  return { result: body.result, raw };
+}
+
+async function rpcAt(url, method, params) {
+  return (await rpcCall(url, method, params)).result;
+}
+
+function rpc(method, params) {
+  return rpcAt(rpcAddress, method, params);
 }
 
 function b64ToBuf(b64) {
@@ -164,10 +254,22 @@ async function readMethod(method, params = [], signers = []) {
   return result;
 }
 
+// getstorage as a base64 value, or null for a key that is not stored. neo-go (0.121, 0.123) and
+// C# Neo (3.10) answer an absent key with the JSON-RPC error -104 "Unknown storage item"; older
+// nodes answered null. Any other error is a real failure.
+async function readStorage(keyBase64) {
+  try {
+    return (await rpc('getstorage', [oracleHash, keyBase64])) ?? null;
+  } catch (error) {
+    if (error instanceof RpcError && isUnknownStorageItemError(error.rpcError)) return null;
+    throw error;
+  }
+}
+
 async function readPendingUpgrade() {
   const [timeBase64, hashBase64] = await Promise.all([
-    rpc('getstorage', [oracleHash, storageKeyBase64(PREFIX_UPGRADE_TIME)]),
-    rpc('getstorage', [oracleHash, storageKeyBase64(PREFIX_UPGRADE_HASH)]),
+    readStorage(storageKeyBase64(PREFIX_UPGRADE_TIME)),
+    readStorage(storageKeyBase64(PREFIX_UPGRADE_HASH)),
   ]);
   return decodePendingUpgrade({ timeBase64, hashBase64 });
 }
@@ -207,8 +309,30 @@ async function waitForTransaction(txid) {
   );
 }
 
+// --- 0. Every endpoint is on this network and they agree about the kernel ------------------------
+for (const url of rpcUrls) {
+  const reported = (await rpcAt(url, 'getversion', []))?.protocol?.network;
+  if (reported !== networkMagic) {
+    throw new Error(
+      `RPC endpoint ${url} reports network magic ${reported}, not the reviewed ${network} magic ${networkMagic}`
+    );
+  }
+}
+
 // --- 1. Current deployed state (read-only) ------------------------------------------
-const state = await rpc('getcontractstate', [oracleHash]);
+const stateResponse = await rpcCall(rpcAddress, 'getcontractstate', [oracleHash]);
+const state = stateResponse.result;
+const observations = [observeContractState(rpcAddress, state)];
+for (const peer of rpcPeers) {
+  try {
+    observations.push(
+      observeContractState(peer, await rpcAt(peer, 'getcontractstate', [oracleHash]))
+    );
+  } catch (error) {
+    throw new Error(`cross-check endpoint ${peer}: ${error.message}`, { cause: error });
+  }
+}
+const rpcAgreement = assertRpcAgreement(observations);
 const gate = describeUpgradeGate(state.manifest);
 const deployedMethods = state.manifest.abi.methods.map((m) => m.name);
 
@@ -257,6 +381,9 @@ console.log(
   jsonSafe({
     network,
     rpc: rpcAddress,
+    rpc_peers: rpcPeers,
+    rpc_source: rpcSource,
+    rpc_agreement: rpcAgreement,
     oracle_hash: oracleHash,
     deployed: {
       updatecounter: state.updatecounter,
@@ -281,11 +408,17 @@ console.log(
     pending_upgrade: pending,
     chain_time_ms: chainTimeMs,
     plan,
-    mode: applyUpdate ? 'APPLY' : 'DRY RUN',
+    preview_simulation: !skipSimulation,
+    system_fee_margin_percent: feeMarginPercent,
+    mode: applyUpdate ? 'APPLY' : applyRebuild ? 'APPLY (index rebuild)' : 'DRY RUN',
   })
 );
 
 // --- 4. Archive the current on-chain state (rollback artifact) ------------------------
+// The archive holds the node's answer byte for byte (.getcontractstate.raw.json) and the artifact
+// the way a rollback submits it: the NEF and the manifest in canonical form. The manifest as the
+// serving node emitted it depends on that node's key order (neo-go and C# differ), so the hash a
+// rollback pins is computed over the canonical form: it is the same whichever node served it.
 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 const archiveDir = path.resolve(flags['archive-dir'] || path.join('private-backups', 'upgrades'));
 await fs.mkdir(archiveDir, { recursive: true });
@@ -293,14 +426,16 @@ const archiveBase = path.join(
   archiveDir,
   `morpheus-oracle.${network}.uc${state.updatecounter}.${timestamp}`
 );
+await fs.writeFile(`${archiveBase}.getcontractstate.raw.json`, stateResponse.raw);
 await fs.writeFile(`${archiveBase}.contractstate.json`, JSON.stringify(state, null, 2));
-// Compact JSON: the rollback submits this exact text, and scheduleUpdate pins its bytes.
-const rollbackManifestText = JSON.stringify(state.manifest);
-await fs.writeFile(`${archiveBase}.manifest.json`, rollbackManifestText);
+const servedManifestText = JSON.stringify(state.manifest);
+await fs.writeFile(`${archiveBase}.manifest.served.json`, servedManifestText);
+await fs.writeFile(`${archiveBase}.manifest.json`, canonicalManifestText(servedManifestText));
 try {
   // Byte-exact NEF so a rollback can submit the deployed code (checksum-validated).
   const rollbackNef = reconstructNefFile(state.nef);
   await fs.writeFile(`${archiveBase}.nef`, rollbackNef);
+  const identity = describeRollbackArtifact({ nefBytes: rollbackNef, servedManifestText });
   await fs.writeFile(
     `${archiveBase}.rollback.json`,
     jsonSafe({
@@ -308,9 +443,17 @@ try {
       oracle_hash: oracleHash,
       updatecounter: state.updatecounter,
       nef_checksum: state.nef.checksum,
-      artifact_sha256: computeUpgradeArtifactHash(rollbackNef, rollbackManifestText),
+      artifact_sha256: identity.artifact_sha256,
+      artifact_form: identity.artifact_form,
+      served_artifact_sha256: identity.served_artifact_sha256,
+      nef_sha256: identity.nef_sha256,
+      manifest_sha256: identity.manifest_sha256,
+      served_manifest_sha256: identity.served_manifest_sha256,
       nef: `${archiveBase}.nef`,
       manifest: `${archiveBase}.manifest.json`,
+      manifest_served: `${archiveBase}.manifest.served.json`,
+      contractstate_raw: `${archiveBase}.getcontractstate.raw.json`,
+      served_by: rpcAddress,
     })
   );
 } catch (error) {
@@ -318,7 +461,7 @@ try {
 }
 console.log(`archived current on-chain state to ${archiveBase}.*`);
 
-// --- 5. Preview of the planned call (test invoke; no signature, no broadcast) ----------
+// --- 5. Preview of the planned call (a node-side simulation; no signature, no broadcast) ------
 const artifactParams = [
   { type: 'ByteArray', value: nefBytes.toString('base64') },
   { type: 'String', value: manifestRaw },
@@ -330,28 +473,50 @@ if (plan.action === UPGRADE_ACTIONS.BLOCKED) {
   process.exit(1);
 }
 if (invocation) {
-  const preview = await rpc('invokefunction', [
-    oracleHash,
-    invocation.method,
-    invocation.withArtifact ? artifactParams : [],
-    adminSigner,
-  ]);
-  console.log(
-    `${invocation.method} preview: state=${preview.state} gasconsumed=${preview.gasconsumed}${
-      preview.exception ? ` exception=${preview.exception}` : ''
-    }`
-  );
-  if (preview.state !== 'HALT') {
-    throw new Error(`${invocation.method} test invoke FAULTed; refusing to continue`);
+  if (skipSimulation) {
+    console.log(
+      `${invocation.method} simulation skipped (--skip-simulation): no state-changing method was ` +
+        'simulated on the node, so neither its verdict nor its gas is shown.'
+    );
+  } else {
+    console.log(
+      `previewing ${invocation.method} with invokefunction, ${SIMULATION_NOTE}. ` +
+        '--skip-simulation skips it.'
+    );
+    const preview = await rpc('invokefunction', [
+      oracleHash,
+      invocation.method,
+      invocation.withArtifact ? artifactParams : [],
+      adminSigner,
+    ]);
+    console.log(
+      `${invocation.method} preview: state=${preview.state} gasconsumed=${preview.gasconsumed}${
+        preview.exception ? ` exception=${preview.exception}` : ''
+      }`
+    );
+    if (preview.state !== 'HALT') {
+      throw new Error(`${invocation.method} test invoke FAULTed; refusing to continue`);
+    }
+    console.log(
+      `apply would attach system fee ${applySystemFeeMargin(preview.gasconsumed, feeMarginPercent)} ` +
+        `(simulated ${preview.gasconsumed} + ${feeMarginPercent}% margin)`
+    );
   }
 } else if (plan.action === UPGRADE_ACTIONS.WAIT) {
-  // Show the kernel's own verdict on an early update.
-  const early = await rpc('invokefunction', [oracleHash, 'update', artifactParams, adminSigner]);
-  console.log(
-    `update preview (timelock running, ${plan.remainingMs} ms left): state=${early.state}${
-      early.exception ? ` exception=${early.exception}` : ''
-    }`
-  );
+  if (skipSimulation) {
+    console.log(
+      "update simulation skipped (--skip-simulation): the kernel's own verdict on an early update is not shown."
+    );
+  } else {
+    // Show the kernel's own verdict on an early update.
+    console.log(`previewing an early update with invokefunction, ${SIMULATION_NOTE}.`);
+    const early = await rpc('invokefunction', [oracleHash, 'update', artifactParams, adminSigner]);
+    console.log(
+      `update preview (timelock running, ${plan.remainingMs} ms left): state=${early.state}${
+        early.exception ? ` exception=${early.exception}` : ''
+      }`
+    );
+  }
 } else {
   console.log(`nothing to send: ${plan.reason}`);
 }
@@ -410,11 +575,7 @@ if (accountHash.toLowerCase() !== String(onChainAdmin).toLowerCase()) {
     `signer ${account.address} (${accountHash}) is not the on-chain admin ${onChainAdmin}; the call would FAULT`
   );
 }
-const contract = new experimental.SmartContract(oracleHash, {
-  rpcAddress,
-  networkMagic,
-  account,
-});
+const txConfig = { rpcAddress, networkMagic, account };
 
 function artifactContractParams() {
   return [
@@ -423,8 +584,36 @@ function artifactContractParams() {
   ];
 }
 
+// Sends one call of the kernel signed by the admin. The system fee is the node's simulation of
+// this very call plus the margin: the simulation is of the state at signing time, and state that
+// moves before inclusion can push the real cost over a fee with no headroom (a FAULT that still
+// burns the fee).
+async function sendInvocation(method, params) {
+  const builder = new sc.ScriptBuilder();
+  builder.emitAppCall(oracleHash, method, params);
+  const signer = new tx.Signer({ account: account.scriptHash, scopes: 'CalledByEntry' });
+  const simulated = BigInt(
+    (
+      await experimental.txHelpers.getSystemFee(u.HexString.fromHex(builder.build()), txConfig, [
+        signer,
+      ])
+    ).toString()
+  );
+  const systemFee = applySystemFeeMargin(simulated, feeMarginPercent);
+  console.log(
+    `system fee for ${method}: simulated ${simulated} + ${feeMarginPercent}% margin = ${systemFee} ` +
+      `datoshi (${u.BigInteger.fromNumber(systemFee.toString()).toDecimal(8)} GAS)`
+  );
+  const contract = new experimental.SmartContract(oracleHash, {
+    ...txConfig,
+    systemFeeOverride: u.BigInteger.fromNumber(systemFee.toString()),
+  });
+  return contract.invoke(method, params);
+}
+
 // --- 8. Apply the planned step ------------------------------------------------------------
 let updated = false;
+let targetManifest = null; // the ABI on chain after an update
 if (applyUpdate) {
   if (plan.action === UPGRADE_ACTIONS.WAIT) {
     throw new Error(
@@ -434,7 +623,7 @@ if (applyUpdate) {
   if (!invocation) {
     console.log(`skipping the upgrade transaction: ${plan.reason}`);
   } else {
-    const txid = await contract.invoke(
+    const txid = await sendInvocation(
       invocation.method,
       invocation.withArtifact ? artifactContractParams() : []
     );
@@ -452,6 +641,9 @@ if (applyUpdate) {
         `update confirmed: updatecounter=${after.updatecounter} checksum=${after.nef.checksum}`
       );
       updated = true;
+      // The ABI now on chain decides what can be read: a rollback lands on an older ABI that lacks
+      // the newer getters (a call to one FAULTs), and the new ABI's Boolean getters are not integers.
+      targetManifest = after.manifest;
     } else if (invocation.method === 'scheduleUpdate') {
       const scheduled = await readPendingUpgrade();
       if (!scheduled.scheduled || scheduled.hashHex !== localArtifactHash) {
@@ -471,38 +663,40 @@ if (applyUpdate) {
 
   if (updated) {
     // Post-update verification reads: the fee views must answer and the registry must still
-    // resolve (storage carried across the update untouched).
+    // resolve (storage carried across the update untouched). Only members of the ABI that is
+    // now on chain are read.
+    const { present, absent } = splitGettersByAbi(targetManifest, POST_UPDATE_GETTERS);
     const verification = {};
-    for (const method of [
-      'accruedRequestFees',
-      'reservedRequestFees',
-      'withdrawableFees',
-      'getMiniAppCount',
-      'getTotalRequests',
-      'isIndexRebuildRequired',
-      'indexRebuildCursor',
-    ]) {
+    for (const method of present) {
       const result = await readMethod(method);
-      verification[method] = String(integerFromStackItem(result.stack?.[0]) ?? 'null');
+      verification[method] = decodeStackItem(result.stack?.[0]);
     }
+    if (absent.length > 0) verification.not_in_target_abi = absent;
     let probeAppId = trimString(flags['probe-app'] || '');
-    if (!probeAppId && appCount > 0) {
-      const firstId = await readMethod('getMiniAppIdByIndex', [{ type: 'Integer', value: '0' }]);
-      probeAppId = b64ToBuf(firstId.stack?.[0]?.value || '').toString('utf8');
-    }
-    if (probeAppId) {
-      const probe = await readMethod('getMiniApp', [{ type: 'String', value: probeAppId }]);
-      const fields = probe.stack?.[0]?.value || [];
-      verification.getMiniApp = {
-        appId: probeAppId,
-        admin: hash160FromStackItem(fields[1]),
-        callback: hash160FromStackItem(fields[3]),
-        created_at: String(integerFromStackItem(fields[7]) ?? 'null'),
-      };
-      if (!verification.getMiniApp.created_at || verification.getMiniApp.created_at === '0') {
-        throw new Error(
-          `GetMiniApp probe for '${probeAppId}' returned an empty record after the update`
-        );
+    const canProbe =
+      manifestHasMethod(targetManifest, 'getMiniAppIdByIndex', 1) &&
+      manifestHasMethod(targetManifest, 'getMiniApp', 1);
+    if (!canProbe) {
+      verification.probe_skipped = 'getMiniAppIdByIndex/getMiniApp are not in the target ABI';
+    } else {
+      if (!probeAppId && appCount > 0) {
+        const firstId = await readMethod('getMiniAppIdByIndex', [{ type: 'Integer', value: '0' }]);
+        probeAppId = b64ToBuf(firstId.stack?.[0]?.value || '').toString('utf8');
+      }
+      if (probeAppId) {
+        const probe = await readMethod('getMiniApp', [{ type: 'String', value: probeAppId }]);
+        const fields = probe.stack?.[0]?.value || [];
+        verification.getMiniApp = {
+          appId: probeAppId,
+          admin: hash160FromStackItem(fields[1]),
+          callback: hash160FromStackItem(fields[3]),
+          created_at: String(integerFromStackItem(fields[7]) ?? 'null'),
+        };
+        if (!verification.getMiniApp.created_at || verification.getMiniApp.created_at === '0') {
+          throw new Error(
+            `GetMiniApp probe for '${probeAppId}' returned an empty record after the update`
+          );
+        }
       }
     }
     console.log(`post-update verification: ${JSON.stringify(verification, null, 2)}`);
@@ -561,7 +755,7 @@ if (applyRebuild) {
         `rebuildIndexes(${start}, ${count}) preview FAULTed: ${chunkPreview.exception || 'unknown'}`
       );
     }
-    const txid = await contract.invoke('rebuildIndexes', [
+    const txid = await sendInvocation('rebuildIndexes', [
       sc.ContractParam.integer(start),
       sc.ContractParam.integer(count),
     ]);
@@ -599,7 +793,7 @@ if (applyRebuild) {
   for (const [callback, appId] of expected) {
     const callbackLe = Buffer.from(callback.slice(2), 'hex').reverse();
     const key = Buffer.concat([Buffer.from([PREFIX_CALLBACK_INDEX]), callbackLe]);
-    const stored = await rpc('getstorage', [oracleHash, key.toString('base64')]);
+    const stored = await readStorage(key.toString('base64'));
     const storedAppId = stored ? b64ToBuf(stored).toString('utf8') : null;
     if (storedAppId !== appId) {
       throw new Error(

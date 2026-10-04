@@ -253,7 +253,11 @@ is the owner's to run. The tool is `scripts/upgrade-morpheus-oracle.mjs`: dry ru
 1. Dry run: `node scripts/upgrade-morpheus-oracle.mjs --network testnet`. Expect
    `plan.action = "update"`, the method diff above, `update preview: state=HALT`, and an archive
    under `private-backups/upgrades/` whose `.rollback.json` names artifact
-   `191032dff57b5e6b870e36cfc90c53f9cb6d8f63360bc09688bc0a54b7acb5f5`.
+   `7321bbabdb2337049b996febe98c63ad112d6a79dbff38c296212c83bd03109f` (computed over the canonical
+   manifest, so the same whichever node served it; `served_artifact_sha256` is
+   `191032dff57b5e6b870e36cfc90c53f9cb6d8f63360bc09688bc0a54b7acb5f5` from a neo-go node and
+   `85ba511568a32d296b91503584497f832c12e3033082280fdd00614ee58723f9` from a C# node, see
+   `docs/runbooks/morpheus-oracle-upgrade.md`).
 2. Apply: `UPGRADE_APPLY=1 MORPHEUS_ORACLE_ADMIN_WIF=… node scripts/upgrade-morpheus-oracle.mjs --network testnet`.
    The tool checks `updatecounter` 2 and checksum 647482271 on chain.
 3. Backfill: `REBUILD_APPLY=1 MORPHEUS_ORACLE_ADMIN_WIF=… node scripts/upgrade-morpheus-oracle.mjs --network testnet`
@@ -267,7 +271,7 @@ is the owner's to run. The tool is `scripts/upgrade-morpheus-oracle.mjs`: dry ru
 5. Rollback rehearsal, which proves the archive and the timelocked path before mainnet relies
    on them: schedule the archived deployed artifact with
    `UPGRADE_APPLY=1 … node scripts/upgrade-morpheus-oracle.mjs --network testnet --nef <archive>.nef --manifest <archive>.manifest.json`
-   (plan `schedule`; the tool verifies the pinned hash is `191032df…`), wait 24 h, run the same
+   (plan `schedule`; the tool verifies the pinned hash is `7321bbab…`), wait 24 h, run the same
    command again (plan `execute`; `updatecounter` 3, checksum 454480263), confirm the old ABI,
    then upgrade again from `contracts/build` (plan `update`) and repeat the backfill.
 
@@ -284,7 +288,7 @@ Rolling back reopens R-01, so it is for a fixed kernel that is broken, not for c
 it cannot be instant: the fixed kernel's own timelock applies.
 
 1. `UPGRADE_APPLY=1 MORPHEUS_ORACLE_ADMIN_WIF=… node scripts/upgrade-morpheus-oracle.mjs --network <net> --nef <archive>.nef --manifest <archive>.manifest.json`
-   schedules the archived deployed artifact (`sha256` `191032df…`).
+   schedules the archived deployed artifact (`artifact_sha256` `7321bbab…`).
 2. After 24 h, the same command executes the update. `updatecounter` increments and the checksum
    returns to 454480263.
 3. `--cancel` withdraws a scheduled rollback before it executes.
@@ -308,4 +312,5 @@ deployments". While a rollback is pending, the new generation's instant controls
 
 The NEF file sha256 and the rollback artifact hash were computed locally from the
 `getcontractstate` response with `scripts/lib-oracle-upgrade.mjs` (`reconstructNefFile`
-reproduces checksum 454480263).
+reproduces checksum 454480263). `191032df…` is the byte-exact hash over the manifest text a neo-go
+node served; the tool now reports `7321bbab…` (over the canonical manifest) as `artifact_sha256`.

@@ -19,7 +19,7 @@ apply flag and network.
 - `npm run verify:n3`
 - `npm run smoke:n3`
 - `npm run set:updater:n3`
-- `node scripts/upgrade-morpheus-oracle.mjs` (dry-run by default; index backfill resumes from the on-chain migration cursor)
+- `node scripts/upgrade-morpheus-oracle.mjs` (dry-run by default; without `--rpc` it reads two official public nodes that must agree, a mainnet apply needs `--rpc`; loads no env file unless `--env-file` names it; `--skip-simulation` keeps a dry run to read-only RPC; index backfill resumes from the on-chain migration cursor)
 - `npm run upgrade:datafeed:n3` (read-only dry-run; broadcast requires
   `node scripts/upgrade-morpheus-datafeed.mjs --apply --network testnet|mainnet`)
 - `npm run audit:feeds -- --network mainnet`

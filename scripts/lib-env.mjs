@@ -55,3 +55,15 @@ export async function loadDotEnv(envPath = path.resolve(process.cwd(), '.env'), 
     throw error;
   }
 }
+
+// Loads the files a caller was told to load (an --env-file flag), never one it found on its own.
+// A missing file is an error, not a silent no-op. loadDotEnv does not override a variable that has
+// a value, so reading the files last to first makes the real environment win over every file and a
+// later file win over an earlier one (the same order Node's own --env-file uses).
+export async function loadNamedEnvFiles(filePaths = [], label = '--env-file') {
+  for (const filePath of [...filePaths].reverse()) {
+    if (!(await loadDotEnv(path.resolve(filePath)))) {
+      throw new Error(`${label} ${filePath} does not exist`);
+    }
+  }
+}
