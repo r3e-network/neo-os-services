@@ -100,6 +100,20 @@ jobs:
       - run: node --test scripts/gitignore-protections.test.mjs
       - run: npm run check:rust-migration
       - run: npm run check:production-topology
+      # Declared capability ids, the host route table and the web proxies must agree, or
+      # carry a dated, owned entry in baselines/capability-route-parity.json.
+      - run: npm run check:capability-route-parity
+      # The baseline only shrinks. In the tree it cannot tell an entry that was always there
+      # from one added in the same change as the dead lane it excuses, so on a pull request
+      # it is compared with the base commit: no entry added, none dated later, no proxy
+      # re-pointed. The job has no path filter, so a baseline-only edit is checked too.
+      - name: Capability route-parity baseline only shrinks
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          npm run check:capability-route-parity -- --base "$BASE_SHA"
       - run: npm run check:cargo-lock-provenance
       - name: Audit Rust dependencies with reviewed exceptions
         run: |

@@ -31,6 +31,28 @@ test('lint-and-format runs all scripts regressions before repository gates', () 
   );
 });
 
+test('lint-and-format runs the capability route-parity gate, and compares its baseline with the base on a pull request', () => {
+  const lint = workflow.jobs['lint-and-format'];
+  const topology = requiredRun(lint, 'npm run check:production-topology');
+  const parity = requiredRun(lint, 'npm run check:capability-route-parity');
+  assert.equal(parity, topology + 1, 'the gate sits right after the topology gate');
+
+  const shrink = lint.steps.find(
+    (step) => typeof step.run === 'string' && step.run.includes('check:capability-route-parity --')
+  );
+  assert.ok(shrink, 'a step compares the baseline with the base commit');
+  assert.equal(shrink.if, "github.event_name == 'pull_request'");
+  assert.equal(shrink['continue-on-error'], undefined, 'the comparison must block on failure');
+  assert.equal(shrink.env.BASE_SHA, '${{ github.event.pull_request.base.sha }}');
+  assert.match(shrink.run, /git fetch --no-tags --depth=1 origin "\$BASE_SHA"/);
+  assert.match(shrink.run, /npm run check:capability-route-parity -- --base "\$BASE_SHA"/);
+  assert.ok(
+    shrink.run.indexOf('git fetch') < shrink.run.indexOf('npm run check:capability-route-parity'),
+    'the base commit is fetched before the comparison reads it'
+  );
+  assert.ok(lint.steps.indexOf(shrink) > parity, 'the comparison follows the gate itself');
+});
+
 test('CI installs and tests the independent custody authority package', () => {
   const custody = workflow.jobs['custody-state-authority'];
   assert.ok(custody, 'ci.yml must define a custody-state-authority test job');

@@ -20,6 +20,7 @@ test('repo verification script runs the canonical local validation stack', () =>
   assert.match(script, /check:audit:root/);
   assert.match(script, /check:rust-migration/);
   assert.match(script, /check:production-topology/);
+  assert.match(script, /^npm run check:capability-route-parity$/m);
   assert.match(script, /check:cargo-lock-provenance/);
   assert.match(script, /format:rust:check/);
   assert.match(script, /check:rust/);
@@ -37,6 +38,21 @@ test('repo verification script runs the canonical local validation stack', () =>
   assert.match(script, /MORPHEUS_NETWORK=\"\$network\" NEXT_PUBLIC_MORPHEUS_NETWORK=\"\$network\"/);
   assert.match(script, /lint -- --max-warnings=0/);
   assert.match(script, /command -v pgrep/);
+});
+
+test('the capability route-parity gate is a package script and runs after the topology gate', () => {
+  const pkg = readJson('package.json');
+  assert.equal(
+    pkg.scripts?.['check:capability-route-parity'],
+    'node scripts/check-capability-route-parity.mjs'
+  );
+
+  const lines = read(path.join('scripts', 'verify_repo.sh')).split('\n');
+  const topology = lines.indexOf('npm run check:production-topology');
+  const parity = lines.indexOf('npm run check:capability-route-parity');
+  assert.notEqual(topology, -1);
+  assert.notEqual(parity, -1, 'verify_repo.sh must run the capability route-parity gate');
+  assert.ok(parity > topology, 'the gate runs after the topology gate');
 });
 
 test('full testnet wrapper guards empty live args under bash nounset', () => {
