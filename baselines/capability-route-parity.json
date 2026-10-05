@@ -118,7 +118,7 @@
       "route": "/api/sign/payload",
       "target": "/sign/payload",
       "method": "POST",
-      "reason": "Unlike the other three, the host DOES classify /sign/payload (Target::SignPayload), but sign.rs closes blind payload signing with a 503 unless the measured image sets ENCLAVE_ALLOW_BLIND_SIGN=1. The shipped posture is closed and scripts/custody-plane-e2e.mjs asserts it, so this proxy reaches nothing a caller can use. Counted dead because the lane refuses in the shipped posture, which is why this proxy is in the baseline while sign_payload is not in dead_capability_ids.",
+      "reason": "Unlike the three proxies aimed at a route the host does not have, the host DOES classify /sign/payload (Target::SignPayload), but sign.rs closes blind payload signing with a 503 unless the measured image sets ENCLAVE_ALLOW_BLIND_SIGN=1. The shipped posture is closed and scripts/custody-plane-e2e.mjs asserts it, so this proxy reaches nothing a caller can use. Counted dead because the lane refuses in the shipped posture, which is why this proxy is in the baseline while sign_payload is not in dead_capability_ids.",
       "owner": "neo-os-services platform operator (CU-149 removes the proxy; the lane itself is a deliberate security retirement, not a gap)",
       "expires": "2026-11-30"
     },
