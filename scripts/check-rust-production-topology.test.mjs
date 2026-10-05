@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import os from 'node:os';
 
@@ -281,6 +283,12 @@ test('compose cannot collapse NeoX submission and fulfillment-proof roles', () =
 
 const PUBLIC_WRITER_KEY = 'boot-enabled-chain-writer:morpheus-public-feed-writer';
 const BEFORE_EXPIRY = '2026-09-23';
+// The exception was first dated 2026-10-07 and renewed once, for 14 days (DEC-CU-3). `expiresOn` is
+// the first UTC day the exception no longer holds, so 2026-10-20 is the last day it covers.
+const ORIGINAL_EXPIRY = '2026-10-07';
+const RENEWED_EXPIRY = '2026-10-21';
+const LAST_COVERED_DAY = '2026-10-20';
+const IN_WINDOW = '2026-10-15';
 
 test('repository discovery finds the boot-enabled public feed writer the name pattern missed', async () => {
   // The historical discovery is by name only and never saw it.
@@ -318,14 +326,15 @@ test('repository discovery finds the boot-enabled public feed writer the name pa
     'deploy/feed-pusher/morpheus-public-feed-writer.service',
     'deploy/feed-pusher/morpheus-public-feed-writer.timer',
   ]);
-  assert.equal(excepted[0].expiresOn, '2026-10-07');
-  assert.match(excepted[0].reason, /owner decision pending, round-9 audit 3a/);
+  assert.equal(excepted[0].expiresOn, RENEWED_EXPIRY);
+  assert.match(excepted[0].reason, /Owner: NeoOS program lead \(delegated by the owner\)/);
+  assert.match(excepted[0].reason, /Condition: the owner caps the writer cadence/);
 });
 
 test('the public feed writer exception is recorded, not the unit deleted or disabled', async () => {
   const exception = REVIEWED_TOPOLOGY_EXCEPTIONS.find((entry) => entry.key === PUBLIC_WRITER_KEY);
   assert.ok(exception);
-  assert.equal(exception.expiresOn, '2026-10-07');
+  assert.equal(exception.expiresOn, RENEWED_EXPIRY);
   for (const unit of ['morpheus-public-feed-writer.service', 'morpheus-public-feed-writer.timer']) {
     const source = await fs.readFile(
       path.resolve(FIXTURE_ROOT, '../..', '..', 'deploy/feed-pusher', unit),
@@ -364,11 +373,11 @@ test('without its reviewed exception the public feed writer fails the gate by na
 });
 
 test('an expired, stale or malformed reviewed exception fails the gate', async () => {
-  const expired = await auditBootEnabledChainWriters(undefined, { today: '2026-10-07' });
+  const expired = await auditBootEnabledChainWriters(undefined, { today: RENEWED_EXPIRY });
   assert.equal(expired.excepted.length, 0);
   assert.ok(
     expired.problems.some((problem) =>
-      problem.includes(`reviewed exception ${PUBLIC_WRITER_KEY} expired on 2026-10-07`)
+      problem.includes(`reviewed exception ${PUBLIC_WRITER_KEY} expired on ${RENEWED_EXPIRY}`)
     ),
     expired.problems.join('\n')
   );
@@ -478,4 +487,255 @@ test('discovery classifies boot-enabled units by content, not by name', async (t
   );
   assert.ok(problems.some((problem) => problem.startsWith('deploy/ops/nightly-sync.service is')));
   assert.ok(problems.some((problem) => problem.startsWith('deploy/ops/shadow-relayer.service is')));
+});
+
+// ── The exception renewed once, to 2026-10-21 (CU-21, DEC-CU-3) ────────────────
+// The renewal changes the entry and nothing else, so these tests pin both: the entry (date,
+// owner, condition, one renewal) and the gate around it (every other rule, the whole gate at
+// the boundary, and the CLI exit path with a pinned clock).
+
+const REPO_ROOT = path.resolve(FIXTURE_ROOT, '..', '..', '..');
+const PUBLIC_WRITER_UNIT = 'deploy/feed-pusher/morpheus-public-feed-writer.service';
+const PUBLIC_WRITER_TIMER = 'deploy/feed-pusher/morpheus-public-feed-writer.timer';
+// sha256 of PUBLIC_WRITER_UNIT as reviewed on 2026-10-05. The gate keys the exception by unit
+// name only (SVC-V10), so this hash is what ties the renewal to the unit that was reviewed.
+const REVIEWED_WRITER_UNIT_SHA256 =
+  '4241f91f6b05c51d4ee97ebb2067ff3c6be0389f682fdce73a65d87457805dad';
+
+function isRealDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function daysBetween(from, to) {
+  return (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000;
+}
+
+async function readShippedWriterUnits() {
+  const [service, timer] = await Promise.all([
+    fs.readFile(path.join(REPO_ROOT, PUBLIC_WRITER_UNIT), 'utf8'),
+    fs.readFile(path.join(REPO_ROOT, PUBLIC_WRITER_TIMER), 'utf8'),
+  ]);
+  return { service, timer };
+}
+
+test('the renewed exception covers 2026-10-20 and every day from 2026-10-21 fails, on the real tree', async () => {
+  for (const today of ['2026-10-05', '2026-10-06', ORIGINAL_EXPIRY, IN_WINDOW, LAST_COVERED_DAY]) {
+    const { problems, excepted } = await auditBootEnabledChainWriters(undefined, { today });
+    assert.deepEqual(problems, [], `${today} is covered`);
+    assert.deepEqual(
+      excepted.map((entry) => [entry.key, entry.expiresOn]),
+      [[PUBLIC_WRITER_KEY, RENEWED_EXPIRY]],
+      `${today} reports the excepted unit by name`
+    );
+  }
+  for (const today of [RENEWED_EXPIRY, '2026-10-22', '2026-11-20', '2027-10-20', '2099-12-31']) {
+    const { problems, writers, excepted } = await auditBootEnabledChainWriters(undefined, {
+      today,
+    });
+    assert.equal(problems.length, 1, `${today}: ${problems.join('\n')}`);
+    assert.ok(
+      problems[0].startsWith(
+        `${PUBLIC_WRITER_UNIT}: reviewed exception ${PUBLIC_WRITER_KEY} expired on ${RENEWED_EXPIRY} (`
+      ),
+      problems[0]
+    );
+    assert.deepEqual(excepted, [], `${today} reports nothing as excepted`);
+    assert.equal(writers.length, 1, `${today} still discovers the writer`);
+  }
+});
+
+test('the shipped exception is one entry, renewed once for 14 days, naming its owner and condition', () => {
+  assert.equal(
+    REVIEWED_TOPOLOGY_EXCEPTIONS.length,
+    1,
+    'one reviewed exception, for the public feed writer'
+  );
+  const exception = REVIEWED_TOPOLOGY_EXCEPTIONS.find((entry) => entry.key === PUBLIC_WRITER_KEY);
+  assert.ok(exception);
+  assert.deepEqual(
+    Object.keys(exception).sort(),
+    ['expiresOn', 'key', 'reason'],
+    'the exception schema is unchanged'
+  );
+  assert.ok(isRealDate(exception.expiresOn), `${exception.expiresOn} is a real calendar date`);
+  assert.equal(
+    daysBetween(ORIGINAL_EXPIRY, exception.expiresOn),
+    14,
+    'renewed once, for 14 days (DEC-CU-3): a further renewal needs a new recorded decision and a change to this test'
+  );
+  const { reason } = exception;
+  // What the exception tolerates, as first reviewed.
+  assert.match(reason, /boot-enabled every 60 s/);
+  assert.match(
+    reason,
+    /workers\/nitro-worker\/\.neoos-live-feed-write\.mjs --execute \(in no repository\)/
+  );
+  assert.match(reason, /outside the Rust relayer authority and absent from its Conflicts=/);
+  assert.match(reason, /kept running, not deleted or disabled/);
+  // Who answers for it, and what has to hold while it stands.
+  assert.match(reason, /Owner: NeoOS program lead \(delegated by the owner\)/);
+  assert.match(
+    reason,
+    /Condition: the owner caps the writer cadence and funds the updater to at least 30 days \(OP-02\)/
+  );
+  assert.match(reason, /the runway and stale alerts exist \(CU-11\)/);
+  assert.match(reason, /replaces this unit in the 2026-10-21 enclave rebuild window/);
+  assert.match(reason, /no second renewal/);
+});
+
+test('the excepted unit is the reviewed file: its sha256 is pinned', async () => {
+  const source = await fs.readFile(path.join(REPO_ROOT, PUBLIC_WRITER_UNIT));
+  assert.equal(
+    createHash('sha256').update(source).digest('hex'),
+    REVIEWED_WRITER_UNIT_SHA256,
+    `${PUBLIC_WRITER_UNIT} changed while the reviewed exception stands: review the change, then update the hash here`
+  );
+});
+
+test('with the renewed entry every other chain-writer rule is unchanged', async (t) => {
+  const { service, timer } = await readShippedWriterUnits();
+  const shipped = { [PUBLIC_WRITER_UNIT]: service, [PUBLIC_WRITER_TIMER]: timer };
+  const audit = async (files) =>
+    auditBootEnabledChainWriters(await writeTree(t, files), { today: IN_WINDOW });
+
+  // The shipped units alone: excepted by name, no problem.
+  let result = await audit(shipped);
+  assert.deepEqual(result.problems, []);
+  assert.deepEqual(
+    result.excepted.map((entry) => entry.key),
+    [PUBLIC_WRITER_KEY]
+  );
+
+  // A second, plainly named boot-enabled writer is not covered, and the excepted unit stays excepted.
+  result = await audit({
+    ...shipped,
+    'deploy/ops/second-writer.service': [
+      '[Unit]',
+      'Description=Second feed writer',
+      '[Service]',
+      'ExecStart=/usr/bin/node /opt/neoos/services/deploy/ops/push.mjs --execute',
+      '[Install]',
+      'WantedBy=multi-user.target',
+    ].join('\n'),
+  });
+  assert.equal(result.problems.length, 1, result.problems.join('\n'));
+  assert.match(
+    result.problems[0],
+    /^deploy\/ops\/second-writer\.service is a boot-enabled chain writer outside the Rust relayer authority/
+  );
+  assert.deepEqual(
+    result.excepted.map((entry) => entry.key),
+    [PUBLIC_WRITER_KEY]
+  );
+
+  // The key is the unit name: the same unit under another name is a second writer.
+  result = await audit({
+    ...shipped,
+    'deploy/feed-pusher/morpheus-public-feed-writer-b.service': service,
+  });
+  assert.equal(result.problems.length, 1, result.problems.join('\n'));
+  assert.match(
+    result.problems[0],
+    /^deploy\/feed-pusher\/morpheus-public-feed-writer-b\.service is a boot-enabled chain writer/
+  );
+
+  // An excepted unit that is deleted, or no longer boot-enabled, leaves a stale exception.
+  const stale = `reviewed exception ${PUBLIC_WRITER_KEY} matches no boot-enabled chain writer under deploy/; remove it`;
+  assert.deepEqual((await audit({})).problems, [stale]);
+  const withoutInstall = (source) => source.replace(/^\[Install\][\s\S]*$/m, '');
+  assert.doesNotMatch(withoutInstall(service), /\[Install\]/);
+  assert.doesNotMatch(withoutInstall(timer), /\[Install\]/);
+  result = await audit({
+    [PUBLIC_WRITER_UNIT]: withoutInstall(service),
+    [PUBLIC_WRITER_TIMER]: withoutInstall(timer),
+  });
+  assert.deepEqual(result.problems, [stale]);
+});
+
+test('across the whole gate the expiry is the only red at the boundary', async () => {
+  assert.deepEqual(
+    await auditProductionTopology(undefined, { chainWriters: { today: LAST_COVERED_DAY } }),
+    []
+  );
+  const problems = await auditProductionTopology(undefined, {
+    chainWriters: { today: RENEWED_EXPIRY },
+  });
+  assert.equal(problems.length, 1, problems.join('\n'));
+  assert.match(
+    problems[0],
+    new RegExp(`reviewed exception ${PUBLIC_WRITER_KEY} expired on ${RENEWED_EXPIRY}`)
+  );
+});
+
+// The gate computes its UTC day from `new Date()`. A child process gets this preload, which pins
+// the no-argument Date constructor and Date.now() to FAKE_NOW, to reach the CLI exit path.
+const FAKE_CLOCK_SOURCE = `
+const fixed = Date.parse(process.env.FAKE_NOW);
+const RealDate = Date;
+globalThis.Date = class extends RealDate {
+  constructor(...args) {
+    if (args.length === 0) super(fixed);
+    else super(...args);
+  }
+  static now() {
+    return fixed;
+  }
+};
+`;
+
+async function runGateCli(t, { now, timeZone }) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'topology-clock-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const preload = path.join(dir, 'fake-clock.mjs');
+  await fs.writeFile(preload, FAKE_CLOCK_SOURCE);
+  const env = { ...process.env, FAKE_NOW: now, TZ: timeZone };
+  delete env.NODE_TEST_CONTEXT;
+  return new Promise((resolve, reject) => {
+    execFile(
+      process.execPath,
+      [
+        '--import',
+        pathToFileURL(preload).href,
+        path.join(REPO_ROOT, 'scripts/check-rust-production-topology.mjs'),
+      ],
+      { env, timeout: 120_000 },
+      (error, stdout, stderr) => {
+        if (error && typeof error.code !== 'number') reject(error);
+        else resolve({ code: error ? error.code : 0, stdout, stderr });
+      }
+    );
+  });
+}
+
+test('the gate CLI passes through 2026-10-20 and exits 1 from 2026-10-21, whatever the local zone', async (t) => {
+  for (const now of ['2026-10-07T00:00:00Z', '2026-10-20T23:59:59Z']) {
+    const { code, stdout, stderr } = await runGateCli(t, { now, timeZone: 'Asia/Shanghai' });
+    assert.equal(code, 0, `${now}: ${stderr}`);
+    assert.match(
+      stderr,
+      new RegExp(
+        `^WARNING reviewed exception ${PUBLIC_WRITER_KEY} \\(expires ${RENEWED_EXPIRY}\\): `,
+        'm'
+      )
+    );
+    assert.match(stderr, /Owner: NeoOS program lead \(delegated by the owner\)/);
+    assert.match(stderr, /Condition: the owner caps the writer cadence and funds the updater/);
+    const report = JSON.parse(stdout);
+    assert.equal(report.ok, true);
+    assert.deepEqual(
+      report.reviewed_exceptions.map((entry) => [entry.key, entry.expiresOn]),
+      [[PUBLIC_WRITER_KEY, RENEWED_EXPIRY]]
+    );
+  }
+  const expired = await runGateCli(t, { now: '2026-10-21T00:00:00Z', timeZone: 'Asia/Shanghai' });
+  assert.equal(expired.code, 1, expired.stderr);
+  assert.equal(expired.stdout, '');
+  assert.match(expired.stderr, /Rust production topology audit failed:/);
+  assert.match(
+    expired.stderr,
+    new RegExp(`reviewed exception ${PUBLIC_WRITER_KEY} expired on ${RENEWED_EXPIRY}`)
+  );
+  assert.doesNotMatch(expired.stderr, /^WARNING/m);
 });
