@@ -1,7 +1,7 @@
 {
-  "comment": "Known-dead routes between the declared capability registry (workers/nitro-worker/src/capabilities.js), the measured host route table (workers/nitro-enclave-host/src/routes.rs) and the web proxies (apps/web/app/api/**/route.ts). This is a RECORD OF DEBT, not an allowance, and it is shrink-only: scripts/check-capability-route-parity.mjs fails if an entry is not actually dead, if an entry names a live lane, if an entry has no owner or expiry, or if an expiry has passed. The only edit that keeps the gate green is DELETING an entry, which is what CU-149 does when it adds the read-only catalog routes to the host and removes the dead proxies. An entry may never be added to admit a newly declared lane: that is the failure the gate exists to catch. Same 'absence without a dated record is a hard failure' rule as deploy/nitro/kms/attestation-pins.json.",
+  "comment": "Known-dead routes between the declared capability registry (workers/nitro-worker/src/capabilities.js), the measured host route table (workers/nitro-enclave-host/src/routes.rs) and the web proxies (apps/web/app/api/**/route.*). This is a RECORD OF DEBT, not an allowance, and it only shrinks. scripts/check-capability-route-parity.mjs enforces that in the tree on every run: every dead lane must be listed; an entry that is not actually dead fails; every entry needs a reason, an owner and an expires that is a real date, later than today and at most 60 days away; and a proxy entry pins the target and method it was recorded with, so re-pointing a proxy at another dead route fails. CI also runs the gate with --base <the pull request's base commit>: an entry that is not in the base file, a later expires, or a re-pointed proxy fails. Deleting an entry is the only edit that passes both, and it is what CU-149 does when it adds the read-only catalog routes to the host and repairs or removes the dead proxies. An entry may never be added to admit a newly declared lane: that is the failure the gate exists to catch. Same 'absence without a dated record is a hard failure' rule as deploy/nitro/kms/attestation-pins.json.",
   "recorded_on": "2026-10-05",
-  "recorded_against": "neo-os-services main 4a19985",
+  "recorded_against": "neo-os-services main 9c3019c (the three route sources are byte-identical on main 0c45a78)",
   "closes_with": "CU-149 (host catalog routes and dead web proxies), planned 10-30",
   "dead_capability_ids": [
     {
@@ -56,14 +56,14 @@
     {
       "id": "txproxy_invoke",
       "declared_route": "/txproxy/invoke",
-      "reason": "The transaction proxy lane is declared and has no host route. Confirmed 404 by the recorded probe (probe-routes-1.log).",
+      "reason": "The transaction proxy lane is declared and has no host route: no Target variant in workers/nitro-enclave-host/src/routes.rs classifies /txproxy/invoke. apps/web/lib/neo-control-plane.ts calls the path directly rather than through proxyToNitro, so that caller is outside what this gate reads.",
       "owner": "neo-os-services platform operator (needs the EIF rebuild window)",
       "expires": "2026-11-30"
     },
     {
       "id": "relay_transaction",
       "declared_route": "/relay/transaction",
-      "reason": "The host has no /relay/transaction (confirmed 404 in probe-routes-1.log). /api/relay/transaction is an admin-gated public proxy aimed at it, so the endpoint exists, authenticates and then fails. Transaction submission goes through the relayer, not the enclave.",
+      "reason": "The host has no /relay/transaction: no Target variant in workers/nitro-enclave-host/src/routes.rs classifies it. /api/relay/transaction is an admin-gated public proxy aimed at it, so the endpoint exists, authenticates and then fails. Transaction submission goes through the relayer, not the enclave.",
       "owner": "neo-os-services platform operator (CU-149 removes the proxy)",
       "expires": "2026-11-30"
     },
@@ -93,6 +93,7 @@
     {
       "route": "/api/neodid/runtime",
       "target": "/neodid/runtime",
+      "method": "GET",
       "reason": "The host has no /neodid/runtime. A documented public GET proxy (docs/USER_GUIDE.md:613) that 404s upstream. CU-149 removes the proxy or the host gains the route.",
       "owner": "neo-os-services platform operator (CU-149 removes the proxy)",
       "expires": "2026-11-30"
@@ -100,6 +101,7 @@
     {
       "route": "/api/compute/functions",
       "target": "/compute/functions",
+      "method": "GET",
       "reason": "The host has no /compute/functions. A public rate-limited GET proxy that 404s upstream while being listed in apps/web/README.md and the user guide as a working endpoint.",
       "owner": "neo-os-services platform operator (CU-149 removes the proxy)",
       "expires": "2026-11-30"
@@ -107,6 +109,7 @@
     {
       "route": "/api/relay/transaction",
       "target": "/relay/transaction",
+      "method": "POST",
       "reason": "The host has no /relay/transaction. The proxy is admin-gated and records an operation log, so the failure is only visible after a successful authorisation.",
       "owner": "neo-os-services platform operator (CU-149 removes the proxy)",
       "expires": "2026-11-30"
@@ -114,8 +117,17 @@
     {
       "route": "/api/sign/payload",
       "target": "/sign/payload",
+      "method": "POST",
       "reason": "Unlike the other three, the host DOES classify /sign/payload (Target::SignPayload), but sign.rs closes blind payload signing with a 503 unless the measured image sets ENCLAVE_ALLOW_BLIND_SIGN=1. The shipped posture is closed and scripts/custody-plane-e2e.mjs asserts it, so this proxy reaches nothing a caller can use. Counted dead because the lane refuses in the shipped posture, which is why this proxy is in the baseline while sign_payload is not in dead_capability_ids.",
       "owner": "neo-os-services platform operator (CU-149 removes the proxy; the lane itself is a deliberate security retirement, not a gap)",
+      "expires": "2026-11-30"
+    },
+    {
+      "route": "/api/runtime/keys/derived",
+      "target": "/keys/derived",
+      "method": "GET",
+      "reason": "The host serves /keys/derived for POST only (classify falls through to NotFound on a method mismatch) and this runtime-token-gated proxy sends GET, so an authorised caller gets the host 404. A path-only comparison lists it as live. scripts/publish-oracle-verifier-key.mjs:51 sends the same GET straight to the host.",
+      "owner": "neo-os-services platform operator (CU-149 repairs or removes the proxy)",
       "expires": "2026-11-30"
     }
   ]
