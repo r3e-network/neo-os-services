@@ -32,6 +32,7 @@
     "check:rust-migration": "node scripts/check-rust-migration.mjs",
     "check:rust:audit": "node scripts/check-rust-audit.mjs",
     "check:production-topology": "node scripts/check-rust-production-topology.mjs",
+    "check:capability-route-parity": "node scripts/check-capability-route-parity.mjs",
     "check:tracked-build-outputs": "node scripts/check-tracked-build-outputs.mjs",
     "check:custody-plane": "node scripts/custody-plane-e2e.mjs",
     "test:signer:rust": "cargo test -p neo-signer --all-targets --locked",

@@ -51,6 +51,7 @@ kill_web_builders() {
 npm run check:audit:root
 npm run check:rust-migration
 npm run check:production-topology
+npm run check:capability-route-parity
 npm run check:cargo-lock-provenance
 npm run format:rust:check
 npm run check:rust

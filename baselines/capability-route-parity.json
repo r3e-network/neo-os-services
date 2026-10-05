@@ -1,0 +1,122 @@
+{
+  "comment": "Known-dead routes between the declared capability registry (workers/nitro-worker/src/capabilities.js), the measured host route table (workers/nitro-enclave-host/src/routes.rs) and the web proxies (apps/web/app/api/**/route.ts). This is a RECORD OF DEBT, not an allowance, and it is shrink-only: scripts/check-capability-route-parity.mjs fails if an entry is not actually dead, if an entry names a live lane, if an entry has no owner or expiry, or if an expiry has passed. The only edit that keeps the gate green is DELETING an entry, which is what CU-149 does when it adds the read-only catalog routes to the host and removes the dead proxies. An entry may never be added to admit a newly declared lane: that is the failure the gate exists to catch. Same 'absence without a dated record is a hard failure' rule as deploy/nitro/kms/attestation-pins.json.",
+  "recorded_on": "2026-10-05",
+  "recorded_against": "neo-os-services main 4a19985",
+  "closes_with": "CU-149 (host catalog routes and dead web proxies), planned 10-30",
+  "dead_capability_ids": [
+    {
+      "id": "neodid_providers",
+      "declared_route": "/neodid/providers",
+      "reason": "The registry publishes a providers listing the Rust host never implemented. No Target variant classifies it, so the route 404s for every caller.",
+      "owner": "neo-os-services platform operator (needs the EIF rebuild window)",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "neodid_runtime",
+      "declared_route": "/neodid/runtime",
+      "reason": "The registry publishes the DID runtime descriptor; the host has no route for it. /api/neodid/runtime proxies here and answers 404 behind a public 200-shaped endpoint.",
+      "owner": "neo-os-services platform operator (needs the EIF rebuild window)",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "providers",
+      "declared_route": "/providers",
+      "reason": "The upstream provider health list stayed in the Node tree when the read plane folded into the host. The registry still declares it; the host does not serve it.",
+      "owner": "neo-os-services platform operator (needs the EIF rebuild window)",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "oracle_heartbeat",
+      "declared_route": "/oracle/heartbeat",
+      "reason": "The registry declares a heartbeat lane with no host route. /health reports provider health instead, so the declared id is a second, unreachable spelling of an existing answer.",
+      "owner": "neo-os-services platform operator (needs the EIF rebuild window)",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "feeds_catalog",
+      "declared_route": "/feeds/catalog",
+      "reason": "The read-only feed pair catalog never moved into the host. A catalog route is exactly what CU-149 adds, or the web app serves it statically.",
+      "owner": "neo-os-services platform operator (CU-149, needs the EIF rebuild window)",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "feeds_price_symbol",
+      "declared_route": "/feeds/price/:symbol (pattern)",
+      "reason": "The parameterised price lane is a REGEX in the registry and the host table is exact-match only, so this id can never be satisfied by a host route as written. It needs a host route for the symbol form, or removal from the registry.",
+      "owner": "neo-os-services platform operator (CU-149, needs the EIF rebuild window)",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "feeds_price",
+      "declared_route": "/feeds/price",
+      "reason": "The quote lane stayed in the Node oracle tree; the host serves price data through /compute/execute and /oracle/query instead. The declared id 404s.",
+      "owner": "neo-os-services platform operator (CU-149, needs the EIF rebuild window)",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "txproxy_invoke",
+      "declared_route": "/txproxy/invoke",
+      "reason": "The transaction proxy lane is declared and has no host route. Confirmed 404 by the recorded probe (probe-routes-1.log).",
+      "owner": "neo-os-services platform operator (needs the EIF rebuild window)",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "relay_transaction",
+      "declared_route": "/relay/transaction",
+      "reason": "The host has no /relay/transaction (confirmed 404 in probe-routes-1.log). /api/relay/transaction is an admin-gated public proxy aimed at it, so the endpoint exists, authenticates and then fails. Transaction submission goes through the relayer, not the enclave.",
+      "owner": "neo-os-services platform operator (CU-149 removes the proxy)",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "compute_functions",
+      "declared_route": "/compute/functions",
+      "reason": "The builtin function catalogue is declared with no host route. /api/compute/functions is a public rate-limited GET proxy aimed at it, so it is a 404 behind a documented public endpoint (docs/USER_GUIDE.md:135).",
+      "owner": "neo-os-services platform operator (CU-149, needs the EIF rebuild window)",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "compute_jobs_id",
+      "declared_route": "/compute/jobs/:id (pattern)",
+      "reason": "The parameterised job lane is a REGEX in the registry and the host table is exact-match only, so it cannot be satisfied by a host route as written. The host computes synchronously and has no job store.",
+      "owner": "neo-os-services platform operator (CU-149, needs the EIF rebuild window)",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "compute_jobs",
+      "declared_route": "/compute/jobs",
+      "reason": "The async job list lane stayed in the Node compute tree. The host answers /compute/execute synchronously; the declared id 404s.",
+      "owner": "neo-os-services platform operator (CU-149, needs the EIF rebuild window)",
+      "expires": "2026-11-30"
+    }
+  ],
+  "dead_web_proxies": [
+    {
+      "route": "/api/neodid/runtime",
+      "target": "/neodid/runtime",
+      "reason": "The host has no /neodid/runtime. A documented public GET proxy (docs/USER_GUIDE.md:613) that 404s upstream. CU-149 removes the proxy or the host gains the route.",
+      "owner": "neo-os-services platform operator (CU-149 removes the proxy)",
+      "expires": "2026-11-30"
+    },
+    {
+      "route": "/api/compute/functions",
+      "target": "/compute/functions",
+      "reason": "The host has no /compute/functions. A public rate-limited GET proxy that 404s upstream while being listed in apps/web/README.md and the user guide as a working endpoint.",
+      "owner": "neo-os-services platform operator (CU-149 removes the proxy)",
+      "expires": "2026-11-30"
+    },
+    {
+      "route": "/api/relay/transaction",
+      "target": "/relay/transaction",
+      "reason": "The host has no /relay/transaction. The proxy is admin-gated and records an operation log, so the failure is only visible after a successful authorisation.",
+      "owner": "neo-os-services platform operator (CU-149 removes the proxy)",
+      "expires": "2026-11-30"
+    },
+    {
+      "route": "/api/sign/payload",
+      "target": "/sign/payload",
+      "reason": "Unlike the other three, the host DOES classify /sign/payload (Target::SignPayload), but sign.rs closes blind payload signing with a 503 unless the measured image sets ENCLAVE_ALLOW_BLIND_SIGN=1. The shipped posture is closed and scripts/custody-plane-e2e.mjs asserts it, so this proxy reaches nothing a caller can use. Counted dead because the lane refuses in the shipped posture, which is why this proxy is in the baseline while sign_payload is not in dead_capability_ids.",
+      "owner": "neo-os-services platform operator (CU-149 removes the proxy; the lane itself is a deliberate security retirement, not a gap)",
+      "expires": "2026-11-30"
+    }
+  ]
+}
