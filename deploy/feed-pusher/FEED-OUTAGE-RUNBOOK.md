@@ -9,6 +9,131 @@
 > before returning authority to Rust. The systemd units enforce this mutual
 > exclusion so Node and Rust cannot write chain state concurrently.
 
+## Runway alerts, stale paging and the daily write budget (CU-11, 2026-10-05)
+
+Written for the 2026-10-01 outage. The live mainnet writer made 752 transactions on 2026-09-30, 0.00606339
+GAS each, about 4.56 GAS a day and four times the plan, while the monitor's only balance alert was a fixed floor
+(12 GAS) that says nothing about days left. The updater ran dry on 2026-10-01 and the NEO-USD and GAS-USD
+prices went dark. `feed-monitor.mjs` and `feed-pusher.mjs` now count days instead of balances and bound the
+writes. Read "What this does not cover" below before relying on them: the live writer is not one of the
+processes the budget binds.
+
+### What the monitor alerts on
+
+`morpheus-feed-monitor.service` runs every 15 minutes. Any alert fails the unit, and failing the unit is what
+pages (`OnFailure=morpheus-alert@%n.service`, delivered to `ALERT_WEBHOOK_URL`). The level in the text says how
+urgent it is; the notifier has no repeat suppression, so while an alert holds it posts again on every run.
+
+| Problem text                                    | Level    | Condition                                                                                                                   | What to do                                                                                      |
+| ----------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `RUNWAY WARNING Nd left`                        | warning  | runway of 14 days or less                                                                                                   | Plan the top-up this week (section 2.1).                                                        |
+| `RUNWAY HIGH Nd left`                           | high     | runway of 7 days or less                                                                                                    | Fund the updater now.                                                                           |
+| `RUNWAY CRITICAL Nd left`                       | critical | runway of 3 days or less                                                                                                    | Fund the updater immediately.                                                                   |
+| `UPDATER CANNOT PAY A WRITE`                    | critical | balance below one write's fee (`FEED_WRITE_FEE_GAS`, 0.00606339 GAS by default); the feed cannot move                       | Fund the updater immediately.                                                                   |
+| `FEED STALE <pair> age=Nmin`                    | critical | an active pair older than its limit (`MAX_AGE_SEC`, 2700 s by default, wider for TradFi while closed)                       | Find which writer stopped and why: check the balance, the provider report and the budget first. |
+| `PROVIDER FAILURE unauthorized\|expired\|quota` | critical | the Node pusher reported, in its last cycle and within `MAX_AGE_SEC`, a rejected key, an expired plan or an exhausted quota | Renew the TwelveData plan or replace `TD_KEY` (billing and secrets: an operator step).          |
+| `LOW GAS updater=N`                             | high     | balance below `MIN_GAS` (default 12 GAS), the old fixed floor; the condition is unchanged                                   | Fund the updater.                                                                               |
+| `CLOCK SKEW <pair>`                             | critical | a pair more than 120 s ahead of chain time (exit 2, unchanged)                                                              | Unchanged: compare the writer host's clock with chain time.                                     |
+
+Runway is the balance divided by the burn. The burn is the GAS the updater spent per day over the last 24
+hours of the monitor's own balance samples, kept in `<MONITOR_STATUS>.balance-samples.json` beside the status
+file (so a TestNet monitor and a mainnet monitor never mix them). A balance that rises between two samples is a
+top-up, and that interval is left out. The estimate needs one hour of clean samples; until then
+`runway_basis` is `insufficient_history` and only the other rows apply. A transient provider trouble (a
+per-minute rate limit, a provider hiccup, an empty answer) is reported in `provider_failure` with
+`"page": false` and does not page by itself: if it persists the feed goes stale and the stale row pages.
+
+### Reading `feed-status.json`
+
+`/opt/morpheus/nitro/feed-status.json` (TestNet: `feed-status-testnet.json`) keeps its earlier fields and gains:
+
+| Field              | Meaning                                                                                                                            |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `alert_level`      | `ok`, `warning`, `high` or `critical`: the worst of the alerts above                                                               |
+| `runway_days`      | days the balance pays for at the observed burn; `0` when the balance cannot pay one write; `null` when it cannot be estimated      |
+| `runway_basis`     | `observed_burn`, `balance_below_write_fee`, `no_burn_observed` (balance not falling) or `insufficient_history`                     |
+| `burn_gas_per_day` | GAS spent per day over the window, or `null`                                                                                       |
+| `writes_per_day`   | `burn_gas_per_day` divided by `write_fee_gas` (an equivalent, only as good as the fee), or `null`                                  |
+| `write_fee_gas`    | fee of one write used for the conversion and the cannot-pay rule (0.00606339, a two-pair write; `FEED_WRITE_FEE_GAS` overrides it) |
+| `last_write_age`   | seconds since the freshest active pair was written, or `null`                                                                      |
+| `stale_pairs`      | names of the active pairs past their limit                                                                                         |
+| `provider_failure` | `null`, or `{ category, kind, page, reported_at, age_seconds, summary }` from the pusher's last cycle                              |
+| `balance_samples`  | how many balance samples the estimate had                                                                                          |
+
+An unreadable registry (exit 2) writes `alert_level: "critical"` with `unreadable_reason`.
+
+### The daily write budget
+
+`MAX_WRITES_PER_DAY` in `/opt/morpheus/nitro/feed-pusher.env` is the most transactions the Node pusher may
+broadcast per UTC day on the Neo N3 lane. A mainnet Neo N3 pusher does not start without it (it exits 1 with
+`missing_write_budget` before it fetches any price), and a value that is not a whole number from 1 to 9999999 is
+refused (`invalid_write_budget`) rather than read as "no cap". TestNet may leave it unset.
+
+- Every broadcast is counted first. The write past the cap is refused before anything is sent. The journal
+  line and the status error both begin `daily write budget exhausted: N of N writes already made for UTC day D`
+  and end with the time the budget restarts. The cycle fails, so the pusher unit pages until the day turns or
+  the cap is raised; the signed batch stays in the pending-batch sidecar and is reconciled later.
+- A broadcast the node refuses (an unfunded updater answers `Insufficient funds`) spent no GAS and gives its
+  write back, so a stretch of refusals cannot use up the day. A lost connection or an "already exists" keeps the
+  write counted, because the transaction may have landed.
+- The count is `<PUSH_STATUS>.write-budget.json` (`/opt/morpheus/nitro/feed-pusher-status.json.write-budget.json`
+  on mainnet): `{ "version": 1, "day": "2026-10-05", "writes": 123 }`. It restarts at 00:00:00Z, and a clock that
+  moves back cannot give a day back. An unreadable or invalid file stops the writes (fail-closed) until the file
+  is fixed or removed; removing it is a decision to forget today's count, so note it.
+- To allow more writes the same day, raise `MAX_WRITES_PER_DAY` and run the unit again. Do not delete the file
+  to get around the cap.
+
+The cap counts writes, not GAS. GAS per day is at most the cap times the fee of one write, and the fee of a write
+grows with the pairs it updates: 0.00606339 GAS for the two-pair writes the live writer made on 2026-09-30,
+0.0501 GAS for a 28-pair batch on 2026-08-20 (0.02474 GAS per cycle on average, 7.12 GAS a day at 288 cycles).
+Size the cap from the fee of your own `SYMBOLS` list, set `FEED_WRITE_FEE_GAS` (monitor) to that fee, and fund the
+updater for cap x fee x the days of runway wanted.
+
+| `MAX_WRITES_PER_DAY`                                    | GAS per day at 0.00606339 | GAS per day at 0.0501 |
+| ------------------------------------------------------- | ------------------------- | --------------------- |
+| 144 (a write every 10 minutes)                          | 0.873                     | 7.21                  |
+| 288 (a write every 5 minutes, the timer)                | 1.746                     | 14.43                 |
+| 360 (288 plus a quarter for re-broadcasts, the example) | 2.183                     | 18.04                 |
+| 576                                                     | 3.493                     | 28.86                 |
+| 752 (what the live writer did on 09-30)                 | 4.560                     | 37.68                 |
+
+Multiply by 30 for a month: a cap of 360 at 0.00606339 GAS is 65.5 GAS, and at 0.0501 GAS it is 541 GAS.
+
+### Proving the alert path
+
+A never-fired alert path is worth nothing (section 3). To fire the monitor on purpose without touching the feed,
+make the fee per write larger than the balance for one run, then remove the drop-in:
+
+```bash
+mkdir -p /etc/systemd/system/morpheus-feed-monitor.service.d
+printf '[Service]\nEnvironment=FEED_WRITE_FEE_GAS=1000000\n' \
+  > /etc/systemd/system/morpheus-feed-monitor.service.d/90-drill.conf
+systemctl daemon-reload
+systemctl start morpheus-feed-monitor.service       # expect exit 1: UPDATER CANNOT PAY A WRITE
+journalctl -u 'morpheus-alert@*' -n 20 --no-pager   # expect the alert line and the webhook result
+rm /etc/systemd/system/morpheus-feed-monitor.service.d/90-drill.conf && systemctl daemon-reload
+systemctl start morpheus-feed-monitor.service       # back to the real balance
+```
+
+### What this does not cover
+
+1. **The live writer.** The budget lives in the tracked Node pusher. `morpheus-public-feed-writer.service` runs
+   `workers/nitro-worker/.neoos-live-feed-write.mjs`, a script that is in no repository, every 60 seconds
+   (`morpheus-public-feed-writer.timer`), and it does not read `feed-pusher.env`. The budget does not bind it,
+   and nothing else in this repository does: its cadence is that timer plus thresholds inside a script this
+   repository cannot see, so capping it is the owner's step (OP-02). The monitor's runway alert is the backstop,
+   because it measures what the updater actually spends, whichever process spends it.
+2. **The Rust writers.** The relayer's feed lane and the `/feed/sign` price plane have no budget and do not
+   classify provider errors (an expired key there reads as "nothing to update"). Their equivalents ride the
+   enclave rebuild window (CU-90).
+3. **Neo X.** The Neo X lane of the pusher is not budgeted (it is de-scoped).
+4. **Provider failure.** It is read from the Node pusher's status file beside the monitor's status
+   (`feed-pusher-status.json`, TestNet `feed-pusher-testnet-status.json`). With another writer, only the stale
+   and runway rows can page.
+5. **The estimate.** It needs an hour of samples, and a 24-hour average lags a sudden burst of writes; the
+   3-day level and the stale row are the backstops.
+6. **Delivery.** Nothing reaches a person until `ALERT_WEBHOOK_URL` is set in `alert-notify.env` (OP-02).
+
 **Recheck 2026-08-31T21:06Z (read-only SSM + public RPC). No writes, no
 restart, no secret print, no chain tx.**
 
