@@ -17,25 +17,41 @@ const GENERATED_SEGMENTS = Object.freeze([
 
 const GENERATED_SEGMENT_SET = new Set(GENERATED_SEGMENTS);
 const GENERATED_PYTHON_BYTECODE_SUFFIX = '.pyc';
-const REVIEWED_BUILD_PREFIXES = Object.freeze([
-  'contracts-evm/build/',
-  'vendor/neo-os-did/contracts/build/',
+const REVIEWED_BUILD_PATHS = new Set([
+  'contracts-evm/build/MiniAppCreditsV2.abi.json',
+  'contracts-evm/build/MiniAppDiceGameEVM.abi.json',
+  'contracts-evm/build/MiniAppDiceGameEVM.neox-mainnet.json',
+  'contracts-evm/build/MiniAppMessageEVM.abi.json',
+  'contracts-evm/build/MiniAppMessageEVM.neox-mainnet.json',
+  'contracts-evm/build/MorpheusOracleEVM.abi.json',
+  'contracts-evm/build/MorpheusOracleEVM.neox-mainnet.json',
+  'contracts-evm/build/MorpheusPriceFeed.abi.json',
+  'contracts-evm/build/MorpheusPriceFeed.neox-mainnet.json',
+  'vendor/neo-os-did/contracts/build/NeoDIDRegistry.manifest.json',
+  'vendor/neo-os-did/contracts/build/NeoDIDRegistry.nef',
 ]);
 
 export { GENERATED_SEGMENTS };
 
-function isReviewedBuildInput(path) {
-  return REVIEWED_BUILD_PREFIXES.some((prefix) => path.startsWith(prefix));
+function normalizePath(path) {
+  return path
+    .replaceAll('\\', '/')
+    .replace(/^\.\//, '')
+    .split('/')
+    .filter((segment) => segment !== '' && segment !== '.')
+    .join('/');
 }
 
 function isRustBinarySource(path) {
   const segments = path.split('/');
-  const sourceIndex = segments.lastIndexOf('src');
+  const lowerSegments = segments.map((segment) => segment.toLowerCase());
+  const sourceIndex = lowerSegments.lastIndexOf('src');
   return (
     sourceIndex >= 0 &&
-    segments[sourceIndex + 1] === 'bin' &&
+    lowerSegments[sourceIndex + 1] === 'bin' &&
     segments.length === sourceIndex + 3 &&
-    segments[sourceIndex + 2].endsWith('.rs')
+    lowerSegments[sourceIndex + 2].endsWith('.rs') &&
+    !lowerSegments.slice(0, sourceIndex).some((segment) => GENERATED_SEGMENT_SET.has(segment))
   );
 }
 
@@ -44,11 +60,12 @@ export function trackedBuildOutputViolations(paths) {
     ...new Set(
       paths.filter((entry) => {
         if (typeof entry !== 'string' || entry.length === 0) return false;
-        const normalized = entry.replaceAll('\\', '/').replace(/^\.\//, '');
-        if (isReviewedBuildInput(normalized) || isRustBinarySource(normalized)) return false;
+        const normalized = normalizePath(entry);
+        const lower = normalized.toLowerCase();
+        if (REVIEWED_BUILD_PATHS.has(normalized) || isRustBinarySource(normalized)) return false;
         return (
-          normalized.endsWith(GENERATED_PYTHON_BYTECODE_SUFFIX) ||
-          normalized.split('/').some((segment) => GENERATED_SEGMENT_SET.has(segment))
+          lower.endsWith(GENERATED_PYTHON_BYTECODE_SUFFIX) ||
+          lower.split('/').some((segment) => GENERATED_SEGMENT_SET.has(segment))
         );
       })
     ),

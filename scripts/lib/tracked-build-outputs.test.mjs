@@ -55,6 +55,33 @@ test('retains reviewed contract artifacts, generated projections and Rust binary
   );
 });
 
+test('does not exempt generated content inside reviewed prefixes or generated ancestors', () => {
+  assert.deepEqual(
+    trackedBuildOutputViolations([
+      'contracts-evm/build/node_modules/evil/index.js',
+      'contracts-evm/build/dist/bundle.js',
+      'vendor/neo-os-did/contracts/build/__pycache__/evil.pyc',
+      'node_modules/pkg/src/bin/tool.rs',
+      'target/debug/build/x/src/bin/evil.rs',
+      'dist/src/bin/x.rs',
+      'Dist/index.js',
+      'NODE_MODULES/pkg/index.js',
+      'X.PYC',
+    ]),
+    [
+      'Dist/index.js',
+      'NODE_MODULES/pkg/index.js',
+      'X.PYC',
+      'contracts-evm/build/dist/bundle.js',
+      'contracts-evm/build/node_modules/evil/index.js',
+      'dist/src/bin/x.rs',
+      'node_modules/pkg/src/bin/tool.rs',
+      'target/debug/build/x/src/bin/evil.rs',
+      'vendor/neo-os-did/contracts/build/__pycache__/evil.pyc',
+    ].sort()
+  );
+});
+
 test('rejects a force-tracked output and passes the repository snapshot', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'neoos-services-output-'));
   try {

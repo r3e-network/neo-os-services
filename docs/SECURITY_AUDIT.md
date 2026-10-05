@@ -92,8 +92,10 @@ tests cover the key size, OAEP/PSS formats, malformed ciphertext handling, and
 public-key verification boundaries.
 
 The remaining `paste` and `serde_cbor` reports are unmaintained-crate warnings,
-not vulnerabilities; they remain explicit migration debt and are still
-allowlisted by identity only. The historical reachability analysis and the
+not vulnerabilities; they remain explicit migration debt and are allowlisted
+only by the executable `scripts/check-rust-audit.mjs` policy, which requires an
+owner, reason, and expiry for each advisory and fails when an exception is
+stale or disappears from the report. The historical reachability analysis and the
 before/after evidence are retained in
 `docs/security/RUST-DEPENDENCY-ADVISORIES-20260926.md`.
 

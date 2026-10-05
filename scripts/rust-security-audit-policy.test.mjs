@@ -19,7 +19,11 @@ test('the Rust audit is an executable no-vulnerability release policy', () => {
   assert.match(checker, /--deny/);
   assert.doesNotMatch(checker, /--no-fetch/);
   assert.match(checker, /last-updated/);
-  assert.match(checker, /EXPECTED_UNMAINTAINED/);
+  assert.match(checker, /REVIEWED_UNMAINTAINED/);
+  assert.match(checker, /owner/);
+  assert.match(checker, /reason/);
+  assert.match(checker, /expiresOn/);
+  assert.match(checker, /audit\.toml/);
   assert.match(checker, /vulnerabilities/);
 
   const review = read('docs/security/RUSTSEC-2023-0071.md');
