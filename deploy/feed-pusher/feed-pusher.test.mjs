@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -8,8 +8,8 @@ import { createHash } from 'node:crypto';
 import pkg from '@cityofzion/neon-js';
 const { wallet, tx } = pkg;
 import { ethers } from 'ethers';
-import { readFileSync } from 'node:fs';
-import { UPDATE_FEED_PARAMETERS } from './lib-feed-network.mjs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { UPDATE_FEED_PARAMETERS, finalizePusherCycle } from './lib-feed-network.mjs';
 
 process.env.FEED_PUSHER_SKIP_MAIN = '1';
 // Pin a deterministic, single-symbol feed so the integration test is exact.
@@ -43,6 +43,14 @@ const {
   __setConfirmSleepForTests,
   __resetConfirmSleepForTests,
   __getLastWriteEvidenceForTests,
+  __writeCycleOverlayStatusForTests,
+  FeedWriteBudgetError,
+  parseDailyWriteLimit,
+  validateWriteBudgetEnv,
+  reserveWriteBudget,
+  releaseWriteBudget,
+  __setWriteBudgetForTests,
+  __resetWriteBudgetForTests,
 } = await import('./feed-pusher.mjs');
 
 const MAINNET_STATE = JSON.parse(
@@ -1403,4 +1411,461 @@ test('neox enclave feed-sign: host refuses to broadcast on any tx drift (fails c
       assertEnclaveNeoXTxMatches(ethers, { ...plan }, { to: TO, chainId: 47763, nonce: 7, from }),
     /signed_tx/
   );
+});
+
+// ── CU-11: daily write budget ─────────────────────────────────────────────────
+//
+// The 2026-10-01 outage: the mainnet updater burned about 4.5 GAS a day (752 transactions on
+// 2026-09-30, 0.00606339 GAS each) and nothing bounded it. The pusher now counts the
+// transactions it broadcasts per UTC day (MAX_WRITES_PER_DAY) and refuses the one past the cap.
+
+const BUDGET_STATE_NAME = 'feed-pusher-status.json.write-budget.json';
+const BUDGET_DAY_NOON = Date.UTC(2026, 9, 5, 12, 0, 0);
+
+function budgetFixture() {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'feed-budget-'));
+  return { dir, statePath: path.join(dir, BUDGET_STATE_NAME) };
+}
+
+function seedBudget(statePath, { day = '2026-10-05', writes }) {
+  writeFileSync(statePath, JSON.stringify({ version: 1, day, writes }));
+}
+
+function readBudget(statePath) {
+  return JSON.parse(readFileSync(statePath, 'utf8'));
+}
+
+test('CU-11: parseDailyWriteLimit accepts only a positive whole number', () => {
+  assert.deepEqual(parseDailyWriteLimit(undefined), { limit: null });
+  assert.deepEqual(parseDailyWriteLimit(''), { limit: null });
+  assert.deepEqual(parseDailyWriteLimit('   '), { limit: null });
+  assert.deepEqual(parseDailyWriteLimit('752'), { limit: 752 });
+  assert.deepEqual(parseDailyWriteLimit(' 288 '), { limit: 288 });
+  for (const bad of ['0', '-5', '1.5', '1e3', 'abc', '752 writes', '0x10', '99999999999']) {
+    const parsed = parseDailyWriteLimit(bad);
+    assert.equal(parsed.limit, null, bad);
+    assert.match(parsed.error, /MAX_WRITES_PER_DAY/, bad);
+  }
+});
+
+test('CU-11: a mainnet Neo N3 writer needs an explicit daily write cap; TestNet and Neo X-only runs do not', () => {
+  const codes = (env, options) => validateWriteBudgetEnv(env, options).map((error) => error.code);
+  assert.deepEqual(codes({}, { network: 'mainnet', n3Enabled: true }), ['missing_write_budget']);
+  assert.deepEqual(
+    codes({ MAX_WRITES_PER_DAY: '288' }, { network: 'mainnet', n3Enabled: true }),
+    []
+  );
+  assert.deepEqual(codes({}, { network: 'testnet', n3Enabled: true }), []);
+  assert.deepEqual(
+    codes({ MAX_WRITES_PER_DAY: '50' }, { network: 'testnet', n3Enabled: true }),
+    []
+  );
+  assert.deepEqual(codes({}, { network: 'mainnet', n3Enabled: false }), []);
+  // A value that is set but unusable is an error everywhere: a typo must not silently mean "no cap".
+  for (const network of ['mainnet', 'testnet']) {
+    assert.deepEqual(codes({ MAX_WRITES_PER_DAY: 'lots' }, { network, n3Enabled: true }), [
+      'invalid_write_budget',
+    ]);
+  }
+  const [error] = validateWriteBudgetEnv({}, { network: 'mainnet', n3Enabled: true });
+  assert.match(error.summary, /MAX_WRITES_PER_DAY/);
+  assert.match(error.summary, /0\.00606339/);
+});
+
+test('CU-11: the 753rd write of a day is refused with a logged reason', () => {
+  const { dir, statePath } = budgetFixture();
+  try {
+    for (let n = 1; n <= 752; n += 1) {
+      const reservation = reserveWriteBudget({ statePath, limit: 752, nowMs: BUDGET_DAY_NOON + n });
+      assert.equal(reservation.used, n);
+      assert.equal(reservation.day, '2026-10-05');
+    }
+    assert.deepEqual(readBudget(statePath), {
+      version: 1,
+      day: '2026-10-05',
+      writes: 752,
+      updated_at: new Date(BUDGET_DAY_NOON + 752).toISOString(),
+    });
+    assert.throws(
+      () => reserveWriteBudget({ statePath, limit: 752, nowMs: BUDGET_DAY_NOON + 753 }),
+      (error) => {
+        assert.ok(error instanceof FeedWriteBudgetError);
+        assert.equal(error.code, 'write_budget_exhausted');
+        assert.match(error.message, /daily write budget exhausted/);
+        assert.match(error.message, /752 of 752 writes/);
+        assert.match(error.message, /UTC day 2026-10-05/);
+        assert.match(error.message, /MAX_WRITES_PER_DAY=752/);
+        assert.match(error.message, /2026-10-06T00:00:00Z/);
+        return true;
+      }
+    );
+    // A refusal does not move the counter, and the next ask is refused the same way.
+    assert.equal(readBudget(statePath).writes, 752);
+    assert.throws(
+      () => reserveWriteBudget({ statePath, limit: 752, nowMs: BUDGET_DAY_NOON + 754 }),
+      FeedWriteBudgetError
+    );
+    // Raising the cap is the way to allow more writes the same day.
+    assert.equal(
+      reserveWriteBudget({ statePath, limit: 800, nowMs: BUDGET_DAY_NOON + 755 }).used,
+      753
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('CU-11: the budget counts a UTC day, starts again at 00:00:00Z and cannot be reset by a clock that moves back', () => {
+  const { dir, statePath } = budgetFixture();
+  try {
+    const lastMs = Date.UTC(2026, 9, 5, 23, 59, 59, 999);
+    assert.equal(reserveWriteBudget({ statePath, limit: 2, nowMs: lastMs }).used, 1);
+    assert.equal(reserveWriteBudget({ statePath, limit: 2, nowMs: lastMs }).used, 2);
+    assert.throws(
+      () => reserveWriteBudget({ statePath, limit: 2, nowMs: lastMs }),
+      FeedWriteBudgetError
+    );
+    const reset = reserveWriteBudget({ statePath, limit: 2, nowMs: Date.UTC(2026, 9, 6, 0, 0, 0) });
+    assert.equal(reset.used, 1);
+    assert.equal(reset.day, '2026-10-06');
+    assert.equal(
+      reserveWriteBudget({ statePath, limit: 2, nowMs: Date.UTC(2026, 9, 6, 8) }).used,
+      2
+    );
+    // Moving the clock back to 10-05 must not hand out a fresh day: the later day stays in force.
+    assert.throws(
+      () => reserveWriteBudget({ statePath, limit: 2, nowMs: Date.UTC(2026, 9, 5, 12) }),
+      (error) => error instanceof FeedWriteBudgetError && /UTC day 2026-10-06/.test(error.message)
+    );
+    assert.deepEqual(
+      { day: readBudget(statePath).day, writes: readBudget(statePath).writes },
+      { day: '2026-10-06', writes: 2 }
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('CU-11: releaseWriteBudget gives back exactly one write of the same day and never goes below zero', () => {
+  const { dir, statePath } = budgetFixture();
+  try {
+    reserveWriteBudget({ statePath, limit: 10, nowMs: BUDGET_DAY_NOON });
+    const second = reserveWriteBudget({ statePath, limit: 10, nowMs: BUDGET_DAY_NOON + 1 });
+    assert.equal(second.used, 2);
+    releaseWriteBudget({ statePath, reservation: second });
+    assert.equal(readBudget(statePath).writes, 1);
+    // A reservation from another day is not this day's to give back.
+    releaseWriteBudget({ statePath, reservation: { ...second, day: '2026-10-04' } });
+    assert.equal(readBudget(statePath).writes, 1);
+    releaseWriteBudget({ statePath, reservation: second });
+    releaseWriteBudget({ statePath, reservation: second });
+    assert.equal(readBudget(statePath).writes, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('CU-11: an unreadable or inconsistent budget state fails closed instead of resetting the day', () => {
+  const { dir, statePath } = budgetFixture();
+  try {
+    // No file yet is a fresh day, not an error.
+    assert.equal(reserveWriteBudget({ statePath, limit: 10, nowMs: BUDGET_DAY_NOON }).used, 1);
+    for (const bad of [
+      '{ truncated',
+      '',
+      '[]',
+      'null',
+      JSON.stringify({ version: 2, day: '2026-10-05', writes: 1 }),
+      JSON.stringify({ version: 1, day: 'today', writes: 1 }),
+      JSON.stringify({ version: 1, day: '2026-10-05', writes: -1 }),
+      JSON.stringify({ version: 1, day: '2026-10-05', writes: 1.5 }),
+      JSON.stringify({ version: 1, day: '2026-10-05', writes: '3' }),
+    ]) {
+      writeFileSync(statePath, bad);
+      assert.throws(
+        () => reserveWriteBudget({ statePath, limit: 10, nowMs: BUDGET_DAY_NOON }),
+        (error) =>
+          error instanceof FeedWriteBudgetError &&
+          error.code === 'write_budget_state_invalid' &&
+          /fail-closed/.test(error.message),
+        bad
+      );
+      assert.equal(
+        readFileSync(statePath, 'utf8'),
+        bad,
+        'a bad state file is left for the operator'
+      );
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A funded mainnet chain whose batch write confirms, plus an enclave that signs it. `onBroadcast`
+// answers sendrawtransaction; every broadcast is recorded in `broadcast`.
+function mockWritableMainnet({ now, broadcast, onBroadcast }) {
+  const signer = new wallet.Account();
+  __setN3RpcForTests(async (method, params) => {
+    const proven = provenWriteRpc(method, params);
+    if (proven !== undefined) return proven;
+    switch (method) {
+      case 'invokefunction':
+        if (params[1] === 'getAllFeedRecords') {
+          return haltAllRecords([
+            { pair: 'TWELVEDATA:NEO-USD', round: 1, price: 5.0, ts: now - 3600 },
+          ]);
+        }
+        if (params[1] === 'balanceOf') {
+          return { state: 'HALT', stack: [{ type: 'Integer', value: String(20 * 1e8) }] };
+        }
+        throw new Error('unexpected invokefunction ' + params[1]);
+      case 'getblockcount':
+        return 5_000_000;
+      case 'invokescript':
+        return { state: 'HALT', gasconsumed: '1234567' };
+      case 'calculatenetworkfee':
+        return { networkfee: '234567' };
+      case 'sendrawtransaction':
+        broadcast.push(params[0]);
+        return onBroadcast(params[0]);
+      case 'getapplicationlog':
+        return { executions: [{ vmstate: 'HALT' }] };
+      default:
+        throw new Error('unexpected rpc ' + method);
+    }
+  });
+  __setEnclaveFeedSignForTests(async (requestBody) => {
+    const p = requestBody.tx_params;
+    return buildEnclaveFeedSignResponse(
+      { symbol: 'NEO-USD', price: 5.25, round: now, ts: now },
+      {
+        nonce: p.nonce,
+        validUntilBlock: p.block_count + 500,
+        systemFee: p.system_fee,
+        networkFee: p.network_fee,
+      },
+      signer
+    );
+  });
+  __setConfirmSleepForTests(async () => {});
+}
+
+function acceptBroadcast(rawTx) {
+  const broadcastTx = tx.Transaction.deserialize(Buffer.from(rawTx, 'base64').toString('hex'));
+  return { hash: `0x${String(broadcastTx.hash()).replace(/^0x/i, '').toLowerCase()}` };
+}
+
+function resetWritableMainnet() {
+  __resetEnclaveFeedSignForTests();
+  __resetN3RpcForTests();
+  __resetConfirmSleepForTests();
+  __resetWriteBudgetForTests();
+  rmSync(`${process.env.PUSH_STATUS}.pending-batch.json`, { force: true });
+}
+
+// Runs `body` against a mocked funded mainnet with a budget state in a private directory; whatever
+// the body does, the mocks, the console spy, the sidecar and the directory are put back.
+async function withWritableMainnet(
+  { now = 1_780_000_000, seed, limit, onBroadcast = acceptBroadcast, configure },
+  body
+) {
+  const { dir, statePath } = budgetFixture();
+  const broadcast = [];
+  const logged = [];
+  const spy = mock.method(console, 'log', (...args) => {
+    logged.push(args.join(' '));
+  });
+  try {
+    if (seed !== undefined) seedBudget(statePath, { writes: seed });
+    mockWritableMainnet({ now, broadcast, onBroadcast });
+    __setWriteBudgetForTests(
+      configure ? configure(statePath) : { limit, statePath, now: () => BUDGET_DAY_NOON }
+    );
+    await body({ now, statePath, broadcast, logged });
+  } finally {
+    spy.mock.restore();
+    resetWritableMainnet();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('CU-11: pushNeoN3 allows the 752nd write of a day, refuses the 753rd before broadcasting and logs why', async () => {
+  await withWritableMainnet(
+    { seed: 751, limit: 752 },
+    async ({ now, statePath, broadcast, logged }) => {
+      await pushNeoN3({ 'NEO-USD': 5.25 }, now);
+      assert.equal(broadcast.length, 1, 'the 752nd write goes out');
+      assert.equal(readBudget(statePath).writes, 752);
+      assert.ok(
+        logged.some((line) => /write budget 752\/752/.test(line)),
+        logged.join('\n')
+      );
+
+      await assert.rejects(
+        () => pushNeoN3({ 'NEO-USD': 5.25 }, now),
+        /daily write budget exhausted/
+      );
+      assert.equal(broadcast.length, 1, 'the 753rd write is refused before anything is broadcast');
+      assert.equal(readBudget(statePath).writes, 752);
+      const alert = logged.find((line) => /ALERT: daily write budget exhausted/.test(line));
+      assert.ok(alert, `no ALERT line in:\n${logged.join('\n')}`);
+      assert.match(alert, /752 of 752 writes/);
+      assert.match(alert, /2026-10-06T00:00:00Z/);
+    }
+  );
+});
+
+test('CU-11: a refused write fails the cycle with the reason and keeps the signed transaction for later', async () => {
+  await withWritableMainnet({ seed: 3, limit: 3 }, async ({ now, broadcast }) => {
+    await assert.rejects(
+      () => pushNeoN3({ 'NEO-USD': 5.25 }, now),
+      /batch updateFeeds failure: status=failed .*daily write budget exhausted: 3 of 3 writes/
+    );
+    assert.equal(broadcast.length, 0);
+    const evidence = __getLastWriteEvidenceForTests();
+    assert.equal(evidence.confirmation_status, 'failed');
+    assert.deepEqual(evidence.pairs_failed, ['TWELVEDATA:NEO-USD']);
+    // The signed identity is retained like any unbroadcast signed batch, so a later cycle reconciles it.
+    const sidecar = JSON.parse(
+      readFileSync(`${process.env.PUSH_STATUS}.pending-batch.json`, 'utf8')
+    );
+    assert.match(sidecar.identity.hash, /^0x[0-9a-f]{64}$/);
+  });
+});
+
+test('CU-11: a broadcast the node rejects spends no GAS and no budget, so a dark updater cannot eat the day', async () => {
+  await withWritableMainnet(
+    {
+      seed: 5,
+      limit: 10,
+      onBroadcast: () => {
+        throw new Error('sendrawtransaction: {"code":-511,"message":"Insufficient funds"}');
+      },
+    },
+    async ({ now, statePath, broadcast }) => {
+      for (let cycle = 0; cycle < 3; cycle += 1) {
+        await assert.rejects(() => pushNeoN3({ 'NEO-USD': 5.25 }, now), /Insufficient funds/);
+        rmSync(`${process.env.PUSH_STATUS}.pending-batch.json`, { force: true });
+      }
+      assert.equal(broadcast.length, 3, 'each cycle did try to broadcast');
+      assert.equal(
+        readBudget(statePath).writes,
+        5,
+        'rejected broadcasts gave their reservation back'
+      );
+    }
+  );
+});
+
+test('CU-11: a broadcast whose outcome is unknown keeps its reservation, because the transaction may have landed', async () => {
+  await withWritableMainnet(
+    {
+      seed: 5,
+      limit: 10,
+      onBroadcast: () => {
+        throw Object.assign(new Error('fetch failed'), { code: 'ECONNRESET' });
+      },
+    },
+    async ({ now, statePath, broadcast }) => {
+      // Attempt 1 loses the connection after sending; attempt 2 finds the transaction confirmed on chain.
+      await pushNeoN3({ 'NEO-USD': 5.25 }, now);
+      assert.equal(broadcast.length, 1);
+      assert.equal(readBudget(statePath).writes, 6);
+    }
+  );
+});
+
+test('CU-11: with no budget configured a direct pushNeoN3 broadcasts as before and writes no budget file', async () => {
+  await withWritableMainnet({ limit: null }, async ({ now, statePath, broadcast }) => {
+    await pushNeoN3({ 'NEO-USD': 5.25 }, now);
+    assert.equal(broadcast.length, 1);
+    assert.throws(() => readFileSync(statePath, 'utf8'), { code: 'ENOENT' });
+  });
+});
+
+test('CU-11: an unusable budget configuration refuses the broadcast instead of ignoring the cap', async () => {
+  await withWritableMainnet(
+    { configure: (statePath) => ({ error: 'MAX_WRITES_PER_DAY is not usable', statePath }) },
+    async ({ now, broadcast }) => {
+      await assert.rejects(
+        () => pushNeoN3({ 'NEO-USD': 5.25 }, now),
+        /MAX_WRITES_PER_DAY is not usable/
+      );
+      assert.equal(broadcast.length, 0);
+    }
+  );
+});
+
+test('CU-11: a mainnet Neo N3 pusher without a daily write cap refuses to start, before it fetches any price', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'feed-budget-cli-'));
+  try {
+    const run = (extra) => {
+      const env = {
+        ...process.env,
+        FEED_CHAINS: 'neo-n3',
+        TD_KEY: 'test-key-not-used',
+        PUSH_LOG: path.join(dir, 'feed-pusher.log'),
+        PUSH_STATUS: path.join(dir, 'feed-pusher-status.json'),
+      };
+      delete env.FEED_PUSHER_SKIP_MAIN;
+      delete env.MAX_WRITES_PER_DAY;
+      Object.assign(env, extra);
+      // The cap is checked before any price is fetched. If that ever regressed, this run must fail
+      // on the assertions below rather than reach api.twelvedata.com, so fetch is made unusable.
+      const noNetwork = `data:text/javascript,${encodeURIComponent(
+        'globalThis.fetch = () => { throw new Error("network is disabled in this test"); };'
+      )}`;
+      return spawnSync(process.execPath, ['--import', noNetwork, PUSHER], {
+        env,
+        encoding: 'utf8',
+        timeout: 30000,
+      });
+    };
+    const missing = run({});
+    assert.equal(missing.status, 1, missing.stdout + missing.stderr);
+    assert.match(missing.stdout, /missing_write_budget/);
+    const status = JSON.parse(readFileSync(path.join(dir, 'feed-pusher-status.json'), 'utf8'));
+    assert.equal(status.ok, false);
+    assert.deepEqual(
+      status.errors.map((error) => error.code),
+      ['missing_write_budget']
+    );
+    const invalid = run({ MAX_WRITES_PER_DAY: 'lots' });
+    assert.equal(invalid.status, 1, invalid.stdout + invalid.stderr);
+    assert.match(invalid.stdout, /invalid_write_budget/);
+    // Every configuration problem is reported in one run, not one per fix.
+    const both = run({ TD_KEY: '' });
+    assert.equal(both.status, 1);
+    assert.match(both.stdout, /missing_td_key/);
+    assert.match(both.stdout, /missing_write_budget/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('CU-11: a TwelveData 401 reaches the writer status as a provider failure the monitor can page on', () => {
+  let failure = null;
+  try {
+    parseTwelveDataPrices(
+      { ok: false, status: 401 },
+      { code: 401, status: 'error', message: 'Your API key is invalid' },
+      ['NEO-USD']
+    );
+  } catch (error) {
+    failure = error;
+  }
+  assert.equal(failure.providerCategory, 'provider_unauthorized');
+  const cycle = finalizePusherCycle({ fetchError: failure });
+  assert.equal(cycle.exitCode, 1);
+  assert.equal(cycle.errors[0].code, 'twelvedata_fetch_failed');
+  assert.equal(cycle.errors[0].provider_category, 'provider_unauthorized');
+  __writeCycleOverlayStatusForTests({ ok: cycle.ok, errors: cycle.errors });
+  try {
+    const written = JSON.parse(readFileSync(process.env.PUSH_STATUS, 'utf8'));
+    assert.equal(written.ok, false);
+    assert.equal(written.errors[0].provider_category, 'provider_unauthorized');
+    assert.ok(Number.isFinite(Date.parse(written.ts)));
+  } finally {
+    rmSync(process.env.PUSH_STATUS, { force: true });
+  }
 });

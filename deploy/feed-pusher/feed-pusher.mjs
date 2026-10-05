@@ -211,6 +211,178 @@ function writeMissingState(counts) {
   } catch {}
 }
 
+// ── Daily write budget (CU-11) ───────────────────────────────────────────────
+// On 2026-09-30 the mainnet updater made 752 transactions (0.00606339 GAS each, about 4.56 GAS) and
+// ran dry the next day with nothing bounding it. MAX_WRITES_PER_DAY caps the transactions this
+// pusher broadcasts per UTC day. The count is kept beside PUSH_STATUS, which every unit already pins
+// per network, so a TestNet pusher and a mainnet pusher never share a budget; it is read from disk
+// on every write, so it survives the oneshot restarts. One pusher process per unit writes it
+// (systemd does not overlap a oneshot unit), so there is no lock. Only the Neo N3 lane is budgeted.
+export class FeedWriteBudgetError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'FeedWriteBudgetError';
+    this.code = code;
+  }
+}
+
+export function parseDailyWriteLimit(raw) {
+  const text = raw == null ? '' : String(raw).trim();
+  if (!text) return { limit: null };
+  if (!/^[1-9]\d{0,6}$/.test(text)) {
+    return {
+      limit: null,
+      error: `MAX_WRITES_PER_DAY must be a whole number from 1 to 9999999, got "${text.slice(0, 40)}"`,
+    };
+  }
+  return { limit: Number(text) };
+}
+
+// Mainnet gas is real money: a mainnet Neo N3 writer does not start without an explicit cap. A value
+// that is set but unusable is refused everywhere, so a typo can never silently mean "no cap".
+export function validateWriteBudgetEnv(env = process.env, { network, n3Enabled = true } = {}) {
+  if (!n3Enabled) return [];
+  const parsed = parseDailyWriteLimit(env.MAX_WRITES_PER_DAY);
+  if (parsed.error) return [{ code: 'invalid_write_budget', summary: parsed.error }];
+  if (parsed.limit === null && network === 'mainnet') {
+    return [
+      {
+        code: 'missing_write_budget',
+        summary:
+          'MAX_WRITES_PER_DAY is required for a mainnet Neo N3 writer: set the most transactions ' +
+          'this pusher may broadcast per UTC day in feed-pusher.env. GAS spent per day is at most ' +
+          'that cap times the fee of one write (0.00606339 GAS for a two-pair write, more for a ' +
+          'larger batch), so fund the updater for cap x fee x the days of runway wanted ' +
+          '(see FEED-OUTAGE-RUNBOOK.md)',
+      },
+    ];
+  }
+  return [];
+}
+
+function utcDay(ms) {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function readWriteBudgetState(statePath) {
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(statePath, 'utf8'));
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return null;
+    throw new FeedWriteBudgetError(
+      'write_budget_state_invalid',
+      `daily write budget state unreadable (fail-closed): ${error instanceof Error ? error.message : error}; fix or remove ${statePath}`
+    );
+  }
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    Array.isArray(parsed) ||
+    parsed.version !== 1 ||
+    typeof parsed.day !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(parsed.day) ||
+    !Number.isFinite(Date.parse(`${parsed.day}T00:00:00Z`)) ||
+    !Number.isSafeInteger(parsed.writes) ||
+    parsed.writes < 0
+  ) {
+    throw new FeedWriteBudgetError(
+      'write_budget_state_invalid',
+      `daily write budget state is not a valid day and count (fail-closed); fix or remove ${statePath}`
+    );
+  }
+  return { day: parsed.day, writes: parsed.writes };
+}
+
+function persistWriteBudgetState(statePath, { day, writes }, nowMs) {
+  const temp = `${statePath}.${process.pid}.tmp`;
+  try {
+    writeFileSync(
+      temp,
+      JSON.stringify({ version: 1, day, writes, updated_at: new Date(nowMs).toISOString() })
+    );
+    renameSync(temp, statePath);
+  } catch (error) {
+    throw new FeedWriteBudgetError(
+      'write_budget_state_unwritable',
+      `daily write budget state cannot be saved (fail-closed): ${error instanceof Error ? error.message : error}`
+    );
+  }
+}
+
+// Counts one write against `limit` for the UTC day of `nowMs` and returns the reservation, or throws
+// when the day's budget is spent. The later of the stored day and today wins, so a clock that moves
+// back cannot hand out a fresh day.
+export function reserveWriteBudget({ statePath, limit, nowMs = Date.now() }) {
+  const today = utcDay(nowMs);
+  const state = readWriteBudgetState(statePath);
+  const day = state && state.day > today ? state.day : today;
+  const used = state && state.day === day ? state.writes : 0;
+  if (used >= limit) {
+    const nextDay = utcDay(Date.parse(`${day}T00:00:00Z`) + 86_400_000);
+    throw new FeedWriteBudgetError(
+      'write_budget_exhausted',
+      `daily write budget exhausted: ${used} of ${limit} writes already made for UTC day ${day} ` +
+        `(MAX_WRITES_PER_DAY=${limit}); refusing to broadcast another transaction until ${nextDay}T00:00:00Z`
+    );
+  }
+  persistWriteBudgetState(statePath, { day, writes: used + 1 }, nowMs);
+  return { statePath, day, used: used + 1, limit };
+}
+
+// Gives one reserved write back (same day only, never below zero).
+export function releaseWriteBudget({ statePath, reservation }) {
+  const state = readWriteBudgetState(statePath);
+  if (!state || state.day !== reservation.day || state.writes < 1) return;
+  persistWriteBudgetState(statePath, { day: state.day, writes: state.writes - 1 }, Date.now());
+}
+
+const WRITE_BUDGET_STATE = `${PUSH_STATUS}.write-budget.json`;
+const writeBudgetFromEnv = {
+  ...parseDailyWriteLimit(process.env.MAX_WRITES_PER_DAY),
+  statePath: WRITE_BUDGET_STATE,
+};
+let writeBudgetOverride = null;
+
+export function __setWriteBudgetForTests(budget) {
+  writeBudgetOverride = budget && typeof budget === 'object' ? budget : null;
+}
+
+export function __resetWriteBudgetForTests() {
+  writeBudgetOverride = null;
+}
+
+// With no cap configured (a TestNet pusher, or a direct import) nothing is counted; a cap that is
+// configured but unusable refuses the write rather than being ignored.
+function reserveFeedWrite(chain) {
+  try {
+    const budget = writeBudgetOverride || writeBudgetFromEnv;
+    if (budget.error) throw new FeedWriteBudgetError('write_budget_config_invalid', budget.error);
+    if (budget.limit == null) return null;
+    const reservation = reserveWriteBudget({
+      statePath: budget.statePath,
+      limit: budget.limit,
+      nowMs: typeof budget.now === 'function' ? budget.now() : Date.now(),
+    });
+    log(
+      `[${chain}] write budget ${reservation.used}/${reservation.limit} for UTC day ${reservation.day}`
+    );
+    return reservation;
+  } catch (error) {
+    if (error instanceof FeedWriteBudgetError) log(`[${chain}] ⚠️ ALERT: ${error.message}`);
+    throw error;
+  }
+}
+
+function releaseFeedWrite(reservation) {
+  if (!reservation) return;
+  try {
+    releaseWriteBudget({ statePath: reservation.statePath, reservation });
+  } catch (error) {
+    log(`write budget release failed: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
 // TwelveData provider symbols are an EXPLICIT per-pair table, never a guess.
 //
 // Two production faults came from deriving the provider symbol from the pair name:
@@ -1202,7 +1374,19 @@ async function submitSignedFeedTx({
     if (typeof onSigned === 'function') await onSigned(identity, signed);
   }
   try {
-    const res = await n3rpc('sendrawtransaction', [identity.rawTx]);
+    // Every transaction this pusher broadcasts is counted against the daily budget first, so a
+    // crash after the node accepted it can only over-count, and past the cap nothing goes out.
+    const reservation = reserveFeedWrite('neo-n3');
+    let res;
+    try {
+      res = await n3rpc('sendrawtransaction', [identity.rawTx]);
+    } catch (error) {
+      // A node that refused the transaction spent no GAS: give the write back, so a stretch of
+      // refused broadcasts (an unfunded updater) cannot use up the day. Anything else (a lost
+      // connection, "already exists") may mean it landed, and stays counted.
+      if (classifyBroadcastOutcome(error).kind === 'rejection') releaseFeedWrite(reservation);
+      throw error;
+    }
     const hash = assertBroadcastAccepted(res);
     if (String(hash).replace(/^0x/i, '').toLowerCase() !== identity.hash.replace(/^0x/i, '')) {
       throw new Error(
@@ -1295,7 +1479,17 @@ async function pushNeoN3PerPair({
     return report;
   }
   let previousTxParams = null;
+  let budgetRefusal = null;
   for (const entry of planned) {
+    if (budgetRefusal) {
+      // The day's write budget is spent: do not sign the remaining pairs only to have each refused.
+      applyWriteConfirmation(report, {
+        pairs: [entry.pair],
+        confirmation: { status: 'failed', reason: budgetRefusal.message },
+        attempt: 1,
+      });
+      continue;
+    }
     let retainedIdentity = null;
     let settled = false;
     for (let attempt = 1; attempt <= PER_PAIR_ATTEMPTS; attempt += 1) {
@@ -1345,6 +1539,7 @@ async function pushNeoN3PerPair({
         break;
       } catch (error) {
         if (error && error.feedIdentity) retainedIdentity = error.feedIdentity;
+        if (error instanceof FeedWriteBudgetError) budgetRefusal = error;
         const retryable = isRetryablePerPairError(error) && attempt < PER_PAIR_ATTEMPTS;
         log(
           `[neo-n3] updateFeed ${entry.pair} attempt ${attempt}/${PER_PAIR_ATTEMPTS} ` +
@@ -1384,7 +1579,8 @@ async function pushNeoN3PerPair({
     throw new Error(
       `[neo-n3] per-pair updateFeed partial failure: failed=${report.failed.join(',')} ` +
         `pending=${report.pending.join(',')} confirmed=${report.confirmed.length} ` +
-        `txids=${report.txids.join(',')}`
+        `txids=${report.txids.join(',')}` +
+        (budgetRefusal ? ` ${budgetRefusal.message}` : '')
     );
   }
   log(
@@ -1978,11 +2174,20 @@ if (process.env.FEED_PUSHER_SKIP_MAIN !== '1') {
       return;
     }
     const envCheck = validateFeedPusherEnv(process.env, { requireTdKey: true });
-    if (envCheck.errors.length) {
-      for (const error of envCheck.errors) {
+    // Every configuration problem is reported in one run, before any price is fetched: a mainnet
+    // Neo N3 writer also needs its daily write cap (CU-11).
+    const configErrors = [
+      ...envCheck.errors,
+      ...validateWriteBudgetEnv(process.env, {
+        network: FEED_TARGET.network,
+        n3Enabled: CHAINS.some((chain) => chain.name === 'neo-n3' && chain.enabled),
+      }),
+    ];
+    if (configErrors.length) {
+      for (const error of configErrors) {
         log(`⚠️ ALERT: ${error.code} — ${error.summary}`);
       }
-      writePusherStatus({ ok: false, errors: envCheck.errors });
+      writePusherStatus({ ok: false, errors: configErrors });
       process.exitCode = 1;
       return;
     }

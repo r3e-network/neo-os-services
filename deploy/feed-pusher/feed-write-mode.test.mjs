@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import pkg from '@cityofzion/neon-js';
@@ -60,6 +60,8 @@ const {
   __getLastWriteEvidenceForTests,
   __rebuildWriterMetricsFromDiskForTests,
   __writeCycleOverlayStatusForTests,
+  __setWriteBudgetForTests,
+  __resetWriteBudgetForTests,
 } = await import('./feed-pusher.mjs');
 import {
   FEED_WRITER_METRIC_NAMES,
@@ -546,6 +548,50 @@ describe('testnet writer host path', { concurrency: false }, () => {
     assert.equal(submittedSnapshots[0].confirmation_status, 'submitted');
     assert.deepEqual(submittedSnapshots[0].pairs_submitted, ['TWELVEDATA:NEO-USD']);
     assert.equal(submittedSnapshots[0].ok, false);
+  });
+
+  test('CU-11: a spent daily write budget stops the per-pair writer after the first refusal and says why', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'feed-write-mode-budget-'));
+    const statePath = path.join(dir, 'status.json.write-budget.json');
+    // One write left today: pair 1 goes out, pair 2 is signed and refused, pair 3 is not even signed.
+    const sent = [];
+    try {
+      writeFileSync(statePath, JSON.stringify({ version: 1, day: '2026-10-05', writes: 4 }));
+      __setWriteBudgetForTests({
+        limit: 5,
+        statePath,
+        now: () => Date.UTC(2026, 9, 5, 12, 0, 0),
+      });
+      await withTestnetWriter(
+        async ({ enclaveCalls, now }) => {
+          await assert.rejects(
+            () => pushNeoN3({ 'NEO-USD': 5.25, 'GAS-USD': 2.2, 'BTC-USD': 65_000 }, now),
+            /per-pair updateFeed partial failure: .*daily write budget exhausted: 5 of 5 writes/
+          );
+          assert.deepEqual(
+            enclaveCalls.map((call) => call.symbols[0]),
+            ['NEO-USD', 'GAS-USD']
+          );
+          assert.equal(sent.length, 1);
+          const evidence = __getLastWriteEvidenceForTests();
+          assert.deepEqual(evidence.pairs_confirmed, ['TWELVEDATA:NEO-USD']);
+          assert.deepEqual(evidence.pairs_failed, ['TWELVEDATA:GAS-USD', 'TWELVEDATA:BTC-USD']);
+          assert.equal(JSON.parse(readFileSync(statePath, 'utf8')).writes, 5);
+        },
+        {
+          sendrawtransaction: (params, { broadcast }) => {
+            const decoded = decodeBroadcast(params[0]);
+            broadcast.push(decoded);
+            sent.push(decoded);
+            return { hash: decoded.hash };
+          },
+        }
+      );
+    } finally {
+      __resetWriteBudgetForTests();
+      rmSync(TEST_PENDING_BATCH_STATE, { force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('accepted-then-timeout reconciles the same signed hash and does not re-sign', async () => {
