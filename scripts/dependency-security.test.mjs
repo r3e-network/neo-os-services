@@ -132,6 +132,7 @@ test('the apps/web closure resolves to patched versions', () => {
   assert.equal(webManifest.devDependencies?.vitest, '^4.1.11');
   assert.equal(rootManifest.overrides?.['fast-uri'], '3.1.6');
   assert.equal(rootManifest.overrides?.sharp, '0.35.4');
+  assert.equal(rootManifest.overrides?.['source-map-js'], '1.2.2');
 
   const floors = {
     next: '15.5.24',
@@ -168,6 +169,12 @@ test('high severity transitive advisories stay above their remediation floors', 
     },
     undici: {
       '8.': '8.10.2',
+    },
+    // GHSA-68fv-2mgg-jv7q: event-loop denial of service through indexed
+    // source-map section offsets, high, affects 1.0.0 - 1.2.1. Transitive via
+    // postcss, so the only route is the root override below.
+    'source-map-js': {
+      '1.': '1.2.2',
     },
   };
 
