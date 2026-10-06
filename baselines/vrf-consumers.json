@@ -477,7 +477,7 @@
           "sha256": "c1cf7c4495d8b61e49fad7cb5b0ca1c5279bd60e49ba546aff94214c61049724"
         },
         "workers/neo-os-relayer/src/config.rs": {
-          "sha256": "2133ee41d132da86172f37fc269d002db076fe8067fafe804a176fa8afe2e9f5"
+          "sha256": "648a3c65156322f11bd6ba450b67ec8864ed8cb36bc12a1ffb3e0308c731af56"
         },
         "workers/neo-os-relayer/src/scan.rs": {
           "sha256": "ef7fb19d9629502e3bc137ee363282993ad134cd829df58796d4f2a7040b77d3"
@@ -486,7 +486,7 @@
           "sha256": "fe73927c2c92f35f455978bbefec90f733ebf569191216f66cd21ec133c47732"
         },
         "workers/neo-os-relayer/tests/local_chain.rs": {
-          "sha256": "8503fb4314717b6f08f7bc214a513a562694352a98b9845108bb89a38483981d"
+          "sha256": "18a090b5c17971e2878e92ccad8c7716713e1de522163032d647a0298cff501a"
         }
       }
     }

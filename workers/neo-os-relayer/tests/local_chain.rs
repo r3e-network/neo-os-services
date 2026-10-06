@@ -88,6 +88,229 @@ fn local_chain_refusals_exit_before_network_io() {
     }
 }
 
+// Include network-suffixed aliases and aliases without a URL suffix. Keep this
+// list independent of the refusal implementation so omissions stay observable.
+const ENDPOINT_ALIASES: &[&str] = &[
+    "NEO_MAINNET_RPC_URLS",
+    "MAINNET_RPC_URLS",
+    "NEO_RPC_URLS_MAINNET",
+    "NEO_MAINNET_RPC_URL",
+    "MAINNET_RPC_URL",
+    "NEO_RPC_MAINNET",
+    "NEO_TESTNET_RPC_URLS",
+    "TESTNET_RPC_URLS",
+    "NEO_RPC_URLS_TESTNET",
+    "NEO_TESTNET_RPC_URL",
+    "TESTNET_RPC_URL",
+    "NEO_RPC_TESTNET",
+    "NEO_RPC_URLS",
+    "NEO_RPC_URL",
+    "NEOX_RPC",
+    "NEOX_RPC_URLS",
+    "MORPHEUS_RELAYER_NEOX_RPC_URL",
+    "MORPHEUS_RELAYER_NEOX_RPC_URLS",
+    "MORPHEUS_MAINNET_RUNTIME_URL",
+    "MORPHEUS_TESTNET_RUNTIME_URL",
+    "MORPHEUS_RUNTIME_URL",
+    "MORPHEUS_MAINNET_NITRO_API_URL",
+    "MORPHEUS_TESTNET_NITRO_API_URL",
+    "NITRO_API_URL",
+    "NITRO_SIGNER_URL",
+    "MORPHEUS_SIGNER_URL",
+    "SIGNER_SERVICE_URL",
+    "SUPABASE_URL",
+    "NEXT_PUBLIC_SUPABASE_URL",
+    "morpheus_SUPABASE_URL",
+    "MORPHEUS_RELAYER_ENCLAVE_FULFILL_URL",
+    "MORPHEUS_RELAYER_ENCLAVE_DECRYPT_URL",
+    "MORPHEUS_DECRYPT_URL",
+    "MORPHEUS_RELAYER_NEO_N3_INDEXER_URL",
+    "MORPHEUS_RELAYER_NEOX_WORKER_URL",
+    "NEOX_WORKER_URL",
+    "MORPHEUS_BETTERSTACK_RELAYER_HEARTBEAT_URL",
+    "MORPHEUS_BETTERSTACK_RELAYER_FEED_HEARTBEAT_URL",
+    "MORPHEUS_BETTERSTACK_RELAYER_FAILURE_URL",
+    "MORPHEUS_BETTERSTACK_RELAYER_DEADLETTER_URL",
+    "MORPHEUS_N3_RECONCILIATION_ARCHIVE_RPC_URLS",
+    "MORPHEUS_LOCAL_CHAIN_RPC_URLS",
+];
+
+fn endpoint_refusal_cases() -> Vec<(String, BTreeMap<String, String>)> {
+    let mut cases = Vec::new();
+    for key in ENDPOINT_ALIASES {
+        let mut env = local_env();
+        env.insert((*key).into(), "https://remote.example".into());
+        cases.push((format!("direct {key}"), env));
+        for value in [
+            serde_json::json!("https://remote.example"),
+            serde_json::json!(["http://127.0.0.1:23456", "https://remote.example"]),
+        ] {
+            let mut env = local_env();
+            // Even a local direct value must not conceal a remote packed value.
+            env.insert((*key).into(), "http://127.0.0.1:23456".into());
+            env.insert(
+                "MORPHEUS_RUNTIME_CONFIG_JSON".into(),
+                serde_json::json!({*key: value}).to_string(),
+            );
+            cases.push((format!("packed {key} {value}"), env));
+        }
+    }
+    let mut env = local_env();
+    env.remove("MORPHEUS_LOCAL_CHAIN_RPC_URLS");
+    env.insert(
+        "MORPHEUS_RUNTIME_CONFIG_JSON".into(),
+        r#"{"MORPHEUS_LOCAL_CHAIN_RPC_URLS":["https://remote.example"]}"#.into(),
+    );
+    cases.push(("effective packed RPC array".into(), env));
+    let mut env = local_env();
+    env.insert(
+        "MORPHEUS_RUNTIME_CONFIG_JSON".into(),
+        r#"{"NODE_ENV":[" PrOdUcTiOn "]}"#.into(),
+    );
+    cases.push(("shadowed production array".into(), env));
+    cases
+}
+
+#[test]
+fn local_chain_endpoint_aliases_and_packed_values_are_refused() {
+    let accepted: Vec<_> = endpoint_refusal_cases()
+        .into_iter()
+        .filter_map(|(name, env)| create_relayer_config_from_env(&env).is_ok().then_some(name))
+        .collect();
+    assert!(accepted.is_empty(), "accepted refusal cases: {accepted:?}");
+}
+
+#[test]
+fn local_chain_packed_loopback_arrays_are_supported() {
+    let mut env = local_env();
+    env.remove("MORPHEUS_LOCAL_CHAIN_RPC_URLS");
+    env.insert(
+        "MORPHEUS_RUNTIME_CONFIG_JSON".into(),
+        serde_json::json!({
+            "MORPHEUS_LOCAL_CHAIN_RPC_URLS": [" http://127.0.0.1:23456 ", "http://[::1]:23457"],
+            "NEOX_RPC": ["https://127.0.0.1:23456"],
+            "NITRO_API_URL": ["http://127.0.0.1:23456"],
+            "NODE_ENV": ["test"]
+        })
+        .to_string(),
+    );
+    let config = create_relayer_config_from_env(&env).unwrap();
+    assert_eq!(
+        config.raw["neo_n3"]["rpcUrls"],
+        serde_json::json!(["http://127.0.0.1:23456", "http://[::1]:23457"])
+    );
+}
+
+#[test]
+fn local_chain_endpoint_refusals_reach_cli_before_rpc() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    };
+    use std::time::Duration;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    assert!(listener.local_addr().unwrap().port() >= 20000);
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    listener.set_nonblocking(true).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server_stop = stop.clone();
+    let server_calls = calls.clone();
+    let server = std::thread::spawn(move || {
+        while !server_stop.load(Ordering::SeqCst) {
+            let (mut stream, _) = match listener.accept() {
+                Ok(connection) => connection,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(1));
+                    continue;
+                }
+                Err(e) => panic!("{e}"),
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut reader = BufReader::new(&mut stream);
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                assert!(reader.read_line(&mut line).unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse::<usize>().unwrap();
+                }
+            }
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).unwrap();
+            let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            server_calls.fetch_add(1, Ordering::SeqCst);
+            let response =
+                serde_json::json!({"jsonrpc":"2.0", "id":request["id"], "result":1}).to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            )
+            .unwrap();
+        }
+    });
+    let state = std::env::temp_dir().join(format!(
+        "local-chain-refusal-{}-{}.json",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let run = |mut env: BTreeMap<String, String>| {
+        // Preserve planted values; replace only the fixture's local defaults.
+        for value in env.values_mut() {
+            *value = value.replace("http://127.0.0.1:23456", &url);
+        }
+        env.insert("MORPHEUS_AUTOMATION_ENABLED".into(), "false".into());
+        env.insert(
+            "MORPHEUS_RELAYER_STATE_FILE".into(),
+            state.to_string_lossy().into(),
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_neo-os-relayer"))
+            .arg("once")
+            .env_clear()
+            .envs(env)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&state);
+        output
+    };
+    let control = run(local_env());
+    let control_calls = calls.swap(0, Ordering::SeqCst);
+    let mut failures = Vec::new();
+    for (name, env) in endpoint_refusal_cases() {
+        let output = run(env);
+        let count = calls.swap(0, Ordering::SeqCst);
+        if output.status.success()
+            || count != 0
+            || !String::from_utf8_lossy(&output.stderr).contains("local-chain")
+        {
+            failures.push(format!("{name}: exit={}, RPC calls={count}", output.status));
+        }
+    }
+    stop.store(true, Ordering::SeqCst);
+    server.join().unwrap();
+    assert!(
+        control.status.success(),
+        "valid CLI control failed: {}",
+        String::from_utf8_lossy(&control.stderr)
+    );
+    assert!(control_calls > 0, "valid control did not reach the fixture");
+    assert!(failures.is_empty(), "CLI refusal bypasses: {failures:?}");
+}
+
 #[test]
 fn default_stays_public_and_refuses_http() {
     let base = BTreeMap::from([("MORPHEUS_NETWORK".into(), "testnet".into())]);

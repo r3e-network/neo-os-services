@@ -389,13 +389,19 @@ fn validate_local_source(source: &EnvSource, network: &str) -> Result<(), String
     neo_os_chain_n3::rpc::validate_local_chain_context(&source.env(&["NODE_ENV"]), 894710606)?;
     // Check both sources, including aliases hidden by precedence, before deriving
     // the effective endpoints. A configured remote host must never be ignored.
-    for object in [&source.process_env, &source.runtime_config] {
-        for (name, value) in object.iter() {
-            if name == "NODE_ENV"
-                && value
-                    .as_str()
-                    .is_some_and(|s| s.trim().eq_ignore_ascii_case("production"))
-            {
+    // Resolve each source independently so packed arrays use the same string
+    // coercion as effective configuration without hiding lower-priority values.
+    for isolated in [
+        EnvSource::new(source.process_env.clone(), JsObject::new()),
+        EnvSource::new(JsObject::new(), source.runtime_config.clone()),
+    ] {
+        for (name, _) in isolated
+            .process_env
+            .iter()
+            .chain(isolated.runtime_config.iter())
+        {
+            let value = isolated.env(&[name]);
+            if name == "NODE_ENV" && value.eq_ignore_ascii_case("production") {
                 return Err("local-chain is refused in production".into());
             }
             let relevant = [
@@ -412,11 +418,19 @@ fn validate_local_source(source: &EnvSource, network: &str) -> Result<(), String
             ]
             .iter()
             .any(|p| name.starts_with(p));
-            if relevant && (name.ends_with("_URL") || name.ends_with("_URLS")) {
-                if let Some(value) = value.as_str() {
-                    for url in value.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-                        neo_os_chain_n3::rpc::validate_local_chain_url(url)?;
-                    }
+            // resolve_neo_n3_rpc_urls and the NeoX resolver also accept these
+            // aliases, which do not follow the ordinary URL/URLS suffix rule.
+            let rpc_alias = matches!(
+                name,
+                "NEO_RPC_URLS_MAINNET"
+                    | "NEO_RPC_URLS_TESTNET"
+                    | "NEO_RPC_MAINNET"
+                    | "NEO_RPC_TESTNET"
+                    | "NEOX_RPC"
+            );
+            if rpc_alias || (relevant && (name.ends_with("_URL") || name.ends_with("_URLS"))) {
+                for url in neo_os_core::config::parse_url_list(&JsValue::Str(value)) {
+                    neo_os_chain_n3::rpc::validate_local_chain_url(&url)?;
                 }
             }
         }
@@ -441,6 +455,14 @@ fn validate_local_fields(raw: &Value) -> Result<(), String> {
         raw["nodeEnv"].as_str().unwrap_or(""),
         magic,
     )?;
+    let urls = raw["neo_n3"]["rpcUrls"]
+        .as_array()
+        .filter(|urls| !urls.is_empty())
+        .ok_or("local-chain requires a nonempty resolved RPC URL list")?;
+    for url in urls {
+        let url = url.as_str().ok_or("local-chain requires string RPC URLs")?;
+        neo_os_chain_n3::rpc::validate_local_chain_url(url)?;
+    }
     if let Some(heartbeats) = raw["heartbeats"].as_object() {
         for value in heartbeats
             .values()
@@ -505,6 +527,32 @@ pub(crate) fn reject_host_evm_private_keys(source: &EnvSource) -> Result<(), Str
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn local_fields_refuse_invalid_resolved_rpc_lists() {
+        let valid = serde_json::json!({
+            "mode": "requests_only", "activeChains": ["neo_n3"],
+            "nodeEnv": "test", "nitro": {"allowFallback": false},
+            "neo_n3": {"scanMode": "block_cursor", "networkMagic": 894710606,
+                "rpcUrls": ["http://127.0.0.1:23456"]}
+        });
+        assert!(super::validate_local_fields(&valid).is_ok());
+        for urls in [
+            serde_json::json!(["https://remote.example"]),
+            serde_json::json!(["http://127.0.0.1:23456", "https://remote.example"]),
+            serde_json::json!([]),
+            serde_json::json!([null]),
+            serde_json::json!([42]),
+            serde_json::json!("http://127.0.0.1:23456"),
+            serde_json::Value::Null,
+        ] {
+            let mut raw = valid.clone();
+            raw["neo_n3"]["rpcUrls"] = urls.clone();
+            assert!(
+                super::validate_local_fields(&raw).is_err(),
+                "accepted {urls}"
+            );
+        }
+    }
     use std::collections::BTreeMap;
 
     use super::{create_relayer_config_from_env, RelayerConfig};
