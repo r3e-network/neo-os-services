@@ -861,3 +861,67 @@ fn production_without_a_pinned_cmk_refuses_to_release() {
         "the release must not even start without the pin"
     );
 }
+
+/// SVC-U10 closes with "production key path unverifiable without KMS". Provisioning
+/// already had per-name assertions that each envelope materialized; what was missing
+/// is the other half: that the key the KMS released is the key the compute route then
+/// serves. This asserts exactly that, with the fake KMS, so the production key path is
+/// verified end to end without a live KMS.
+#[test]
+fn a_provisioned_kms_key_is_the_key_the_compute_route_serves() {
+    let kms = FakeKms::releasing(RUNTIME_CIPHERTEXT, released_envelope(1, "testnet"));
+    kms.set_result(ORACLE_CIPHERTEXT, Ok(oracle_envelope("testnet")));
+    kms.set_result(NEODID_CIPHERTEXT, Ok(neodid_envelope("testnet")));
+    kms.set_result(
+        CUSTODY_TOKEN_CIPHERTEXT,
+        Ok(custody_token_envelope("testnet")),
+    );
+    kms.set_result(GAME_SECRET_CIPHERTEXT, Ok(game_secret_envelope("testnet")));
+    let harness = bootstrap(AWS_PAIRS, kms);
+
+    // Before provisioning there is no key material at all, so the compute route
+    // cannot serve the confidential lane.
+    let (before, env_trim) = compute_overlay(&harness);
+    let error = crate::compute_execute::oracle_key_material(&before, &env_trim)
+        .expect_err("nothing provisioned yet");
+    assert_eq!(error.status, 400);
+
+    let outcome = provision_outcome(
+        &harness,
+        &bearer(RELEASED_TOKEN),
+        json!({
+            "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64": RUNTIME_CIPHERTEXT,
+            "MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64": ORACLE_CIPHERTEXT,
+            "MORPHEUS_NEODID_SALT_KMS_CIPHERTEXT_BASE64": NEODID_CIPHERTEXT,
+            "SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64": CUSTODY_TOKEN_CIPHERTEXT,
+            "MORPHEUS_GAME_SECRET_KMS_CIPHERTEXT_BASE64": GAME_SECRET_CIPHERTEXT,
+        }),
+    );
+    assert_eq!(outcome.status, 200, "{:?}", outcome.body);
+
+    // After provisioning the compute route resolves the very key the fake KMS
+    // released — not a fallback, not an ephemeral one.
+    let (after, env_trim) = compute_overlay(&harness);
+    let key = crate::compute_execute::oracle_key_material(&after, &env_trim)
+        .expect("the provisioned key serves the compute route");
+    assert_eq!(key.source, "nitro-recipient-kms");
+    assert_eq!(key.public_key_raw, ORACLE_PUBLIC_KEY);
+}
+
+/// The live overlay as the compute fold's resolver sees it, plus the same trimming
+/// reader that fold builds.
+fn compute_overlay(
+    harness: &TestState,
+) -> (
+    std::collections::BTreeMap<String, String>,
+    impl Fn(&str) -> String,
+) {
+    let map = harness.state.overlay.read().expect("overlay").merged_map();
+    let lookup = map.clone();
+    (map, move |name: &str| {
+        lookup
+            .get(name)
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default()
+    })
+}

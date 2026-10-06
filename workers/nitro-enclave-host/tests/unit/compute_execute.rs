@@ -179,7 +179,7 @@ fn confidential_key_material_states_fail_exactly_like_the_child() {
     assert_eq!(error.status, 400);
     assert_eq!(
         error.message,
-        "oracle key material unavailable: no configured key, Secrets Manager sealed keystore, or ephemeral key not allowed"
+        "oracle key material unavailable: no configured key or provisioned KMS ciphertext, and no ephemeral key allowed"
     );
 
     // A configured source that fails to parse falls through to the next one
@@ -194,10 +194,14 @@ fn confidential_key_material_states_fail_exactly_like_the_child() {
         .expect_err("misconfigured source falls through");
     assert_eq!(
         error.message,
-        "oracle key material unavailable: no configured key, Secrets Manager sealed keystore, or ephemeral key not allowed"
+        "oracle key material unavailable: no configured key or provisioned KMS ciphertext, and no ephemeral key allowed"
     );
 
-    // Sealed keystore: present in env, unsealing not served by the fold.
+    // A sealed keystore in the env is not a separate refusal any more (CU-148):
+    // the only way that path could produce a wrap key is the legacy Secrets
+    // Manager master derivation, which this host refuses by policy, so it could
+    // never succeed here. It now lands on the ordinary no-key-material error and
+    // the message stops advertising a capability this host does not have.
     let overlay = [
         ("MORPHEUS_NETWORK", TEST_NETWORK),
         ("NITRO_API_TOKEN", "s3cret"),
@@ -208,30 +212,14 @@ fn confidential_key_material_states_fail_exactly_like_the_child() {
     ];
     let harness = compute_harness(&overlay);
     let error = handle_compute_execute(&harness.state, &json!({ "encrypted_params": "AAAA" }))
-        .expect_err("sealed keystore fails closed");
-    assert_eq!(error.status, 503);
+        .expect_err("a sealed keystore cannot be served here");
+    assert_eq!(error.status, 400);
     assert_eq!(
         error.message,
-        "sealed oracle keystore unsealing is not served by the Rust enclave host yet"
+        "oracle key material unavailable: no configured key or provisioned KMS ciphertext, and no ephemeral key allowed"
     );
 
-    // Ephemeral keys are refused outright (non-production would generate one
-    // in the child).
-    let overlay = [
-        ("MORPHEUS_NETWORK", TEST_NETWORK),
-        ("NITRO_API_TOKEN", "s3cret"),
-        ("MORPHEUS_ALLOW_EPHEMERAL_KEY", "true"),
-    ];
-    let harness = compute_harness(&overlay);
-    let error = handle_compute_execute(&harness.state, &json!({ "encrypted_params": "AAAA" }))
-        .expect_err("ephemeral material fails closed");
-    assert_eq!(error.status, 503);
-    assert_eq!(
-        error.message,
-        "ephemeral oracle key material is not served by the Rust enclave host"
-    );
-
-    // ...and production denies the flag before anything else runs.
+    // ...and production denies the ephemeral flag before anything else runs.
     let overlay = [
         ("MORPHEUS_NETWORK", TEST_NETWORK),
         ("NITRO_API_TOKEN", "s3cret"),
@@ -715,4 +703,159 @@ fn dispatch_classifies_and_auth_gates_the_flipped_route() {
     );
     assert_eq!(outcome.status, 200);
     assert_eq!(outcome.body["mode"], "builtin");
+}
+
+// ---------------------------------------------------------------------------
+// CU-148: the two branches that stood in for unfinished work.
+//
+// The ephemeral branch is implemented (the crypto already existed in
+// `neo_os_compute::oracle::crypto` and is unit-tested there); the sealed-keystore
+// branch is removed, because the only way it could produce a wrap key is the
+// legacy Secrets Manager master derivation this host refuses by policy, so it
+// could never have succeeded here.
+// ---------------------------------------------------------------------------
+
+/// The overlay as the fold sees it, plus the same trimming reader the fold builds
+/// (`compute_execute.rs:62`). The trim matters: the production check compares the
+/// trimmed value, so a padded `NODE_ENV` must still be recognised.
+fn material_env(
+    overlay: &[(&str, &str)],
+) -> (
+    std::collections::BTreeMap<String, String>,
+    impl Fn(&str) -> String,
+) {
+    let map: std::collections::BTreeMap<String, String> = overlay
+        .iter()
+        .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+        .collect();
+    let lookup = map.clone();
+    (map, move |name: &str| {
+        lookup
+            .get(name)
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default()
+    })
+}
+
+#[test]
+fn an_ephemeral_key_is_generated_outside_production_when_no_stable_source_exists() {
+    let (overlay, env_trim) = material_env(&[
+        ("MORPHEUS_NETWORK", TEST_NETWORK),
+        ("MORPHEUS_ALLOW_EPHEMERAL_KEY", "true"),
+    ]);
+    let key = oracle_key_material(&overlay, &env_trim).expect("an ephemeral key");
+    assert_eq!(key.source, "ephemeral-memory");
+    assert_eq!(key.algorithm, "X25519-HKDF-SHA256-AES-256-GCM");
+    // A real key pair, not a placeholder: the public half is 32 bytes.
+    assert_eq!(key.public_key_raw_bytes.len(), 32);
+    assert!(!key.private_key_pkcs8_bytes.is_empty());
+}
+
+#[test]
+fn an_ephemeral_key_never_reaches_production() {
+    // The production refusal stands and runs before the key is generated, so the
+    // fact that the branch now works cannot widen production's attack surface.
+    for node_env in ["production", " PrOdUcTiOn "] {
+        let (overlay, env_trim) = material_env(&[
+            ("MORPHEUS_NETWORK", TEST_NETWORK),
+            ("MORPHEUS_ALLOW_EPHEMERAL_KEY", "true"),
+            ("NODE_ENV", node_env),
+        ]);
+        let error = oracle_key_material(&overlay, &env_trim).expect_err("production refuses");
+        assert_eq!(error.status, 400, "{node_env}");
+        assert_eq!(
+            error.message,
+            "MORPHEUS_ALLOW_EPHEMERAL_KEY is not allowed when NODE_ENV=production"
+        );
+    }
+}
+
+#[test]
+fn an_ephemeral_key_is_not_reachable_unless_the_flag_is_set() {
+    // Without the flag the request fails closed exactly as before: opening the
+    // branch must not make an ephemeral key the silent default.
+    let (overlay, env_trim) = material_env(&[("MORPHEUS_NETWORK", TEST_NETWORK)]);
+    let error = oracle_key_material(&overlay, &env_trim).expect_err("no flag, no key");
+    assert_eq!(error.status, 400);
+    assert_eq!(
+        error.message,
+        "oracle key material unavailable: no configured key or provisioned KMS ciphertext, and no ephemeral key allowed"
+    );
+}
+
+#[test]
+fn a_configured_key_still_wins_over_an_ephemeral_one() {
+    // The order is unchanged: a configured or provisioned source is used, and the
+    // ephemeral branch is only ever the last resort.
+    let (overlay, env_trim) = material_env(&[
+        ("MORPHEUS_NETWORK", TEST_NETWORK),
+        ("MORPHEUS_ALLOW_EPHEMERAL_KEY", "true"),
+        ("MORPHEUS_ORACLE_KEY_MATERIAL_JSON", KEY_MATERIAL_JSON),
+    ]);
+    let key = oracle_key_material(&overlay, &env_trim).expect("the configured key");
+    assert_ne!(key.source, "ephemeral-memory");
+    assert_eq!(key.public_key_raw, RECIPIENT_PUBLIC_RAW_B64);
+}
+
+#[test]
+fn a_sealed_keystore_no_longer_claims_a_capability_this_host_lacks() {
+    // The stub is gone, so a sealed keystore lands on the ordinary unavailable
+    // error rather than a 503 advertising an unsealing path that cannot run here.
+    for name in [
+        "MORPHEUS_ORACLE_SEALED_KEYSTORE_JSON",
+        "MORPHEUS_ORACLE_SEALED_KEYSTORE_BASE64",
+    ] {
+        let (overlay, env_trim) = material_env(&[
+            ("MORPHEUS_NETWORK", TEST_NETWORK),
+            (
+                name,
+                r#"{"public_key_raw":"AA==","sealed_private_key":"BB=="}"#,
+            ),
+        ]);
+        let error = oracle_key_material(&overlay, &env_trim).expect_err("unavailable");
+        assert_eq!(error.status, 400, "{name}");
+        assert_eq!(
+            error.message,
+            "oracle key material unavailable: no configured key or provisioned KMS ciphertext, and no ephemeral key allowed",
+            "{name}"
+        );
+        // And with the ephemeral flag it is still refused: the sealed env does not
+        // silently become an ephemeral key.
+        let mut overlay_with_flag = overlay.clone();
+        overlay_with_flag.insert(
+            "MORPHEUS_ALLOW_EPHEMERAL_KEY".to_string(),
+            "true".to_string(),
+        );
+        let env_trim = {
+            let lookup = overlay_with_flag.clone();
+            move |name: &str| {
+                lookup
+                    .get(name)
+                    .map(|value| value.trim().to_string())
+                    .unwrap_or_default()
+            }
+        };
+        let key = oracle_key_material(&overlay_with_flag, &env_trim).expect("ephemeral");
+        assert_eq!(key.source, "ephemeral-memory", "{name}");
+    }
+}
+
+#[test]
+fn an_ephemeral_key_is_minted_per_resolution_and_never_leaks_between_requests() {
+    // This is the sharp edge of the branch, pinned rather than left to a comment:
+    // `docs/ENVIRONMENT.md` calls the ephemeral key process-lifetime, but the
+    // resolution runs per request, so two resolutions produce two different keys.
+    // That matches the sibling `/oracle/key` lane today and it is why the key cannot
+    // carry a ciphertext across requests — but it must never silently become a
+    // STABLE key, which is the failure that would matter. Two calls must differ.
+    let (overlay, env_trim) = material_env(&[
+        ("MORPHEUS_NETWORK", TEST_NETWORK),
+        ("MORPHEUS_ALLOW_EPHEMERAL_KEY", "true"),
+    ]);
+    let first = oracle_key_material(&overlay, &env_trim).expect("first key");
+    let second = oracle_key_material(&overlay, &env_trim).expect("second key");
+    assert_ne!(
+        first.public_key_raw_bytes, second.public_key_raw_bytes,
+        "an ephemeral key must not be reused across resolutions"
+    );
 }

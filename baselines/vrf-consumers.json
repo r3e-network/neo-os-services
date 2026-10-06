@@ -141,6 +141,12 @@
         },
         "workers/nitro-enclave-host/tests/unit/support.rs": {
           "sha256": "0dbef3c312e4fe414a1c5981abfe7f1099296dd545587dc4008a9e5145c88ef2"
+        },
+        "workers/nitro-enclave-host/tests/unit/compute_execute.rs": {
+          "sha256": "26c4d898052d27658374a16eeea99e48e9728e1bead5d2ab345f6d8ebae1e8a3"
+        },
+        "workers/nitro-enclave-host/tests/unit/provision.rs": {
+          "sha256": "9c2ada6f9ed8e14dda807f93f254e83a805be3f8b59d89c4611354969f054dd3"
         }
       }
     },
@@ -456,6 +462,9 @@
         },
         "workers/nitro-enclave-host/src/state.rs": {
           "sha256": "f2cd1d9b3aae67da9da76b23311ae2d52cabf373e59663714cb1b544c9c4777f"
+        },
+        "workers/nitro-enclave-host/src/compute_execute.rs": {
+          "sha256": "3459f87b4bb69b0ac55c8599724b516fdef89056ec7ab85bd49ab9bb763cac65"
         }
       }
     },
