@@ -73,6 +73,9 @@
         "scripts/runtime-service-matrix.test.mjs": {
           "sha256": "eddf1012ba51591c027efa65803a1f5b6c32ed5c35e4a0a210bf0bc6ff404e21"
         },
+        "scripts/test-host-private-chain.py": {
+          "sha256": "7038c32c198aa2bd6640aadb9f560103b76c337e506ec4cbcda71a3a4219d099"
+        },
         "scripts/upgrade-morpheus-oracle.test.mjs": {
           "sha256": "1e83b015dd67366b4f52fbc4c290b5cd67f3ccc24d37e31ff0fbfce998b91294"
         },
@@ -104,10 +107,13 @@
           "sha256": "f693b43c66bad116b023184599848f411d294fad32ae0f1240767ea7cff0aa9a"
         },
         "workers/nitro-enclave-host/tests/unit/fulfill.rs": {
-          "sha256": "b275855fcaf2ae1ffe2fe2092109c8d34b3ea4e79caf8e45ec7ede6694c22626"
+          "sha256": "0d79bd31b9c2db3fce3b67aed78ff214993f8c9352f4f25ef8434c73a6ca5ca7"
         },
         "workers/nitro-enclave-host/tests/unit/overlay.rs": {
           "sha256": "a9924f35c5fbca7fcc4120729e19712aab8518ba15e94c7b98e5b06628f658b6"
+        },
+        "workers/nitro-enclave-host/tests/unit/private_chain.rs": {
+          "sha256": "3f71ea0306a664bcc9e68a38210a195543c4fb2f856cf6b92097210474204b48"
         },
         "workers/nitro-enclave-host/tests/unit/routes.rs": {
           "sha256": "e3f426fc370ac8905781a0646bbe7134984ff97b9d7540a8f73d37e5fdd2e77d"

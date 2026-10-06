@@ -1036,3 +1036,6 @@ fn default_configuration_binds_the_measured_contract() {
     );
     assert!(harness.signer.sign_calls().is_empty());
 }
+
+#[path = "private_chain.rs"]
+mod private_chain;

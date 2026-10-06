@@ -54,3 +54,17 @@ kernel/host/custody fulfillment harness. The test also supplies unusable proxy
 settings to prove the local RPC path does not use them. Its nodes bind loopback,
 have no seeds, and use temporary state. CI runs the same test explicitly; the
 ordinary Rust suite reports this environment-dependent test as ignored.
+
+For the host override's on-chain acceptance, install Neo Express 3.10.1, nccs
+3.9.1, .NET 10 and Rust 1.98, then run `bash contracts/build.sh` followed by
+`python3 scripts/test-host-private-chain.py`. The `host-private-chain` CI job
+compiles the kernel with nccs and runs the same driver. The test deploys the unmodified kernel to a new
+disposable private chain, queues a compute request, reads its fields from chain
+storage, and feeds them to the real host fulfillment function with the override.
+The compute bridge is disabled; hash computation runs in process. A fresh P-256
+software signer substitutes for custody and a test document substitutes for NSM.
+Neo Express's offline blocks and clock advancement mature the verifier timelock.
+The kernel verifies the signature and stores the completed result; the harness
+also checks corrupt-signature and duplicate-fulfillment rejection. Wallets and
+chain data are deleted on exit. This does not exercise the relayer or production
+custody/attestation transport.
