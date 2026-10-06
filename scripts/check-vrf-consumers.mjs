@@ -192,11 +192,6 @@ function main() {
   const found = new Set();
   for (const path of new Set(files)) {
     if (CONTROL.has(path)) continue;
-    const isSource =
-      SOURCE.has(extname(path).toLowerCase()) ||
-      !extname(path) ||
-      (changedSet.has(path) && extname(path).toLowerCase() !== '.md');
-    if (!isSource && !inputs.has(path)) continue;
     const full = resolve(root, path);
     // Deletions are shrinkage. Other failures, including symlinks, are errors.
     let stat;
@@ -206,8 +201,16 @@ function main() {
       if (e.code === 'ENOENT') continue;
       throw e;
     }
+    const bytes = stat.isFile() ? readFileSync(full) : Buffer.alloc(0);
+    // Executable modes and shebangs take precedence over documentation extensions.
+    const isSource =
+      (stat.mode & 0o111) !== 0 ||
+      bytes.subarray(0, 2).toString() === '#!' ||
+      SOURCE.has(extname(path).toLowerCase()) ||
+      !extname(path) ||
+      (changedSet.has(path) && extname(path).toLowerCase() !== '.md');
+    if (!isSource && !inputs.has(path)) continue;
     requireRule(stat.isFile(), `input must be a regular file: ${path}`);
-    const bytes = readFileSync(full);
     const input = inputs.get(path);
     if (input) {
       found.add(path);

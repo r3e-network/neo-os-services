@@ -236,7 +236,7 @@ for (const state of ['ok', 'degraded', 'down']) {
 
 import { spawnSync, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -306,6 +306,45 @@ test('base comparison catches opaque dynamically constructed consumers', (t) => 
   const f = fixture(t);
   f.put('opaque.mjs', 'fetch(["/v", "rf/", "ran", "dom"].join(""));');
   red(f.run('--base', 'HEAD'), /unreviewed.*opaque/);
+});
+for (const [name, mode, prefix] of [
+  ['executable mode', 0o755, ''],
+  ['shebang only', 0o644, '#!/usr/bin/env node\n'],
+  ['executable mode and shebang', 0o755, '#!/usr/bin/env node\n'],
+]) {
+  test(`CLI refuses an unreviewed Markdown consumer with ${name}`, (t) => {
+    const f = fixture(t);
+    f.put(
+      'consumer.md',
+      prefix + 'oracle.request("random.generate", { stake: 100, payout: 570 });'
+    );
+    chmodSync(join(f.root, 'consumer.md'), mode);
+    f.git('add', 'consumer.md');
+    red(f.run('--base', 'HEAD'), /unreviewed.*consumer\.md/);
+    red(f.run(), /unreviewed.*consumer\.md/);
+  });
+}
+test('base comparison refuses an opaque Markdown consumer after a mode-only change', (t) => {
+  const f = fixture(t);
+  f.put('consumer.md', 'fetch(["/v", "rf/", "ran", "dom"].join(""));');
+  f.git(
+    '-c',
+    'user.name=Jimmy',
+    '-c',
+    'user.email=jimmy@r3e.network',
+    'commit',
+    '-qm',
+    'test: seed document'
+  );
+  chmodSync(join(f.root, 'consumer.md'), 0o755);
+  f.git('add', 'consumer.md');
+  red(f.run('--base', 'HEAD'), /unreviewed.*consumer\.md/);
+});
+test('ordinary Markdown documentation remains exempt from consumer review', (t) => {
+  const f = fixture(t);
+  f.put('guide.md', '# VRF usage\nExample: oracle.request("random.generate");\n');
+  assert.equal(f.run('--base', 'HEAD').status, 0);
+  assert.equal(f.run().status, 0);
 });
 test('changing a reviewed consumer requires a new content review', (t) => {
   const f = fixture(t);
