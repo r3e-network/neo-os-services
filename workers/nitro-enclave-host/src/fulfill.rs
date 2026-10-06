@@ -35,6 +35,13 @@ use crate::RuntimeError;
 const N3_MAINNET_ORACLE_CONTRACT: &str = "0xf54d8584ef82315c1800373272ab08ae0db2d5ef";
 const N3_TESTNET_ORACLE_CONTRACT: &str = "0xf54d8584ef82315c1800373272ab08ae0db2d5ef";
 
+/// CU-87: the image-ENV name that names the oracle contract a test expects, so a
+/// kernel deployed fresh on a private chain can be fulfilled. It is NOT in
+/// `PROVISIONABLE_NAMES`, so `/provision` cannot install it: an untrusted parent
+/// never moves the measured binding. Off unless set, refused in production,
+/// refused on mainnet, and refused when it is not a 20-byte hex script hash.
+const TEST_CONTRACT_OVERRIDE_ENV: &str = "MORPHEUS_TEST_MEASURED_ORACLE_CONTRACT_OVERRIDE";
+
 /// JS `String(value)` over serde JSON — `??` chains never hand us
 /// null/undefined, so `Null` here is unreachable in practice.
 pub(crate) fn js_coerce(value: &serde_json::Value) -> String {
@@ -376,6 +383,7 @@ pub fn handle_oracle_fulfill(
         )
     } else {
         let (contract_script_hash, network_magic) = measured_n3_binding(
+            state,
             &network,
             &contract_script_hash,
             fulfillment_context
@@ -499,12 +507,14 @@ pub fn handle_oracle_fulfill(
 }
 
 fn measured_n3_binding(
+    state: &AppState,
     network: &str,
     supplied_contract: &str,
     supplied_magic: Option<&serde_json::Value>,
 ) -> Result<(String, Option<f64>), RuntimeError> {
-    let expected_contract = measured_n3_oracle_contract(network)?;
-    if !supplied_contract.is_empty() && !supplied_contract.eq_ignore_ascii_case(expected_contract) {
+    let expected_contract = expected_n3_oracle_contract(state, network)?;
+    if !supplied_contract.is_empty() && !supplied_contract.eq_ignore_ascii_case(&expected_contract)
+    {
         return Err(http_error(
             400,
             format!(
@@ -529,10 +539,50 @@ fn measured_n3_binding(
             ));
         }
     }
-    Ok((
-        expected_contract.to_string(),
-        Some(f64::from(expected_magic)),
-    ))
+    Ok((expected_contract, Some(f64::from(expected_magic))))
+}
+
+/// The oracle contract this host binds a Neo N3 fulfilment digest to: the
+/// compiled-in measured constant, or — for tests only — the kernel named by
+/// `MORPHEUS_TEST_MEASURED_ORACLE_CONTRACT_OVERRIDE`.
+///
+/// The override replaces only WHICH contract is expected. Every other check is
+/// untouched: the supplied contract must still equal the resolved value, and the
+/// network magic still comes from the reviewed identity registry, never from the
+/// request. It is refused in production, on mainnet, and when malformed, so it
+/// can only ever redirect a test at the kernel that test deployed.
+fn expected_n3_oracle_contract(state: &AppState, network: &str) -> Result<String, RuntimeError> {
+    let measured = measured_n3_oracle_contract(network)?;
+    let overlay = state.overlay.read().expect("overlay lock");
+    let Some(requested) = overlay.get_trimmed(TEST_CONTRACT_OVERRIDE_ENV) else {
+        return Ok(measured.to_string());
+    };
+    let node_env = overlay.get_trimmed("NODE_ENV");
+    drop(overlay);
+
+    if node_env.is_some_and(|value| value.eq_ignore_ascii_case("production")) {
+        return Err(http_error(
+            503,
+            format!("{TEST_CONTRACT_OVERRIDE_ENV} is not allowed when NODE_ENV=production"),
+        ));
+    }
+    if network == "mainnet" {
+        return Err(http_error(
+            503,
+            format!("{TEST_CONTRACT_OVERRIDE_ENV} is refused on mainnet"),
+        ));
+    }
+    let hash = requested
+        .strip_prefix("0x")
+        .or_else(|| requested.strip_prefix("0X"))
+        .unwrap_or(&requested);
+    if hash.len() != 40 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(http_error(
+            503,
+            format!("{TEST_CONTRACT_OVERRIDE_ENV} must be a 20-byte hex script hash"),
+        ));
+    }
+    Ok(format!("0x{}", hash.to_ascii_lowercase()))
 }
 
 fn measured_n3_oracle_contract(network: &str) -> Result<&'static str, RuntimeError> {
@@ -623,7 +673,7 @@ fn resolve_vrf_request_domain(
             .get("network_magic")
             .filter(|value| !value.is_null())
             .or_else(|| context.get("networkMagic").filter(|value| !value.is_null()));
-        let (contract, _) = measured_n3_binding(&network, &contract, supplied_magic)?;
+        let (contract, _) = measured_n3_binding(state, &network, &contract, supplied_magic)?;
         (
             u64::from(measured_n3_magic(&network)?),
             contract.to_ascii_lowercase(),

@@ -25,6 +25,26 @@ or use proxies. Only N3 request mode with block scanning is supported. Existing
 custody and fulfillment requirements still apply; this flag does not override the
 measured contract or enable a private-key signer.
 
+## Measured-contract override (tests only)
+
+A kernel deployed fresh on a private chain has its own script hash, so the host's
+compiled-in measured binding refuses every fulfilment against it. For tests, set
+`MORPHEUS_TEST_MEASURED_ORACLE_CONTRACT_OVERRIDE` on the enclave host to that
+kernel's 20-byte script hash, and point the relayer's `neo_n3.oracleContract` at the
+same kernel:
+
+```sh
+MORPHEUS_TEST_MEASURED_ORACLE_CONTRACT_OVERRIDE=0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a
+```
+
+It is off unless set, and the host refuses it with 503 when `NODE_ENV` is
+`production`, when the network is `mainnet`, or when the value is not a 20-byte hex
+script hash. It replaces only which contract the host expects: the supplied contract
+must still equal it and the network magic still comes from the reviewed identity
+registry, so a request never chooses this value. It is image ENV only and is not in
+the `/provision` allowlist, so an untrusted parent cannot set it at runtime. Remove
+the variable to roll back; nothing is stored or migrated.
+
 Run `python3 scripts/test-relayer-local-chain.py` from the repository root with
 NeoGo 0.121.0 and Rust installed. The test creates and deletes a private chain,
 a fresh disposable validator wallet and a signed transaction. The relayer resumes

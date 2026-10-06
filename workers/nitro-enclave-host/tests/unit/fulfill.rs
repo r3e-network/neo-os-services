@@ -852,3 +852,187 @@ fn measured_n3_identity_rejects_unknown_network_without_testnet_fallback() {
     assert!(measured_n3_oracle_contract("staging").is_err());
     assert!(measured_n3_magic("staging").is_err());
 }
+
+// ---------------------------------------------------------------------------
+// CU-87: the test-only measured-contract override.
+//
+// A kernel deployed fresh on a private chain has its own script hash, so the
+// compiled-in measured binding refuses every fulfilment against it. The
+// override names that kernel for tests. It is refused in production, refused on
+// mainnet, refused when malformed, and it never lets the request choose the
+// value: the supplied contract must still equal the resolved expected hash.
+// ---------------------------------------------------------------------------
+
+/// A kernel deployed fresh on a private chain: a different script hash from the
+/// compiled-in measured one.
+const FRESH_KERNEL_CONTRACT: &str = "0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
+const OTHER_FRESH_KERNEL_CONTRACT: &str = "0x6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b";
+
+fn override_harness(extra: &[(&str, &str)], reply: BridgeReply) -> TestState {
+    let mut overlay = healthy_overlay();
+    overlay.extend_from_slice(extra);
+    let harness = test_state(
+        &overlay,
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    harness.bridge.set_reply(reply);
+    harness
+}
+
+fn override_env() -> [(&'static str, &'static str); 1] {
+    [(
+        "MORPHEUS_TEST_MEASURED_ORACLE_CONTRACT_OVERRIDE",
+        FRESH_KERNEL_CONTRACT,
+    )]
+}
+
+fn bound_body(contract: &str) -> serde_json::Value {
+    let mut body = price_body_without_binding();
+    body["fulfillment_context"]["contract_script_hash"] = json!(contract);
+    body["fulfillment_context"]["network_magic"] = json!(894710606);
+    body
+}
+
+#[test]
+fn fresh_kernel_fulfils_when_the_test_override_names_it() {
+    let harness = override_harness(&override_env(), price_reply());
+    let body = bound_body(FRESH_KERNEL_CONTRACT);
+
+    let response = handle_oracle_fulfill(&harness.state, &body).expect("fresh kernel fulfilment");
+    assert_eq!(response["status"], "ok");
+    assert_eq!(response["success"], true);
+
+    // The digest binds the FRESH kernel, not the compiled-in measured one:
+    // an independent recomputation over the override hash must match byte for
+    // byte, and the measured-hash digest must not.
+    let worker_response =
+        JsValue::from_json(&json!({ "ok": true, "status": 200, "body": fixed_price_body() }));
+    let fulfillment = encode_fulfillment_result("oracle_query", &worker_response).expect("encode");
+    let intent = resolve_kernel_intent("oracle_query");
+    let options_for = |contract: &str| FulfillmentOptions {
+        chain: Some("neo_n3".to_string()),
+        app_id: String::new(),
+        module_id: intent.module_id.to_string(),
+        operation: intent.operation.to_string(),
+        contract_script_hash: contract.to_string(),
+        network_magic: Some(894710606.0),
+    };
+    let digest_for = |contract: &str| {
+        hex::encode(
+            build_fulfillment_digest_bytes(
+                &JsValue::Str("4242".to_string()),
+                "oracle_query",
+                fulfillment.success,
+                &fulfillment.result,
+                &fulfillment.error,
+                fulfillment.result_bytes_base64.as_deref().unwrap_or(""),
+                &options_for(contract),
+            )
+            .expect("digest"),
+        )
+    };
+    assert_eq!(
+        response["fulfillment_digest_hex"],
+        digest_for(FRESH_KERNEL_CONTRACT)
+    );
+    assert_ne!(
+        response["fulfillment_digest_hex"],
+        digest_for(measured_n3_oracle_contract(TEST_NETWORK).expect("reviewed test network"))
+    );
+}
+
+#[test]
+fn test_override_is_refused_in_production_before_signing() {
+    for node_env in ["production", " PrOdUcTiOn "] {
+        let overlay = [("NODE_ENV", node_env), override_env()[0]];
+        let harness = override_harness(&overlay, price_reply());
+        let error = handle_oracle_fulfill(&harness.state, &bound_body(FRESH_KERNEL_CONTRACT))
+            .expect_err("production refuses the override");
+        assert_eq!(error.status, 503);
+        assert_eq!(
+            error.message,
+            "MORPHEUS_TEST_MEASURED_ORACLE_CONTRACT_OVERRIDE is not allowed when NODE_ENV=production"
+        );
+        // Nothing signed. The N3 binding is resolved in the digest phase, which
+        // runs after compute — the order the measured binding has always had, so
+        // this asserts the invariant that matters and no more.
+        assert!(harness.signer.sign_calls().is_empty());
+    }
+}
+
+#[test]
+fn test_override_must_be_a_script_hash() {
+    for bad in [
+        "0x1234",
+        "0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "0xzzzz5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+        "not-a-hash",
+    ] {
+        let harness = override_harness(
+            &[("MORPHEUS_TEST_MEASURED_ORACLE_CONTRACT_OVERRIDE", bad)],
+            price_reply(),
+        );
+        let error = handle_oracle_fulfill(&harness.state, &bound_body(FRESH_KERNEL_CONTRACT))
+            .expect_err("malformed override");
+        assert_eq!(error.status, 503, "{bad}");
+        assert_eq!(
+            error.message,
+            "MORPHEUS_TEST_MEASURED_ORACLE_CONTRACT_OVERRIDE must be a 20-byte hex script hash",
+            "{bad}"
+        );
+        assert!(harness.signer.sign_calls().is_empty(), "{bad}");
+    }
+}
+
+#[test]
+fn test_override_is_refused_on_mainnet() {
+    let mut overlay = vec![("MORPHEUS_NETWORK", "mainnet")];
+    overlay.extend_from_slice(&override_env());
+    let harness = override_harness(&overlay, price_reply());
+    let error = handle_oracle_fulfill(&harness.state, &bound_body(FRESH_KERNEL_CONTRACT))
+        .expect_err("mainnet refuses the override");
+    assert_eq!(error.status, 503);
+    assert_eq!(
+        error.message,
+        "MORPHEUS_TEST_MEASURED_ORACLE_CONTRACT_OVERRIDE is refused on mainnet"
+    );
+    assert!(harness.signer.sign_calls().is_empty());
+}
+
+#[test]
+fn test_override_still_requires_the_supplied_contract_to_match() {
+    let harness = override_harness(&override_env(), price_reply());
+    // The override names kernel A; the request names kernel B. The override
+    // widens the expected value, it does not disable the comparison.
+    let error = handle_oracle_fulfill(&harness.state, &bound_body(OTHER_FRESH_KERNEL_CONTRACT))
+        .expect_err("foreign fresh kernel");
+    assert_eq!(error.status, 400);
+    assert!(
+        error
+            .message
+            .contains("contract does not match measured testnet"),
+        "{}",
+        error.message
+    );
+    assert!(harness.signer.sign_calls().is_empty());
+}
+
+#[test]
+fn default_configuration_binds_the_measured_contract() {
+    // No flag: the measured constant still binds and a fresh kernel is refused.
+    let harness = fulfill_harness(price_reply());
+    let error = handle_oracle_fulfill(&harness.state, &bound_body(FRESH_KERNEL_CONTRACT))
+        .expect_err("measured binding is unchanged by default");
+    assert_eq!(error.status, 400);
+    assert!(
+        error
+            .message
+            .contains("contract does not match measured testnet"),
+        "{}",
+        error.message
+    );
+    assert!(harness.signer.sign_calls().is_empty());
+}

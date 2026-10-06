@@ -106,6 +106,17 @@ fn is_provisionable_name_matches_the_documented_allowlist() {
     assert!(!is_provisionable_name("MORPHEUS_NETWORK"));
     assert!(!is_provisionable_name("NODE_ENV"));
     assert!(!is_provisionable_name("SIGNER_SERVICE_URL"));
+    // CU-87: the test-only measured-contract override is image ENV only. An
+    // untrusted parent must not be able to move the measured binding through
+    // /provision.
+    assert!(!is_provisionable_name(
+        "MORPHEUS_TEST_MEASURED_ORACLE_CONTRACT_OVERRIDE"
+    ));
+    let mut overlay = EnvOverlay::new(Vec::<(&str, &str)>::new());
+    assert!(!overlay.apply(
+        "MORPHEUS_TEST_MEASURED_ORACLE_CONTRACT_OVERRIDE",
+        &value("0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a")
+    ));
     assert!(!is_provisionable_name("MORPHEUS-NETWORK"));
     assert!(!is_provisionable_name("morpheus_network"));
     assert!(!is_provisionable_name(""));

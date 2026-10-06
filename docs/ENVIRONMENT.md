@@ -434,6 +434,10 @@ These are intentionally left unset in production unless you explicitly want the 
   English: Allows provider requests to override builtin base URLs. Default unset means disabled.
   中文：允许 provider 请求覆盖内置 base URL。默认不写就是关闭。
 
+- `MORPHEUS_TEST_MEASURED_ORACLE_CONTRACT_OVERRIDE`
+  English: Tests only. Names the 20-byte oracle contract script hash the measured Rust host binds a Neo N3 fulfilment digest to, so a kernel deployed fresh on a private chain can be fulfilled. Default unset means the compiled-in measured contract binds, unchanged. Refused with 503 when `NODE_ENV=production`, when the network is `mainnet`, or when the value is not a 20-byte hex script hash. Image ENV only: not in the `/provision` allowlist, so it cannot be set at runtime. The supplied contract must still equal it and the network magic still comes from the reviewed identity registry, so a request never chooses this value. See `workers/neo-os-relayer/LOCAL-CHAIN.md`.
+  中文：仅供测试。指定实测 Rust 主机绑定 Neo N3 履约摘要所用的 20 字节 oracle 合约脚本哈希，使私有链上新部署的 kernel 可以被履约。默认不写即使用编译进镜像的实测合约，行为不变。当 `NODE_ENV=production`、网络为 `mainnet`，或该值不是 20 字节十六进制脚本哈希时，一律以 503 拒绝。仅支持镜像 ENV：不在 `/provision` 白名单内，运行时无法设置。请求携带的合约仍必须与其相等，网络 magic 仍取自已审阅的身份注册表，请求本身无法决定该值。参见 `workers/neo-os-relayer/LOCAL-CHAIN.md`。
+
 - `MORPHEUS_FEED_BALANCE_GAS`
   English: The updater's GAS balance, supplied by an operator for the enclave host's `/health` runway report. The host holds no key and has no chain RPC for it, so this is the only source. Default unset means the runway reports `runway_basis: balance_unknown` with a null `runway_days` — unknown, never a healthy-looking number.
   中文：由运维提供的 updater GAS 余额，供 enclave 主机 `/health` 的 runway 报告使用。主机不持有密钥也没有对应的链上 RPC，因此这是唯一来源。默认不写时 runway 报告 `runway_basis: balance_unknown` 且 `runway_days` 为 null——是未知，而不是看似健康的数值。
