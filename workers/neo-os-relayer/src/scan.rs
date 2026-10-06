@@ -400,22 +400,21 @@ pub fn process_chain_neo_n3(
         };
     }
 
-    let rpc_client =
-        match neo_os_chain_n3::rpc::NeoRpcClient::new(transport.clone(), rpc_urls, true) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!("Failed to create Neo N3 RPC client: {e}");
-                return ChainProcessResult {
-                    chain: "neo_n3".to_string(),
-                    skipped: false,
-                    discovery_healthy: false,
-                    scanned_blocks: None,
-                    scanned_requests: None,
-                    events: vec![],
-                    retries: vec![],
-                };
-            }
-        };
+    let rpc_client = match crate::config::n3_rpc(config, transport.clone(), rpc_urls, true) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("Failed to create Neo N3 RPC client: {e}");
+            return ChainProcessResult {
+                chain: "neo_n3".to_string(),
+                skipped: false,
+                discovery_healthy: false,
+                scanned_blocks: None,
+                scanned_requests: None,
+                events: vec![],
+                retries: vec![],
+            };
+        }
+    };
 
     let due_retries_before = get_due_retry_items(state, "neo_n3", now_ms);
     let mut skip_discovery_for_idle = false;

@@ -647,6 +647,17 @@ pub fn derive_pure_fields(
     registry: &JsValue,
     cert_file_fallback: &str,
 ) -> CoreResult<JsObject> {
+    derive_pure_fields_with_rpc_urls(source, registry, cert_file_fallback, None)
+}
+
+/// Relayer-only seam: the caller validates an explicit local RPC list before
+/// derivation. Ordinary callers retain the reviewed public RPC resolution.
+pub fn derive_pure_fields_with_rpc_urls(
+    source: &EnvSource,
+    registry: &JsValue,
+    cert_file_fallback: &str,
+    local_rpc_urls: Option<Vec<String>>,
+) -> CoreResult<JsObject> {
     let network = {
         let raw = source.env(&["MORPHEUS_NETWORK", "NEXT_PUBLIC_MORPHEUS_NETWORK"]);
         crate::network_identity::resolve_reviewed_network(if raw.is_empty() {
@@ -772,18 +783,22 @@ pub fn derive_pure_fields(
              MORPHEUS_ALLOW_INSECURE_HOST_EVM_SIGNER=true for an explicit non-production test",
         ));
     }
-    let neo_n3_rpc_urls = resolve_neo_n3_rpc_urls(&network, source, registry)?;
+    let allow_public_runtime = !production && local_rpc_urls.is_none();
+    let neo_n3_rpc_urls = match local_rpc_urls {
+        Some(urls) => urls,
+        None => resolve_neo_n3_rpc_urls(&network, source, registry)?,
+    };
     let allow_fallback_value = !production
         && parse_boolean_env(
             &JsValue::Str(source.env(&["MORPHEUS_RELAYER_ALLOW_RUNTIME_FALLBACKS"])),
             true,
         );
-    let nitro_api_url = resolve_nitro_api_urls(&network, source, registry, !production);
+    let nitro_api_url = resolve_nitro_api_urls(&network, source, registry, allow_public_runtime);
     let signer_url = {
         let explicit =
             js_trim(&source.env(&["NITRO_SIGNER_URL", "MORPHEUS_SIGNER_URL"])).to_string();
         if explicit.is_empty() {
-            resolve_nitro_api_urls(&network, source, registry, !production)
+            resolve_nitro_api_urls(&network, source, registry, allow_public_runtime)
         } else {
             explicit
         }
@@ -798,7 +813,7 @@ pub fn derive_pure_fields(
             if !signer.is_empty() {
                 signer
             } else {
-                resolve_nitro_api_urls(&network, source, registry, !production)
+                resolve_nitro_api_urls(&network, source, registry, allow_public_runtime)
             }
         }
     };
@@ -821,7 +836,7 @@ pub fn derive_pure_fields(
                 if !signer.is_empty() {
                     signer
                 } else {
-                    resolve_nitro_api_urls(&network, source, registry, !production)
+                    resolve_nitro_api_urls(&network, source, registry, allow_public_runtime)
                 }
             }
         }

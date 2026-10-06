@@ -7,7 +7,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use neo_os_core::config::{
-    configured_host_signer_env_names, default_state_file_name, derive_pure_fields, EnvSource,
+    configured_host_signer_env_names, default_state_file_name, derive_pure_fields_with_rpc_urls,
+    EnvSource,
 };
 use neo_os_core::js_value::{JsObject, JsValue};
 use serde::{Deserialize, Serialize};
@@ -201,7 +202,21 @@ pub fn create_relayer_config_from_env(
 
     let registry = load_network_registry(&network);
 
-    let pure_fields = derive_pure_fields(&env_source, &registry, "").map_err(|e| e.0)?;
+    let local_chain = env_source.env(&["MORPHEUS_LOCAL_CHAIN"]) == "true";
+    let local_urls = if local_chain {
+        validate_local_source(&env_source, &network)?;
+        let urls = neo_os_core::config::parse_url_list(&JsValue::Str(
+            env_source.env(&["MORPHEUS_LOCAL_CHAIN_RPC_URLS"]),
+        ));
+        if urls.is_empty() {
+            return Err("local-chain requires explicit loopback RPC URLs".into());
+        }
+        Some(urls)
+    } else {
+        None
+    };
+    let pure_fields = derive_pure_fields_with_rpc_urls(&env_source, &registry, "", local_urls)
+        .map_err(|e| e.0)?;
 
     let mode = pure_fields
         .get("mode")
@@ -291,6 +306,11 @@ pub fn create_relayer_config_from_env(
         .unwrap_or_else(|| vec!["neo_n3".to_string()]);
 
     let mut raw_val = js_value_to_json(&JsValue::Object(pure_fields));
+    if local_chain {
+        validate_local_fields(&raw_val)?;
+        raw_val["localChain"] = Value::Bool(true);
+        raw_val["neo_n3"]["networkMagic"] = Value::from(894710606u32);
+    }
     if let Value::Object(ref mut map) = raw_val {
         map.insert(
             "deliveryProtocol".into(),
@@ -360,6 +380,108 @@ pub fn create_relayer_config_from_env(
         state_persist_min_interval_ms,
         raw: raw_val,
     })
+}
+
+fn validate_local_source(source: &EnvSource, network: &str) -> Result<(), String> {
+    if network != "testnet" {
+        return Err("local-chain requires the testnet profile".into());
+    }
+    neo_os_chain_n3::rpc::validate_local_chain_context(&source.env(&["NODE_ENV"]), 894710606)?;
+    // Check both sources, including aliases hidden by precedence, before deriving
+    // the effective endpoints. A configured remote host must never be ignored.
+    for object in [&source.process_env, &source.runtime_config] {
+        for (name, value) in object.iter() {
+            if name == "NODE_ENV"
+                && value
+                    .as_str()
+                    .is_some_and(|s| s.trim().eq_ignore_ascii_case("production"))
+            {
+                return Err("local-chain is refused in production".into());
+            }
+            let relevant = [
+                "MORPHEUS_",
+                "NITRO_",
+                "NEO_",
+                "NEOX_",
+                "SIGNER_",
+                "SUPABASE_",
+                "NEXT_PUBLIC_",
+                "MAINNET_",
+                "TESTNET_",
+                "morpheus_",
+            ]
+            .iter()
+            .any(|p| name.starts_with(p));
+            if relevant && (name.ends_with("_URL") || name.ends_with("_URLS")) {
+                if let Some(value) = value.as_str() {
+                    for url in value.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                        neo_os_chain_n3::rpc::validate_local_chain_url(url)?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_local_fields(raw: &Value) -> Result<(), String> {
+    if raw["mode"] != "requests_only"
+        || raw["activeChains"] != serde_json::json!(["neo_n3"])
+        || raw["neo_n3"]["scanMode"] != "block_cursor"
+        || raw["nitro"]["allowFallback"] != false
+    {
+        return Err("local-chain requires requests_only, neo_n3, block_cursor and disabled runtime fallbacks".into());
+    }
+    let magic = if raw["neo_n3"]["networkMagic"].as_f64() == Some(894710606.0) {
+        894710606
+    } else {
+        0
+    };
+    neo_os_chain_n3::rpc::validate_local_chain_context(
+        raw["nodeEnv"].as_str().unwrap_or(""),
+        magic,
+    )?;
+    if let Some(heartbeats) = raw["heartbeats"].as_object() {
+        for value in heartbeats
+            .values()
+            .filter_map(Value::as_str)
+            .filter(|s| !s.is_empty())
+        {
+            neo_os_chain_n3::rpc::validate_local_chain_url(value)?;
+        }
+    }
+    for field in [
+        "apiUrl",
+        "signerUrl",
+        "custodyUrl",
+        "enclaveFulfillUrl",
+        "decryptUrl",
+    ] {
+        if let Some(urls) = raw["nitro"][field].as_str() {
+            for url in urls.split(',').filter(|s| !s.is_empty()) {
+                neo_os_chain_n3::rpc::validate_local_chain_url(url)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One selection point for scanning, delivery and transaction reconciliation.
+pub(crate) fn n3_rpc<T: neo_os_chain_n3::HttpTransport>(
+    config: &RelayerConfig,
+    transport: T,
+    urls: Vec<String>,
+    enforce_ssrf: bool,
+) -> Result<neo_os_chain_n3::rpc::NeoRpcClient<T>, String> {
+    if config.raw.get("localChain").and_then(Value::as_bool) == Some(true) {
+        validate_local_fields(&config.raw)?;
+        if config.network != "testnet" || config.is_production() {
+            return Err("local-chain requires non-production testnet".into());
+        }
+        neo_os_chain_n3::rpc::NeoRpcClient::new_local(transport, urls, &config.node_env, 894710606)
+    } else {
+        neo_os_chain_n3::rpc::NeoRpcClient::new(transport, urls, enforce_ssrf)
+    }
 }
 
 pub(crate) fn reject_host_evm_private_keys(source: &EnvSource) -> Result<(), String> {

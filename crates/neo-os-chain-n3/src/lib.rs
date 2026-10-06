@@ -39,6 +39,12 @@ pub trait HttpTransport: Send + Sync {
     fn post(&self, url: &str, body: &str) -> Result<(u16, String), String>;
     fn get(&self, url: &str) -> Result<(u16, String), String>;
 
+    /// Local-chain RPC must never follow redirects or use an outbound proxy.
+    /// Transports must explicitly implement this capability; no fallback.
+    fn post_local(&self, _url: &str, _body: &str) -> Result<(u16, String), String> {
+        Err("local-chain transport is unavailable".into())
+    }
+
     /// Send an authenticated request with an optional per-request deadline.
     ///
     /// Custody traffic must never silently fall back to an unauthenticated
@@ -72,6 +78,10 @@ impl<T: HttpTransport + ?Sized> HttpTransport for &T {
     }
     fn get(&self, url: &str) -> Result<(u16, String), String> {
         (**self).get(url)
+    }
+
+    fn post_local(&self, url: &str, body: &str) -> Result<(u16, String), String> {
+        (**self).post_local(url, body)
     }
 
     fn post_with_bearer(

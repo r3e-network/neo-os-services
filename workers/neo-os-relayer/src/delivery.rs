@@ -21,7 +21,6 @@ use neo_os_chain_evm::{
     UnsignedEip1559,
 };
 use neo_os_chain_n3::custody::{CustodyClient, CustodyConnection};
-use neo_os_chain_n3::rpc::NeoRpcClient;
 use neo_os_chain_n3::tx::{
     build_sign_and_broadcast, confirm_fulfill_execution, resolve_signer, BroadcastOptions,
     NonceSource, Waiter, DEFAULT_FULFILL_CONFIRM_TIMEOUT_MS,
@@ -287,7 +286,7 @@ where
     // Production resolves and classifies every configured RPC address. Unit
     // tests use an injected in-memory transport with `.example` URLs and never
     // perform DNS, so the network-level guard is disabled only in test builds.
-    let rpc = NeoRpcClient::new(transport, rpc_urls, !cfg!(test))?;
+    let rpc = crate::config::n3_rpc(config, transport, rpc_urls, !cfg!(test))?;
     let request_for_error = prepared.request_id.clone();
     let options = BroadcastOptions {
         label: "Neo N3 fulfillRequest",
@@ -602,7 +601,12 @@ fn settled_request<T: N3HttpTransport + EvmHttpTransport>(
             .ok_or("request state omitted status")?;
         return Ok(matches!(status,2|3).then(||json!({"chain":chain,"contract":contract,"request_id":id,"status":status,"record":record})));
     }
-    let rpc = NeoRpcClient::new(transport, string_array(lane.get("rpcUrls")), !cfg!(test))?;
+    let rpc = crate::config::n3_rpc(
+        config,
+        transport,
+        string_array(lane.get("rpcUrls")),
+        !cfg!(test),
+    )?;
     let result = rpc
         .invoke_function(
             &contract,
@@ -699,7 +703,12 @@ pub fn observe_existing_transaction<T: N3HttpTransport + EvmHttpTransport>(
             _ => return Err("unexpected EVM receipt status".into()),
         }
     } else if chain == "neo_n3" {
-        let rpc = NeoRpcClient::new(transport, string_array(lane.get("rpcUrls")), !cfg!(test))?;
+        let rpc = crate::config::n3_rpc(
+            config,
+            transport,
+            string_array(lane.get("rpcUrls")),
+            !cfg!(test),
+        )?;
         let result = rpc.get_application_log(hash).map_err(|e| e.to_string())?;
         match result
             .pointer("/executions/0/vmstate")
@@ -750,7 +759,7 @@ pub fn observe_expired_n3<T: N3HttpTransport + EvmHttpTransport>(
     let mut checks = vec![];
     let mut canonical = None;
     for url in unique {
-        let rpc = NeoRpcClient::new(transport, vec![url.clone()], !cfg!(test))?;
+        let rpc = crate::config::n3_rpc(config, transport, vec![url.clone()], !cfg!(test))?;
         let tip = rpc.get_block_count().map_err(|e| e.to_string())? as u64;
         if tip <= expiry {
             return Err("archive node has not passed the transaction expiry".into());
@@ -866,7 +875,12 @@ pub(crate) fn resume_signed<T: N3HttpTransport + EvmHttpTransport>(
             .map_err(|e| e.to_string())
     } else if chain == "neo_n3" {
         let lane = object_at(&config.raw, "neo_n3")?;
-        let rpc = NeoRpcClient::new(transport, string_array(lane.get("rpcUrls")), !cfg!(test))?;
+        let rpc = crate::config::n3_rpc(
+            config,
+            transport,
+            string_array(lane.get("rpcUrls")),
+            !cfg!(test),
+        )?;
         if let Ok(log) = rpc.get_application_log(hash) {
             if let Some(execution) = log.pointer("/executions/0") {
                 if execution

@@ -94,7 +94,12 @@ pub fn detect_unknown_env_vars(env: &BTreeMap<String, String>) -> Vec<UnknownEnv
     let mut unknown = Vec::new();
 
     for (name, val) in env {
-        if DIRECT_CONTROL_ENV_KEYS.contains(&name.as_str()) {
+        if DIRECT_CONTROL_ENV_KEYS.contains(&name.as_str())
+            || matches!(
+                name.as_str(),
+                "MORPHEUS_LOCAL_CHAIN" | "MORPHEUS_LOCAL_CHAIN_RPC_URLS"
+            )
+        {
             continue;
         }
         if !prefixes.iter().any(|p| name.starts_with(p)) {

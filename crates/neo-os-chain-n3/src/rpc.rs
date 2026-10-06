@@ -40,6 +40,7 @@ pub struct NeoRpcClient<T: HttpTransport> {
     /// constructor validates too, but per-call re-validation catches a
     /// promotion list that was somehow replaced).
     enforce_ssrf: bool,
+    local_chain: bool,
 }
 
 impl<T: HttpTransport> NeoRpcClient<T> {
@@ -61,7 +62,27 @@ impl<T: HttpTransport> NeoRpcClient<T> {
             transport,
             urls: Mutex::new(urls),
             enforce_ssrf,
+            local_chain: false,
         })
+    }
+
+    /// Explicit non-production seam; public client construction is unchanged.
+    pub fn new_local(
+        transport: T,
+        urls: Vec<String>,
+        node_env: &str,
+        network_magic: u32,
+    ) -> Result<Self, String> {
+        validate_local_chain_context(node_env, network_magic)?;
+        if urls.is_empty() {
+            return Err("local-chain requires explicit loopback RPC URLs".into());
+        }
+        for url in &urls {
+            validate_local_chain_url(url)?;
+        }
+        let mut client = Self::new(transport, urls, false)?;
+        client.local_chain = true;
+        Ok(client)
     }
 
     pub fn urls(&self) -> Vec<String> {
@@ -91,7 +112,14 @@ impl<T: HttpTransport> NeoRpcClient<T> {
                 }
             }
             let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
-            let call = self.transport.post(rpc_url, &body.to_string());
+            let call = if self.local_chain {
+                // Recheck before I/O as well as at construction.
+                validate_local_chain_context("", 894710606).map_err(NeoRpcError)?;
+                validate_local_chain_url(rpc_url).map_err(NeoRpcError)?;
+                self.transport.post_local(rpc_url, &body.to_string())
+            } else {
+                self.transport.post(rpc_url, &body.to_string())
+            };
             let (status, raw_body) = match call {
                 Ok(pair) => pair,
                 Err(transport_error) => {
@@ -182,6 +210,20 @@ impl<T: HttpTransport> NeoRpcClient<T> {
     /// `sendrawtransaction {base64}` — true when the node accepted it.
     pub fn send_raw_transaction(&self, signed_base64: &str) -> Result<bool, NeoRpcError> {
         let value = self.call("sendrawtransaction", json!([signed_base64]))?;
+        // NeoGo returns the accepted hash. Keep the legacy public-client
+        // response contract unchanged; this shape is needed by the local seam.
+        if self.local_chain
+            && value
+                .get("hash")
+                .and_then(Value::as_str)
+                .is_some_and(|hash| {
+                    hash.strip_prefix("0x").is_some_and(|hex| {
+                        hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit())
+                    })
+                })
+        {
+            return Ok(true);
+        }
         value
             .as_bool()
             .ok_or_else(|| NeoRpcError("sendrawtransaction returned a non-boolean result".into()))
@@ -198,6 +240,40 @@ impl<T: HttpTransport> NeoRpcClient<T> {
     pub fn get_contract_state(&self, contract: &str) -> Result<Value, NeoRpcError> {
         self.call("getcontractstate", json!([contract]))
     }
+}
+
+/// Local mode accepts literal loopback IPs only: no DNS, credentials or fragment.
+pub fn validate_local_chain_url(value: &str) -> Result<(), String> {
+    let url = url::Url::parse(value).map_err(|_| "local-chain URL is invalid")?;
+    let loopback = match url.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        _ => false,
+    };
+    if !matches!(url.scheme(), "http" | "https")
+        || !loopback
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(
+            "local-chain requires HTTP(S) literal loopback URLs without credentials or fragments"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+pub fn validate_local_chain_context(node_env: &str, network_magic: u32) -> Result<(), String> {
+    if node_env.trim().eq_ignore_ascii_case("production")
+        || std::env::var("NODE_ENV").is_ok_and(|v| v.trim().eq_ignore_ascii_case("production"))
+    {
+        return Err("local-chain is refused in production".into());
+    }
+    if network_magic != 894710606 {
+        return Err("local-chain requires testnet magic 894710606".into());
+    }
+    Ok(())
 }
 
 fn validate_rpc_response<'a>(

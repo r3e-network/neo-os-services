@@ -52,6 +52,26 @@ impl Default for RelayerHttpTransport {
 
 // Implement neo_os_chain_n3::HttpTransport
 impl neo_os_chain_n3::HttpTransport for RelayerHttpTransport {
+    fn post_local(&self, url: &str, body: &str) -> Result<(u16, String), String> {
+        self.check_cancelled()?;
+        neo_os_chain_n3::rpc::validate_local_chain_url(url)?;
+        let response = reqwest::blocking::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e| e.to_string())?
+            .post(url)
+            .header("content-type", "application/json")
+            .body(body.to_owned())
+            .send()
+            .map_err(|e| e.to_string())?;
+        Ok((
+            response.status().as_u16(),
+            response.text().map_err(|e| e.to_string())?,
+        ))
+    }
+
     fn post(&self, url: &str, body: &str) -> Result<(u16, String), String> {
         self.check_cancelled()?;
         let response = self
