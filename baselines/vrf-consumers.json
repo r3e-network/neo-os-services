@@ -104,7 +104,10 @@
           "sha256": "f693b43c66bad116b023184599848f411d294fad32ae0f1240767ea7cff0aa9a"
         },
         "workers/nitro-enclave-host/tests/unit/fulfill.rs": {
-          "sha256": "5c8ecbef95a15300bcbaaef86d73a2a4e0ba21f35e51d3c217e649903c7971fd"
+          "sha256": "b275855fcaf2ae1ffe2fe2092109c8d34b3ea4e79caf8e45ec7ede6694c22626"
+        },
+        "workers/nitro-enclave-host/tests/unit/overlay.rs": {
+          "sha256": "a9924f35c5fbca7fcc4120729e19712aab8518ba15e94c7b98e5b06628f658b6"
         },
         "workers/nitro-enclave-host/tests/unit/routes.rs": {
           "sha256": "e3f426fc370ac8905781a0646bbe7134984ff97b9d7540a8f73d37e5fdd2e77d"
@@ -428,7 +431,7 @@
           "sha256": "8febb1bba6ee15b180a9ed7c5e85a92746b02eb487a7f74d71844b84808a19c8"
         },
         "workers/nitro-enclave-host/src/fulfill.rs": {
-          "sha256": "061b3b0dd159c6b23b61981f381c9210af5279cbc9145c001149e5cb3024ebb0"
+          "sha256": "6091de4a1273a390fc9e594e5f87d9ecadc708c9c509223fab73463dfe98e9c4"
         },
         "workers/nitro-enclave-host/src/lib.rs": {
           "sha256": "be403ab1de54cc331f87fd8fd3a200ba2b6edee9159828da23a881985ef94eeb"
