@@ -291,10 +291,10 @@
           "sha256": "57034057da8038d191d0ae79e0b1fad0fb526cb47a30c6fc63664f2758e0a81a"
         },
         "workers/neo-os-relayer/src/config_introspect.rs": {
-          "sha256": "a71c4465b38975df960747cf7c3a449bfcdc675f7f911e266a7df573f52ce05c"
+          "sha256": "108eb7baec8e545a7addee153d7ef3609ff959c440164e34b25e8fa31f895666"
         },
         "workers/neo-os-relayer/src/delivery.rs": {
-          "sha256": "81a7120b7508295968f80aa182952218dcb01b57e48f290ade3bbde2055453a2"
+          "sha256": "458b22e4f0ce4304a492bce59dd7bc9bc1fe390f370f06a85f23fbd2a9f41a23"
         }
       }
     },
@@ -455,6 +455,38 @@
         },
         "workers/nitro-worker/src/platform/request-guards.js": {
           "sha256": "45aa88606cf7d2520a003da5c99ba4f7efd6118dfb605be1a5697748b4ee90eb"
+        }
+      }
+    },
+    {
+      "consumer": "local-chain-relayer-seam",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Explicit non-production loopback configuration, N3 RPC transport and private-chain regression fixtures. These changes add no randomness consumer, payout or economic decision; production mode is refused and the prepared test transaction transfers only disposable private-chain GAS. Review binds these exact input files.",
+      "inputs": {
+        "crates/neo-os-chain-n3/src/lib.rs": {
+          "sha256": "e8d602b1b168da9b4b002fe1b3cc798e6444ca53b2e90f7dda0d8967abe7b5f8"
+        },
+        "crates/neo-os-chain-n3/src/rpc.rs": {
+          "sha256": "f8d3b1d1832f59a25fea848eed77653b5ff90afc7a0bac48dffba4a61ed2041c"
+        },
+        "crates/neo-os-core/src/config.rs": {
+          "sha256": "82889ab40f4e18f25b49aba51513bb0c87513182e7bdeb063f047be903d92356"
+        },
+        "scripts/test-relayer-local-chain.py": {
+          "sha256": "c1cf7c4495d8b61e49fad7cb5b0ca1c5279bd60e49ba546aff94214c61049724"
+        },
+        "workers/neo-os-relayer/src/config.rs": {
+          "sha256": "2133ee41d132da86172f37fc269d002db076fe8067fafe804a176fa8afe2e9f5"
+        },
+        "workers/neo-os-relayer/src/scan.rs": {
+          "sha256": "ef7fb19d9629502e3bc137ee363282993ad134cd829df58796d4f2a7040b77d3"
+        },
+        "workers/neo-os-relayer/src/transport.rs": {
+          "sha256": "fe73927c2c92f35f455978bbefec90f733ebf569191216f66cd21ec133c47732"
+        },
+        "workers/neo-os-relayer/tests/local_chain.rs": {
+          "sha256": "8503fb4314717b6f08f7bc214a513a562694352a98b9845108bb89a38483981d"
         }
       }
     }
