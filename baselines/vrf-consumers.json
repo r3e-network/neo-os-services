@@ -1,0 +1,462 @@
+{
+  "version": 1,
+  "reviews": [
+    {
+      "consumer": "isolated-regression-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Test harnesses, vectors and generators exercise request routing, signatures and byte formats with synthetic inputs; their assertions do not award economic value to users. Review covers these exact files only, not future tests or live deployments.",
+      "inputs": {
+        "apps/web/__tests__/control-plane.test.ts": {
+          "sha256": "6de119dd0f5ebda3a3cc046514d1130c5070b2ad9847a6220e50d4dbecac9435"
+        },
+        "apps/web/__tests__/request-network.test.ts": {
+          "sha256": "56c1b759a81b740190cf2217ce1b8edba7d9fda593a41b51d4b705a54e097013"
+        },
+        "contracts-evm/test/MorpheusOracleEVM.t.sol": {
+          "sha256": "5f8455980197803e904d93a93d8fe6260d73d4dc578cd3dfa2134dbf8a8ea3de"
+        },
+        "contracts-evm/test/MorpheusOracleEVMFulfillment.t.sol": {
+          "sha256": "3ab81728d5b202d431191cfb08078ff7c1128a3841e39958a9b5b5cd4a4c18fe"
+        },
+        "crates/neo-os-chain-evm/tests/vectors/neox_digest.json": {
+          "sha256": "c3cfb4e59d4f984b875c92c004bed48fd4142e8bc57e9346e13990b1a16b89f7"
+        },
+        "crates/neo-os-compute/tests/capabilities_tests.rs": {
+          "sha256": "4e4ec0c1ab01c03adc2dab2af9b14065664be256b96ff903351e4b4e9be51b43"
+        },
+        "crates/neo-os-compute/tests/vectors/confidential-envelope-v2-client.json": {
+          "sha256": "6ba1d936538425e819f24ff674235c9acb8c4f3d6df093e5c502d448b91c9eb0"
+        },
+        "crates/neo-os-core/tests/retry_backoff.rs": {
+          "sha256": "611eba7bf573bd2c349e7b794ac97418c2970d6792ddf4e59f8966e774f28983"
+        },
+        "crates/neo-os-core/tests/state_prune.rs": {
+          "sha256": "633b4146f39ac46b469f4d50314becf5735e5c026df6681ddc84c79fb526e6f1"
+        },
+        "crates/neo-os-core/tests/vectors/fulfillment_envelope.json": {
+          "sha256": "1275507e2aea08e0ff773798f0bc9b3e49af1b11ae59cadf9763bbaacbe583e8"
+        },
+        "crates/neo-os-core/tests/vectors/neox_digest.json": {
+          "sha256": "c3cfb4e59d4f984b875c92c004bed48fd4142e8bc57e9346e13990b1a16b89f7"
+        },
+        "crates/neo-os-core/tests/vectors/retry_backoff.json": {
+          "sha256": "a039a698d4b86052ce98249d89aca7de0649404630aa69e1e68a9dd4152cf34c"
+        },
+        "crates/neo-os-core/tests/vectors/state_prune.json": {
+          "sha256": "34ebee479b9b80ffbc4b104761225b1220a79eeebed3226abb94cfa575705ccf"
+        },
+        "deploy/cloudflare/morpheus-control-plane/worker.test.mjs": {
+          "sha256": "98f873e9a98d9b504db50afe8888553d78369d7cc480b1d8de64b899ead32dbe"
+        },
+        "deploy/cloudflare/morpheus-edge-gateway/worker.test.mjs": {
+          "sha256": "92146da85e9f57595bdce6953890af85fc94ba63689bf1e56f592f90c7147bbf"
+        },
+        "deploy/evm/neox-network-required.test.mjs": {
+          "sha256": "2d38607a973c1ad374133956b9ec7d77ad564beac497eb0865943451ec6cb126"
+        },
+        "deploy/nitro/enclave-server.test.mjs": {
+          "sha256": "487b8c94db1627638276ee85730b8f9225946bc63470e544c033c6f0e25af866"
+        },
+        "fuzz-os-infra.mjs": {
+          "sha256": "506962eb18f707466be45abaad691289a50b4640e22aeb6198a4e855ee0b1354"
+        },
+        "scripts/custody-plane-e2e.mjs": {
+          "sha256": "8b66c96605518816426eddf0030ab17a3ede0e0d708f7437bebfa5d427f63c1f"
+        },
+        "scripts/export-rust-vectors.mjs": {
+          "sha256": "6249ab98047227cd3967f6bf8376f984b0d32ff08051eebfe42b3b99caf3d0ee"
+        },
+        "scripts/network-identity-consumers.test.mjs": {
+          "sha256": "04e475b1e058566d110a113afef0eda939ee18cf1af0671491524e9a3c031ded"
+        },
+        "scripts/runtime-service-matrix.test.mjs": {
+          "sha256": "eddf1012ba51591c027efa65803a1f5b6c32ed5c35e4a0a210bf0bc6ff404e21"
+        },
+        "scripts/upgrade-morpheus-oracle.test.mjs": {
+          "sha256": "1e83b015dd67366b4f52fbc4c290b5cd67f3ccc24d37e31ff0fbfce998b91294"
+        },
+        "workers/morpheus-relayer/relayer.test.mjs": {
+          "sha256": "c01da1cb483de4d7fbe7808f677be62c384a7bc08373681b189436d896957c6e"
+        },
+        "workers/morpheus-relayer/src/fulfillment.test.mjs": {
+          "sha256": "b426790409e3bfe0542427e7aca59da874c8bf26c2e76974cc66f52649cc1c53"
+        },
+        "workers/morpheus-relayer/src/identifier-hygiene.test.mjs": {
+          "sha256": "298d0220eb7ff097878169f45a25c269d19112373123d3b7586756f7d5d22bf6"
+        },
+        "workers/morpheus-relayer/src/lib/neo-signers.test.mjs": {
+          "sha256": "9a9fc826d924c77a5dbc0728cd259c1a450faddb92e93e6c7a4caab7b5c177e4"
+        },
+        "workers/morpheus-relayer/src/neox.test.mjs": {
+          "sha256": "5e4b0f31978465123e7e3e65ad2f1e53bc4085d2a35de7d11b1520ee999ef7ed"
+        },
+        "workers/morpheus-relayer/src/prometheus.test.mjs": {
+          "sha256": "cc21eafb8a68076389903d425fc1a2aa3e27d9eb4c7c7a4e4f588846806997c0"
+        },
+        "workers/morpheus-relayer/src/request-processor.test.mjs": {
+          "sha256": "e8f99fbb143e42d63c975ad3d73cd0de0f63d1df5700238e26338518c498a705"
+        },
+        "workers/nitro-enclave-host/tests/unit/custody.rs": {
+          "sha256": "a0ba913fe0743b3faf2597b4bcee2f662b452d961174cd27d4980375e41979bc"
+        },
+        "workers/nitro-enclave-host/tests/unit/dispatch.rs": {
+          "sha256": "f693b43c66bad116b023184599848f411d294fad32ae0f1240767ea7cff0aa9a"
+        },
+        "workers/nitro-enclave-host/tests/unit/fulfill.rs": {
+          "sha256": "5c8ecbef95a15300bcbaaef86d73a2a4e0ba21f35e51d3c217e649903c7971fd"
+        },
+        "workers/nitro-enclave-host/tests/unit/routes.rs": {
+          "sha256": "e3f426fc370ac8905781a0646bbe7134984ff97b9d7540a8f73d37e5fdd2e77d"
+        },
+        "workers/nitro-enclave-host/tests/unit/secret_root.rs": {
+          "sha256": "3991b54a38a19d3c4cfd9dab23a444607410a569244f9591b52eb19dddb97f4f"
+        },
+        "workers/nitro-enclave-host/tests/unit/session.rs": {
+          "sha256": "ae40d1c25452a7b45fb1bec41827c024d8f8093426d2efa192dfa2f083971914"
+        },
+        "workers/nitro-enclave-host/tests/unit/sign.rs": {
+          "sha256": "a94c7b465a2c52385b2222109aa48ad847b0b459d5a12ec21429d7982f848da4"
+        },
+        "workers/nitro-enclave-host/tests/unit/vrf.rs": {
+          "sha256": "d6940c8620bd2e0e97a929107a40eb6c7dd10015c1a7d5d4434008136577b919"
+        },
+        "workers/nitro-worker/src/capabilities.test.mjs": {
+          "sha256": "81958e6018b72875b3887bc43a72228b7f9bf3d2a5ae7cd54e182df5d5f8a96c"
+        },
+        "workers/nitro-worker/src/oracle/vrf.test.mjs": {
+          "sha256": "29c499e6237da9680a0ca1facd41567172f5174390e75ef9d20e936136068291"
+        },
+        "workers/nitro-worker/src/workflow.test.mjs": {
+          "sha256": "4389adbdfd562707ea22c2a92f3fdf64c8862c54c9d7fb8a0d76734b79da0d90"
+        }
+      }
+    },
+    {
+      "consumer": "public-discovery-and-proxy-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Unsigned discovery, configuration and automation proxy inputs. No random result is used here to choose or pay an economic reward. Proxy reachability is not permission for its callers; a new final consumer requires its own classification.",
+      "inputs": {
+        "apps/web/app/api/control-plane/automation/execute/route.ts": {
+          "sha256": "708a2a99613c02866c26eff687aa82e03c0655530fbe5b86580860a714237075"
+        },
+        "apps/web/app/api/sign/payload/route.ts": {
+          "sha256": "396e3e7a67b68bf731839f0a0c97e3b3d79c560d1a416179f3c38d0e3a865140"
+        },
+        "apps/web/lib/control-plane.ts": {
+          "sha256": "2f036f21d5ee26ce6ee441e3c91fe66556f54ab23fbf4c8e6035c60078b4a9d7"
+        },
+        "apps/web/lib/environment.ts": {
+          "sha256": "a52928b004110fd23bb375ae5e826419a11746b17d3848b954ccfd778cae0a4c"
+        },
+        "apps/web/public/morpheus-runtime-catalog.json": {
+          "sha256": "4b4f9d3063caeef377d7c85c85360515d6fed0b884f2c32557e4030ddf3d04a6"
+        },
+        "packages/shared/src/index.ts": {
+          "sha256": "f728d61361b1493a348031e735e54ca4c7964605ea5464d28eb04aebaee2a089"
+        },
+        "packages/shared/src/public-runtime.js": {
+          "sha256": "80a23bce39f9237ec8c97c2f06823332f417f41a8f0e843a2e21e0702d5fb70b"
+        },
+        "packages/shared/src/workflow-catalog.js": {
+          "sha256": "5ba653cd7cded23ab2e28aa942a122757bdbe0868be795d79791fed595ddcdd6"
+        },
+        "scripts/lib-public-runtime-catalog.mjs": {
+          "sha256": "7d715cda81923aaaa51f1aa86d1b7f46abc04e7829375d8fc153a5ec15dbee0f"
+        }
+      }
+    },
+    {
+      "consumer": "compatibility-reference-routing",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Frozen reference router and chain adapter used to compare parity. They map and encode random requests but define no economic settlement. This review does not classify downstream applications as non-value.",
+      "inputs": {
+        "baselines/js-parity/oracle/neox.js": {
+          "sha256": "6e95c9a9dd36cd5ebcc20d03c5549d6285b0f70cba4c6f6e7a2830258f78ed0e"
+        },
+        "baselines/js-parity/oracle/router.js": {
+          "sha256": "57034057da8038d191d0ae79e0b1fad0fb526cb47a30c6fc63664f2758e0a81a"
+        }
+      }
+    },
+    {
+      "consumer": "contracts-evm/MiniAppDiceGameEVM.sol",
+      "classification": "value-bearing-known-debt",
+      "owner": "services lead",
+      "justification": "Existing dice consumer stakes GAS and pays 5.7x on operator-predictable random.generate. The validation driver places those same wagers. This is value-bearing debt, not permission for a new integration; queued E-VRF1 must retire or replace it.",
+      "inputs": {
+        "contracts-evm/MiniAppDiceGameEVM.sol": {
+          "sha256": "d379663d51c18c4b87fb5b15b4fc8cf3b32db37a49731fec81b2593f3aef910c"
+        },
+        "deploy/evm/validate-dice.mjs": {
+          "sha256": "3ad6cc855a86c1d99ff35347b7d31c62fa2419c55f9d45f422147a4dc878a43d"
+        }
+      },
+      "remediation": "E-VRF1",
+      "expires": "2026-11-30"
+    },
+    {
+      "consumer": "kernel-routing-and-result-encoding",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Kernel capability, routing, configuration, resource accounting and envelope definitions. These integration inputs do not consume VRF output to decide economic value; oracle service fees are independent of the random output. Caller settlement is separately classified.",
+      "inputs": {
+        "contracts/MorpheusOracle/MorpheusOracle.cs": {
+          "sha256": "68ad447db1ac276cc2ff21ac05850fe1577d49f766a057189b5b045d978c2953"
+        },
+        "crates/neo-os-compute/src/capabilities.rs": {
+          "sha256": "f83d92bc792a47fa34d684e9b9f9631394d9e9b4ccbdbcdb84c3ecf993c46099"
+        },
+        "crates/neo-os-compute/src/overload.rs": {
+          "sha256": "c74f6c325b852d52174896d6d6a57ac56fc93a40de7db77bc8b34fd131710b28"
+        },
+        "crates/neo-os-core/src/config_schema.rs": {
+          "sha256": "7de19c13073bc069669c57bea448a3de118f6c49dc0a58c06951e9261a61a896"
+        },
+        "crates/neo-os-core/src/envelope.rs": {
+          "sha256": "78826d39c801ac0eada09b2ca781da3932a745852196a05bb086e3fbe8377835"
+        },
+        "crates/neo-os-core/src/kernel.rs": {
+          "sha256": "6f18b07d0fd58285a8a26fe2819f837bab512de799052d0a4b3b945e32d8deb5"
+        }
+      }
+    },
+    {
+      "consumer": "unrelated-rng-primitives",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Lexical matches for local deterministic game RNG state or JavaScript Math.random. These files do not call the direct, automation or oracle VRF lanes. This is an explicit reviewed false positive, not a directory exemption.",
+      "inputs": {
+        "crates/neo-os-games/src/game2048.rs": {
+          "sha256": "3a883579a4ad2a640faa6ba24e1bfe0a0f11d4f9a4da9359c1ab38f682fe3d7f"
+        },
+        "crates/neo-os-games/src/merge.rs": {
+          "sha256": "10ac23c1d209f718600d739e874e04c3ccfbae4685dfa3133b5f6577c096217c"
+        },
+        "vendor/boa_engine-0.21.1/src/builtins/math/mod.rs": {
+          "sha256": "093692c654dd163846916f97aa7edbebb9ade6b24976fce95de08faecc7c85b7"
+        }
+      }
+    },
+    {
+      "consumer": "compatibility-gateways",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Gateway routing and retired-lane responses, including forwarding oracle fulfillment. These exact gateways define no economic payoff; final applications are separately reviewed. Generic transport alone never proves a caller non-value.",
+      "inputs": {
+        "deploy/cloudflare/morpheus-control-plane/lib/health.js": {
+          "sha256": "e662aa344a8c7931ef518e685156bd3b3c7e79b483ed954cc15cb4c9cc03343f"
+        },
+        "deploy/cloudflare/morpheus-control-plane/worker.mjs": {
+          "sha256": "700e01f2e1e3025b259e3e14e1f52654dbb93605f3568ccd52a9a802d7ee7a08"
+        },
+        "deploy/cloudflare/morpheus-edge-gateway/worker.mjs": {
+          "sha256": "2756c8688bb1b114001783e681db31f0a48d6b2be96b91aa6cd9e297cbef2392"
+        },
+        "deploy/nitro/enclave-server.mjs": {
+          "sha256": "59a84e67912ebba9c2a4529f0c31ec9e5895ffc40d8f040e651f34b78f523e40"
+        }
+      }
+    },
+    {
+      "consumer": "oracle-delivery-adapters",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Transport, dispatch and compatibility generation for oracle results. These exact adapters do not select rewards or settle wagers; final consumers require separate review, including the explicitly recorded dice debt. Forwarding is not proof that a caller is non-value.",
+      "inputs": {
+        "deploy/evm/neox-fulfiller.mjs": {
+          "sha256": "8e86f13d6fae7b4dc56e5257d0360e1fab1dfdfd798abfc7c435b06d7bce9646"
+        },
+        "workers/morpheus-relayer/src/config-schema.js": {
+          "sha256": "d2492f4a0fe47ba7d8b1eecce6075c7a1f1e08947ee41fc275701fae8970b403"
+        },
+        "workers/morpheus-relayer/src/config.js": {
+          "sha256": "ac50a7c6e05efc0f0cb2dc49f85ea0921b77044ceb50ff6cec16abfb1dd03991"
+        },
+        "workers/morpheus-relayer/src/fulfillment/classifier.js": {
+          "sha256": "1863f6b07e72b057312fd49048588e49722bb9ed27bfbd41e2b6bf911c1d1650"
+        },
+        "workers/morpheus-relayer/src/fulfillment/enclave.js": {
+          "sha256": "944064db641add6b70df931a8dae1d755e68a076c720480d69644ef36606e979"
+        },
+        "workers/morpheus-relayer/src/fulfillment/executor.js": {
+          "sha256": "0710b3bb6529e5d96da3245e95c03bda4b9ed7812d3895f6261ed9cf9474d6db"
+        },
+        "workers/morpheus-relayer/src/neox.js": {
+          "sha256": "6e95c9a9dd36cd5ebcc20d03c5549d6285b0f70cba4c6f6e7a2830258f78ed0e"
+        },
+        "workers/morpheus-relayer/src/router.js": {
+          "sha256": "57034057da8038d191d0ae79e0b1fad0fb526cb47a30c6fc63664f2758e0a81a"
+        },
+        "workers/neo-os-relayer/src/config_introspect.rs": {
+          "sha256": "a71c4465b38975df960747cf7c3a449bfcdc675f7f911e266a7df573f52ce05c"
+        },
+        "workers/neo-os-relayer/src/delivery.rs": {
+          "sha256": "81a7120b7508295968f80aa182952218dcb01b57e48f290ade3bbde2055453a2"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/evm/oracle-admin.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Operational configuration or policy validation names the VRF lane but does not use its output to choose a reward or settlement. This exact-file review does not authorize live operations or classify downstream consumers.",
+      "inputs": {
+        "deploy/evm/oracle-admin.mjs": {
+          "sha256": "61123e3d468e7b99a2537d0ad8efd342324654e122c298eaefe6e2f32d44b727"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/evm/validate-vrf.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Diagnostic consumer requests randomness and inspects result fields or signatures. Its random result is not used to choose a stake, payout, reward or asset allocation. Transaction fees are not conditioned on the random output. This classification does not authorize executing the script against a live chain.",
+      "inputs": {
+        "deploy/evm/validate-vrf.mjs": {
+          "sha256": "ba51dbfb4d220702d76bc33dceb3a5820785619a09d4cf5cfbaecdfcac68b2a4"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/nitro/provision-enclave-compute.sh",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Operational configuration or policy validation names the VRF lane but does not use its output to choose a reward or settlement. This exact-file review does not authorize live operations or classify downstream consumers.",
+      "inputs": {
+        "deploy/nitro/provision-enclave-compute.sh": {
+          "sha256": "d39d75ea60c0800c7383c4342f5fb551541c8bc9a4d6a17069691e9ed341dac3"
+        }
+      }
+    },
+    {
+      "consumer": "package-lock.json",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Operational configuration or policy validation names the VRF lane but does not use its output to choose a reward or settlement. This exact-file review does not authorize live operations or classify downstream consumers.",
+      "inputs": {
+        "package-lock.json": {
+          "sha256": "8b600feb302a4b149c7719a0e71a070e3228b862b679f689145c2d0146ff519b"
+        }
+      }
+    },
+    {
+      "consumer": "scripts/check-rust-migration.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Operational configuration or policy validation names the VRF lane but does not use its output to choose a reward or settlement. This exact-file review does not authorize live operations or classify downstream consumers.",
+      "inputs": {
+        "scripts/check-rust-migration.mjs": {
+          "sha256": "c9d09491ec14474394f8cc5df9ac54fd1ef664c6658f159db12e39a627d60bd5"
+        }
+      }
+    },
+    {
+      "consumer": "scripts/neox-testnet-e2e.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Diagnostic consumer requests randomness and inspects result fields or signatures. Its random result is not used to choose a stake, payout, reward or asset allocation. Transaction fees are not conditioned on the random output. This classification does not authorize executing the script against a live chain.",
+      "inputs": {
+        "scripts/neox-testnet-e2e.mjs": {
+          "sha256": "04634cfc94a76dbde6b948ed1f33cd8eff704f6b1b31ed516c0a546a5349f52e"
+        }
+      }
+    },
+    {
+      "consumer": "scripts/ops/fix-mainnet-morpheus-runtime.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Operational configuration or policy validation names the VRF lane but does not use its output to choose a reward or settlement. This exact-file review does not authorize live operations or classify downstream consumers.",
+      "inputs": {
+        "scripts/ops/fix-mainnet-morpheus-runtime.mjs": {
+          "sha256": "1e635b7078b2ca6e07d76208ba623930e4c669f6f6c9a493938fce61d252a67a"
+        }
+      }
+    },
+    {
+      "consumer": "scripts/render-nitro-compose-env.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Operational configuration or policy validation names the VRF lane but does not use its output to choose a reward or settlement. This exact-file review does not authorize live operations or classify downstream consumers.",
+      "inputs": {
+        "scripts/render-nitro-compose-env.mjs": {
+          "sha256": "13249afd466f42d3255f0c1c857ecdac811501d9e5dd2876832cef673ccefad9"
+        }
+      }
+    },
+    {
+      "consumer": "scripts/runtime-service-matrix.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Diagnostic consumer requests randomness and inspects result fields or signatures. Its random result is not used to choose a stake, payout, reward or asset allocation. Transaction fees are not conditioned on the random output. This classification does not authorize executing the script against a live chain.",
+      "inputs": {
+        "scripts/runtime-service-matrix.mjs": {
+          "sha256": "10249893670eccd836c1a0530d8407661503bd2fb594082a197b5bc2e37efe77"
+        }
+      }
+    },
+    {
+      "consumer": "host-vrf-and-nested-automation",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Host direct, oracle and automation dispatch plus generation, custody signing and UUID/session support. These files expose primitives but do not define an economic payoff from the VRF bytes. Their callers are independently reviewed; this entry grants no runtime caller exemption.",
+      "inputs": {
+        "workers/nitro-enclave-host/src/automation.rs": {
+          "sha256": "7921520bd6f60733a9fe0e3c7459b871f53a20511aa3a2a4a3ab9256b9091680"
+        },
+        "workers/nitro-enclave-host/src/dispatch.rs": {
+          "sha256": "8febb1bba6ee15b180a9ed7c5e85a92746b02eb487a7f74d71844b84808a19c8"
+        },
+        "workers/nitro-enclave-host/src/fulfill.rs": {
+          "sha256": "061b3b0dd159c6b23b61981f381c9210af5279cbc9145c001149e5cb3024ebb0"
+        },
+        "workers/nitro-enclave-host/src/lib.rs": {
+          "sha256": "2f5776f93200e267976417aee78a8b9c716586b6617d2b5e6715f5bcebf690fc"
+        },
+        "workers/nitro-enclave-host/src/paymaster.rs": {
+          "sha256": "f76867d383e27809f24412dfd752beccbff34f55a7e425481566bfea5a54a50c"
+        },
+        "workers/nitro-enclave-host/src/routes.rs": {
+          "sha256": "7170bb0c8c3c10ccfcd68d1341429332345b742fda14c7b8f352d54125309f1f"
+        },
+        "workers/nitro-enclave-host/src/secret_root.rs": {
+          "sha256": "16c21aa54714b8cc613761d06a49e1bf68e96146c951f430510f38a64b6c0d5b"
+        },
+        "workers/nitro-enclave-host/src/session.rs": {
+          "sha256": "6902321d3a6cdf30e8d4a3c2e5e7e79be8fec7b1b69365e5fdb1edc04f82eb0d"
+        },
+        "workers/nitro-enclave-host/src/vrf.rs": {
+          "sha256": "61339dbade97261c9a55c7a3a7d0f3da504d08cf8303831da9252ef732d90b9d"
+        }
+      }
+    },
+    {
+      "consumer": "compatibility-worker-vrf",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Compatibility generation, signing, registration and admission of random results. No result-dependent value distribution is defined by these exact files; downstream consumers still need their own review.",
+      "inputs": {
+        "workers/nitro-worker/src/capabilities.js": {
+          "sha256": "e0d1ab7bab04e62c837faec9f18ccf60419caf8e2b5f2b353b31b0be22de7f54"
+        },
+        "workers/nitro-worker/src/chain/signing.js": {
+          "sha256": "b3406f3e8ca49b8c300c57231a2ec5eedca925193be5340fc920f347be21b94a"
+        },
+        "workers/nitro-worker/src/oracle/index.js": {
+          "sha256": "50119bd5c93501aa674f85c65a40a5c3d08e3ab28b033e6b39fba1cb3682fbc0"
+        },
+        "workers/nitro-worker/src/oracle/vrf.js": {
+          "sha256": "ce78be0d2a6b60ddff9394a318204569c85fd048f31152862aea748a43396c2b"
+        },
+        "workers/nitro-worker/src/platform/overload-guard.js": {
+          "sha256": "976a0e22f5f9bd04791d9ccce2af3f33fd731b215bbafc0d371b1d7210379663"
+        },
+        "workers/nitro-worker/src/platform/request-guards.js": {
+          "sha256": "45aa88606cf7d2520a003da5c99ba4f7efd6118dfb605be1a5697748b4ee90eb"
+        }
+      }
+    }
+  ]
+}

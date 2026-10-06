@@ -63,6 +63,7 @@ jobs:
       - run: npm ci
       # Exercise gate regressions before any repository gate can stop the job.
       - run: npm run test:scripts
+      - run: node --test packages/shared/src/public-runtime.test.mjs
       # Blocking, and scoped: production dependencies may carry no advisory at or above
       # moderate, and every dev-only advisory needs a dated, owner-assigned entry in
       # config/npm-audit-exceptions.json (today GHSA-vfj7-8cjw-p6xm: braces behind
@@ -103,6 +104,7 @@ jobs:
       # Declared capability ids, the host route table and the web proxies must agree, or
       # carry a dated, owned entry in baselines/capability-route-parity.json.
       - run: npm run check:capability-route-parity
+      - run: node scripts/check-vrf-consumers.mjs
       # The baseline only shrinks. In the tree it cannot tell an entry that was always there
       # from one added in the same change as the dead lane it excuses, so on a pull request
       # it is compared with the base commit: no entry added, none dated later, no proxy
@@ -114,6 +116,7 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin "$BASE_SHA"
           npm run check:capability-route-parity -- --base "$BASE_SHA"
+          node scripts/check-vrf-consumers.mjs --base "$BASE_SHA"
       - run: npm run check:cargo-lock-provenance
       - name: Audit Rust dependencies with reviewed exceptions
         run: |

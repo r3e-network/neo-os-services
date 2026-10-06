@@ -288,3 +288,40 @@ tag or the raw root restored; the VRF keyed with the game key; the game lane key
 or the VRF key; one label for both purposes; the fulfil lane encoded as the direct lane) and
 failed in every case. Removing the contract fields from the Node relayer's fulfil context fails
 both relayer tests.
+
+## 7. Repository integration policy (CU-147)
+
+Direct VRF results, nested automation random results and the oracle's compact
+32-byte random callback are **operator-predictable**. Custody signatures bind
+bytes; they do not make those bytes unpredictable to the operator. Unsigned
+public status and its `catalog.vrf` result descriptors carry this disclosure in
+operational, degraded and down states. Signed envelopes and callback bytes stay
+unchanged.
+
+`node scripts/check-vrf-consumers.mjs` checks the reviewed inventory in
+`baselines/vrf-consumers.json`. Every entry names an owner, a justification and
+full-file SHA-256 inputs. New direct, automation and oracle candidates are refused
+until reviewed. A caller-provided non-value flag has no effect. Generic transports
+are reviewed as primitives, never as proof that their downstream callers are
+non-value; final economic consumers need a separate review.
+
+On pull requests CI also runs `node scripts/check-vrf-consumers.mjs --base <sha>`.
+It requires policy review for all changed executable/configuration inputs, even
+when calls are dynamically constructed and have no recognisable route literal.
+The lexical inventory is a discovery aid, not economic analysis or runtime caller
+identity. The reviewed content and base comparison are essential: a tree-only run
+cannot establish the safety of arbitrary dynamically constructed integrations.
+Control files (this gate, its tests, the policy and CI) require independent review.
+No directory-wide exemption exists for examples, tests, EVM or compatibility code.
+
+DEC-CU-22 records `contracts-evm/MiniAppDiceGameEVM.sol` as
+`value-bearing-known-debt`, owner **services lead**, remediation **E-VRF1**, expiry
+**2026-11-30** (the first refused UTC day). Its `deploy/evm/validate-dice.mjs` wager
+driver is an input of that same debt, not a non-value test. Every gate run prints
+the debt. Expiry has a maximum 60-day horizon; comparison with the base forbids
+new or extended debt and new/changed debt inputs. The initial decision's exact
+input hashes and expiry also cap bootstrap runs where the base has no policy.
+Debt can shrink; it cannot be silently relabelled non-value. Neither the contract
+nor the wager driver changes in this slice. Runtime consumer authentication,
+retirement/replacement of the dice integration and live deployment status remain
+outside this repository gate (E-VRF1 / OWN-25).

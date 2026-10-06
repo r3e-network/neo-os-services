@@ -83,10 +83,21 @@ export const PUBLIC_RUNTIME_DISCOVERY_LINKS = Object.freeze({
   policies: '/api/policies',
 });
 
+// Unsigned descriptors: never merge these fields into signed result/callback bytes.
+export const PUBLIC_VRF_DISCLOSURE = Object.freeze({
+  predictability: 'operator-predictable',
+  permittedUse: 'non-value only; repository policy review required',
+  directResult: '/vrf/random: signed {randomness}',
+  automationResult: '/automation/execute: nested random result',
+  oracleResult: '/oracle/fulfill: random.generate, compact 32-byte callback',
+  limitation: 'Custody signatures do not make outputs unpredictable to the operator.',
+});
+
 export function buildPublicRuntimeCatalogSummary(catalog) {
   const workflows = Array.isArray(catalog?.workflows) ? catalog.workflows : [];
 
   return {
+    vrf: { ...PUBLIC_VRF_DISCLOSURE },
     envelope: clone(catalog?.envelope || {}),
     topology: clone(catalog?.topology || {}),
     risk: clone(catalog?.risk || {}),
@@ -144,6 +155,7 @@ export function getPublicRuntimeStatusNotes(snapshot) {
     `Execution: ${snapshot.catalog.topology.executionPlane}`,
     `Risk: ${snapshot.catalog.topology.riskPlane}`,
     `Automation: ${triggerKinds.join(', ')}`,
+    `VRF: ${PUBLIC_VRF_DISCLOSURE.predictability}; ${PUBLIC_VRF_DISCLOSURE.permittedUse}. ${PUBLIC_VRF_DISCLOSURE.limitation}`,
   ];
 
   if (snapshot.runtime.info.appId) {
