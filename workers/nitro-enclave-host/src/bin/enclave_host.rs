@@ -31,6 +31,7 @@ use nitro_attest::release::NsmAttestation;
 use nitro_enclave_host::custody::{CustodySigner, ReqwestCustodyTransport};
 use nitro_enclave_host::dispatch::dispatch;
 use nitro_enclave_host::feed_sign::TwelveDataPrices;
+use nitro_enclave_host::feed_status::PricePlaneStatus;
 use nitro_enclave_host::kms_release::ProductionKms;
 use nitro_enclave_host::neodid::ReqwestJwksFetcher;
 use nitro_enclave_host::overlay::EnvOverlay;
@@ -98,6 +99,11 @@ fn main() {
     // requests run on `spawn_blocking` threads.
     let overlay = Arc::new(RwLock::new(EnvOverlay::from_process()));
 
+    // The price plane and `/health` share one status cell: what the plane
+    // classified is what the status reports, by construction rather than by two
+    // writers agreeing.
+    let price_plane_status = Arc::new(Mutex::new(PricePlaneStatus::default()));
+
     let app_state = Arc::new(AppState {
         overlay: overlay.clone(),
         runtime_token_kms_version: AtomicU64::new(0),
@@ -112,6 +118,7 @@ fn main() {
         jwks_fetcher: Box::new(ReqwestJwksFetcher),
         oracle_runtime: Mutex::new(neo_os_compute::oracle::providers::ProviderRuntime::default()),
         kms_diag: Mutex::new(KmsDiag::default()),
+        price_plane_status,
         overload: neo_os_compute::overload::OverloadGuard::new(),
     });
 

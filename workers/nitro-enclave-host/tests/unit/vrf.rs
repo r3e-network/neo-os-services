@@ -299,6 +299,7 @@ fn vrf_random_carries_custody_failure_without_a_local_fallback() {
         sign_result: Some(Err(crate::RuntimeError {
             status: 503,
             message: "custody unavailable".to_string(),
+            provider_category: None,
         })),
         ..SignerConfig::default()
     });

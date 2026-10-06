@@ -30,6 +30,7 @@ use rlp::{Rlp, RlpStream};
 use sha2::{Digest, Sha256};
 use sha3::Keccak256;
 
+use crate::feed_status::provider_response_failed;
 use crate::fulfill::js_truthy;
 use crate::http_error;
 use crate::overlay::EnvOverlay;
@@ -179,7 +180,7 @@ pub fn handle_feed_sign(
     let thresholds = feed_thresholds(&overlay);
 
     // (1) COMPUTE: fetch prices in-enclave (mirrors feed-pusher's td()).
-    let prices = state.price.fetch_prices(&symbols)?;
+    let prices = fetch_prices_recording(state, &symbols)?;
 
     // (2)+(3) PLAN + SCALE — identical arrays to feed-pusher.mjs pushNeoN3.
     let mut planned_pairs: Vec<ContractParam> = Vec::new();
@@ -393,6 +394,14 @@ pub fn handle_feed_sign(
     let mut response = serde_json::Map::new();
     response.insert("status".into(), serde_json::json!("ok"));
     response.insert("chain".into(), serde_json::json!("neo_n3"));
+    // A signed batch is one write against the updater's balance. Counting it here
+    // is what gives `/health` a burn rate to report; the feed-monitor's own
+    // measurement stays the authority on the real balance.
+    state
+        .price_plane_status
+        .lock()
+        .expect("price plane status lock")
+        .record_write(wall_clock_now_sec());
     response.insert("write_mode".into(), serde_json::json!(write_mode));
     response.insert("operation".into(), serde_json::json!(write_mode));
     response.insert("pairs".into(), serde_json::Value::Array(pairs));
@@ -524,7 +533,7 @@ fn handle_neox_feed_sign(
     let onchain_state = normalize_onchain_state(raw_state);
     let overlay = state.overlay.read().expect("overlay lock").merged_map();
     let thresholds = feed_thresholds(&overlay);
-    let prices = state.price.fetch_prices(&symbols)?;
+    let prices = fetch_prices_recording(state, &symbols)?;
 
     let mut planned_symbols = Vec::new();
     let mut planned_prices = Vec::new();
@@ -899,10 +908,15 @@ fn validate_signed_eip1559_matches(signed_hex: &str, unsigned: &[u8]) -> Result<
     Ok(())
 }
 
-/// The production price plane: one batched TwelveData `/price` call, the
-/// exact URL/parse/drop discipline of feed-pusher's `td()` and the mjs's
-/// `defaultPriceFetcher`. HTTP-level errors are NOT failures — a bad symbol
-/// or a failed quote just leaves that symbol missing, exactly like the JS.
+/// The production price plane: one batched TwelveData `/price` call.
+///
+/// The parse discipline is the Node writer's (`feed-pusher.mjs`'s `td()` and the
+/// mjs's `defaultPriceFetcher`), with one correction. That code, and this file
+/// before it, treated an upstream failure as an empty price map — but TwelveData
+/// returns failures as JSON even for non-2xx responses, so parsing one as a payload
+/// made every configured pair look missing: an expired subscription read as "no
+/// update" and the cycle exited clean. `parse_twelvedata_prices` now classifies those
+/// responses, and the caller sees a failure.
 pub struct TwelveDataPrices {
     overlay: Arc<RwLock<EnvOverlay>>,
 }
@@ -949,31 +963,122 @@ impl PriceSource for TwelveDataPrices {
         let text = response
             .text()
             .map_err(|error| http_error(500, error.to_string()))?;
-        let parsed: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|_| http_error(500, format!("TwelveData non-JSON (HTTP {status})")))?;
+        let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|_| {
+            // A body that is not JSON at all is still an upstream failure, and it
+            // must read as one: the fold records the error it returns.
+            provider_category_error(crate::feed_status::provider_failure(
+                status,
+                &serde_json::json!({}),
+            ))
+        })?;
 
-        let mut out = BTreeMap::new();
-        for (symbol, entry_key) in symbols.iter().zip(&mapped) {
-            let entry = if symbols.len() == 1 {
-                Some(&parsed)
-            } else {
-                entry_key.and_then(|key| parsed.get(key))
-            };
-            let Some(value) = entry.and_then(|entry| entry.get("price")) else {
-                continue;
-            };
-            if value.is_null() {
-                continue;
-            }
-            let price = js_to_number(value);
-            // Drop non-positive / non-finite quotes: a 0/negative reading is
-            // "missing".
-            if price.is_finite() && price > 0.0 {
-                out.insert(symbol.clone(), price);
+        parse_twelvedata_prices(status, &parsed, symbols, &mapped).map_err(provider_category_error)
+    }
+}
+
+/// `parseTwelveDataPrices` (feed-pusher.mjs:544) with `assertTwelveDataResponse`
+/// folded in: the response is checked for a provider failure, then each symbol is
+/// read, then the result is checked for being usable.
+///
+/// The failure checks are the point of this function. TwelveData returns failures
+/// as JSON, including for non-2xx responses, so parsing one as a payload made every
+/// configured pair look "missing" and hid billing and rate-limit outages behind a
+/// clean exit. A quoted symbol that is absent, null, or non-positive is still
+/// simply missing — that behaviour is unchanged.
+pub(crate) fn parse_twelvedata_prices(
+    http_status: u16,
+    body: &serde_json::Value,
+    symbols: &[String],
+    mapped: &[Option<&'static str>],
+) -> Result<BTreeMap<String, f64>, crate::feed_status::ProviderFailure> {
+    // A provider failure is a failure whatever the parse would have made of the
+    // body. The whole batch fails: a partial update from a throttled or expired
+    // provider is how a feed goes quietly stale.
+    if provider_response_failed(http_status, body) {
+        return Err(crate::feed_status::provider_failure(http_status, body));
+    }
+
+    let mut out = BTreeMap::new();
+    for (symbol, entry_key) in symbols.iter().zip(mapped) {
+        let entry = if symbols.len() == 1 {
+            Some(body)
+        } else {
+            entry_key.and_then(|key| body.get(key))
+        };
+        // HTTP 200 can carry a quota or auth failure inside an individual batch
+        // item, so each item is tested the same way as the envelope.
+        if let Some(item) = entry {
+            if provider_response_failed(http_status, item) {
+                return Err(crate::feed_status::provider_failure(http_status, item));
             }
         }
-        Ok(out)
+        let Some(value) = entry.and_then(|entry| entry.get("price")) else {
+            continue;
+        };
+        if value.is_null() {
+            continue;
+        }
+        let price = js_to_number(value);
+        // Drop non-positive / non-finite quotes: a 0/negative reading is
+        // "missing".
+        if price.is_finite() && price > 0.0 {
+            out.insert(symbol.clone(), price);
+        }
     }
+    // An empty result is NOT a failure here. The Node writer fails the whole batch
+    // with `no_usable_prices`, but this host has a second guard for the same
+    // condition that the Node writer lacks — the plan's `invalid_price` check,
+    // which puts the symbol in `skipped` and lets the rest of the batch through.
+    // Failing here would pre-empt that guard and turn a dropped quote into a
+    // failed route.
+    Ok(out)
+}
+
+/// The caller-facing error for a classified provider failure: 502, because the
+/// host is fine and the upstream is not. A 5xx keeps the relayer from treating it
+/// as a settled on-chain refusal — the request stays open for a later cycle,
+/// which is the same disposition the Node writer's `twelvedata_fetch_failed` has.
+fn provider_category_error(failure: crate::feed_status::ProviderFailure) -> RuntimeError {
+    http_error(502, failure.summary).with_provider_category(failure.category)
+}
+
+/// Fetch prices and record the verdict for `/health`.
+///
+/// The recording lives HERE rather than inside the `PriceSource` implementation on
+/// purpose: `/health` must reflect what the price plane actually did, and the fold
+/// is the one place that sees every outcome, whichever implementation served it. A
+/// classified failure is remembered; a fetch that produced usable prices clears the
+/// earlier verdict, so a recovered provider stops paging.
+fn fetch_prices_recording(
+    state: &AppState,
+    symbols: &[String],
+) -> Result<BTreeMap<String, f64>, RuntimeError> {
+    let outcome = state.price.fetch_prices(symbols);
+    let mut status = state
+        .price_plane_status
+        .lock()
+        .expect("price plane status lock");
+    match &outcome {
+        Ok(_) => status.record_success(wall_clock_now_sec()),
+        Err(error) => {
+            // A failure with no category came from somewhere other than the
+            // provider (a transport error, say); it is still a failed fetch and
+            // `/health` must not report a stale "ok".
+            let category = error
+                .provider_category
+                .clone()
+                .unwrap_or_else(|| "provider_error".to_string());
+            status.record_failure(
+                crate::feed_status::ProviderFailure {
+                    category,
+                    http_status: error.status,
+                    summary: error.message.clone(),
+                },
+                wall_clock_now_sec(),
+            );
+        }
+    }
+    outcome
 }
 
 /// `Math.max(Number(FEED_TD_TIMEOUT_MS || 25000), 1000)` — an unparsable
@@ -1125,6 +1230,47 @@ fn feed_thresholds(overlay: &BTreeMap<String, String>) -> FeedThresholds {
         threshold_bps: env_number_or(overlay, "THRESHOLD_BPS", 10.0),
         max_stale_sec: env_number_or(overlay, "MAX_STALE_SEC", 1800.0),
         max_deviation_bps: env_number_or(overlay, "MAX_DEVIATION_BPS", 5000.0),
+    }
+}
+
+/// The fee of one write, which sets both the "cannot pay one write" rule and the
+/// writes-a-day figure. The default is the Node monitor's observed two-pair
+/// write; a deployment with a different batch size overrides it.
+pub(crate) fn configured_write_fee_gas(overlay: &BTreeMap<String, String>) -> Option<f64> {
+    optional_number(overlay, "MORPHEUS_FEED_WRITE_FEE_GAS").filter(|fee| *fee > 0.0)
+}
+
+/// The operator's daily write cap for the status report. Unset means unbounded,
+/// which is the shipped posture: this slice reports, it does not throttle.
+pub(crate) fn configured_max_writes_per_day(overlay: &BTreeMap<String, String>) -> Option<f64> {
+    optional_number(overlay, "MORPHEUS_FEED_MAX_WRITES_PER_DAY").filter(|cap| *cap >= 0.0)
+}
+
+/// The updater's GAS balance, supplied by an operator. The host holds no key and
+/// has no chain RPC for it, so this is the only honest source; with none supplied
+/// the runway reports `balance_unknown` instead of a number nobody measured.
+pub(crate) fn configured_balance_gas(overlay: &BTreeMap<String, String>) -> Option<f64> {
+    optional_number(overlay, "MORPHEUS_FEED_BALANCE_GAS").filter(|gas| *gas >= 0.0)
+}
+
+/// A finite number from the overlay, or `None` when the name is absent, empty or
+/// unparsable. Unlike `env_number_or` there is no default: these inputs are
+/// genuinely optional, and an absent one must stay distinguishable from a zero.
+fn optional_number(overlay: &BTreeMap<String, String>, name: &str) -> Option<f64> {
+    let raw = overlay.get(name)?;
+    if raw.is_empty() {
+        return None;
+    }
+    js_number(raw).is_finite().then_some(js_number(raw))
+}
+
+/// The runway inputs for `/health`, read from the live overlay.
+pub(crate) fn runway_config(state: &AppState) -> crate::feed_status::RunwayConfig {
+    let overlay = state.overlay.read().expect("overlay lock").merged_map();
+    crate::feed_status::RunwayConfig {
+        balance_gas: configured_balance_gas(&overlay),
+        write_fee_gas: configured_write_fee_gas(&overlay),
+        max_writes_per_day: configured_max_writes_per_day(&overlay),
     }
 }
 
@@ -1330,6 +1476,14 @@ fn wall_clock_now() -> f64 {
         .unwrap_or(0.0)
 }
 
+/// Whole seconds since the epoch, for the runway's day and window arithmetic.
+pub(crate) fn wall_clock_now_sec() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 /// `ContractParam.integer(x)`'s Math.round — half toward +infinity, where
 /// f64::round is half away from zero (they differ only on negative halves).
 fn js_math_round(value: f64) -> f64 {
@@ -1369,7 +1523,7 @@ fn encode_uri_component(text: &str) -> String {
 
 /// `toTwelveDataSymbol` (feed-pusher.mjs:250): trim+uppercase lookup, null
 /// when unmapped (the request symbol then comes back `missing`).
-fn to_twelve_data_symbol(symbol: &str) -> Option<&'static str> {
+pub(crate) fn to_twelve_data_symbol(symbol: &str) -> Option<&'static str> {
     match symbol.trim().to_ascii_uppercase().as_str() {
         // Crypto — TwelveData 'Synthetic'/exchange-backed X/USD pairs.
         "NEO-USD" => Some("NEO/USD"),

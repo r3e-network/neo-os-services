@@ -434,6 +434,18 @@ These are intentionally left unset in production unless you explicitly want the 
   English: Allows provider requests to override builtin base URLs. Default unset means disabled.
   中文：允许 provider 请求覆盖内置 base URL。默认不写就是关闭。
 
+- `MORPHEUS_FEED_BALANCE_GAS`
+  English: The updater's GAS balance, supplied by an operator for the enclave host's `/health` runway report. The host holds no key and has no chain RPC for it, so this is the only source. Default unset means the runway reports `runway_basis: balance_unknown` with a null `runway_days` — unknown, never a healthy-looking number.
+  中文：由运维提供的 updater GAS 余额，供 enclave 主机 `/health` 的 runway 报告使用。主机不持有密钥也没有对应的链上 RPC，因此这是唯一来源。默认不写时 runway 报告 `runway_basis: balance_unknown` 且 `runway_days` 为 null——是未知，而不是看似健康的数值。
+
+- `MORPHEUS_FEED_WRITE_FEE_GAS`
+  English: The GAS fee of one feed write, used for the "cannot pay one write" rule and the writes-a-day figure. Default unset means the observed two-pair write fee `0.00606339`.
+  中文：一次 feed 写入的 GAS 费用，用于“付不起一次写入”的判定与每日写入次数折算。默认不写时使用实测的双 pair 写入费用 `0.00606339`。
+
+- `MORPHEUS_FEED_MAX_WRITES_PER_DAY`
+  English: The daily write cap reported on `/health` as `writes.budget_state`. Default unset means unbounded, which is the shipped posture: it is reported, not enforced, so it does not refuse a write.
+  中文：在 `/health` 上以 `writes.budget_state` 报告的每日写入上限。默认不写表示不设限，这也是当前交付姿态：只报告、不强制，不会因此拒绝写入。
+
 - `MORPHEUS_ALLOW_UNSANDBOXED_CHILDREN`
   English: Dev-only override that disables the Node permission model for script/WASM child processes (the model is ON by default). Ignored — fail closed — when `NODE_ENV=production`. Replaces the retired `SCRIPT_CHILD_ENABLE_PERMISSION_MODEL` toggle, which no longer has any effect.
   中文：仅用于开发的覆盖项：关闭脚本/WASM 子进程的 Node permission model（默认开启）。当 `NODE_ENV=production` 时该覆盖被忽略（fail closed）。取代已失效的 `SCRIPT_CHILD_ENABLE_PERMISSION_MODEL`。

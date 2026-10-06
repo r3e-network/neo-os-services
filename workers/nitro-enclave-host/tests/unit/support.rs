@@ -599,6 +599,9 @@ struct FakePriceInner {
     prices: Mutex<HashMap<String, f64>>,
     error: Mutex<Option<String>>,
     calls: Mutex<Vec<Vec<String>>>,
+    /// A canned provider response body, so a test can express the JSON failures
+    /// TwelveData returns for a 401 or a 429.
+    provider_body: Mutex<Option<(u16, serde_json::Value)>>,
 }
 
 impl FakePrice {
@@ -631,6 +634,27 @@ impl FakePrice {
             .insert(symbol.to_string(), price);
     }
 
+    /// Replace the whole quote set, keyed by the TwelveData symbol.
+    pub fn set_prices(&self, pairs: &[(&str, f64)]) {
+        let mut prices = self.inner.prices.lock().expect("prices lock");
+        prices.clear();
+        for (symbol, value) in pairs {
+            prices.insert((*symbol).to_string(), *value);
+        }
+    }
+
+    /// Answer with a provider response body, so a test can express what the real
+    /// plane sees — including the JSON failure bodies TwelveData returns for a 401
+    /// or a 429. The body goes through the production parse and classification, so
+    /// these tests exercise the real rules and not a stand-in for them.
+    pub fn set_provider_failure(&self, http_status: u16, body: serde_json::Value) {
+        *self.inner.provider_body.lock().expect("provider body lock") = Some((http_status, body));
+    }
+
+    pub fn clear_provider_failure(&self) {
+        *self.inner.provider_body.lock().expect("provider body lock") = None;
+    }
+
     pub fn calls(&self) -> Vec<Vec<String>> {
         self.inner.calls.lock().expect("calls lock").clone()
     }
@@ -646,6 +670,31 @@ impl PriceSource for FakePrice {
         let error = self.inner.error.lock().expect("error lock").clone();
         if let Some(message) = error {
             return Err(crate::http_error(500, message));
+        }
+        let mapped: Vec<Option<&'static str>> = symbols
+            .iter()
+            .map(|symbol| crate::feed_sign::to_twelve_data_symbol(symbol))
+            .collect();
+
+        // A canned body goes through the PRODUCTION parse and classification, so a
+        // test can assert the real rules for a provider failure — including the
+        // JSON body TwelveData returns for a 401 or a 429.
+        //
+        // With no canned body the price map is returned as-is, deliberately: the
+        // production fetcher drops non-positive quotes, and several tests here use
+        // the raw map to exercise the fold's OWN `invalid_price` backstop, which
+        // only sees a quote the fetcher would have dropped.
+        if let Some((http_status, body)) = self
+            .inner
+            .provider_body
+            .lock()
+            .expect("provider body lock")
+            .clone()
+        {
+            return crate::feed_sign::parse_twelvedata_prices(http_status, &body, symbols, &mapped)
+                .map_err(|failure| {
+                    crate::http_error(502, failure.summary).with_provider_category(failure.category)
+                });
         }
         let prices = self.inner.prices.lock().expect("prices lock");
         Ok(symbols
@@ -806,6 +855,7 @@ pub fn test_state(
         jwks_fetcher: Box::new(jwks_fetcher.clone()),
         oracle_runtime: Mutex::new(neo_os_compute::oracle::providers::ProviderRuntime::default()),
         kms_diag: Mutex::new(KmsDiag::default()),
+        price_plane_status: Arc::new(Mutex::new(crate::feed_status::PricePlaneStatus::default())),
         overload: neo_os_compute::overload::OverloadGuard::new(),
     };
     TestState {

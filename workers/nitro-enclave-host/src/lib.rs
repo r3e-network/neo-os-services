@@ -31,6 +31,7 @@ pub mod compute_execute;
 pub mod custody;
 pub mod dispatch;
 pub mod feed_sign;
+pub mod feed_status;
 pub mod fulfill;
 pub mod health;
 pub mod kms_release;
@@ -59,6 +60,12 @@ pub const RUNTIME_NAME: &str = "morpheus-enclave-server";
 pub struct RuntimeError {
     pub status: u16,
     pub message: String,
+    /// The market-data provider failure category, when the failure came from the
+    /// price plane. It rides on the error rather than inside the message so a
+    /// caller can act on the category without parsing prose, and it is omitted
+    /// from the body entirely when absent, so every other route's body stays
+    /// byte-identical.
+    pub provider_category: Option<String>,
 }
 
 /// `httpError(status, message)` — the constructor the Node dispatch reads as
@@ -67,17 +74,29 @@ pub fn http_error(status: u16, message: impl Into<String>) -> RuntimeError {
     RuntimeError {
         status,
         message: message.into(),
+        provider_category: None,
     }
 }
 
 impl RuntimeError {
+    /// Attach a provider failure category. The price plane's classified failures
+    /// use this so `/feed/sign`'s caller learns *why* the upstream refused.
+    pub fn with_provider_category(mut self, category: impl Into<String>) -> Self {
+        self.provider_category = Some(category.into());
+        self
+    }
+
     /// The catch-all's body shape (`enclave-server.mjs` dispatch's `catch`).
     pub fn body(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut body = serde_json::json!({
             "status": "error",
             "error": self.message,
             "runtime": RUNTIME_NAME,
-        })
+        });
+        if let Some(category) = &self.provider_category {
+            body["provider_category"] = serde_json::Value::String(category.clone());
+        }
+        body
     }
 }
 

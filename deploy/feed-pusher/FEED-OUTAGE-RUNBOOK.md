@@ -123,9 +123,15 @@ systemctl start morpheus-feed-monitor.service       # back to the real balance
    and nothing else in this repository does: its cadence is that timer plus thresholds inside a script this
    repository cannot see, so capping it is the owner's step (OP-02). The monitor's runway alert is the backstop,
    because it measures what the updater actually spends, whichever process spends it.
-2. **The Rust writers.** The relayer's feed lane and the `/feed/sign` price plane have no budget and do not
-   classify provider errors (an expired key there reads as "nothing to update"). Their equivalents ride the
-   enclave rebuild window (CU-90).
+2. **The Rust writers.** The `/feed/sign` price plane now classifies provider failures and reports them, with its
+   runway, on the enclave host's `/health` under `price_plane` (CU-90, shipped dark: it rides the enclave rebuild
+   window, OP-11). Two limits remain. The classification covers 401, 403, expiry and quota/rate-limit, NOT the
+   all-quotes-unusable case — that stays per-symbol, because the host's `invalid_price` guard is the backstop for
+   it. And the runway measures THIS host's own writes times the fee of one write, not the updater's balance
+   falling, so it cannot see spend by any other writer; this monitor remains the authority on the real balance. The
+   balance itself is an operator input (`MORPHEUS_FEED_BALANCE_GAS`), because the host holds no key and has no chain
+   RPC for it, and an unset balance reports `balance_unknown` rather than a number. The relayer's own feed lane is
+   still unbudgeted and still does not classify.
 3. **Neo X.** The Neo X lane of the pusher is not budgeted (it is de-scoped).
 4. **Provider failure.** It is read from the Node pusher's status file beside the monitor's status
    (`feed-pusher-status.json`, TestNet `feed-pusher-testnet-status.json`). With another writer, only the stale

@@ -1115,3 +1115,244 @@ fn feed_identity_rejects_unknown_network_without_testnet_fallback() {
     assert!(feed_magic("staging").is_err());
     assert!(feed_n3_contract("staging").is_err());
 }
+
+// ---------------------------------------------------------------------------
+// CU-90: provider-failure classification.
+//
+// TwelveData returns failures as JSON, including for non-2xx responses. Treating
+// that object as a successful payload made every configured pair look missing, so
+// an expired subscription read as "no update" and the cycle exited clean. The
+// rules and their order are ported from feed-pusher.mjs's
+// `classifyTwelveDataFailure` / `assertTwelveDataResponse`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_expired_subscription_is_a_failure_not_an_empty_price_map() {
+    let harness = harness();
+    harness.price.set_provider_failure(
+        401,
+        json!({
+            "status": "error",
+            "code": 401,
+            "message": "Your subscription has expired, please, pay last invoice",
+        }),
+    );
+    let outcome = post_feed(&harness, &json!({ "symbols": ["NEO-USD"] }));
+    assert_ne!(outcome.status, 200);
+    assert_ne!(outcome.body["status"], "no-update");
+    assert_eq!(outcome.status, 502);
+    assert_eq!(outcome.body["error"], "TwelveData upstream error (HTTP 401, code 401): Your subscription has expired, please, pay last invoice");
+    assert_eq!(outcome.body["provider_category"], "subscription_expired");
+}
+
+#[test]
+fn every_classified_provider_failure_reaches_the_caller() {
+    // The Node table, in its order: expiry is tested before 401/403 so the
+    // real-world 401 "subscription has expired" is not filed as unauthorized.
+    for (http_status, body, expected) in [
+        (
+            429,
+            json!({"status":"error","code":429,"message":"API quota exceeded for today"}),
+            "daily_quota_exhausted",
+        ),
+        (
+            429,
+            json!({"status":"error","code":429,"message":"Per minute limit reached"}),
+            "minute_rate_limited",
+        ),
+        (
+            429,
+            json!({"status":"error","code":429,"message":"Too many requests"}),
+            "rate_limited",
+        ),
+        (
+            401,
+            json!({"status":"error","code":401,"message":"Your subscription has expired"}),
+            "subscription_expired",
+        ),
+        (
+            401,
+            json!({"status":"error","code":401,"message":"Invalid API key"}),
+            "provider_unauthorized",
+        ),
+        (
+            403,
+            json!({"status":"error","code":403,"message":"Forbidden"}),
+            "provider_unauthorized",
+        ),
+        (
+            500,
+            json!({"status":"error","code":500,"message":"Internal server error"}),
+            "provider_error",
+        ),
+    ] {
+        let harness = harness();
+        harness.price.set_provider_failure(http_status, body);
+        let outcome = post_feed(&harness, &json!({ "symbols": ["NEO-USD"] }));
+        assert_eq!(outcome.status, 502, "{expected}");
+        assert_eq!(outcome.body["provider_category"], expected);
+    }
+}
+
+#[test]
+fn a_provider_error_reported_inside_a_success_status_is_still_a_failure() {
+    // TwelveData can answer HTTP 200 with `status: "error"` and a numeric code.
+    let harness = harness();
+    harness.price.set_provider_failure(
+        200,
+        json!({"status":"error","code":401,"message":"Your subscription has expired"}),
+    );
+    let outcome = post_feed(&harness, &json!({ "symbols": ["NEO-USD"] }));
+    assert_eq!(outcome.status, 502);
+    assert_eq!(outcome.body["provider_category"], "subscription_expired");
+}
+
+#[test]
+fn a_batch_item_failure_fails_the_whole_batch() {
+    // HTTP 200 can carry a per-symbol quota or auth failure. One dead symbol
+    // must not be reported as a successful partial update.
+    let harness = harness();
+    harness.price.set_provider_failure(
+        200,
+        json!({
+            "NEO/USD": {"status":"error","code":429,"message":"API quota exceeded for today"},
+            "GAS/USD": {"price": "3.5"},
+        }),
+    );
+    let outcome = post_feed(&harness, &json!({ "symbols": ["NEO-USD", "GAS-USD"] }));
+    assert_eq!(outcome.status, 502);
+    assert_eq!(outcome.body["provider_category"], "daily_quota_exhausted");
+}
+
+/// A batch whose quotes are all unusable is NOT a provider failure here, and this
+/// is a deliberate divergence from the Node writer: it fails the batch with
+/// `no_usable_prices`, but this host has the plan's `invalid_price` guard as a
+/// second line of defence and pre-empting it would turn a dropped quote into a
+/// failed route. The route succeeds and names each dropped symbol.
+/// An all-unusable batch is NOT a provider failure here, and this is a deliberate
+/// divergence from the Node writer: it fails the batch with `no_usable_prices`,
+/// but this host has the plan's `invalid_price` guard as a second line of defence
+/// and pre-empting it would turn a dropped quote into a failed route. So the parse
+/// returns an empty map and lets that guard report each symbol.
+#[test]
+fn a_response_with_no_usable_prices_is_an_empty_map_not_a_failure() {
+    let symbols = vec!["NEO-USD".to_string(), "GAS-USD".to_string()];
+    let mapped: Vec<Option<&'static str>> = symbols
+        .iter()
+        .map(|symbol| to_twelve_data_symbol(symbol))
+        .collect();
+    let body = json!({
+        "NEO/USD": { "price": "0" },
+        "GAS/USD": { "price": "-1" },
+    });
+    let parsed = parse_twelvedata_prices(200, &body, &symbols, &mapped).expect("no failure");
+    assert!(parsed.is_empty(), "{parsed:?}");
+}
+
+/// The unchanged drop discipline, asserted against the production parse: an absent
+/// symbol and a non-positive quote both leave the symbol simply missing, and
+/// neither is a provider failure.
+#[test]
+fn the_parse_drops_absent_and_non_positive_quotes_without_failing() {
+    let symbols = vec!["NEO-USD".to_string(), "GAS-USD".to_string()];
+    let mapped: Vec<Option<&'static str>> = symbols
+        .iter()
+        .map(|symbol| to_twelve_data_symbol(symbol))
+        .collect();
+    let body = json!({ "NEO/USD": { "price": "12.5" } });
+    let parsed = parse_twelvedata_prices(200, &body, &symbols, &mapped).expect("no failure");
+    assert_eq!(parsed.get("NEO-USD"), Some(&12.5));
+    assert!(
+        !parsed.contains_key("GAS-USD"),
+        "absent quote must stay missing"
+    );
+
+    let zero = json!({ "NEO/USD": { "price": "0" } });
+    let parsed = parse_twelvedata_prices(200, &zero, &symbols, &mapped).expect("no failure");
+    assert!(
+        !parsed.contains_key("NEO-USD"),
+        "zero quote must be dropped"
+    );
+}
+
+#[test]
+fn a_missing_quote_is_still_just_missing_through_the_fold() {
+    // The unchanged path: an absent symbol leaves that symbol missing and the
+    // route succeeds. Classification must not swallow ordinary gaps.
+    let harness = harness();
+    harness.price.set_prices(&[("GAS-USD", 3.5)]);
+    let outcome = post_feed(
+        &harness,
+        &json!({
+            "symbols": ["NEO-USD", "GAS-USD"],
+            "onchain_state": { "GAS-USD": { "round": "1", "price": "0", "ts": 7 } },
+            "now": 2,
+            "tx_params": { "nonce": 1, "blockCount": 100, "systemFee": 1, "networkFee": 1 },
+        }),
+    );
+    assert_eq!(outcome.status, 200);
+    assert_eq!(outcome.body["missing"], json!(["NEO-USD"]));
+    assert_eq!(outcome.body["pairs"], json!(["TWELVEDATA:GAS-USD"]));
+}
+
+#[test]
+fn a_provider_error_message_never_leaks_the_api_key() {
+    let harness = harness();
+    harness.price.set_provider_failure(
+        401,
+        json!({
+            "status": "error",
+            "code": 401,
+            "message": "Invalid API key apikey=SUPERSECRET1234567890 for this account",
+        }),
+    );
+    let outcome = post_feed(&harness, &json!({ "symbols": ["NEO-USD"] }));
+    let rendered = outcome.body.to_string();
+    assert!(!rendered.contains("SUPERSECRET"), "{rendered}");
+    assert!(rendered.contains("apikey=<redacted>"), "{rendered}");
+    // The message is capped, so an upstream cannot flood the status.
+    assert!(outcome.body["error"].as_str().expect("error").len() <= 300);
+}
+
+#[test]
+fn a_price_fetch_failure_records_the_verdict_and_reads_on_status() {
+    let harness = harness();
+    harness.price.set_provider_failure(
+        401,
+        json!({"status":"error","code":401,"message":"Your subscription has expired"}),
+    );
+    post_feed(&harness, &json!({ "symbols": ["NEO-USD"] }));
+    let body = crate::health::handle_health(&harness.state);
+    assert_eq!(
+        body["price_plane"]["provider"]["category"],
+        "subscription_expired"
+    );
+    assert_eq!(body["price_plane"]["provider"]["kind"], "expired");
+    assert_eq!(body["price_plane"]["provider"]["page"], true);
+    // A provider outage does not make the enclave unready: custody and the
+    // signing plane are untouched.
+    assert_eq!(body["ready"], true);
+    assert_eq!(body["status"], "ok");
+}
+
+#[test]
+fn a_successful_fetch_clears_the_recorded_verdict() {
+    let harness = harness();
+    harness.price.set_provider_failure(
+        401,
+        json!({"status":"error","code":401,"message":"Your subscription has expired"}),
+    );
+    post_feed(&harness, &json!({ "symbols": ["NEO-USD"] }));
+    assert_eq!(
+        crate::health::handle_health(&harness.state)["price_plane"]["provider"]["state"],
+        "failed"
+    );
+
+    harness.price.clear_provider_failure();
+    harness.price.set_prices(&[("NEO/USD", 12.5)]);
+    post_feed(&harness, &json!({ "symbols": ["NEO-USD"] }));
+    assert_eq!(
+        crate::health::handle_health(&harness.state)["price_plane"]["provider"]["state"],
+        "ok"
+    );
+}

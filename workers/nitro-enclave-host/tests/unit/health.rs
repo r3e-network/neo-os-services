@@ -152,3 +152,92 @@ fn health_reads_the_network_from_the_live_overlay() {
     let body = handle_health(&harness.state);
     assert_eq!(body["network"], "mainnet");
 }
+
+/// CU-90: the status surface carries the price plane's provider verdict, its
+/// observed write cadence and the runway. A fresh host reports no provider
+/// verdict at all rather than claiming one it has not observed.
+#[test]
+fn health_carries_the_price_plane_failure_and_runway_state() {
+    let harness = test_state(
+        &healthy_overlay(),
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+
+    let body = handle_health(&harness.state);
+    assert_eq!(body["price_plane"]["provider"], serde_json::Value::Null);
+    assert_eq!(body["price_plane"]["writes"]["observed"], 0);
+    assert_eq!(body["price_plane"]["writes"]["budget_state"], "unbounded");
+    // No balance supplied: the runway is unknown, and unknown is not "fine".
+    assert_eq!(
+        body["price_plane"]["runway"]["runway_days"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        body["price_plane"]["runway"]["runway_basis"],
+        "balance_unknown"
+    );
+    assert_eq!(body["price_plane"]["runway"]["alert_level"], "ok");
+
+    // A recorded failure shows up with its category, kind and page verdict,
+    // and leaves the readiness contract alone: custody still answers.
+    harness
+        .state
+        .price_plane_status
+        .lock()
+        .expect("lock")
+        .record_failure(
+            crate::feed_status::ProviderFailure {
+                category: "daily_quota_exhausted".to_string(),
+                http_status: 429,
+                summary: "API quota exceeded for today".to_string(),
+            },
+            1_700_000_000,
+        );
+    let body = handle_health(&harness.state);
+    assert_eq!(body["price_plane"]["provider"]["state"], "failed");
+    assert_eq!(
+        body["price_plane"]["provider"]["category"],
+        "daily_quota_exhausted"
+    );
+    assert_eq!(body["price_plane"]["provider"]["kind"], "quota");
+    assert_eq!(body["price_plane"]["provider"]["page"], true);
+    assert_eq!(body["price_plane"]["provider"]["http_status"], 429);
+    assert_eq!(
+        body["price_plane"]["provider"]["observed_at"],
+        1_700_000_000
+    );
+    assert_eq!(body["ready"], true);
+    assert_eq!(body["status"], "ok");
+}
+
+/// A balance in the environment is the operator's input; without one the runway
+/// is explicitly unknown rather than an optimistic number.
+#[test]
+fn health_reports_the_operator_supplied_balance_and_write_fee() {
+    let harness = test_state(
+        &[
+            ("MORPHEUS_NETWORK", TEST_NETWORK),
+            ("NITRO_API_TOKEN", "s3cret"),
+            ("MORPHEUS_FEED_BALANCE_GAS", "240"),
+            ("MORPHEUS_FEED_WRITE_FEE_GAS", "0.5"),
+            ("MORPHEUS_FEED_MAX_WRITES_PER_DAY", "96"),
+        ],
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let body = handle_health(&harness.state);
+    assert_eq!(body["price_plane"]["runway"]["balance_gas"], 240.0);
+    assert_eq!(body["price_plane"]["runway"]["write_fee_gas"], 0.5);
+    assert_eq!(body["price_plane"]["writes"]["budget"], 96.0);
+    // 240 GAS cannot pay a 0.5 GAS write a hundred times over, but with no
+    // observed burn the basis says why the runway is unknown.
+    assert_eq!(
+        body["price_plane"]["runway"]["runway_basis"],
+        "insufficient_history"
+    );
+}

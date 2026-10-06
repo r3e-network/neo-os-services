@@ -119,7 +119,7 @@
           "sha256": "a94c7b465a2c52385b2222109aa48ad847b0b459d5a12ec21429d7982f848da4"
         },
         "workers/nitro-enclave-host/tests/unit/vrf.rs": {
-          "sha256": "d6940c8620bd2e0e97a929107a40eb6c7dd10015c1a7d5d4434008136577b919"
+          "sha256": "df63dbb54a57d2f66f7ec42aacea4fc80be95e2afeb0f43a8db62eeb90450132"
         },
         "workers/nitro-worker/src/capabilities.test.mjs": {
           "sha256": "81958e6018b72875b3887bc43a72228b7f9bf3d2a5ae7cd54e182df5d5f8a96c"
@@ -129,6 +129,18 @@
         },
         "workers/nitro-worker/src/workflow.test.mjs": {
           "sha256": "4389adbdfd562707ea22c2a92f3fdf64c8862c54c9d7fb8a0d76734b79da0d90"
+        },
+        "workers/nitro-enclave-host/tests/unit/feed_sign.rs": {
+          "sha256": "e36f0f60df2fc084a43d8d445353f19f9511a2baf3d487f6129f14e7aac1e5e0"
+        },
+        "workers/nitro-enclave-host/tests/unit/feed_status.rs": {
+          "sha256": "9fd9725f676faa9ad43a22b587fa37371aba16c35505888c269f2583378b124b"
+        },
+        "workers/nitro-enclave-host/tests/unit/health.rs": {
+          "sha256": "e58c0de4f4d855f3417268f04bd32d98fbf6694d92fa26b38e5ad77f0ff84c98"
+        },
+        "workers/nitro-enclave-host/tests/unit/support.rs": {
+          "sha256": "a210f50f10b3bd953b09d9456f7d689c6da65f0157cce34981b05a9a81422a4d"
         }
       }
     },
@@ -413,7 +425,7 @@
           "sha256": "061b3b0dd159c6b23b61981f381c9210af5279cbc9145c001149e5cb3024ebb0"
         },
         "workers/nitro-enclave-host/src/lib.rs": {
-          "sha256": "2f5776f93200e267976417aee78a8b9c716586b6617d2b5e6715f5bcebf690fc"
+          "sha256": "6268673b23ccf27af2a64a6458462d776ec0bb8e2bb17d8d080ebce4834bbb0b"
         },
         "workers/nitro-enclave-host/src/paymaster.rs": {
           "sha256": "f76867d383e27809f24412dfd752beccbff34f55a7e425481566bfea5a54a50c"
@@ -429,6 +441,21 @@
         },
         "workers/nitro-enclave-host/src/vrf.rs": {
           "sha256": "61339dbade97261c9a55c7a3a7d0f3da504d08cf8303831da9252ef732d90b9d"
+        },
+        "workers/nitro-enclave-host/src/bin/enclave_host.rs": {
+          "sha256": "545f6390510c401178f909c01bac69ea078f2926347e2bf6e34467d018522860"
+        },
+        "workers/nitro-enclave-host/src/feed_sign.rs": {
+          "sha256": "5f99f48dc7d66307bc7d2b4c5f2e7fb9a75aed88b14ff304d9404d2a23986318"
+        },
+        "workers/nitro-enclave-host/src/feed_status.rs": {
+          "sha256": "f1850bacddb73917b2b05a3b9ae0a7692468787cc802ee219199e24d32959dad"
+        },
+        "workers/nitro-enclave-host/src/health.rs": {
+          "sha256": "7f0d1b64d586d22826727d3504865743269259c47446e12ae9e5f1079904c864"
+        },
+        "workers/nitro-enclave-host/src/state.rs": {
+          "sha256": "f2cd1d9b3aae67da9da76b23311ae2d52cabf373e59663714cb1b544c9c4777f"
         }
       }
     },

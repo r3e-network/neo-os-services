@@ -277,6 +277,11 @@ pub struct AppState {
     /// requests here.
     pub oracle_runtime: Mutex<neo_os_compute::oracle::providers::ProviderRuntime>,
     pub kms_diag: Mutex<KmsDiag>,
+    /// What the price plane has observed: the last classified provider failure,
+    /// this UTC day's write count, and the write timestamps the runway is
+    /// measured from. Reported by `/health`; it never gates readiness, because a
+    /// provider outage does not stop this host from signing.
+    pub price_plane_status: Arc<Mutex<crate::feed_status::PricePlaneStatus>>,
     /// Per-route admission control (CL-34). The Node worker this host
     /// replaces calls the same guard on every request after auth
     /// (`workers/nitro-worker/src/worker.js`); the Rust port shipped the

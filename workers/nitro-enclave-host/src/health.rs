@@ -91,6 +91,17 @@ pub fn handle_health(state: &AppState) -> serde_json::Value {
         "key_source": key_source,
         "plaintext_key_provision_allowed": false,
         "kms_diag": state.kms_diag.lock().expect("kms diag lock").value.clone(),
+        // What the market-data provider is doing and how long the updater can keep
+        // writing. Reporting only: an expired subscription must be visible here,
+        // but it does not make this host unready — custody still answers.
+        "price_plane": state
+            .price_plane_status
+            .lock()
+            .expect("price plane status lock")
+            .snapshot(
+                crate::feed_sign::wall_clock_now_sec(),
+                crate::feed_sign::runway_config(state),
+            ),
     });
     if !signer_errors.is_empty() {
         body["signer_error"] = serde_json::Value::String(signer_errors.join(" | "));
