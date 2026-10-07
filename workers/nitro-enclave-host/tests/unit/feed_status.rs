@@ -440,6 +440,84 @@ fn a_response_is_a_failure_on_any_of_the_three_signals() {
 }
 
 #[test]
+fn numeric_provider_codes_match_the_node_number_model() {
+    for (raw, category, code) in [
+        (
+            r#"{"code":401.0,"message":"request refused"}"#,
+            "provider_unauthorized",
+            "401",
+        ),
+        (
+            r#"{"code":4.03e2,"message":"request refused"}"#,
+            "provider_unauthorized",
+            "403",
+        ),
+        (
+            r#"{"code":"429","message":"daily quota"}"#,
+            "daily_quota_exhausted",
+            "429",
+        ),
+        (
+            r#"{"code":429.0,"message":"per minute limit"}"#,
+            "minute_rate_limited",
+            "429",
+        ),
+        (
+            r#"{"code":400.5,"message":"request refused"}"#,
+            "provider_error",
+            "400.5",
+        ),
+        (
+            r#"{"code":"400","message":"request refused"}"#,
+            "provider_error",
+            "400",
+        ),
+    ] {
+        // Read actual JSON text: the representation must not decide whether a
+        // numeric provider failure is mistaken for an empty successful quote.
+        let body: Value = serde_json::from_str(raw).expect("valid provider JSON");
+        assert!(provider_response_failed(200, &body), "{raw}");
+        assert_eq!(classify_provider_failure(200, &body), category, "{raw}");
+        assert_eq!(
+            provider_failure(200, &body).summary,
+            format!(
+                "TwelveData upstream error (HTTP 200, code {code}): {}",
+                body["message"].as_str().expect("message")
+            ),
+            "{raw}"
+        );
+    }
+}
+
+#[test]
+fn numeric_provider_code_controls_preserve_success_and_http_fallback() {
+    for code in [
+        json!(399.5),
+        json!("399"),
+        json!("not a number"),
+        json!("Infinity"),
+        json!("1e999"),
+        json!(null),
+        json!(false),
+        json!(""),
+    ] {
+        assert!(
+            !provider_response_failed(200, &json!({"code":code,"price":"12.5"})),
+            "{code}"
+        );
+    }
+    for code in [json!(0.0), json!(0), json!(false), json!(null), json!("")] {
+        let body = json!({"code":code,"message":"request refused"});
+        assert!(provider_response_failed(401, &body));
+        assert_eq!(
+            classify_provider_failure(401, &body),
+            "provider_unauthorized",
+            "{body}"
+        );
+    }
+}
+
+#[test]
 fn a_provider_message_never_carries_the_api_key() {
     let sanitized = sanitize_provider_message(
         "Invalid API key apikey=SUPERSECRET1234567890 for account NEO&x=1",

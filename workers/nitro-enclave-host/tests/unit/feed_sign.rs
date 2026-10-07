@@ -1344,6 +1344,28 @@ fn a_price_fetch_failure_records_the_verdict_and_reads_on_status() {
 /// there `entry` is the body itself and the per-item check fires on the same
 /// object.
 #[test]
+fn numeric_provider_codes_reach_the_real_route_and_health() {
+    for raw in [
+        r#"{"code":403.0,"message":"request refused"}"#,
+        r#"{"code":"403","message":"request refused"}"#,
+    ] {
+        let harness = harness();
+        harness
+            .price
+            .set_provider_failure(200, serde_json::from_str(raw).expect("valid provider JSON"));
+        let outcome = post_feed(&harness, &json!({"symbols":["NEO-USD","GAS-USD"]}));
+        assert_eq!(outcome.status, 502, "{raw}: {}", outcome.body);
+        assert_eq!(outcome.body["provider_category"], "provider_unauthorized");
+        let health = crate::health::handle_health(&harness.state);
+        assert_eq!(health["price_plane"]["provider"]["state"], "failed");
+        assert_eq!(
+            health["price_plane"]["provider"]["category"],
+            "provider_unauthorized"
+        );
+    }
+}
+
+#[test]
 fn a_unicode_expiry_failure_reaches_the_route_and_health() {
     let harness = harness();
     harness.price.set_provider_failure(

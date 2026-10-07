@@ -18,6 +18,7 @@
 
 use std::collections::VecDeque;
 
+use neo_os_compute::js::{js_number_to_string, js_to_number, js_truthy};
 use serde_json::{json, Value};
 
 /// The observed fee of one two-pair write, from `feed-monitor.mjs`'s
@@ -143,16 +144,16 @@ pub fn sanitize_provider_message(value: &str) -> String {
 pub fn classify_provider_failure(http_status: u16, body: &Value) -> &'static str {
     let code = body
         .get("code")
-        .and_then(|value| value.as_i64())
-        .filter(|code| *code != 0)
-        .unwrap_or(i64::from(http_status));
+        .filter(|value| js_truthy(value))
+        .map(js_to_number)
+        .unwrap_or(f64::from(http_status));
     let message = body
         .get("message")
         .and_then(|value| value.as_str())
         .unwrap_or("")
         .to_ascii_lowercase();
 
-    if code == 429 || http_status == 429 {
+    if code == 429.0 || http_status == 429 {
         if message.contains("daily") || message.contains("per day") || message.contains("today") {
             return "daily_quota_exhausted";
         }
@@ -164,7 +165,7 @@ pub fn classify_provider_failure(http_status: u16, body: &Value) -> &'static str
     if is_subscription_expired(&message) {
         return "subscription_expired";
     }
-    if code == 401 || code == 403 {
+    if code == 401.0 || code == 403.0 {
         return "provider_unauthorized";
     }
     "provider_error"
@@ -198,8 +199,10 @@ fn is_subscription_expired(lower_message: &str) -> bool {
 
 /// Is this response a provider failure? The three tests
 /// `assertTwelveDataResponse` makes: the HTTP status, an explicit
-/// `status: "error"`, and a numeric `code >= 400`. A body can arrive under a 200
-/// and still carry a failure, which is why all three are checked.
+/// `status: "error"`, and a finite `Number(code) >= 400`. JSON decimals and
+/// numeric strings have the same meaning as integers in the Node writer.
+/// A body can arrive under a 200 and still carry a failure, which is why all
+/// three are checked.
 pub fn provider_response_failed(http_status: u16, body: &Value) -> bool {
     if !(200..300).contains(&http_status) {
         return true;
@@ -213,8 +216,8 @@ pub fn provider_response_failed(http_status: u16, body: &Value) -> bool {
         .is_some_and(|status| status.eq_ignore_ascii_case("error"));
     let bad_code = object
         .get("code")
-        .and_then(|value| value.as_i64())
-        .is_some_and(|code| code >= 400);
+        .map(js_to_number)
+        .is_some_and(|code| code.is_finite() && code >= 400.0);
     says_error || bad_code
 }
 
@@ -222,10 +225,10 @@ pub fn provider_response_failed(http_status: u16, body: &Value) -> bool {
 pub fn provider_failure(http_status: u16, body: &Value) -> ProviderFailure {
     let code = body
         .get("code")
-        .and_then(|value| value.as_i64())
-        .filter(|code| *code != 0);
+        .map(js_to_number)
+        .filter(|code| code.is_finite());
     let code_suffix = code
-        .map(|code| format!(", code {code}"))
+        .map(|code| format!(", code {}", js_number_to_string(code)))
         .unwrap_or_default();
     let summary = sanitize_provider_message(
         body.get("message")
