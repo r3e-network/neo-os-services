@@ -131,10 +131,10 @@
           "sha256": "4389adbdfd562707ea22c2a92f3fdf64c8862c54c9d7fb8a0d76734b79da0d90"
         },
         "workers/nitro-enclave-host/tests/unit/feed_sign.rs": {
-          "sha256": "8f61d66b367d5d955e3ee055b149b5eb6d0e080147043eb86bb7d46c43b1ae04"
+          "sha256": "815beaec40fcf9f254d6776a77eb5497370bc17b58689ec03a73a7172315eaea"
         },
         "workers/nitro-enclave-host/tests/unit/feed_status.rs": {
-          "sha256": "cba6211dd83aac6f894256c439577764cba8ced49b1d1806ec079dab361c735d"
+          "sha256": "eaecdcc7be03837bfa1cc2d04336d4197d3ce7f0f3e9fcf2a1d1cd7f4f89ffe1"
         },
         "workers/nitro-enclave-host/tests/unit/health.rs": {
           "sha256": "e58c0de4f4d855f3417268f04bd32d98fbf6694d92fa26b38e5ad77f0ff84c98"
@@ -449,7 +449,7 @@
           "sha256": "9e43d9054d74925305b202d5f51df55a26cb02ffdfc6b35483e5636378bc733d"
         },
         "workers/nitro-enclave-host/src/feed_status.rs": {
-          "sha256": "2fa0f53ba9c68cbbf7266e0adb55a5e69d22bd34e8542a6d297e99598f619213"
+          "sha256": "1159999cd37751667fee8f1173a01eadb41e5d1f992193b20125e8ba2a0c07bd"
         },
         "workers/nitro-enclave-host/src/health.rs": {
           "sha256": "7f0d1b64d586d22826727d3504865743269259c47446e12ae9e5f1079904c864"

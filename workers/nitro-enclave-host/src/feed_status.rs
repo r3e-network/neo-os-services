@@ -170,15 +170,30 @@ pub fn classify_provider_failure(http_status: u16, body: &Value) -> &'static str
     "provider_error"
 }
 
-/// `/subscription.{0,40}expired/i` — the word order and the bounded gap, because
-/// the provider's message carries an invoice reference between the two words.
+/// `/subscription.{0,40}expired/i` — the Node regex counts UTF-16 code units
+/// and its dot excludes line terminators. Try every phrase at character
+/// boundaries: a byte prefix can split UTF-8, and the first phrase need not
+/// be the one whose bounded gap ends in `expired`.
 fn is_subscription_expired(lower_message: &str) -> bool {
-    let Some(start) = lower_message.find("subscription") else {
-        return false;
-    };
-    let after = &lower_message[start + "subscription".len()..];
-    let gap = after.len().min(40 + "expired".len());
-    after[..gap].contains("expired")
+    lower_message
+        .match_indices("subscription")
+        .any(|(start, _)| {
+            let after = &lower_message[start + "subscription".len()..];
+            let mut gap = 0;
+            for (offset, character) in after.char_indices() {
+                if gap > 40 {
+                    break;
+                }
+                if after[offset..].starts_with("expired") {
+                    return true;
+                }
+                if matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') {
+                    break;
+                }
+                gap += character.len_utf16();
+            }
+            false
+        })
 }
 
 /// Is this response a provider failure? The three tests

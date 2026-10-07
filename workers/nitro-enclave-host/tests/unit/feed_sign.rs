@@ -1344,6 +1344,26 @@ fn a_price_fetch_failure_records_the_verdict_and_reads_on_status() {
 /// there `entry` is the body itself and the per-item check fires on the same
 /// object.
 #[test]
+fn a_unicode_expiry_failure_reaches_the_route_and_health() {
+    let harness = harness();
+    harness.price.set_provider_failure(
+        401,
+        json!({
+            "status": "error",
+            "code": 401,
+            "message": format!("subscription{}expired", "中".repeat(16)),
+        }),
+    );
+    let outcome = post_feed(&harness, &json!({ "symbols": ["NEO-USD", "GAS-USD"] }));
+    assert_eq!(outcome.status, 502);
+    assert_eq!(outcome.body["provider_category"], "subscription_expired");
+    assert_eq!(
+        crate::health::handle_health(&harness.state)["price_plane"]["provider"]["category"],
+        "subscription_expired"
+    );
+}
+
+#[test]
 fn a_two_symbol_batch_fails_on_an_envelope_level_provider_error() {
     let harness = harness();
     harness.price.set_provider_failure(

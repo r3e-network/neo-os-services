@@ -356,6 +356,70 @@ fn expiry_is_matched_across_a_bounded_gap() {
 }
 
 #[test]
+fn expiry_handles_unicode_without_splitting_utf8() {
+    let body = json!({"code":401,"message":format!("subscription{}expired", "中".repeat(16))});
+    assert_eq!(
+        classify_provider_failure(401, &body),
+        "subscription_expired"
+    );
+}
+
+#[test]
+fn expiry_gap_matches_the_node_utf16_limit() {
+    // The Node classifier's regex has no `u` flag: its gap is measured in
+    // UTF-16 code units, so a supplementary character occupies two positions.
+    for (gap, expected) in [
+        ("x".repeat(40), "subscription_expired"),
+        ("x".repeat(41), "provider_unauthorized"),
+        ("中".repeat(40), "subscription_expired"),
+        ("中".repeat(41), "provider_unauthorized"),
+        ("😀".repeat(20), "subscription_expired"),
+        ("😀".repeat(21), "provider_unauthorized"),
+    ] {
+        let body = json!({"code":401,"message":format!("subscription{gap}expired")});
+        assert_eq!(classify_provider_failure(401, &body), expected, "{body}");
+    }
+}
+
+#[test]
+fn expiry_does_not_cross_node_line_terminators() {
+    for terminator in ['\n', '\r', '\u{2028}', '\u{2029}'] {
+        let body = json!({"code":401,"message":format!("subscription{terminator}expired")});
+        assert_eq!(
+            classify_provider_failure(401, &body),
+            "provider_unauthorized",
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn expiry_checks_later_subscription_matches() {
+    let body = json!({"code":401,"message":format!("subscription{}; subscription expired", "x".repeat(60))});
+    assert_eq!(
+        classify_provider_failure(401, &body),
+        "subscription_expired"
+    );
+}
+
+#[test]
+fn expiry_requires_the_complete_ordered_phrase() {
+    for message in [
+        "expired subscription",
+        "subscription expire",
+        "no subscription",
+        "subscription",
+    ] {
+        let body = json!({"code":401,"message":message});
+        assert_eq!(
+            classify_provider_failure(401, &body),
+            "provider_unauthorized",
+            "{body}"
+        );
+    }
+}
+
+#[test]
 fn a_response_is_a_failure_on_any_of_the_three_signals() {
     assert!(provider_response_failed(500, &json!({})));
     assert!(provider_response_failed(429, &json!({})));
