@@ -273,6 +273,14 @@ fn classification_follows_the_node_table_in_its_order() {
             json!({"status":"error","code":429,"message":"Too many requests"}),
             "rate_limited",
         ),
+        // The HTTP status is a 429 signal in its own right: a body carrying a
+        // different numeric code under an HTTP 429 is still rate limiting, not a
+        // provider error.
+        (
+            429,
+            json!({"status":"error","code":500,"message":"Internal server error"}),
+            "rate_limited",
+        ),
         (
             401,
             json!({"status":"error","code":401,"message":"Your subscription has expired"}),
@@ -309,6 +317,29 @@ fn expiry_is_classified_before_unauthorized() {
 }
 
 #[test]
+fn rate_limiting_is_classified_before_expiry() {
+    // The table's order, the other way round from the 401 case: the 429 branch is
+    // tested first, so a throttled response that also mentions an expired
+    // subscription is a quota problem, not a billing one — a different kind and a
+    // different page verdict. Hoisting the expiry test above the 429 block
+    // silently reclassifies it.
+    let body = json!({
+        "status": "error",
+        "code": 429,
+        "message": "Your subscription has expired",
+    });
+    assert_eq!(classify_provider_failure(429, &body), "rate_limited");
+    // The HTTP status alone carries the same precedence, whatever code the body
+    // carries.
+    let wrong_code = json!({
+        "status": "error",
+        "code": 200,
+        "message": "Your subscription has expired",
+    });
+    assert_eq!(classify_provider_failure(429, &wrong_code), "rate_limited");
+}
+
+#[test]
 fn expiry_is_matched_across_a_bounded_gap() {
     let body = json!({"code":401,"message":"Your subscription for the plan expired"});
     assert_eq!(
@@ -332,6 +363,9 @@ fn a_response_is_a_failure_on_any_of_the_three_signals() {
     assert!(provider_response_failed(200, &json!({"status":"ERROR"})));
     assert!(provider_response_failed(200, &json!({"code":401})));
     assert!(provider_response_failed(200, &json!({"code":429})));
+    // The numeric-code test starts AT 400, the lowest error code; 399 is not one.
+    assert!(provider_response_failed(200, &json!({"code":400})));
+    assert!(!provider_response_failed(200, &json!({"code":399})));
     // A good quote is not a failure.
     assert!(!provider_response_failed(200, &json!({"price":"65000.12"})));
     // A code under 400 is not a failure on its own.

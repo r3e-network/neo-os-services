@@ -1335,6 +1335,117 @@ fn a_price_fetch_failure_records_the_verdict_and_reads_on_status() {
     assert_eq!(body["status"], "ok");
 }
 
+/// A two-pair batch is the deployed write shape, and the ENVELOPE-level check is
+/// what fails it: with more than one symbol the per-item lookup asks the error
+/// envelope for `NEO/USD`, finds nothing, and skips the item check, so without
+/// the envelope check the whole batch would parse as an empty price map and the
+/// fold would answer HTTP 200 `no-update` — the runbook incident this slice
+/// fixed, restored silently. The single-symbol tests cannot see that, because
+/// there `entry` is the body itself and the per-item check fires on the same
+/// object.
+#[test]
+fn a_two_symbol_batch_fails_on_an_envelope_level_provider_error() {
+    let harness = harness();
+    harness.price.set_provider_failure(
+        401,
+        json!({
+            "status": "error",
+            "code": 401,
+            "message": "Your subscription has expired, please, pay last invoice",
+        }),
+    );
+    let outcome = post_feed(&harness, &json!({ "symbols": ["NEO-USD", "GAS-USD"] }));
+    // Asserted before the status so the failure message carries the whole body:
+    // without the envelope check, the evidence for this test IS the incident —
+    // HTTP 200 `no-update` with both pairs missing.
+    assert_ne!(
+        outcome.body["status"], "no-update",
+        "the runbook incident, restored: {}",
+        outcome.body
+    );
+    assert_eq!(outcome.status, 502);
+    assert_eq!(outcome.body["provider_category"], "subscription_expired");
+    assert_ne!(outcome.body["missing"], json!(["NEO-USD", "GAS-USD"]));
+    // The same verdict is what `/health` reports for the deployed batch shape.
+    let health = crate::health::handle_health(&harness.state);
+    assert_eq!(
+        health["price_plane"]["provider"]["category"],
+        "subscription_expired"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Rework: the transport path must not publish the API key.
+//
+// The request URL carries the key (`feed_sign.rs` builds it with
+// `apikey={api_key}`) and `reqwest`'s error `Display` embeds that URL, so a DNS,
+// TLS, connect or timeout failure produces a message containing the key. Those
+// messages are returned to the relayer and recorded as the provider summary that
+// the unauthenticated `/health` route serves. The redaction must cover them just
+// as it covers a provider body message.
+// ---------------------------------------------------------------------------
+
+/// An obvious placeholder, never a real credential. The assertion is that this
+/// string cannot reach a response body or `/health`.
+const TRANSPORT_KEY_PLACEHOLDER: &str = "PLACEHOLDER-NOT-A-REAL-KEY";
+
+/// A real `reqwest` transport error, produced by a refused connection on
+/// loopback (port 1): no foreign host is contacted, and the URL carries only the
+/// placeholder above. The proxies this environment exports are disabled so the
+/// failure is the connection refusal, not a proxy answer that would hide the URL.
+fn refused_transport_error() -> reqwest::Error {
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("client");
+    client
+        .get(format!(
+            "http://127.0.0.1:1/price?symbol=NEO%2FUSD&apikey={TRANSPORT_KEY_PLACEHOLDER}"
+        ))
+        .send()
+        .expect_err("loopback port 1 must refuse the connection")
+}
+
+/// The error the price lane builds for a failed request is redacted at the site
+/// that constructs it.
+#[test]
+fn a_transport_failure_is_redacted_where_the_price_error_is_built() {
+    let display = refused_transport_error().to_string();
+    // Fail closed: if a future reqwest stops embedding the URL there is nothing
+    // to redact, and this test must fail loudly rather than pass vacuously.
+    assert!(display.contains(TRANSPORT_KEY_PLACEHOLDER), "{display}");
+    let message = price_transport_error(refused_transport_error()).message;
+    assert!(!message.contains(TRANSPORT_KEY_PLACEHOLDER), "{message}");
+    assert!(message.contains("apikey=<redacted>"), "{message}");
+}
+
+/// The same failure end to end: what the relayer is told, and what the
+/// unauthenticated `/health` route serves, must both be free of the key.
+#[test]
+fn a_transport_failure_never_publishes_the_key_on_the_route_or_on_health() {
+    let display = refused_transport_error().to_string();
+    assert!(display.contains(TRANSPORT_KEY_PLACEHOLDER), "{display}");
+    let harness = harness();
+    harness.price.set_error(&display);
+    let outcome = post_feed(&harness, &json!({ "symbols": ["NEO-USD"] }));
+    assert_eq!(outcome.status, 500);
+    let rendered = outcome.body.to_string();
+    let health = crate::health::handle_health(&harness.state);
+    let served = health.to_string();
+    // Both halves are reported in one run: the relayer's body and the
+    // unauthenticated status route are separate disclosures.
+    let route_leaks = rendered.contains(TRANSPORT_KEY_PLACEHOLDER);
+    let health_leaks = served.contains(TRANSPORT_KEY_PLACEHOLDER);
+    assert!(
+        !route_leaks && !health_leaks,
+        "route leaked: {route_leaks} ({rendered}); /health leaked: {health_leaks} ({served})"
+    );
+    assert!(rendered.contains("apikey=<redacted>"), "{rendered}");
+    assert!(served.contains("apikey=<redacted>"), "{served}");
+    assert_eq!(health["price_plane"]["provider"]["state"], "failed");
+    assert_eq!(health["price_plane"]["provider"]["http_status"], 500);
+}
+
 #[test]
 fn a_successful_fetch_clears_the_recorded_verdict() {
     let harness = harness();

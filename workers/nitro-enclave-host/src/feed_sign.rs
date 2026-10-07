@@ -954,15 +954,10 @@ impl PriceSource for TwelveDataPrices {
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_millis(timeout_ms))
             .build()
-            .map_err(|error| http_error(500, error.to_string()))?;
-        let response = client
-            .get(&url)
-            .send()
-            .map_err(|error| http_error(500, error.to_string()))?;
+            .map_err(price_transport_error)?;
+        let response = client.get(&url).send().map_err(price_transport_error)?;
         let status = response.status().as_u16();
-        let text = response
-            .text()
-            .map_err(|error| http_error(500, error.to_string()))?;
+        let text = response.text().map_err(price_transport_error)?;
         let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|_| {
             // A body that is not JSON at all is still an upstream failure, and it
             // must read as one: the fold records the error it returns.
@@ -1034,6 +1029,18 @@ pub(crate) fn parse_twelvedata_prices(
     Ok(out)
 }
 
+/// The caller-facing error for a failed price request. `reqwest`'s `Display`
+/// embeds the request URL, and that URL carries `apikey=…`, so the text is
+/// redacted before it leaves this function: it is returned to the relayer and
+/// recorded as the provider summary that the unauthenticated `/health` route
+/// serves.
+fn price_transport_error(error: reqwest::Error) -> RuntimeError {
+    http_error(
+        500,
+        crate::feed_status::sanitize_provider_message(&error.to_string()),
+    )
+}
+
 /// The caller-facing error for a classified provider failure: 502, because the
 /// host is fine and the upstream is not. A 5xx keeps the relayer from treating it
 /// as a settled on-chain refusal — the request stays open for a later cycle,
@@ -1054,6 +1061,22 @@ fn fetch_prices_recording(
     symbols: &[String],
 ) -> Result<BTreeMap<String, f64>, RuntimeError> {
     let outcome = state.price.fetch_prices(symbols);
+    // A failure that arrives WITHOUT a category did not come from
+    // `provider_failure`: it is transport or protocol text that has never been
+    // through the redactor, and a `reqwest` error carries the request URL, which
+    // carries `apikey=…`. Redact it here as well as where the price error is
+    // built, because this helper is the one place every price caller passes
+    // through, whichever `PriceSource` served the fetch. A categorized failure is
+    // left alone: `provider_failure` already sanitized its summary, and the
+    // sanitizer's cap is not idempotent, so re-running it would clip the message
+    // a second time.
+    let outcome = outcome.map_err(|error| match error.provider_category {
+        Some(_) => error,
+        None => RuntimeError {
+            message: crate::feed_status::sanitize_provider_message(&error.message),
+            ..error
+        },
+    });
     let mut status = state
         .price_plane_status
         .lock()
@@ -1063,7 +1086,8 @@ fn fetch_prices_recording(
         Err(error) => {
             // A failure with no category came from somewhere other than the
             // provider (a transport error, say); it is still a failed fetch and
-            // `/health` must not report a stale "ok".
+            // `/health` must not report a stale "ok". Its message was redacted
+            // just above, so what is recorded cannot carry the key.
             let category = error
                 .provider_category
                 .clone()

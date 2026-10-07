@@ -136,7 +136,10 @@ pub fn sanitize_provider_message(value: &str) -> String {
 /// `classifyTwelveDataFailure`, in its order. Expiry is tested BEFORE 401/403 on
 /// purpose: the real-world expired-subscription response is a 401 whose message
 /// says the subscription expired, and filing that as "unauthorized" sends an
-/// operator looking at the key instead of at the invoice.
+/// operator looking at the key instead of at the invoice. The 429 branch is
+/// tested before expiry for the same reason in reverse: a throttled response is
+/// a quota problem even when its message mentions the subscription, and the two
+/// classify to a different kind and a different page verdict.
 pub fn classify_provider_failure(http_status: u16, body: &Value) -> &'static str {
     let code = body
         .get("code")
