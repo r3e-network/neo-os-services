@@ -127,8 +127,12 @@ systemctl start morpheus-feed-monitor.service       # back to the real balance
    runway, on the enclave host's `/health` under `price_plane` (CU-90, shipped dark: it rides the enclave rebuild
    window, OP-11). Two limits remain. The classification covers 401, 403, expiry and quota/rate-limit, NOT the
    all-quotes-unusable case — that stays per-symbol, because the host's `invalid_price` guard is the backstop for
-   it. And the runway measures THIS host's own writes times the fee of one write, not the updater's balance
-   falling, so it cannot see spend by any other writer; this monitor remains the authority on the real balance. The
+   it. The host observes N3 signed plans, reported separately as `signed_plans`; it does not broadcast or receive
+   confirmations. Completed `writes.observed` is therefore `null`, a configured write budget's state is `unknown`,
+   and signed plans never establish burn or runway. With a sufficient configured balance, the runway basis is
+   `confirmed_write_history_unavailable`; a balance below one write fee still reports zero days and a critical
+   alert. Retained signed-plan samples are bounded at 4096 and a truncated count reports `lower_bound`.
+   This monitor remains the authority on actual spend and balance. The
    balance itself is an operator input (`MORPHEUS_FEED_BALANCE_GAS`), because the host holds no key and has no chain
    RPC for it, and an unset balance reports `balance_unknown` rather than a number. The relayer's own feed lane is
    still unbudgeted and still does not classify.

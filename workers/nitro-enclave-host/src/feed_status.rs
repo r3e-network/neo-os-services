@@ -1,20 +1,11 @@
 //! What the price plane has observed, for `/health` to report.
 //!
-//! Two things the Node writer's monitor reports and the Rust host did not: what
-//! the market-data provider is currently doing (an expired subscription must read
-//! as a failure, not as a quiet market), and how long the updater can keep writing.
-//!
-//! The runway arithmetic is a port of `feed-monitor.mjs`'s `assRunway`, and it
-//! keeps that code's refusals intact, because they are the point: a balance that
-//! cannot pay one write is zero days, and with no history there is nothing to
-//! estimate from. "No data" must never be reported as "fine" — an absent balance
-//! reads `balance_unknown` with a null runway, not a comfortable number.
-//!
-//! One deliberate difference from the Node monitor, stated rather than hidden: the
-//! monitor measures the updater's balance falling, which catches spend by ANY
-//! process. This host can only observe its OWN write cycles, so the burn here is
-//! this host's writes times the fee of one write. It is the host's own view, and
-//! the monitor remains the authority on actual balance.
+//! Provider failures and signed plans are local observations. A signature is
+//! not a broadcast or confirmation: the separate pusher owns both. This host
+//! therefore reports completed writes and burn as unknown, and cannot estimate
+//! runway from signed plans. An operator balance below one write fee still
+//! reports zero runway; an absent balance remains explicitly unknown. The Node
+//! monitor remains the authority on actual spending.
 
 use std::collections::VecDeque;
 
@@ -37,9 +28,8 @@ pub const RUNWAY_ALERT_DAYS: RunwayAlertDays = RunwayAlertDays {
 const BURN_WINDOW_SEC: i64 = 24 * 3600;
 const BURN_MIN_SPAN_SEC: i64 = 3600;
 
-/// How many write timestamps to keep. Bounded so a long-lived host cannot grow
-/// without limit; the window is a day, so this is far more than it needs.
-const MAX_WRITE_SAMPLES: usize = 4096;
+/// Bound retained signature observations; a truncated count is a lower bound.
+const MAX_SIGNED_PLAN_SAMPLES: usize = 4096;
 
 /// The upstream message cap, so a provider cannot flood the status.
 const MESSAGE_CAP: usize = 240;
@@ -52,7 +42,7 @@ pub struct RunwayAlertDays {
 
 /// A classified provider failure: the Node writer's `error.providerCategory`, the
 /// HTTP status it came from, and a redacted summary. It never carries the API key
-/// — [`sanitize_provider_message`] removes it before the value is built.
+/// — the request's configured key is removed before formatting or truncation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProviderFailure {
     pub category: String,
@@ -105,9 +95,39 @@ fn provider_verdict(category: &str) -> (&'static str, bool) {
     }
 }
 
-/// `sanitizeProviderErrorMessage`: redact the API key, collapse whitespace, cap
-/// the length. A provider that echoes the key back must not put it in `/health`.
+/// Keep the context-free helper for fixtures that carry only query parameters.
+#[cfg(test)]
 pub fn sanitize_provider_message(value: &str) -> String {
+    sanitize_provider_message_with_key(value, "")
+}
+
+/// Redact before collapsing whitespace or truncating: truncation must never
+/// leave a partial configured credential that a later replacement cannot match.
+pub fn sanitize_provider_message_with_key(value: &str, api_key: &str) -> String {
+    let out = redact_provider_message(value, api_key);
+    let mut message = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    if message.is_empty() {
+        message = "upstream request failed".to_string();
+    }
+    if message.chars().count() > MESSAGE_CAP {
+        message = message.chars().take(MESSAGE_CAP).collect();
+    }
+    message
+}
+
+/// Redaction without a second cap, for an already formatted error.
+/// Provider bodies can echo a key without `apikey=`; URL errors can encode it.
+pub fn redact_provider_message(value: &str, api_key: &str) -> String {
+    // Replace complete keys first: a key containing `&` or whitespace must not
+    // be split by query-parameter removal, leaving a credential suffix behind.
+    let value = if api_key.is_empty() {
+        value.to_string()
+    } else {
+        redact_encoded_key(
+            &value.replace(api_key, "<redacted>"),
+            &crate::feed_sign::encode_uri_component(api_key),
+        )
+    };
     let lower = value.to_ascii_lowercase();
     let mut out = String::with_capacity(value.len());
     let mut cursor = 0;
@@ -124,14 +144,39 @@ pub fn sanitize_provider_message(value: &str) -> String {
     }
     out.push_str(&value[cursor..]);
 
-    let mut message = out.split_whitespace().collect::<Vec<_>>().join(" ");
-    if message.is_empty() {
-        message = "upstream request failed".to_string();
+    out
+}
+
+fn redact_encoded_key(value: &str, encoded: &str) -> String {
+    let expected = encoded.as_bytes();
+    let mut out = String::with_capacity(value.len());
+    let mut cursor = 0;
+    for (start, _) in value.char_indices() {
+        if start < cursor || start + expected.len() > value.len() {
+            continue;
+        }
+        let actual = &value.as_bytes()[start..start + expected.len()];
+        let mut index = 0;
+        let mut matches = true;
+        while index < expected.len() {
+            if expected[index] == b'%' && index + 2 < expected.len() {
+                matches &= actual[index] == b'%'
+                    && actual[index + 1..index + 3]
+                        .eq_ignore_ascii_case(&expected[index + 1..index + 3]);
+                index += 3;
+            } else {
+                matches &= actual[index] == expected[index];
+                index += 1;
+            }
+        }
+        if matches {
+            out.push_str(&value[cursor..start]);
+            out.push_str("<redacted>");
+            cursor = start + expected.len();
+        }
     }
-    if message.chars().count() > MESSAGE_CAP {
-        message = message.chars().take(MESSAGE_CAP).collect();
-    }
-    message
+    out.push_str(&value[cursor..]);
+    out
 }
 
 /// `classifyTwelveDataFailure`, in its order. Expiry is tested BEFORE 401/403 on
@@ -222,7 +267,13 @@ pub fn provider_response_failed(http_status: u16, body: &Value) -> bool {
 }
 
 /// The failure for a response, with the Node writer's message shape.
+#[cfg(test)]
 pub fn provider_failure(http_status: u16, body: &Value) -> ProviderFailure {
+    provider_failure_with_key(http_status, body, "")
+}
+
+/// The production boundary binds redaction to the key of this request.
+pub fn provider_failure_with_key(http_status: u16, body: &Value, api_key: &str) -> ProviderFailure {
     let code = body
         .get("code")
         .map(js_to_number)
@@ -230,33 +281,32 @@ pub fn provider_failure(http_status: u16, body: &Value) -> ProviderFailure {
     let code_suffix = code
         .map(|code| format!(", code {}", js_number_to_string(code)))
         .unwrap_or_default();
-    let summary = sanitize_provider_message(
+    let summary = sanitize_provider_message_with_key(
         body.get("message")
             .and_then(|value| value.as_str())
             .unwrap_or(""),
+        api_key,
     );
     ProviderFailure {
         category: classify_provider_failure(http_status, body).to_string(),
         http_status,
-        summary: format!("TwelveData upstream error (HTTP {http_status}{code_suffix}): {summary}"),
+        summary: redact_provider_message(
+            &format!("TwelveData upstream error (HTTP {http_status}{code_suffix}): {summary}"),
+            api_key,
+        ),
     }
 }
 
-/// The observed price-plane state: the last provider verdict and the write
-/// timestamps the daily budget and the burn rate are both derived from. Held by
-/// `AppState` behind a `Mutex`, like `KmsDiag`.
-///
-/// Both derived numbers are computed from the timestamps at read time rather than
-/// kept in counters. A counter has to be reset by the code that notices midnight,
-/// and any read path that forgets leaves yesterday's number on the status; deriving
-/// both from the same series makes that class of bug impossible.
+/// Local provider verdict and signature observations, held by `AppState`.
+/// Counts are derived for the UTC day at read time; no midnight reset is needed.
 #[derive(Debug, Default)]
 pub struct PricePlaneStatus {
     provider: Option<ProviderFailure>,
     /// When the provider was last observed. `Some` with no failure means the last
     /// fetch succeeded; `None` means no fetch has happened yet.
     provider_observed_at: Option<i64>,
-    writes: VecDeque<i64>,
+    signed_plans: VecDeque<i64>,
+    signed_plan_samples_dropped: bool,
 }
 
 impl PricePlaneStatus {
@@ -274,19 +324,20 @@ impl PricePlaneStatus {
         self.provider_observed_at = Some(observed_at_sec);
     }
 
-    /// One successful write cycle, for today's count and the burn rate.
-    pub fn record_write(&mut self, observed_at_sec: i64) {
-        self.writes.push_back(observed_at_sec);
-        while self.writes.len() > MAX_WRITE_SAMPLES {
-            self.writes.pop_front();
+    /// One signed plan. The host has no broadcast or confirmation receipt.
+    pub fn record_signed_plan(&mut self, observed_at_sec: i64) {
+        self.signed_plans.push_back(observed_at_sec);
+        while self.signed_plans.len() > MAX_SIGNED_PLAN_SAMPLES {
+            self.signed_plans.pop_front();
+            self.signed_plan_samples_dropped = true;
         }
     }
 
-    /// The writes counted for the UTC day `now_sec` falls in. A host that is idle
+    /// The signed plans counted for the UTC day `now_sec` falls in. A host that is idle
     /// across midnight reports zero, not yesterday's total.
-    fn writes_today(&self, now_sec: i64) -> u64 {
+    fn signed_plans_today(&self, now_sec: i64) -> u64 {
         let day_start = now_sec.div_euclid(86_400) * 86_400;
-        self.writes
+        self.signed_plans
             .iter()
             .filter(|at| **at >= day_start && **at <= now_sec)
             .count() as u64
@@ -294,7 +345,7 @@ impl PricePlaneStatus {
 
     /// The `/health` object.
     pub fn snapshot(&self, now_sec: i64, config: RunwayConfig) -> Value {
-        let writes_today = self.writes_today(now_sec);
+        let signed_plans_today = self.signed_plans_today(now_sec);
         let provider = match self.provider_observed_at {
             // A fetch succeeded: the provider is answering, and saying so is the
             // point of clearing the failure in the first place.
@@ -317,32 +368,46 @@ impl PricePlaneStatus {
         };
         let writes = match config.max_writes_per_day {
             None => json!({
-                "observed": writes_today,
+                "observed": Value::Null,
+                "observation_state": "not_observed",
                 "budget": Value::Null,
                 "budget_state": "unbounded",
             }),
             Some(budget) => {
-                let observed = writes_today as f64;
                 json!({
-                    "observed": writes_today,
+                    "observed": Value::Null,
+                    "observation_state": "not_observed",
                     "budget": budget,
-                    "budget_state": if observed > budget { "exceeded" } else { "within_budget" },
+                    "budget_state": "unknown",
                 })
             }
         };
-        let write_times: Vec<i64> = self.writes.iter().copied().collect();
+        let mut runway = assess_runway(config.balance_gas, &[], config.fee(), now_sec);
+        runway["write_samples"] = Value::Null;
+        runway["burn_window_hours"] = Value::Null;
+        if runway["runway_basis"] == "insufficient_history" {
+            runway["runway_basis"] = json!("confirmed_write_history_unavailable");
+        }
         json!({
             "provider": provider,
             "writes": writes,
-            "runway": assess_runway(config.balance_gas, &write_times, config.fee(), now_sec),
+            "signed_plans": {
+                "chain": "neo_n3",
+                "observed": signed_plans_today,
+                "sample_limit": MAX_SIGNED_PLAN_SAMPLES,
+                "count_state": if self.signed_plan_samples_dropped {
+                    "lower_bound"
+                } else {
+                    "complete_since_start"
+                },
+            },
+            "runway": runway,
         })
     }
 }
 
-/// `assessRunway`. `balance` of `None` means no balance is configured at all,
-/// which is its own basis rather than a zero runway. The burn comes from this
-/// host's own observed writes: `writes_per_day * fee`, which is what this process
-/// spends, not what the updater's balance loses to every writer.
+/// Pure arithmetic for a caller with confirmed write history. The host snapshot
+/// supplies none: local signatures do not establish actual spend or completion.
 pub fn assess_runway(
     balance: Option<f64>,
     writes: &[i64],

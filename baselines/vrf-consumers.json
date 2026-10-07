@@ -131,16 +131,16 @@
           "sha256": "4389adbdfd562707ea22c2a92f3fdf64c8862c54c9d7fb8a0d76734b79da0d90"
         },
         "workers/nitro-enclave-host/tests/unit/feed_sign.rs": {
-          "sha256": "10370dbaca0680a9e5f3f55bace065ac01ac75f9aa93d93eb7f5b51d86b45688"
+          "sha256": "5a72f9b4f8e373214a4298316bda1cb112a87be3a53d70ad90a72cd96f730a99"
         },
         "workers/nitro-enclave-host/tests/unit/feed_status.rs": {
-          "sha256": "585cd76eefd65f3eec521d1b2e0cc6f09072e60a303433903f712ca281893a6c"
+          "sha256": "42c7d4efff9115d1bdac8d96423ae5dcd5bb08d36342e7f89c9fc664c6d4014d"
         },
         "workers/nitro-enclave-host/tests/unit/health.rs": {
-          "sha256": "e58c0de4f4d855f3417268f04bd32d98fbf6694d92fa26b38e5ad77f0ff84c98"
+          "sha256": "263f6b94a5e2493d2b5f235e1587fca5a006518985045169ae2a270c181c25d9"
         },
         "workers/nitro-enclave-host/tests/unit/support.rs": {
-          "sha256": "a210f50f10b3bd953b09d9456f7d689c6da65f0157cce34981b05a9a81422a4d"
+          "sha256": "0dbef3c312e4fe414a1c5981abfe7f1099296dd545587dc4008a9e5145c88ef2"
         }
       }
     },
@@ -446,10 +446,10 @@
           "sha256": "545f6390510c401178f909c01bac69ea078f2926347e2bf6e34467d018522860"
         },
         "workers/nitro-enclave-host/src/feed_sign.rs": {
-          "sha256": "9e43d9054d74925305b202d5f51df55a26cb02ffdfc6b35483e5636378bc733d"
+          "sha256": "64455dc9ada7cd6b83e99dd0dfe29c8c4b0c9d65235583d840d5b8eda225a0a1"
         },
         "workers/nitro-enclave-host/src/feed_status.rs": {
-          "sha256": "3ab9452ca813aadf9f507e808c3f73bc70fd3edd5693e37740a18ab98d68f339"
+          "sha256": "9ce7652b96b7d435decae2c0313a3d770ff40ee0b14e340475026304d4f9e372"
         },
         "workers/nitro-enclave-host/src/health.rs": {
           "sha256": "7f0d1b64d586d22826727d3504865743269259c47446e12ae9e5f1079904c864"

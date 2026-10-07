@@ -32,7 +32,7 @@ fn provider_state_is_absent_before_the_first_fetch() {
     let value = status.snapshot(at(10, 0), RunwayConfig::default());
     // A fresh host has observed no provider verdict and says nothing about one.
     assert_eq!(value["provider"], Value::Null);
-    assert_eq!(value["writes"]["observed"], 0);
+    assert_eq!(value["signed_plans"]["observed"], 0);
 }
 
 #[test]
@@ -108,39 +108,141 @@ fn an_unrecognised_category_still_reports_failed_and_pages() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn the_write_budget_counts_the_current_utc_day_and_resets() {
+fn signed_plans_count_the_current_utc_day_and_reset() {
     let mut status = PricePlaneStatus::default();
     for hour in 0..5 {
-        status.record_write(at(10, hour));
+        status.record_signed_plan(at(10, hour));
     }
     let config = RunwayConfig {
         max_writes_per_day: Some(3.0),
         ..RunwayConfig::default()
     };
     let exceeded = status.snapshot(at(10, 5), config);
-    assert_eq!(exceeded["writes"]["observed"], 5);
+    assert_eq!(exceeded["signed_plans"]["observed"], 5);
     assert_eq!(exceeded["writes"]["budget"], 3.0);
-    assert_eq!(exceeded["writes"]["budget_state"], "exceeded");
+    assert_eq!(exceeded["writes"]["budget_state"], "unknown");
 
     // A new UTC day starts a new count; yesterday's writes do not carry over.
     let next_day = status.snapshot(at(11, 0), config);
-    assert_eq!(next_day["writes"]["observed"], 0);
-    assert_eq!(next_day["writes"]["budget_state"], "within_budget");
+    assert_eq!(next_day["signed_plans"]["observed"], 0);
+    assert_eq!(next_day["writes"]["budget_state"], "unknown");
 }
 
 #[test]
-fn an_unset_write_budget_reports_unbounded_and_never_exceeded() {
+fn signed_plans_do_not_establish_write_budget_usage() {
     let mut status = PricePlaneStatus::default();
     // 46 writes inside one UTC day, which is the point: no cap is configured, so
     // however many writes happen the budget never reports a breach.
     for hour in 0..23 {
-        status.record_write(at(10, hour) + 60);
-        status.record_write(at(10, hour) + 120);
+        status.record_signed_plan(at(10, hour) + 60);
+        status.record_signed_plan(at(10, hour) + 120);
     }
-    let writes = status.snapshot(at(10, 23), RunwayConfig::default())["writes"].clone();
+    let snapshot = status.snapshot(at(10, 23), RunwayConfig::default());
+    let writes = &snapshot["writes"];
     assert_eq!(writes["budget_state"], "unbounded");
     assert_eq!(writes["budget"], Value::Null);
-    assert_eq!(writes["observed"], 46);
+    assert_eq!(writes["observed"], Value::Null);
+    assert_eq!(snapshot["signed_plans"]["observed"], 46);
+}
+
+#[test]
+fn signed_plan_samples_are_bounded_and_report_truncation() {
+    let mut status = PricePlaneStatus::default();
+    for offset in 0..5000 {
+        status.record_signed_plan(at(10, 0) + offset);
+    }
+    assert_eq!(status.signed_plans.len(), MAX_SIGNED_PLAN_SAMPLES);
+    let snapshot = status.snapshot(at(10, 3), RunwayConfig::default());
+    assert_eq!(snapshot["signed_plans"]["observed"], 4096);
+    assert_eq!(snapshot["signed_plans"]["count_state"], "lower_bound");
+    assert_eq!(snapshot["writes"]["observed"], Value::Null);
+}
+
+#[test]
+fn signed_plans_cannot_estimate_burn_even_with_a_balance_and_day_of_history() {
+    let mut status = PricePlaneStatus::default();
+    for hour in 0..24 {
+        status.record_signed_plan(at(10, hour));
+    }
+    let config = RunwayConfig {
+        balance_gas: Some(100.0),
+        max_writes_per_day: Some(1.0),
+        ..RunwayConfig::default()
+    };
+    let value = status.snapshot(at(10, 23), config);
+    assert_eq!(value["signed_plans"]["observed"], 24);
+    assert_eq!(value["writes"]["observed"], Value::Null);
+    assert_eq!(value["writes"]["budget_state"], "unknown");
+    assert_eq!(
+        value["runway"]["runway_basis"],
+        "confirmed_write_history_unavailable"
+    );
+    for field in [
+        "runway_days",
+        "burn_gas_per_day",
+        "writes_per_day",
+        "write_samples",
+        "burn_window_hours",
+    ] {
+        assert_eq!(value["runway"][field], Value::Null, "{field}");
+    }
+}
+
+#[test]
+fn unavailable_write_history_preserves_the_cannot_pay_one_write_warning() {
+    let config = RunwayConfig {
+        balance_gas: Some(0.001),
+        ..RunwayConfig::default()
+    };
+    let runway = PricePlaneStatus::default().snapshot(at(10, 0), config)["runway"].clone();
+    assert_eq!(runway["runway_days"], 0.0);
+    assert_eq!(runway["runway_basis"], "balance_below_write_fee");
+    assert_eq!(runway["alert_level"], "critical");
+    assert_eq!(runway["burn_gas_per_day"], Value::Null);
+}
+
+#[test]
+fn configured_key_redaction_covers_bare_query_and_encoded_echoes_before_capping() {
+    let key = "DUMMY-Key&TAIL/中";
+    for text in [
+        format!("key {key} rejected"),
+        format!("https://example.invalid/?apikey={key}&symbol=NEO"),
+        "key DUMMY-Key%26TAIL%2F%E4%B8%AD rejected".to_string(),
+        "key DUMMY-Key%26TAIL%2f%e4%b8%ad rejected".to_string(),
+        "key DUMMY-Key%26TAIL%2f%E4%b8%Ad rejected".to_string(),
+        format!("{} {key}", "x".repeat(224)),
+        format!("key {key} and {key} rejected"),
+    ] {
+        let message = sanitize_provider_message_with_key(&text, key);
+        assert!(!message.contains("DUMMY-Key"), "{message}");
+        assert!(!message.contains("TAIL"), "{message}");
+        assert!(message.contains("<redacted>"), "{message}");
+        assert!(message.chars().count() <= MESSAGE_CAP);
+    }
+    assert_eq!(
+        sanitize_provider_message_with_key("normal failure", ""),
+        "normal failure"
+    );
+    assert_eq!(
+        sanitize_provider_message_with_key("different key DUMMY-key", "DUMMY-Key"),
+        "different key DUMMY-key"
+    );
+}
+
+#[test]
+fn batch_item_error_redacts_the_request_key_at_the_production_parser_boundary() {
+    let symbols = vec!["NEO-USD".to_string(), "GAS-USD".to_string()];
+    let mapped = [Some("NEO/USD"), Some("GAS/USD")];
+    let key = "DUMMY-REQUEST-KEY";
+    let body = json!({"NEO/USD":{"price":"12.0"},
+        "GAS/USD":{"code":403,"message":format!("Key {key} rejected")}});
+    let failure =
+        crate::feed_sign::parse_twelvedata_prices_with_key(200, &body, &symbols, &mapped, key)
+            .unwrap_err();
+    assert_eq!(failure.category, "provider_unauthorized");
+    assert!(!failure.summary.contains(key));
+    assert!(failure.summary.contains("<redacted>"));
+    assert!(failure.summary.contains("rejected"));
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +286,7 @@ fn runway_with_no_writes_at_all_is_unknown_not_zero() {
 }
 
 #[test]
-fn runway_is_measured_from_this_hosts_own_write_cadence() {
+fn pure_runway_arithmetic_requires_supplied_confirmed_write_history() {
     // 48 writes spread evenly over 24 h. The rate counts writes over the span
     // between the first and the last, which is 47 gaps of 1800 s, not 48 — so the
     // measured rate is slightly above 48 a day. The runway is that rate times the

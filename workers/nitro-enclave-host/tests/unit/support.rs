@@ -602,6 +602,8 @@ struct FakePriceInner {
     /// A canned provider response body, so a test can express the JSON failures
     /// TwelveData returns for a 401 or a 429.
     provider_body: Mutex<Option<(u16, serde_json::Value)>>,
+    /// The same fixture overlay used by the production parser's key boundary.
+    provider_overlay: Mutex<Option<Arc<RwLock<EnvOverlay>>>>,
 }
 
 impl FakePrice {
@@ -691,10 +693,30 @@ impl PriceSource for FakePrice {
             .expect("provider body lock")
             .clone()
         {
-            return crate::feed_sign::parse_twelvedata_prices(http_status, &body, symbols, &mapped)
-                .map_err(|failure| {
-                    crate::http_error(502, failure.summary).with_provider_category(failure.category)
-                });
+            let api_key = self
+                .inner
+                .provider_overlay
+                .lock()
+                .expect("provider overlay lock")
+                .as_ref()
+                .map(|overlay| {
+                    overlay
+                        .read()
+                        .expect("overlay lock")
+                        .get_trimmed("TD_KEY")
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default();
+            return crate::feed_sign::parse_twelvedata_prices_with_key(
+                http_status,
+                &body,
+                symbols,
+                &mapped,
+                &api_key,
+            )
+            .map_err(|failure| {
+                crate::http_error(502, failure.summary).with_provider_category(failure.category)
+            });
         }
         let prices = self.inner.prices.lock().expect("prices lock");
         Ok(symbols
@@ -839,12 +861,18 @@ pub fn test_state(
     kms: FakeKms,
 ) -> TestState {
     let price = FakePrice::default();
+    let overlay = Arc::new(RwLock::new(EnvOverlay::new(
+        overlay_pairs.iter().map(|(key, value)| (*key, *value)),
+    )));
+    *price
+        .inner
+        .provider_overlay
+        .lock()
+        .expect("provider overlay lock") = Some(Arc::clone(&overlay));
     let oracle_io = FakeOracleIo::default();
     let jwks_fetcher = FakeJwksFetcher;
     let state = AppState {
-        overlay: Arc::new(RwLock::new(EnvOverlay::new(
-            overlay_pairs.iter().map(|(key, value)| (*key, *value)),
-        ))),
+        overlay,
         runtime_token_kms_version: AtomicU64::new(0),
         attest: Box::new(attest.clone()),
         signer: Box::new(signer.clone()),

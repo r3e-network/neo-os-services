@@ -439,12 +439,12 @@ These are intentionally left unset in production unless you explicitly want the 
   中文：由运维提供的 updater GAS 余额，供 enclave 主机 `/health` 的 runway 报告使用。主机不持有密钥也没有对应的链上 RPC，因此这是唯一来源。默认不写时 runway 报告 `runway_basis: balance_unknown` 且 `runway_days` 为 null——是未知，而不是看似健康的数值。
 
 - `MORPHEUS_FEED_WRITE_FEE_GAS`
-  English: The GAS fee of one feed write, used for the "cannot pay one write" rule and the writes-a-day figure. Default unset means the observed two-pair write fee `0.00606339`.
-  中文：一次 feed 写入的 GAS 费用，用于“付不起一次写入”的判定与每日写入次数折算。默认不写时使用实测的双 pair 写入费用 `0.00606339`。
+  English: The GAS fee of one feed write, used for the "cannot pay one write" rule. Default unset means the observed two-pair write fee `0.00606339`. The host observes signed plans, not confirmed writes, so this input never converts signed plans into actual burn or runway.
+  中文：一次 feed 写入的 GAS 费用，用于“付不起一次写入”的判定。默认不写时使用实测的双 pair 写入费用 `0.00606339`。主机仅观察签名计划，未观察确认写入，因此不会据此将签名次数折算为实际消耗或 runway。
 
 - `MORPHEUS_FEED_MAX_WRITES_PER_DAY`
-  English: The daily write cap reported on `/health` as `writes.budget_state`. Default unset means unbounded, which is the shipped posture: it is reported, not enforced, so it does not refuse a write.
-  中文：在 `/health` 上以 `writes.budget_state` 报告的每日写入上限。默认不写表示不设限，这也是当前交付姿态：只报告、不强制，不会因此拒绝写入。
+  English: The daily write cap reported on `/health` as `writes.budget`. It is reported, not enforced. Since the host has no broadcast or confirmation receipts, `writes.observed` is null and a configured cap's `budget_state` is unknown. An unset cap reports unbounded. N3 signed plans appear separately in `signed_plans` and never prove cap usage.
+  中文：在 `/health` 的 `writes.budget` 中报告的每日写入上限，只报告、不强制。主机未接收广播或确认回执，因此 `writes.observed` 为 null，已配置上限的 `budget_state` 为 unknown。未配置上限时报告 unbounded。N3 签名计划单独列入 `signed_plans`，不代表实际额度使用量。
 
 - `MORPHEUS_ALLOW_UNSANDBOXED_CHILDREN`
   English: Dev-only override that disables the Node permission model for script/WASM child processes (the model is ON by default). Ignored — fail closed — when `NODE_ENV=production`. Replaces the retired `SCRIPT_CHILD_ENABLE_PERMISSION_MODEL` toggle, which no longer has any effect.

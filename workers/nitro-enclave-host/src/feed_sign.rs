@@ -394,14 +394,13 @@ pub fn handle_feed_sign(
     let mut response = serde_json::Map::new();
     response.insert("status".into(), serde_json::json!("ok"));
     response.insert("chain".into(), serde_json::json!("neo_n3"));
-    // A signed batch is one write against the updater's balance. Counting it here
-    // is what gives `/health` a burn rate to report; the feed-monitor's own
-    // measurement stays the authority on the real balance.
+    // The pusher broadcasts and confirms later. A successful custody reply is
+    // only a signed plan, and must never establish a completed write or burn.
     state
         .price_plane_status
         .lock()
         .expect("price plane status lock")
-        .record_write(wall_clock_now_sec());
+        .record_signed_plan(wall_clock_now_sec());
     response.insert("write_mode".into(), serde_json::json!(write_mode));
     response.insert("operation".into(), serde_json::json!(write_mode));
     response.insert("pairs".into(), serde_json::Value::Array(pairs));
@@ -954,20 +953,27 @@ impl PriceSource for TwelveDataPrices {
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_millis(timeout_ms))
             .build()
-            .map_err(price_transport_error)?;
-        let response = client.get(&url).send().map_err(price_transport_error)?;
+            .map_err(|error| price_transport_error_with_key(error, &api_key))?;
+        let response = client
+            .get(&url)
+            .send()
+            .map_err(|error| price_transport_error_with_key(error, &api_key))?;
         let status = response.status().as_u16();
-        let text = response.text().map_err(price_transport_error)?;
+        let text = response
+            .text()
+            .map_err(|error| price_transport_error_with_key(error, &api_key))?;
         let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|_| {
             // A body that is not JSON at all is still an upstream failure, and it
             // must read as one: the fold records the error it returns.
-            provider_category_error(crate::feed_status::provider_failure(
+            provider_category_error(crate::feed_status::provider_failure_with_key(
                 status,
                 &serde_json::json!({}),
+                &api_key,
             ))
         })?;
 
-        parse_twelvedata_prices(status, &parsed, symbols, &mapped).map_err(provider_category_error)
+        parse_twelvedata_prices_with_key(status, &parsed, symbols, &mapped, &api_key)
+            .map_err(provider_category_error)
     }
 }
 
@@ -980,17 +986,32 @@ impl PriceSource for TwelveDataPrices {
 /// configured pair look "missing" and hid billing and rate-limit outages behind a
 /// clean exit. A quoted symbol that is absent, null, or non-positive is still
 /// simply missing — that behaviour is unchanged.
+#[cfg(test)]
 pub(crate) fn parse_twelvedata_prices(
     http_status: u16,
     body: &serde_json::Value,
     symbols: &[String],
     mapped: &[Option<&'static str>],
 ) -> Result<BTreeMap<String, f64>, crate::feed_status::ProviderFailure> {
+    parse_twelvedata_prices_with_key(http_status, body, symbols, mapped, "")
+}
+
+pub(crate) fn parse_twelvedata_prices_with_key(
+    http_status: u16,
+    body: &serde_json::Value,
+    symbols: &[String],
+    mapped: &[Option<&'static str>],
+    api_key: &str,
+) -> Result<BTreeMap<String, f64>, crate::feed_status::ProviderFailure> {
     // A provider failure is a failure whatever the parse would have made of the
     // body. The whole batch fails: a partial update from a throttled or expired
     // provider is how a feed goes quietly stale.
     if provider_response_failed(http_status, body) {
-        return Err(crate::feed_status::provider_failure(http_status, body));
+        return Err(crate::feed_status::provider_failure_with_key(
+            http_status,
+            body,
+            api_key,
+        ));
     }
 
     let mut out = BTreeMap::new();
@@ -1004,7 +1025,11 @@ pub(crate) fn parse_twelvedata_prices(
         // item, so each item is tested the same way as the envelope.
         if let Some(item) = entry {
             if provider_response_failed(http_status, item) {
-                return Err(crate::feed_status::provider_failure(http_status, item));
+                return Err(crate::feed_status::provider_failure_with_key(
+                    http_status,
+                    item,
+                    api_key,
+                ));
             }
         }
         let Some(value) = entry.and_then(|entry| entry.get("price")) else {
@@ -1034,10 +1059,15 @@ pub(crate) fn parse_twelvedata_prices(
 /// redacted before it leaves this function: it is returned to the relayer and
 /// recorded as the provider summary that the unauthenticated `/health` route
 /// serves.
+#[cfg(test)]
 fn price_transport_error(error: reqwest::Error) -> RuntimeError {
+    price_transport_error_with_key(error, "")
+}
+
+fn price_transport_error_with_key(error: reqwest::Error, api_key: &str) -> RuntimeError {
     http_error(
         500,
-        crate::feed_status::sanitize_provider_message(&error.to_string()),
+        crate::feed_status::sanitize_provider_message_with_key(&error.to_string(), api_key),
     )
 }
 
@@ -1060,20 +1090,31 @@ fn fetch_prices_recording(
     state: &AppState,
     symbols: &[String],
 ) -> Result<BTreeMap<String, f64>, RuntimeError> {
+    let api_key = state
+        .overlay
+        .read()
+        .expect("overlay lock")
+        .get_trimmed("TD_KEY")
+        .unwrap_or_default();
     let outcome = state.price.fetch_prices(symbols);
     // A failure that arrives WITHOUT a category did not come from
     // `provider_failure`: it is transport or protocol text that has never been
     // through the redactor, and a `reqwest` error carries the request URL, which
     // carries `apikey=…`. Redact it here as well as where the price error is
     // built, because this helper is the one place every price caller passes
-    // through, whichever `PriceSource` served the fetch. A categorized failure is
-    // left alone: `provider_failure` already sanitized its summary, and the
-    // sanitizer's cap is not idempotent, so re-running it would clip the message
-    // a second time.
+    // through, whichever `PriceSource` served the fetch. A categorized failure
+    // has already been capped at its request boundary; redact the configured
+    // key again here without capping that formatted summary a second time.
     let outcome = outcome.map_err(|error| match error.provider_category {
-        Some(_) => error,
+        Some(_) => RuntimeError {
+            message: crate::feed_status::redact_provider_message(&error.message, &api_key),
+            ..error
+        },
         None => RuntimeError {
-            message: crate::feed_status::sanitize_provider_message(&error.message),
+            message: crate::feed_status::sanitize_provider_message_with_key(
+                &error.message,
+                &api_key,
+            ),
             ..error
         },
     });
@@ -1528,7 +1569,7 @@ fn contract_integer(value: f64) -> i64 {
 
 /// `encodeURIComponent` — byte-wise percent-encoding except the JS
 /// unreserved set (`A-Za-z0-9-_.!~*'()`).
-fn encode_uri_component(text: &str) -> String {
+pub(crate) fn encode_uri_component(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric()

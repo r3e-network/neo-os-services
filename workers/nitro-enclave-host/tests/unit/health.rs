@@ -154,7 +154,7 @@ fn health_reads_the_network_from_the_live_overlay() {
 }
 
 /// CU-90: the status surface carries the price plane's provider verdict, its
-/// observed write cadence and the runway. A fresh host reports no provider
+/// signed plans and the unknown completed-write history. A fresh host reports no provider
 /// verdict at all rather than claiming one it has not observed.
 #[test]
 fn health_carries_the_price_plane_failure_and_runway_state() {
@@ -168,7 +168,10 @@ fn health_carries_the_price_plane_failure_and_runway_state() {
 
     let body = handle_health(&harness.state);
     assert_eq!(body["price_plane"]["provider"], serde_json::Value::Null);
-    assert_eq!(body["price_plane"]["writes"]["observed"], 0);
+    assert_eq!(
+        body["price_plane"]["writes"]["observed"],
+        serde_json::Value::Null
+    );
     assert_eq!(body["price_plane"]["writes"]["budget_state"], "unbounded");
     // No balance supplied: the runway is unknown, and unknown is not "fine".
     assert_eq!(
@@ -234,10 +237,10 @@ fn health_reports_the_operator_supplied_balance_and_write_fee() {
     assert_eq!(body["price_plane"]["runway"]["balance_gas"], 240.0);
     assert_eq!(body["price_plane"]["runway"]["write_fee_gas"], 0.5);
     assert_eq!(body["price_plane"]["writes"]["budget"], 96.0);
-    // 240 GAS cannot pay a 0.5 GAS write a hundred times over, but with no
+    // 240 GAS could pay 480 writes at 0.5 GAS, but with no
     // observed burn the basis says why the runway is unknown.
     assert_eq!(
         body["price_plane"]["runway"]["runway_basis"],
-        "insufficient_history"
+        "confirmed_write_history_unavailable"
     );
 }

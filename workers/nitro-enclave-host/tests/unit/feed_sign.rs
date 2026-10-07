@@ -1431,6 +1431,135 @@ fn a_two_symbol_batch_fails_on_an_envelope_level_provider_error() {
 /// string cannot reach a response body or `/health`.
 const TRANSPORT_KEY_PLACEHOLDER: &str = "PLACEHOLDER-NOT-A-REAL-KEY";
 
+fn configured_price_key_harness() -> TestState {
+    test_state(
+        &[
+            ("MORPHEUS_NETWORK", TEST_NETWORK),
+            ("NITRO_API_TOKEN", "s3cret"),
+            ("TD_KEY", TRANSPORT_KEY_PLACEHOLDER),
+            ("MORPHEUS_FEED_BALANCE_GAS", "240"),
+            ("MORPHEUS_FEED_MAX_WRITES_PER_DAY", "96"),
+        ],
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    )
+}
+
+#[test]
+fn configured_price_key_in_provider_text_is_redacted_on_both_surfaces() {
+    let harness = configured_price_key_harness();
+    harness.price.set_provider_failure(
+        403,
+        json!({"status":"error", "code":403,
+            "message": format!("Key {TRANSPORT_KEY_PLACEHOLDER} was rejected")}),
+    );
+    let outcome = post_feed(&harness, &json!({"symbols":["NEO-USD"]}));
+    assert_eq!(outcome.status, 502);
+    assert_eq!(outcome.body["provider_category"], "provider_unauthorized");
+    for body in [outcome.body, crate::health::handle_health(&harness.state)] {
+        let rendered = body.to_string();
+        assert!(!rendered.contains(TRANSPORT_KEY_PLACEHOLDER), "{rendered}");
+        assert!(rendered.contains("<redacted>"), "{rendered}");
+        assert!(rendered.contains("was rejected"), "{rendered}");
+    }
+}
+
+#[test]
+fn configured_price_key_in_transport_text_is_redacted_on_both_surfaces() {
+    let harness = configured_price_key_harness();
+    harness.price.set_error(&format!(
+        "Request for key {TRANSPORT_KEY_PLACEHOLDER} failed"
+    ));
+    let outcome = post_feed(&harness, &json!({"symbols":["NEO-USD"]}));
+    assert_eq!(outcome.status, 500);
+    for body in [outcome.body, crate::health::handle_health(&harness.state)] {
+        let rendered = body.to_string();
+        assert!(!rendered.contains(TRANSPORT_KEY_PLACEHOLDER), "{rendered}");
+        assert!(rendered.contains("<redacted>"), "{rendered}");
+    }
+}
+
+#[test]
+fn configured_price_key_from_an_alternate_classified_source_is_redacted() {
+    struct ClassifiedEcho;
+    impl PriceSource for ClassifiedEcho {
+        fn fetch_prices(&self, _symbols: &[String]) -> Result<BTreeMap<String, f64>, RuntimeError> {
+            Err(
+                http_error(502, format!("Key {TRANSPORT_KEY_PLACEHOLDER} rejected"))
+                    .with_provider_category("provider_unauthorized"),
+            )
+        }
+    }
+    let mut harness = configured_price_key_harness();
+    harness.state.price = Box::new(ClassifiedEcho);
+    let outcome = post_feed(&harness, &json!({"symbols":["NEO-USD"]}));
+    assert_eq!(outcome.status, 502);
+    for body in [outcome.body, crate::health::handle_health(&harness.state)] {
+        let rendered = body.to_string();
+        assert!(!rendered.contains(TRANSPORT_KEY_PLACEHOLDER), "{rendered}");
+        assert!(rendered.contains("<redacted>"), "{rendered}");
+    }
+}
+
+#[test]
+fn configured_price_key_is_redacted_before_a_summary_can_cut_it_in_half() {
+    let harness = configured_price_key_harness();
+    harness.price.set_provider_failure(
+        403,
+        json!({"status":"error", "code":403,
+            "message": format!("{} {TRANSPORT_KEY_PLACEHOLDER}", "x".repeat(224))}),
+    );
+    let outcome = post_feed(&harness, &json!({"symbols":["NEO-USD"]}));
+    assert_eq!(outcome.status, 502);
+    for body in [outcome.body, crate::health::handle_health(&harness.state)] {
+        let rendered = body.to_string();
+        assert!(!rendered.contains("PLACEHOLDER-NOT"), "{rendered}");
+        assert!(rendered.contains("<redacted>"), "{rendered}");
+    }
+}
+
+#[test]
+fn a_signed_price_plan_is_not_evidence_of_a_broadcast_or_completed_write() {
+    let harness = configured_price_key_harness();
+    harness.price.set_price("NEO-USD", 2.0);
+    let outcome = post_feed(
+        &harness,
+        &json!({
+            "symbols":["NEO-USD"],
+            "onchain_state":{"NEO-USD":{"round":1000,"price":0,"ts":1718352000}},
+            "now":1001,
+            "tx_params":{"nonce":424242,"blockCount":100000,"systemFee":1000000000,"networkFee":1234567},
+        }),
+    );
+    assert_eq!(outcome.status, 200);
+    assert_eq!(outcome.body["status"], "ok");
+    assert_eq!(harness.signer.n3_transaction_calls().len(), 1);
+    let plane = crate::health::handle_health(&harness.state)["price_plane"].clone();
+    assert_eq!(plane["writes"]["observed"], serde_json::Value::Null);
+    assert_eq!(plane["writes"]["budget_state"], "unknown");
+    assert_eq!(plane["signed_plans"]["observed"], 1);
+    assert_eq!(plane["runway"]["runway_days"], serde_json::Value::Null);
+    assert_eq!(plane["runway"]["burn_gas_per_day"], serde_json::Value::Null);
+    assert_eq!(
+        plane["runway"]["runway_basis"],
+        "confirmed_write_history_unavailable"
+    );
+}
+
+#[test]
+fn a_no_update_plan_does_not_count_as_a_signature_or_a_completed_write() {
+    let harness = configured_price_key_harness();
+    let outcome = post_feed(&harness, &json!({"symbols":["NEO-USD"]}));
+    assert_eq!(outcome.status, 200);
+    assert_eq!(outcome.body["status"], "no-update");
+    assert!(harness.signer.n3_transaction_calls().is_empty());
+    let plane = crate::health::handle_health(&harness.state)["price_plane"].clone();
+    assert_eq!(plane["signed_plans"]["observed"], 0);
+    assert_eq!(plane["writes"]["observed"], serde_json::Value::Null);
+}
+
 /// A real `reqwest` transport error, produced by a refused connection on
 /// loopback (port 1): no foreign host is contacted, and the URL carries only the
 /// placeholder above. The proxies this environment exports are disabled so the
