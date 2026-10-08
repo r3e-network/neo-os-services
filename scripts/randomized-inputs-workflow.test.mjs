@@ -26,7 +26,7 @@ test('randomized-inputs.yml parses and keeps its triggers', () => {
     parsed = yaml.load(workflowText, { filename: '.github/workflows/randomized-inputs.yml' });
   }, 'the workflow must be loadable YAML');
   assert.ok(parsed.on.push, 'the suite must run on push');
-  assert.ok(parsed.on.pull_request, 'the suite must run on pull requests');
+  assert.ok('pull_request' in parsed.on, 'the suite must run on pull requests');
   assert.ok(parsed.jobs['randomized-inputs'], 'the randomized-inputs job must exist');
 });
 
