@@ -384,17 +384,22 @@ export function resolveWorkerRoute(requestType, _payload) {
 
 export function buildWorkerPayload(chain, requestType, payload, requestId, context = {}) {
   const kernelIntent = resolveKernelIntent(requestType);
+  // A request body of literal JSON `null` decodes to null, and the envelope
+  // fields below are read from the body; dereferencing it threw a TypeError
+  // (CU-179). Only null and undefined change here: every other payload keeps
+  // the previous spread and field reads byte-for-byte.
+  const body = payload ?? {};
   return {
-    ...payload,
+    ...body,
     request_id: String(requestId),
     request_source: `morpheus-relayer:${chain}`,
-    target_chain: payload.target_chain || chain,
+    target_chain: body.target_chain || chain,
     legacy_request_type: kernelIntent.legacyRequestType,
     kernel_module_id: kernelIntent.moduleId,
     kernel_operation: kernelIntent.operation,
-    requester: context.requester || payload.requester || '',
-    callback_contract: context.callbackContract || payload.callback_contract || '',
-    callback_method: context.callbackMethod || payload.callback_method || '',
+    requester: context.requester || body.requester || '',
+    callback_contract: context.callbackContract || body.callback_contract || '',
+    callback_method: context.callbackMethod || body.callback_method || '',
   };
 }
 
