@@ -131,7 +131,12 @@ assert.equal(resolveKernelIntent(42).workerRoute, '/oracle/smart-fetch');
 assert.deepEqual(decodePayloadText(''), {});
 // Regression (CU-179): a request body of literal JSON `null` decodes to null
 // and must still produce a worker envelope instead of dereferencing null.
-const nullBodyEnvelope = buildWorkerPayload('neo_n3', 'oracle.fetch', decodePayloadText('null'), '1');
+const nullBodyEnvelope = buildWorkerPayload(
+  'neo_n3',
+  'oracle.fetch',
+  decodePayloadText('null'),
+  '1'
+);
 assert.equal(nullBodyEnvelope.request_id, '1');
 assert.equal(nullBodyEnvelope.target_chain, 'neo_n3');
 
@@ -139,7 +144,12 @@ function exerciseBody(s, text) {
   const decoded = decodePayloadText(text);
   // Trimming around a payload must not change what it decodes to.
   assert.deepEqual(decodePayloadText(`  ${text}  `), decoded);
-  if (decoded && typeof decoded === 'object' && !Array.isArray(decoded) && 'raw_payload' in decoded) {
+  if (
+    decoded &&
+    typeof decoded === 'object' &&
+    !Array.isArray(decoded) &&
+    'raw_payload' in decoded
+  ) {
     outcomes.rawFallback += 1;
   } else {
     outcomes.jsonBody += 1;
@@ -190,7 +200,9 @@ function exerciseDelivery(kind, text, decoded, index) {
   assert.equal(digest.length, 32);
   // Binding: a different request id, result or envelope tuple changes the digest.
   assert(
-    !digest.equals(buildFulfillmentDigestBytes(String(index + 1), kind, true, text, '', '', options))
+    !digest.equals(
+      buildFulfillmentDigestBytes(String(index + 1), kind, true, text, '', '', options)
+    )
   );
   assert(
     !digest.equals(
@@ -354,10 +366,15 @@ function exerciseFeed(s) {
 
 async function exerciseSponsor(decoded) {
   const payload =
-    decoded && typeof decoded === 'object' && !Array.isArray(decoded) ? decoded : { value: decoded };
+    decoded && typeof decoded === 'object' && !Array.isArray(decoded)
+      ? decoded
+      : { value: decoded };
   const response = await handlePaymasterAuthorize(payload);
   assert.ok(Number.isInteger(response.status), 'sponsor status');
-  assert.ok(response.status === 200 || response.status === 400, `sponsor status ${response.status}`);
+  assert.ok(
+    response.status === 200 || response.status === 400,
+    `sponsor status ${response.status}`
+  );
   // Sponsorship is not enabled in this suite: no input may be approved.
   assert.notEqual(response.body?.approved, true, 'sponsor approved with the policy disabled');
   if (response.status === 200) {

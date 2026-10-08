@@ -21,8 +21,15 @@ exception, panic, hang or child failure. The Rust test process is single-threade
 HTTP is replaced by a panic-on-use transport. The selected Node functions perform
 no I/O. No credentials, signing operation, database or chain is needed.
 
+Each suite prints one `SERVICES_INPUTS_RECEIPT` line with the seeds it explored,
+the per-target case counts and the outcome counters. The runner parses both
+receipts and fails when a suite printed none, when the seeds differ from the
+committed list, when fewer than 100 cases per seed were explored, or when the
+generator produced only one shape of input. A workflow change that stopped the
+suite from running therefore fails the job instead of passing it.
+
 For a ten-minute local run, run the same command at low priority with **300** as
-the final argument: `nice -n 10 node fuzz-testing/run-services-inputs.mjs <build-log> 300`.
+the final argument: `nice -n 15 node fuzz-testing/run-services-inputs.mjs <build-log> 300`.
 This runs each suite for at least five minutes, serially. Background the command,
 retain the output and reap the process. Failed inputs should be reduced by deleting
 fields/array elements and shortening strings or bytes while preserving the failure;
@@ -30,21 +37,33 @@ keep each production fix and its minimal regression in a separate commit.
 
 Coverage:
 
-- Relayer JSON request bodies, malformed-text fallback, kernel-intent routing and
-  operator-only feed classification; delivery request-id/module binding and digest
-  separation between request ids.
+- Relayer JSON request bodies, raw-text fallback for truncated or malformed text,
+  the null body, kernel-intent routing, operator-only feed classification,
+  delivery request-id/module binding and digest separation between request ids,
+  results and envelope tuples.
+- Delivery prepared-fulfillment records: retry metadata and callback-pending
+  worker responses keep their field types for arbitrary prepared values.
 - Confidential-envelope structure and malformed CBOR/COSE signed-payload decoding.
   Explicit `cbor:`/`cose:` Error rejections are expected; native exceptions fail.
   This checks parsing, not cryptographic signature verification.
-- Node decimal price parsing and round trips; Rust decimal parsing/formatting,
-  Unicode, nested Neo stack items and feed symbol normalization.
+- Node decimal price parsing and round trips; feed timestamp clamping (both the
+  accepted and the rejected branch) and its monotonicity bound.
+- Rust decimal parsing/formatting including non-ASCII input, Unicode and nested
+  Neo stack items, feed symbol normalization.
 - Rust sponsor authorization over arbitrary gas/account/target values with the
-  policy disabled, gas-cap boundaries, and missing-principal rejection when enabled. A valid enabled
-  policy is a positive control. It does not exercise journal/budget persistence or
-  owner-configured on-chain AA hook policies.
+  policy disabled, gas-cap boundaries, and missing-principal rejection when
+  enabled. A valid enabled policy is a positive control.
+- The exported Node sponsor entry point refuses arbitrary request bodies without
+  throwing.
 
-JSON depth is capped at three, generated strings at 47 characters, and random CBOR
-at 95 bytes. Fixed valid fixtures and near-valid malformed envelopes complement
-random values. This is a bounded robustness check, not exhaustive validation of
-all service handlers. New failures outside this slice belong in dated evidence
-with their minimal input; they must not be silently swallowed or allowed to pass.
+Boundaries. JSON depth is capped at three, generated strings at 47 characters,
+and random CBOR at 95 bytes; this is a bounded robustness check, not exhaustive
+validation of every service handler. The Rust sponsor test does not exercise
+journal or budget persistence, and the Node sponsor entry point cannot reach the
+policy decision without enclave signing material, so only its refusal path is
+asserted there. `integerToDecimalString` (Node) and `integer_to_decimal_string`
+(Rust) apply the JavaScript `slice(0, -0)` quirk when `decimals` is 0 and pass
+non-digit input through; no production call site passes either, and a fix would
+have to change both ports together. New failures outside this slice belong in dated
+evidence with their minimal input; they must not be silently swallowed or allowed
+to pass.

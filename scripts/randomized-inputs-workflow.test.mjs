@@ -15,7 +15,8 @@ const workflowText = fs.readFileSync(workflowPath, 'utf8');
 // The one command that may run the CU-179 randomized suite in CI. An
 // indirection (npm script, wrapper) would let the workflow stay green while the
 // suite stopped running, so the contract pins this exact string.
-const SUITE_COMMAND = 'node fuzz-testing/run-services-inputs.mjs "$RUNNER_TEMP/randomized-build.json"';
+const SUITE_COMMAND =
+  'node fuzz-testing/run-services-inputs.mjs "$RUNNER_TEMP/randomized-build.json"';
 const BUILD_COMMAND =
   'cargo test --locked -p neo-os-compute --test randomized_inputs --no-run --message-format=json > "$RUNNER_TEMP/randomized-build.json"';
 

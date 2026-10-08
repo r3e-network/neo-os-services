@@ -14,9 +14,7 @@ assert(
 // Committed seeds. A run must explore these streams; a suite that prints no
 // receipt, or one for other seeds, fails instead of passing silently.
 const COMMITTED_SEEDS = [20261005, 20260928, 4294967295];
-const expectedSeeds = process.env.FUZZ_SEED
-  ? [Number(process.env.FUZZ_SEED)]
-  : COMMITTED_SEEDS;
+const expectedSeeds = process.env.FUZZ_SEED ? [Number(process.env.FUZZ_SEED)] : COMMITTED_SEEDS;
 const allSeeds = expectedSeeds.length === COMMITTED_SEEDS.length;
 const caseFloor = 100 * expectedSeeds.length;
 const binaries = readFileSync(buildLog, 'utf8')
@@ -36,11 +34,12 @@ const started = Date.now();
 const deadline = started + (seconds <= 3 ? 55000 : seconds * 2000 + 15000);
 
 function receiptOf(stdout, suite) {
-  const line = stdout
-    .split('\n')
-    .find((candidate) => candidate.startsWith('SERVICES_INPUTS_RECEIPT '));
+  const marker = 'SERVICES_INPUTS_RECEIPT ';
+  // `--nocapture` interleaves the libtest progress prefix with the receipt, so
+  // locate the marker inside the line instead of requiring it at the start.
+  const line = stdout.split('\n').find((candidate) => candidate.includes(marker));
   assert.ok(line, `${suite} printed no receipt; it did not run its corpus`);
-  const receipt = JSON.parse(line.slice('SERVICES_INPUTS_RECEIPT '.length));
+  const receipt = JSON.parse(line.slice(line.indexOf(marker) + marker.length));
   assert.equal(receipt.suite, suite, `${suite} receipt names ${receipt.suite}`);
   return receipt;
 }
@@ -82,7 +81,17 @@ if (node.error || node.status !== 0) {
 const nodeReceipt = receiptOf(node.stdout || '', 'services-node');
 checkReceipt(nodeReceipt, {
   minimumCases: caseFloor,
-  targets: ['body', 'intent', 'delivery', 'prepared', 'envelope', 'cose', 'price', 'feed', 'sponsor'],
+  targets: [
+    'body',
+    'intent',
+    'delivery',
+    'prepared',
+    'envelope',
+    'cose',
+    'price',
+    'feed',
+    'sponsor',
+  ],
 });
 // Both branches of the feed clamp and both body shapes must appear: a generator
 // stuck on one side would otherwise pass every assertion vacuously.
