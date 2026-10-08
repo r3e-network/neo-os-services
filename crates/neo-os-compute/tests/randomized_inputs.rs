@@ -151,6 +151,19 @@ fn randomized_inputs() {
             break;
         }
     }
+    // The receipt is machine-checked by run-services-inputs.mjs: a filtered-out
+    // or shortened run fails instead of passing with no cases explored.
+    println!(
+        "SERVICES_INPUTS_RECEIPT {}",
+        json!({
+            "suite": "services-rust",
+            "elapsedSeconds": start.elapsed().as_secs_f64(),
+            "seeds": streams
+                .iter()
+                .map(|(seed, _, count)| json!({"seed": seed, "cases": count}))
+                .collect::<Vec<_>>(),
+        })
+    );
     println!(
         "services-rust elapsed_seconds={:.3} seeds_cases={:?}",
         start.elapsed().as_secs_f64(),
@@ -159,4 +172,22 @@ fn randomized_inputs() {
             .map(|(seed, _, count)| (seed, count))
             .collect::<Vec<_>>()
     );
+}
+
+// Minimal inputs from the randomized run: with decimals 6 the byte index
+// `len - 6` fell inside a multi-byte character and `padded[..index]` panicked.
+// The fix slices UTF-16 code units, matching the JavaScript `String.slice` the
+// module ports, so the rendering is defined for every input.
+#[test]
+fn non_ascii_integer_input_is_rendered_without_panicking() {
+    assert_eq!(
+        integer_to_decimal_string(&json!("é00000"), 6),
+        "0.é00000",
+        "must match integerToDecimalString('é00000', 6) in the JavaScript port"
+    );
+    // A surrogate pair can still be split by the ported slice semantics; that
+    // must degrade to a replacement character, never to a panic.
+    for input in ["💰00000", "💰\u{0}中", "中中中", "é", "\u{0}000000"] {
+        let _ = integer_to_decimal_string(&json!(input), 6);
+    }
 }
