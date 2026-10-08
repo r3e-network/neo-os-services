@@ -38,13 +38,16 @@ keep each production fix and its minimal regression in a separate commit.
 Coverage:
 
 - Relayer JSON request bodies, raw-text fallback for truncated or malformed text,
-  the null body, kernel-intent routing, operator-only feed classification,
+  the null body, kernel-intent routing, operator-only feed classification, the
+  payload `target_chain`/`requester` binding (an explicit context value wins),
   delivery request-id/module binding and digest separation between request ids,
   results and envelope tuples.
 - Delivery prepared-fulfillment records: retry metadata and callback-pending
-  worker responses keep their field types for arbitrary prepared values.
+  worker responses keep their field types for arbitrary prepared values, and a
+  record without a trust tier takes the enclave tier default.
 - Confidential-envelope structure and malformed CBOR/COSE signed-payload decoding.
   Explicit `cbor:`/`cose:` Error rejections are expected; native exceptions fail.
+  A non-Buffer input is rejected by the decoder's own Error as well.
   This checks parsing, not cryptographic signature verification.
 - Node decimal price parsing and round trips; feed timestamp clamping (both the
   accepted and the rejected branch) and its monotonicity bound.

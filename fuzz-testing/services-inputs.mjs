@@ -13,6 +13,7 @@ import {
   normalizeRequestType,
   buildWorkerPayload,
   buildFulfillmentDigestBytes,
+  TRUST_TIER_ENCLAVE_ATTESTED,
 } from '../workers/morpheus-relayer/src/router.js';
 import {
   buildPreparedFulfillment,
@@ -139,6 +140,31 @@ const nullBodyEnvelope = buildWorkerPayload(
 );
 assert.equal(nullBodyEnvelope.request_id, '1');
 assert.equal(nullBodyEnvelope.target_chain, 'neo_n3');
+// Binding controls: the payload's own target_chain and requester must survive the
+// envelope build, and an explicit context value must win over the body value.
+const precedenceEnvelope = buildWorkerPayload(
+  'neo_n3',
+  'oracle.fetch',
+  { target_chain: 'neox', requester: 'body-requester' },
+  '1'
+);
+assert.equal(precedenceEnvelope.target_chain, 'neox');
+assert.equal(precedenceEnvelope.requester, 'body-requester');
+assert.equal(
+  buildWorkerPayload('neo_n3', 'oracle.fetch', { requester: 'body' }, '1', {
+    requester: 'context',
+  }).requester,
+  'context'
+);
+// A malformed COSE input that is not even a Buffer must still be the decoder's
+// own Error; the corpus only feeds Buffers, so this channel needs its own case.
+rejected(() => decodeCoseSign1('not a buffer'), /^(cbor|cose):/);
+// A prepared fulfillment that carries no trust tier takes the enclave default.
+assert.equal(buildPreparedFulfillmentRetryMeta({}).trust_tier, TRUST_TIER_ENCLAVE_ATTESTED);
+assert.equal(
+  buildPreparedFulfillment({ success: true, result: '' }, {}).trust_tier,
+  TRUST_TIER_ENCLAVE_ATTESTED
+);
 
 function exerciseBody(s, text) {
   const decoded = decodePayloadText(text);
