@@ -135,7 +135,7 @@ const nullBodyEnvelope = buildWorkerPayload('neo_n3', 'oracle.fetch', decodePayl
 assert.equal(nullBodyEnvelope.request_id, '1');
 assert.equal(nullBodyEnvelope.target_chain, 'neo_n3');
 
-function exerciseBody(text) {
+function exerciseBody(s, text) {
   const decoded = decodePayloadText(text);
   // Trimming around a payload must not change what it decodes to.
   assert.deepEqual(decodePayloadText(`  ${text}  `), decoded);
@@ -143,6 +143,13 @@ function exerciseBody(text) {
     outcomes.rawFallback += 1;
   } else {
     outcomes.jsonBody += 1;
+  }
+  // A truncated payload must fall back to the raw text rather than throw.
+  const cut = text.slice(0, 1 + (next(s) % Math.max(1, text.length)));
+  const truncated = decodePayloadText(cut);
+  if (truncated && typeof truncated === 'object' && 'raw_payload' in truncated) {
+    assert.equal(truncated.raw_payload, cut.trim());
+    outcomes.rawFallback += 1;
   }
   // Regression (CU-179): a request body of literal JSON `null` decodes to null
   // and must still produce a worker envelope instead of dereferencing null.
@@ -276,6 +283,7 @@ function exerciseEnvelope(text) {
   }
   // A valid envelope is accepted even while the malformed corpus is rejected.
   assert.notEqual(parseConfidentialEnvelope(validEnvelopeBase64), null);
+  outcomes.envelopeAccepted += 1;
   targets.envelope += 1;
 }
 
@@ -306,25 +314,40 @@ function exerciseFeed(s) {
   const nowSec = next(s) % 2000000000;
   const maxFutureSeconds = 1 + (next(s) % 600);
   const futureSkewSeconds = next(s) % 300;
+  let clamped;
+  let rejection = null;
   try {
-    const clamped = clampFeedTimestampSec({
+    clamped = clampFeedTimestampSec({
       upstreamSec,
       prevTs,
       nowSec,
       maxFutureSeconds,
       futureSkewSeconds,
     });
-    outcomes.feedClamped += 1;
-    assert.ok(Number.isInteger(clamped));
-    // Strictly monotonic above the last anchored timestamp, never above now+skew.
-    assert.ok(clamped >= Math.max(Math.floor(prevTs), 0) + 1, `not monotonic: ${clamped}`);
-    assert.ok(clamped <= Math.max(Math.floor(upstreamSec), Math.floor(nowSec) + futureSkewSeconds));
   } catch (error) {
+    rejection = error;
+  }
+  if (rejection) {
     // Only the documented feed-timestamp rejection is allowed, and only for a
     // timestamp beyond the caller's future tolerance.
     outcomes.feedRejected += 1;
-    assert.equal(error.constructor.name, 'FeedTimestampError');
+    assert.equal(rejection.constructor.name, 'FeedTimestampError');
     assert.ok(upstreamSec > nowSec + maxFutureSeconds, 'rejected a timestamp inside the tolerance');
+  } else {
+    outcomes.feedClamped += 1;
+    assert.ok(Number.isInteger(clamped));
+    // Strictly monotonic above the last anchored timestamp, and never beyond
+    // the caller's future tolerance or the upstream value itself. The monotonic
+    // floor can exceed both when prevTs is already ahead of them.
+    assert.ok(clamped >= Math.max(Math.floor(prevTs), 0) + 1, `not monotonic: ${clamped}`);
+    assert.ok(
+      clamped <= Math.max(Math.floor(prevTs) + 1, Math.floor(nowSec) + futureSkewSeconds),
+      `beyond the future tolerance: ${clamped}`
+    );
+    assert.ok(
+      clamped <= Math.max(Math.floor(prevTs) + 1, Math.floor(upstreamSec)),
+      `beyond the upstream timestamp: ${clamped}`
+    );
   }
   targets.feed += 1;
 }
@@ -353,7 +376,7 @@ do {
       const kind = kinds[next(s) % kinds.length];
       const bytes = Buffer.from(Array.from({ length: next(s) % 96 }, () => next(s) & 255));
       try {
-        const decoded = exerciseBody(text);
+        const decoded = exerciseBody(s, text);
         exerciseIntent(kind);
         exerciseDelivery(kind, text, decoded, caseIndex);
         exercisePrepared(kind, text, decoded);
