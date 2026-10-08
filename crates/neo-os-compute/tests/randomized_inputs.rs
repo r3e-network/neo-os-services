@@ -112,6 +112,21 @@ fn randomized_inputs() {
                         PaymasterEvaluation::Invalid(body) => assert!(body.get("error").is_some()),
                         PaymasterEvaluation::Verdict(body) => assert_eq!(body["approved"], false),
                     }
+                    // A fully valid request must still be refused while the policy
+                    // is disabled, so an approval cannot slip past the enable check.
+                    match evaluate_paymaster_authorization(&no_env, &valid, &no_http, 0, || {
+                        "fixture".into()
+                    })
+                    .unwrap()
+                    {
+                        PaymasterEvaluation::Verdict(body) => {
+                            assert_eq!(
+                                body["approved"], false,
+                                "disabled policy approved a request"
+                            )
+                        }
+                        other => panic!("disabled policy rejected with {other:?}"),
+                    }
                     let capped = |key: &str| match key {
                         "MORPHEUS_PAYMASTER_TESTNET_ENABLED" => Some("true".into()),
                         "MORPHEUS_PAYMASTER_TESTNET_MAX_GAS_UNITS" => Some("5".into()),
