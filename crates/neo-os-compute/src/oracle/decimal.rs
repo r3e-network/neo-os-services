@@ -59,18 +59,24 @@ pub fn integer_to_decimal_string(value: &Json, decimals: usize) -> String {
     let negative = raw.starts_with('-');
     let stripped = raw.strip_prefix(['+', '-']).unwrap_or(&raw);
     let digits = if stripped.is_empty() { "0" } else { stripped };
-    let mut padded = digits.to_string();
+    // `String.prototype.length` and `slice` in the JavaScript port count UTF-16
+    // code units and tolerate splitting a surrogate pair. Slicing Rust `String`
+    // byte indices panicked whenever `len - decimals` was not a char boundary
+    // (CU-179: `integer_to_decimal_string("é00000", 6)`); code units keep the
+    // ported semantics for every input.
+    let mut padded: Vec<u16> = digits.encode_utf16().collect();
     while padded.len() < decimals + 1 {
-        padded.insert(0, '0');
+        padded.insert(0, u16::from(b'0'));
     }
     // decimals is 6 at every call site; the 0 arm reproduces the JS
     // `slice(0, -0)` quirk for completeness.
     let (whole, fraction) = if decimals == 0 {
-        ("0".to_string(), padded)
+        ("0".to_string(), String::from_utf16_lossy(&padded))
     } else {
+        let (whole, fraction) = padded.split_at(padded.len() - decimals);
         (
-            padded[..padded.len() - decimals].to_string(),
-            padded[padded.len() - decimals..].to_string(),
+            String::from_utf16_lossy(whole),
+            String::from_utf16_lossy(fraction),
         )
     };
     let whole = if whole.is_empty() {
