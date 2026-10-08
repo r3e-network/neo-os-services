@@ -184,12 +184,16 @@ function exerciseIntent(kind) {
 
 function exerciseDelivery(kind, text, decoded, index) {
   const intent = resolveKernelIntent(kind);
-  const payload = buildWorkerPayload('neo_n3', kind, decoded, String(index), {
+  // Chain events carry the request id as a number or a string; the envelope
+  // must always carry the string form.
+  const requestId = index % 2 === 0 ? index : String(index);
+  const payload = buildWorkerPayload('neo_n3', kind, decoded, requestId, {
     requester: 'requester',
     callbackContract: 'callback',
     callbackMethod: 'method',
   });
   assert.equal(payload.request_id, String(index));
+  assert.equal(typeof payload.request_id, 'string');
   assert.equal(payload.request_source, 'morpheus-relayer:neo_n3');
   assert.equal(payload.legacy_request_type, normalizeRequestType(kind));
   assert.equal(payload.kernel_module_id, intent.moduleId);
@@ -316,6 +320,9 @@ function exerciseCose(bytes) {
 function exercisePrice(s, text) {
   const integer = String(next(s) % 1000000000);
   assert.equal(decimalToIntegerString(integerToDecimalString(integer)), integer);
+  // A short value exercises the zero padding rather than only the slice.
+  const shortInteger = String(next(s) % 100000);
+  assert.equal(decimalToIntegerString(integerToDecimalString(shortInteger)), shortInteger);
   rejected(() => decimalToIntegerString(`${text}x`), /^invalid decimal value:/);
   targets.price += 1;
 }

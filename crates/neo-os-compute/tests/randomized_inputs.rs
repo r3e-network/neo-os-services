@@ -71,10 +71,17 @@ fn randomized_inputs() {
                 let input = arbitrary(rng, 0);
                 let gas = arbitrary(rng, 0);
                 let integer = rng.gen_range(0..1_000_000_000u64).to_string();
+                let short_integer = rng.gen_range(0..100_000u64).to_string();
                 let bounded_gas = rng.gen_range(-3..9i64);
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let rendered = integer_to_decimal_string(&json!(integer), 6);
                     assert_eq!(decimal_to_integer_string(&rendered, 6).unwrap(), integer);
+                    // A short value exercises the zero padding, not only the slice.
+                    let short_rendered = integer_to_decimal_string(&json!(short_integer), 6);
+                    assert_eq!(
+                        decimal_to_integer_string(&short_rendered, 6).unwrap(),
+                        short_integer
+                    );
                     assert!(decimal_to_integer_string(&format!("{input}x"), 6).is_err());
                     // Unexpected Unicode must not unwind the price plane.
                     let _ = integer_to_decimal_string(&input, 6);
