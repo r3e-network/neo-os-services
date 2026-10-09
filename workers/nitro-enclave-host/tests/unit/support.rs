@@ -885,6 +885,7 @@ pub fn test_state(
         kms_diag: Mutex::new(KmsDiag::default()),
         price_plane_status: Arc::new(Mutex::new(crate::feed_status::PricePlaneStatus::default())),
         overload: neo_os_compute::overload::OverloadGuard::new(),
+        ephemeral_oracle_key: Mutex::new(None),
     };
     TestState {
         attest,

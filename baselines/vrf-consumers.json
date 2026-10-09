@@ -140,13 +140,13 @@
           "sha256": "263f6b94a5e2493d2b5f235e1587fca5a006518985045169ae2a270c181c25d9"
         },
         "workers/nitro-enclave-host/tests/unit/support.rs": {
-          "sha256": "0dbef3c312e4fe414a1c5981abfe7f1099296dd545587dc4008a9e5145c88ef2"
+          "sha256": "b8db1b3a52cfa12198d62f9a42f2613a612979a197f80aec5558ec345327a845"
         },
         "workers/nitro-enclave-host/tests/unit/compute_execute.rs": {
-          "sha256": "26c4d898052d27658374a16eeea99e48e9728e1bead5d2ab345f6d8ebae1e8a3"
+          "sha256": "c8b97b43472f49ee744903caa9717e0da422265842f0e5dbb1f7e443b91e9c77"
         },
         "workers/nitro-enclave-host/tests/unit/provision.rs": {
-          "sha256": "9c2ada6f9ed8e14dda807f93f254e83a805be3f8b59d89c4611354969f054dd3"
+          "sha256": "aa13b8b07ee0d8e1d5b3b7d7e3e97485f0348b494456c5811307c1d539553da2"
         }
       }
     },
@@ -419,7 +419,7 @@
       "consumer": "host-vrf-and-nested-automation",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Host direct, oracle and automation dispatch plus generation, custody signing and UUID/session support. These files expose primitives but do not define an economic payoff from the VRF bytes. Their callers are independently reviewed; this entry grants no runtime caller exemption.",
+      "justification": "Host direct, oracle and automation dispatch plus generation, custody signing and UUID/session support, and the oracle envelope key-material module those lanes resolve keys through. These files expose primitives but do not define an economic payoff from the VRF bytes. Their callers are independently reviewed; this entry grants no runtime caller exemption.",
       "inputs": {
         "workers/nitro-enclave-host/src/automation.rs": {
           "sha256": "7921520bd6f60733a9fe0e3c7459b871f53a20511aa3a2a4a3ab9256b9091680"
@@ -449,7 +449,7 @@
           "sha256": "61339dbade97261c9a55c7a3a7d0f3da504d08cf8303831da9252ef732d90b9d"
         },
         "workers/nitro-enclave-host/src/bin/enclave_host.rs": {
-          "sha256": "545f6390510c401178f909c01bac69ea078f2926347e2bf6e34467d018522860"
+          "sha256": "8dff50a86c716700e60c8550e2bf0edf952ad7870724a73464228635810d204f"
         },
         "workers/nitro-enclave-host/src/feed_sign.rs": {
           "sha256": "64455dc9ada7cd6b83e99dd0dfe29c8c4b0c9d65235583d840d5b8eda225a0a1"
@@ -461,10 +461,22 @@
           "sha256": "7f0d1b64d586d22826727d3504865743269259c47446e12ae9e5f1079904c864"
         },
         "workers/nitro-enclave-host/src/state.rs": {
-          "sha256": "f2cd1d9b3aae67da9da76b23311ae2d52cabf373e59663714cb1b544c9c4777f"
+          "sha256": "7192a3779756376f9e6d761d08ce4922504073121f54ccc7195965b18b201883"
         },
         "workers/nitro-enclave-host/src/compute_execute.rs": {
-          "sha256": "3459f87b4bb69b0ac55c8599724b516fdef89056ec7ab85bd49ab9bb763cac65"
+          "sha256": "66c018136cb1cb0280351c479feeb4c434062ee45d89b4c6b942e9d8fe02503d"
+        },
+        "crates/neo-os-compute/src/oracle/crypto.rs": {
+          "sha256": "5dc853f17b62b79959221a79c99b6bd07bdf202a879b12e1cf65501e1ad847c5"
+        },
+        "crates/neo-os-compute/src/oracle/message_reveal.rs": {
+          "sha256": "4f6d25aa5a50854e030722186e25442dcb9b52a669a50fa1418465d77548a8a8"
+        },
+        "workers/nitro-enclave-host/src/neodid.rs": {
+          "sha256": "cd661e9ab712fd5ab15749a829e5bc07a66d10eebdb1c69e64814bc1c37253f0"
+        },
+        "workers/nitro-enclave-host/src/oracle_read.rs": {
+          "sha256": "4e420cf1d623fce08bae505253cde885fc0e710f1fcaba1f586d8f0967d5e92b"
         }
       }
     },

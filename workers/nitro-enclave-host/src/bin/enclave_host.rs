@@ -120,6 +120,7 @@ fn main() {
         kms_diag: Mutex::new(KmsDiag::default()),
         price_plane_status,
         overload: neo_os_compute::overload::OverloadGuard::new(),
+        ephemeral_oracle_key: Mutex::new(None),
     });
 
     // SVC-D-2 / CL-29: before serving anything, prove this is a measured

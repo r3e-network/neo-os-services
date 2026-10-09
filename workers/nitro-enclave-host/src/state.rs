@@ -8,6 +8,8 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
 use zeroize::Zeroizing;
 
+use neo_os_compute::oracle::crypto::{generate_x25519_key_material, OracleKeyMaterial};
+
 use crate::overlay::EnvOverlay;
 use crate::RuntimeError;
 
@@ -289,9 +291,55 @@ pub struct AppState {
     /// caller able to park unbounded blocking-pool threads in a fixed-memory
     /// single-node enclave. One guard per process, like the JS module global.
     pub overload: neo_os_compute::overload::OverloadGuard,
+    /// The process-lifetime ephemeral oracle key (CU-148). Empty until the
+    /// first lane that needs it outside production, then never replaced. See
+    /// [`AppState::ephemeral_oracle_key`] for why the lifetime is the process
+    /// and not the request.
+    pub ephemeral_oracle_key: Mutex<Option<OracleKeyMaterial>>,
 }
 
 impl AppState {
+    /// The ONE ephemeral oracle key this process serves.
+    ///
+    /// The key is minted on first use and returned unchanged for the rest of
+    /// the process, which is what `docs/ENVIRONMENT.md` already promises:
+    /// "a process-lifetime ephemeral oracle key ... decryptability ends with
+    /// the process". That promise is what makes the key usable at all —
+    /// `/oracle/public-key` advertises the material a caller encrypts to, and
+    /// `/compute/execute` (and the other lanes that decrypt with this key)
+    /// must resolve that same material. When each lane minted its own key the
+    /// advertised public key opened nothing, which is the defect CU-148's
+    /// review found.
+    ///
+    /// What a shared lifetime key costs, stated rather than assumed away: a
+    /// per-request key bounds a memory-disclosure to the one request whose key
+    /// leaked, while this one key decrypts every ephemeral envelope the
+    /// process ever accepted, for as long as the process lives. The exposure
+    /// is bounded the same way the feature is: the ephemeral branch is reachable
+    /// only when `MORPHEUS_ALLOW_EPHEMERAL_KEY` is set, `NODE_ENV=production`
+    /// refuses that flag inside [`crate::compute_execute`]'s resolver and
+    /// `neo_os_compute`'s policy check before any key is minted, and the flag is
+    /// image ENV — `/provision` materializes a fixed set of KMS-derived names
+    /// and cannot set it. The key is memory-only: it is never written to disk,
+    /// never leaves the measured boundary, and it is dropped with the process,
+    /// so its lifetime is also the enclave's boot, not the calendar.
+    pub fn ephemeral_oracle_key(&self) -> OracleKeyMaterial {
+        let mut slot = self
+            .ephemeral_oracle_key
+            .lock()
+            .expect("ephemeral oracle key lock");
+        if let Some(key) = slot.as_ref() {
+            return key.clone();
+        }
+        let mut os = rand::rngs::OsRng;
+        let key = {
+            use rand::RngCore;
+            generate_x25519_key_material(&mut |buffer: &mut [u8]| os.fill_bytes(buffer))
+        };
+        *slot = Some(key.clone());
+        key
+    }
+
     /// Resolve the live overlay against the reviewed network registry. A
     /// malformed explicit label is a runtime configuration error, never a
     /// request to use TestNet.

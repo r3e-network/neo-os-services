@@ -12,11 +12,18 @@
 //!     closed with a 503: the fold has no egress. A direct ciphertext
 //!     decrypts through the canonical `neo_os_compute::oracle::crypto`
 //!     implementation.
-//!   - Sealed-keystore (Secrets Manager) and ephemeral oracle key material
-//!     fail closed with 503s; only configured-env material decrypts. The
-//!     unavailable-material message is the JS one, verbatim, and a
-//!     misconfigured source falls through to the next source exactly as the
-//!     child logs and does.
+//!   - Oracle key material comes from a configured source — which is where
+//!     `/provision` puts the key KMS released — or, outside production only and
+//!     only with `MORPHEUS_ALLOW_EPHEMERAL_KEY`, from the process-lifetime
+//!     ephemeral key shared with `/oracle/public-key`
+//!     ([`AppState::ephemeral_oracle_key`]). The sealed-keystore source is NOT
+//!     served: its only route to a wrap key is `derive_oracle_wrap_key`, and
+//!     this host passes a deriver that refuses the legacy Secrets Manager
+//!     master derivation unconditionally (CL-10/CL-12), so that branch could
+//!     never produce material here and no longer advertises itself with a
+//!     refusal of its own. The unavailable-material message names the sources
+//!     that remain, and a misconfigured source falls through to the next source
+//!     exactly as the child logs and does.
 //!   - `use_derived_keys` is ignored (the child derives per-role keys from
 //!     Secrets Manager); signing always uses the custody worker key.
 //!   - A failed custody signing call surfaces the plane's own status (503 for
@@ -36,7 +43,7 @@ use std::collections::BTreeMap;
 use neo_os_compute::compute::execute_builtin_compute;
 use neo_os_compute::core::EnvReader;
 use neo_os_compute::oracle::crypto::{
-    generate_x25519_key_material, parse_configured_oracle_key_material,
+    parse_configured_oracle_key_material,
     resolve_confidential_payload as resolve_confidential_payload_canonical,
     resolve_encrypted_confidential_payload, resolve_encrypted_confidential_ref, OracleKeyMaterial,
     ORACLE_ENVELOPE_ALGORITHM, PLAINTEXT_ORACLE_KEY_PRODUCTION_ERROR,
@@ -68,7 +75,7 @@ pub fn handle_compute_execute(
 
     // resolveConfidentialPayload (crypto.js:643) — the direct-ciphertext
     // aliases decrypt in-process; the ref lane needs egress and fails closed.
-    let payload = resolve_confidential_payload(body, &overlay, &env_trim)?;
+    let payload = resolve_confidential_payload(state, body, &overlay, &env_trim)?;
 
     // `trimString(resolved.mode || (function || compute_fn ? 'builtin' :
     // 'script')) || 'script'` — mode is NOT lowercased: 'SCRIPT' runs
@@ -164,6 +171,7 @@ pub fn handle_compute_execute(
 /// before any network touch. Shared with the neodid fold, whose JS handler
 /// composes the same resolution before its flows.
 pub(crate) fn resolve_confidential_payload(
+    state: &AppState,
     payload: &serde_json::Value,
     overlay: &BTreeMap<String, String>,
     env_trim: &dyn Fn(&str) -> String,
@@ -178,7 +186,7 @@ pub(crate) fn resolve_confidential_payload(
         }
         return Ok(payload.clone());
     }
-    let key = oracle_key_material(overlay, env_trim)?;
+    let key = oracle_key_material(state, overlay, env_trim)?;
     let env_lookup = |name: &str| overlay.get(name).cloned();
     let unavailable_transport = |_: &neo_os_compute::transport::HttpRequest| {
         Err("encrypted-confidential ref transport is unavailable".to_string())
@@ -198,7 +206,8 @@ pub(crate) fn resolve_confidential_payload(
 
 /// `ensureOracleKeyMaterial` (crypto.js:575) over the overlay: the
 /// ephemeral-policy check, then the configured source, then — only outside
-/// production and only when explicitly allowed — an ephemeral key.
+/// production and only when explicitly allowed — the process-lifetime
+/// ephemeral key.
 ///
 /// The sealed-keystore source that `crypto.js` also tries is deliberately absent, and
 /// this is not an omission. Its only route to a wrap key is
@@ -210,10 +219,18 @@ pub(crate) fn resolve_confidential_payload(
 /// configured source (which is where `/provision` puts the key it released from KMS) and
 /// the development-only ephemeral key.
 ///
+/// The ephemeral key is NOT minted here. It comes from
+/// [`AppState::ephemeral_oracle_key`], the one key `/oracle/public-key` also serves
+/// and the other oracle lanes also decrypt with, so what this fold resolves is
+/// exactly what a caller encrypted to. Minting per resolution here was the defect
+/// CU-148's review found: the endpoint advertised key A and this fold decrypted
+/// with key B. The exposure that sharing buys is stated on that method.
+///
 /// `pub(crate)` rather than private: the key `/provision` materializes is the key
 /// this resolver must then serve, and that end-to-end claim is asserted from the
 /// provisioning suite, which owns the KMS fixtures.
 pub(crate) fn oracle_key_material(
+    state: &AppState,
     overlay: &BTreeMap<String, String>,
     env_trim: &dyn Fn(&str) -> String,
 ) -> Result<OracleKeyMaterial, RuntimeError> {
@@ -242,31 +259,18 @@ pub(crate) fn oracle_key_material(
 
     if ephemeral_requested {
         // The generator is `neo_os_compute`'s, not a second implementation here: the
-        // enclave host owns no crypto of its own, and the sibling `/oracle/key` lane
-        // already gates an ephemeral key the same way.
-        //
-        // Note what this is NOT: `docs/ENVIRONMENT.md` describes the ephemeral key as
-        // process-lifetime, and this resolution runs per request, so each call here
-        // mints a NEW key. That matches the sibling lane's behaviour today, and it
-        // means an ephemeral key cannot carry a ciphertext across two requests — the
-        // client would have to encrypt within one. Making it genuinely
-        // process-lifetime needs a cached key on `AppState`, which is a mechanism this
-        // slice does not add; it is recorded as an open item in the CU-148 evidence.
-        // Either way it stays outside production, which refuses the flag above.
-        let mut rng = os_rng();
-        return Ok(generate_x25519_key_material(&mut rng));
+        // enclave host owns no crypto of its own. The lifetime, though, is this
+        // host's decision, and it is the process: `docs/ENVIRONMENT.md` documents
+        // exactly that ("a process-lifetime ephemeral oracle key ... decryptability
+        // ends with the process"), and a key that changed per resolution could not
+        // be advertised and used. Production refuses the flag above, before this
+        // line, so the branch stays development-only.
+        return Ok(state.ephemeral_oracle_key());
     }
     Err(http_error(
         400,
         "oracle key material unavailable: no configured key or provisioned KMS ciphertext, and no ephemeral key allowed",
     ))
-}
-
-/// The OS entropy source, the same seam `oracle_read` uses for its ephemeral keys.
-fn os_rng() -> impl FnMut(&mut [u8]) {
-    use rand::RngCore;
-    let mut os = rand::rngs::OsRng;
-    move |buffer: &mut [u8]| os.fill_bytes(buffer)
 }
 
 /// `normalizeBoolean` over an env value: absent/blank falls back, otherwise

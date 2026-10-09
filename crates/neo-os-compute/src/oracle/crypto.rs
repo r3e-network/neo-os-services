@@ -568,6 +568,13 @@ pub fn decrypt_encrypted_token(
 /// same warning events and the same refusal outside development. The JS
 /// singleton deliberately does not cache a rejected resolution — that policy
 /// is the host's retry loop, not a pure-lane concern.
+///
+/// The ephemeral branch mints a NEW key on every call, this one included. That
+/// is only correct for a caller whose single lane both mints and consumes the
+/// key. A host that advertises the key on one route and decrypts with it on
+/// another must serve ONE key from both, or the advertised material decrypts
+/// nothing; such a caller uses [`resolve_oracle_key_material_with_ephemeral`]
+/// and supplies the process-lifetime key it also serves.
 pub fn resolve_oracle_key_material(
     env: crate::core::EnvReader<'_>,
     deriver: WrapKeyDeriver<'_>,
@@ -575,6 +582,30 @@ pub fn resolve_oracle_key_material(
     repo_root: &str,
     warn_log: &dyn Fn(&str, &str, &str),
     rng: &mut dyn FnMut(&mut [u8]),
+) -> Result<OracleKeyMaterial, String> {
+    resolve_oracle_key_material_with_ephemeral(
+        env,
+        deriver,
+        reader,
+        repo_root,
+        warn_log,
+        &mut || generate_x25519_key_material(rng),
+    )
+}
+
+/// [`resolve_oracle_key_material`] with the ephemeral key owned by the caller:
+/// the decision tree, the warning events and the development-only policy are
+/// identical, and only the last step differs — `ephemeral()` returns the key
+/// to serve instead of a freshly generated one. The caller is responsible for
+/// the lifetime of what it returns, and for returning the SAME key to every
+/// lane that must interoperate with it.
+pub fn resolve_oracle_key_material_with_ephemeral(
+    env: crate::core::EnvReader<'_>,
+    deriver: WrapKeyDeriver<'_>,
+    reader: KeystoreReader<'_>,
+    repo_root: &str,
+    warn_log: &dyn Fn(&str, &str, &str),
+    ephemeral: &mut dyn FnMut() -> OracleKeyMaterial,
 ) -> Result<OracleKeyMaterial, String> {
     assert_ephemeral_key_policy(env)?;
     match parse_configured_oracle_key_material(env) {
@@ -599,7 +630,7 @@ pub fn resolve_oracle_key_material(
     if !resolve_allow_ephemeral_oracle_key(env) {
         return Err("oracle key material unavailable: no configured key, Secrets Manager sealed keystore, or ephemeral key not allowed".to_string());
     }
-    Ok(generate_x25519_key_material(rng))
+    Ok(ephemeral())
 }
 
 /// `resolveEncryptedPayload(payload)` — the token-ciphertext truthy chain.
@@ -1228,14 +1259,16 @@ pub fn decrypt_encrypted_token_resolved(
     reader: KeystoreReader<'_>,
     repo_root: &str,
     warn_log: &dyn Fn(&str, &str, &str),
-    rng: &mut dyn FnMut(&mut [u8]),
+    ephemeral: &mut dyn FnMut() -> OracleKeyMaterial,
 ) -> Result<Option<String>, String> {
     // `decryptEncryptedToken(ciphertext)`: `if (!ciphertext) return null` is a
     // truthiness gate on the raw value, before any string handling.
     if !js_truthy(ciphertext) {
         return Ok(None);
     }
-    let key_material = resolve_oracle_key_material(env, deriver, reader, repo_root, warn_log, rng)?;
+    let key_material = resolve_oracle_key_material_with_ephemeral(
+        env, deriver, reader, repo_root, warn_log, ephemeral,
+    )?;
     decrypt_encrypted_token(&js_stringify(ciphertext), &key_material)
 }
 

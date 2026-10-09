@@ -882,7 +882,7 @@ fn a_provisioned_kms_key_is_the_key_the_compute_route_serves() {
     // Before provisioning there is no key material at all, so the compute route
     // cannot serve the confidential lane.
     let (before, env_trim) = compute_overlay(&harness);
-    let error = crate::compute_execute::oracle_key_material(&before, &env_trim)
+    let error = crate::compute_execute::oracle_key_material(&harness.state, &before, &env_trim)
         .expect_err("nothing provisioned yet");
     assert_eq!(error.status, 400);
 
@@ -902,7 +902,7 @@ fn a_provisioned_kms_key_is_the_key_the_compute_route_serves() {
     // After provisioning the compute route resolves the very key the fake KMS
     // released — not a fallback, not an ephemeral one.
     let (after, env_trim) = compute_overlay(&harness);
-    let key = crate::compute_execute::oracle_key_material(&after, &env_trim)
+    let key = crate::compute_execute::oracle_key_material(&harness.state, &after, &env_trim)
         .expect("the provisioned key serves the compute route");
     assert_eq!(key.source, "nitro-recipient-kms");
     assert_eq!(key.public_key_raw, ORACLE_PUBLIC_KEY);

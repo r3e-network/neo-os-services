@@ -17,7 +17,9 @@ use crate::js::{
     js_number, js_number_to_string, js_number_value, js_stringify, js_to_number, js_trim_string,
     js_truthy,
 };
-use crate::oracle::crypto::{decrypt_encrypted_token_resolved, KeystoreReader, WrapKeyDeriver};
+use crate::oracle::crypto::{
+    decrypt_encrypted_token_resolved, KeystoreReader, OracleKeyMaterial, WrapKeyDeriver,
+};
 use crate::transport::{HttpRequest, HttpTransport};
 
 pub const REVEAL_FRESHNESS_WINDOW_SECONDS: f64 = 600.0; // ±10 min tolerance for clock skew
@@ -571,7 +573,7 @@ pub fn handle_message_reveal(
     reader: KeystoreReader<'_>,
     repo_root: &str,
     warn_log: &dyn Fn(&str, &str, &str),
-    rng: &mut dyn FnMut(&mut [u8]),
+    ephemeral: &mut dyn FnMut() -> OracleKeyMaterial,
     read_message: &dyn Fn(&ReadMessageRequest) -> Result<NeoXMessage, String>,
 ) -> (u16, Json) {
     let bad_request = |message: &str| (400u16, json!({ "error": message }));
@@ -712,7 +714,7 @@ pub fn handle_message_reveal(
         reader,
         repo_root,
         warn_log,
-        rng,
+        ephemeral,
     ) {
         Ok(Some(plaintext)) => (
             200,
@@ -888,7 +890,7 @@ pub fn handle_oracle_decrypt(
     reader: KeystoreReader<'_>,
     repo_root: &str,
     warn_log: &dyn Fn(&str, &str, &str),
-    rng: &mut dyn FnMut(&mut [u8]),
+    ephemeral: &mut dyn FnMut() -> OracleKeyMaterial,
     read_message: &dyn Fn(&ReadMessageRequest) -> Result<NeoXMessage, String>,
 ) -> (u16, Json) {
     let bad_request = |message: &str| (400u16, json!({ "error": message }));
@@ -915,7 +917,7 @@ pub fn handle_oracle_decrypt(
         reader,
         repo_root,
         warn_log,
-        rng,
+        ephemeral,
     ) {
         Ok(Some(plaintext)) => (200, json!({ "plaintext": plaintext })),
         Ok(None) => bad_request("decryption returned empty result"),
@@ -926,7 +928,9 @@ pub fn handle_oracle_decrypt(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::oracle::crypto::{KeystoreReadError, ORACLE_ENVELOPE_INFO};
+    use crate::oracle::crypto::{
+        generate_x25519_key_material, KeystoreReadError, ORACLE_ENVELOPE_INFO,
+    };
     use crate::transport::HttpResponse;
     use serde_json::json;
     use std::collections::HashMap;
@@ -1287,6 +1291,9 @@ mod tests {
                 state = state.wrapping_add(1);
             }
         };
+        // The lane no longer mints its own ephemeral key: it serves the one its
+        // caller owns, so the deterministic generator rides in as the provider.
+        let mut ephemeral = || generate_x25519_key_material(&mut rng);
         handle_message_reveal(
             payload,
             REVEAL_NOW,
@@ -1295,7 +1302,7 @@ mod tests {
             &no_keystore,
             "/repo",
             &warn,
-            &mut rng,
+            &mut ephemeral,
             read,
         )
     }
@@ -1777,6 +1784,9 @@ mod tests {
                 state = state.wrapping_add(1);
             }
         };
+        // The lane no longer mints its own ephemeral key: it serves the one its
+        // caller owns, so the deterministic generator rides in as the provider.
+        let mut ephemeral = || generate_x25519_key_material(&mut rng);
         handle_oracle_decrypt(
             payload,
             env,
@@ -1785,7 +1795,7 @@ mod tests {
             &no_keystore,
             "/repo",
             &warn,
-            &mut rng,
+            &mut ephemeral,
             read,
         )
     }

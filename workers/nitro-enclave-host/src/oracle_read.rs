@@ -32,6 +32,10 @@
 //!     materialized in memory by `/provision`. Legacy Secrets Manager master
 //!     derivation is not compiled; sealed-keystore fallback therefore fails
 //!     closed.
+//!   - The development-only ephemeral key is NOT minted per lane. Every lane
+//!     here, and `/compute/execute`, resolves it from
+//!     [`AppState::ephemeral_oracle_key`], so the key `/oracle/public-key`
+//!     advertises is the key those lanes decrypt with (CU-148).
 
 use neo_os_compute::core::{
     capped_duration_ms, enforce_serialized_size_limit, normalize_target_chain, read_env,
@@ -40,8 +44,8 @@ use neo_os_compute::core::{
 use neo_os_compute::oracle::crypto::{
     format_key_material, resolve_confidential_payload as resolve_confidential_payload_js,
     resolve_encrypted_confidential_payload, resolve_encrypted_confidential_ref,
-    resolve_encrypted_payload, resolve_encrypted_token_ref, resolve_oracle_key_material,
-    KeystoreReadError, OracleKeyMaterial,
+    resolve_encrypted_payload, resolve_encrypted_token_ref,
+    resolve_oracle_key_material_with_ephemeral, KeystoreReadError, OracleKeyMaterial,
 };
 use neo_os_compute::oracle::fetch::{perform_oracle_fetch, TransportFailure, UpstreamFetchError};
 use neo_os_compute::oracle::message_reveal::{
@@ -98,7 +102,7 @@ pub fn handle_oracle_decrypt(
     let read_message = |request: &ReadMessageRequest| read_message_from_chain(request, &transport);
     let deriver = refuse_legacy_master_derivation;
     let now_seconds = io_plane.now_ms() as f64 / 1000.0;
-    let mut rng = os_rng();
+    let mut ephemeral = || state.ephemeral_oracle_key();
     let (status, body) = handle_oracle_decrypt_port(
         payload,
         env_reader,
@@ -107,7 +111,7 @@ pub fn handle_oracle_decrypt(
         &keystore_reader,
         REPO_ROOT,
         &warn_log,
-        &mut rng,
+        &mut ephemeral,
         &read_message,
     );
     Ok(DispatchOutcome { status, body })
@@ -125,7 +129,7 @@ pub fn handle_oracle_message_reveal(
     let read_message = |request: &ReadMessageRequest| read_message_from_chain(request, &transport);
     let deriver = refuse_legacy_master_derivation;
     let now_seconds = io_plane.now_ms() as f64 / 1000.0;
-    let mut rng = os_rng();
+    let mut ephemeral = || state.ephemeral_oracle_key();
     let (status, body) = handle_message_reveal(
         payload,
         now_seconds,
@@ -134,7 +138,7 @@ pub fn handle_oracle_message_reveal(
         &keystore_reader,
         REPO_ROOT,
         &warn_log,
-        &mut rng,
+        &mut ephemeral,
         &read_message,
     );
     Ok(DispatchOutcome { status, body })
@@ -147,16 +151,8 @@ pub fn handle_oracle_public_key(
 ) -> Result<DispatchOutcome, RuntimeError> {
     let overlay = state.overlay.read().expect("overlay lock").merged_map();
     let env_reader: EnvReader = &|name: &str| overlay.get(name).cloned();
-    let mut rng = os_rng();
-    let key = resolve_oracle_key_material(
-        env_reader,
-        &refuse_legacy_master_derivation,
-        &keystore_reader,
-        REPO_ROOT,
-        &warn_log,
-        &mut rng,
-    )
-    .map_err(|message| http_error(400, sanitize_error_message(&message)))?;
+    let key = oracle_key_material(state, env_reader)
+        .map_err(|message| http_error(400, sanitize_error_message(&message)))?;
     Ok(DispatchOutcome::ok(json!({
         "algorithm": key.algorithm,
         "public_key": key.public_key_raw,
@@ -179,13 +175,6 @@ fn warn_log(level: &str, event: &str, detail: &str) {
         "{}",
         json!({ "level": level, "msg": event, "detail": detail })
     );
-}
-
-/// `crypto.getRandomValues` — the ephemeral-key fallback needs real entropy.
-fn os_rng() -> impl FnMut(&mut [u8]) {
-    use rand::RngCore;
-    let mut os = rand::rngs::OsRng;
-    move |buffer: &mut [u8]| os.fill_bytes(buffer)
 }
 
 /// `readKeystoreFile` over the enclave filesystem: ENOENT → the optional
@@ -226,7 +215,7 @@ fn build_oracle_response(
     let mut key = placeholder_key();
     let mut key_resolved = false;
     if !confidential_direct.is_empty() || !confidential_ref.is_empty() {
-        key = oracle_key_material(env_reader, &mut os_rng())
+        key = oracle_key_material(state, env_reader)
             .map_err(|message| http_error(400, sanitize_error_message(&message)))?;
         key_resolved = true;
     }
@@ -240,7 +229,7 @@ fn build_oracle_response(
         && (!resolve_encrypted_payload(&resolved).is_empty()
             || !resolve_encrypted_token_ref(&resolved).is_empty())
     {
-        key = oracle_key_material(env_reader, &mut os_rng())
+        key = oracle_key_material(state, env_reader)
             .map_err(|message| http_error(400, sanitize_error_message(&message)))?;
     }
 
@@ -367,18 +356,27 @@ fn build_oracle_response(
     })
 }
 
-/// The key-material tree with legacy master derivation hard-disabled.
+/// The key-material tree with legacy master derivation hard-disabled, and the
+/// ephemeral fallback bound to the process-lifetime key in [`AppState`].
+///
+/// Binding the fallback here rather than letting the lane mint its own key is
+/// what makes the advertised material usable: `/oracle/public-key` returns
+/// exactly what [`AppState::ephemeral_oracle_key`] holds, so the same bytes
+/// decrypt on every lane that consumes this key. The remaining steps of the
+/// tree — the configured source, the sealed/keystore source, the refusal
+/// outside development — are `neo_os_compute`'s and are unchanged.
 fn oracle_key_material(
+    state: &AppState,
     env_reader: EnvReader<'_>,
-    rng: &mut dyn FnMut(&mut [u8]),
 ) -> Result<OracleKeyMaterial, String> {
-    resolve_oracle_key_material(
+    let mut ephemeral = || state.ephemeral_oracle_key();
+    resolve_oracle_key_material_with_ephemeral(
         env_reader,
         &refuse_legacy_master_derivation,
         &keystore_reader,
         REPO_ROOT,
         &warn_log,
-        rng,
+        &mut ephemeral,
     )
 }
 

@@ -114,7 +114,7 @@ fn handle_ticket(
             "plaintext configured NeoDID salt is forbidden in production",
         ));
     }
-    let resolved = resolve_confidential_payload(body, &overlay_map, &env_trim)?;
+    let resolved = resolve_confidential_payload(state, body, &overlay_map, &env_trim)?;
 
     let env_reader: EnvReader = &|name: &str| overlay_map.get(name).cloned();
     let verify_id_token = |request: &Web3AuthVerifyRequest<'_>| {

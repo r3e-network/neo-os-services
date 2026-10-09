@@ -7,7 +7,13 @@
 
 use super::*;
 use base64::Engine as _;
+use neo_os_compute::oracle::crypto::{
+    decrypt_encrypted_token, AES_GCM_IV_LENGTH_BYTES, AES_GCM_TAG_LENGTH_BYTES,
+    ORACLE_ENVELOPE_ALGORITHM, ORACLE_ENVELOPE_INFO, ORACLE_ENVELOPE_VERSION,
+};
 use serde_json::json;
+
+use crate::oracle_read::handle_oracle_public_key;
 
 #[path = "support.rs"]
 #[allow(clippy::duplicate_mod)] // intentional: one shared doubles file per test module
@@ -713,37 +719,165 @@ fn dispatch_classifies_and_auth_gates_the_flipped_route() {
 // branch is removed, because the only way it could produce a wrap key is the
 // legacy Secrets Manager master derivation this host refuses by policy, so it
 // could never have succeeded here.
+//
+// The ephemeral key itself is process-lifetime, not per resolution, and every
+// lane that consumes it resolves it from `AppState::ephemeral_oracle_key`. The
+// tests below pin that from three directions: the endpoint's own two answers,
+// the endpoint against the fold's resolver, and a real seal-to-advertised-key
+// round trip through `/compute/execute`.
 // ---------------------------------------------------------------------------
 
-/// The overlay as the fold sees it, plus the same trimming reader the fold builds
-/// (`compute_execute.rs:62`). The trim matters: the production check compares the
-/// trimmed value, so a padded `NODE_ENV` must still be recognised.
-fn material_env(
+/// The overlay as the fold sees it, the same trimming reader the fold builds
+/// (`compute_execute.rs`), and the state that owns the process-lifetime key. The
+/// trim matters: the production check compares the trimmed value, so a padded
+/// `NODE_ENV` must still be recognised.
+#[allow(clippy::type_complexity)]
+fn material_state(
     overlay: &[(&str, &str)],
 ) -> (
+    TestState,
     std::collections::BTreeMap<String, String>,
     impl Fn(&str) -> String,
 ) {
-    let map: std::collections::BTreeMap<String, String> = overlay
-        .iter()
-        .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
-        .collect();
+    let harness = compute_harness(overlay);
+    let map = harness.state.overlay.read().expect("overlay").merged_map();
     let lookup = map.clone();
-    (map, move |name: &str| {
+    let env_trim = move |name: &str| {
         lookup
             .get(name)
             .map(|value| value.trim().to_string())
             .unwrap_or_default()
+    };
+    (harness, map, env_trim)
+}
+
+/// Seal `plaintext` to an advertised raw X25519 public key in the v2 envelope
+/// `neo_os_compute::oracle::crypto` opens: X25519 ECDH → HKDF-SHA256 (salt = the
+/// recipient public key, info = envelope info ‖ sender ‖ recipient) →
+/// AES-256-GCM, with `ct` and `tag` carried as separate base64 fields.
+///
+/// This is the CALLER's side, and it is deliberately an independent
+/// implementation: aws-lc-rs's X25519 and AES-256-GCM, not the
+/// curve25519-dalek/aes-gcm pair the enclave decrypts with. An envelope it
+/// produces can therefore only open if both sides agree on the wire format and
+/// on the key.
+fn seal_to_public_key(recipient_public_key_b64: &str, plaintext: &str) -> String {
+    use aws_lc_rs::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
+    use aws_lc_rs::agreement::{agree_ephemeral, EphemeralPrivateKey, UnparsedPublicKey, X25519};
+    use aws_lc_rs::rand::{SecureRandom as _, SystemRandom};
+    use base64::Engine as _;
+    use hkdf::Hkdf;
+    use sha2::Sha256;
+
+    let engine = base64::engine::general_purpose::STANDARD;
+    let recipient_public = engine
+        .decode(recipient_public_key_b64)
+        .expect("the advertised public key is base64");
+    assert_eq!(
+        recipient_public.len(),
+        32,
+        "an X25519 public key is 32 bytes"
+    );
+
+    let rng = SystemRandom::new();
+    let sender_private = EphemeralPrivateKey::generate(&X25519, &rng).expect("sender key");
+    let sender_public = sender_private
+        .compute_public_key()
+        .expect("sender public key")
+        .as_ref()
+        .to_vec();
+
+    let mut aes_key = [0u8; 32];
+    agree_ephemeral(
+        sender_private,
+        UnparsedPublicKey::new(&X25519, recipient_public.as_slice()),
+        aws_lc_rs::error::Unspecified,
+        |shared| {
+            let mut info = Vec::with_capacity(ORACLE_ENVELOPE_INFO.len() + 64);
+            info.extend_from_slice(ORACLE_ENVELOPE_INFO);
+            info.extend_from_slice(&sender_public);
+            info.extend_from_slice(&recipient_public);
+            Hkdf::<Sha256>::new(Some(recipient_public.as_slice()), shared)
+                .expand(&info, &mut aes_key)
+                .map_err(|_| aws_lc_rs::error::Unspecified)
+        },
+    )
+    .expect("x25519 agreement");
+
+    let mut iv = [0u8; AES_GCM_IV_LENGTH_BYTES];
+    rng.fill(&mut iv).expect("envelope nonce");
+
+    let sealing =
+        LessSafeKey::new(UnboundKey::new(&AES_256_GCM, &aes_key).expect("aes-256-gcm key"));
+    let mut in_out = plaintext.as_bytes().to_vec();
+    sealing
+        .seal_in_place_append_tag(Nonce::assume_unique_for_key(iv), Aad::empty(), &mut in_out)
+        .expect("seal");
+    let tag = in_out.split_off(in_out.len() - AES_GCM_TAG_LENGTH_BYTES);
+
+    engine.encode(
+        json!({
+            "v": ORACLE_ENVELOPE_VERSION,
+            "alg": ORACLE_ENVELOPE_ALGORITHM,
+            "epk": engine.encode(&sender_public),
+            "iv": engine.encode(iv),
+            "ct": engine.encode(&in_out),
+            "tag": engine.encode(&tag),
+        })
+        .to_string(),
+    )
+}
+
+#[test]
+fn the_envelope_sealer_the_end_to_end_test_uses_is_pinned_against_a_fixed_key() {
+    // The end-to-end test below proves the advertised key is the computed key
+    // only if the sealer itself is correct: a broken sealer would fail for its
+    // own reasons and the failure would be misread as the key split this slice
+    // fixes. This pins the sealer against the fixed golden recipient key whose
+    // envelopes the worker suite already decrypts.
+    let configured = parse_configured_oracle_key_material(&|name: &str| {
+        (name == "MORPHEUS_ORACLE_KEY_MATERIAL_JSON").then(|| KEY_MATERIAL_JSON.to_string())
     })
+    .expect("the golden key material parses")
+    .expect("the golden key material is configured");
+    assert_eq!(configured.public_key_raw, RECIPIENT_PUBLIC_RAW_B64);
+
+    let sealed = seal_to_public_key(RECIPIENT_PUBLIC_RAW_B64, "sealed-by-the-test-client");
+    assert_eq!(
+        decrypt_encrypted_token(&sealed, &configured)
+            .expect("the golden key opens what the test client sealed")
+            .as_deref(),
+        Some("sealed-by-the-test-client")
+    );
+
+    // And the sealer is not accidentally key-agnostic: a different recipient
+    // key must not open it.
+    let other = key_material_for_public_key("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "AA==");
+    assert!(decrypt_encrypted_token(&sealed, &other).is_err());
+}
+
+/// A key material whose public half is `public_key_raw` — enough for the
+/// negative half of the sealer pin above, which only needs the derivation to
+/// differ, never a working key.
+fn key_material_for_public_key(public_key_raw: &str, private_key_pkcs8: &str) -> OracleKeyMaterial {
+    neo_os_compute::oracle::crypto::format_key_material(
+        base64::engine::general_purpose::STANDARD
+            .decode(public_key_raw)
+            .expect("public key is base64"),
+        base64::engine::general_purpose::STANDARD
+            .decode(private_key_pkcs8)
+            .expect("private key is base64"),
+        "test",
+    )
 }
 
 #[test]
 fn an_ephemeral_key_is_generated_outside_production_when_no_stable_source_exists() {
-    let (overlay, env_trim) = material_env(&[
+    let (harness, overlay, env_trim) = material_state(&[
         ("MORPHEUS_NETWORK", TEST_NETWORK),
         ("MORPHEUS_ALLOW_EPHEMERAL_KEY", "true"),
     ]);
-    let key = oracle_key_material(&overlay, &env_trim).expect("an ephemeral key");
+    let key = oracle_key_material(&harness.state, &overlay, &env_trim).expect("an ephemeral key");
     assert_eq!(key.source, "ephemeral-memory");
     assert_eq!(key.algorithm, "X25519-HKDF-SHA256-AES-256-GCM");
     // A real key pair, not a placeholder: the public half is 32 bytes.
@@ -756,12 +890,13 @@ fn an_ephemeral_key_never_reaches_production() {
     // The production refusal stands and runs before the key is generated, so the
     // fact that the branch now works cannot widen production's attack surface.
     for node_env in ["production", " PrOdUcTiOn "] {
-        let (overlay, env_trim) = material_env(&[
+        let (harness, overlay, env_trim) = material_state(&[
             ("MORPHEUS_NETWORK", TEST_NETWORK),
             ("MORPHEUS_ALLOW_EPHEMERAL_KEY", "true"),
             ("NODE_ENV", node_env),
         ]);
-        let error = oracle_key_material(&overlay, &env_trim).expect_err("production refuses");
+        let error = oracle_key_material(&harness.state, &overlay, &env_trim)
+            .expect_err("production refuses");
         assert_eq!(error.status, 400, "{node_env}");
         assert_eq!(
             error.message,
@@ -774,8 +909,9 @@ fn an_ephemeral_key_never_reaches_production() {
 fn an_ephemeral_key_is_not_reachable_unless_the_flag_is_set() {
     // Without the flag the request fails closed exactly as before: opening the
     // branch must not make an ephemeral key the silent default.
-    let (overlay, env_trim) = material_env(&[("MORPHEUS_NETWORK", TEST_NETWORK)]);
-    let error = oracle_key_material(&overlay, &env_trim).expect_err("no flag, no key");
+    let (harness, overlay, env_trim) = material_state(&[("MORPHEUS_NETWORK", TEST_NETWORK)]);
+    let error =
+        oracle_key_material(&harness.state, &overlay, &env_trim).expect_err("no flag, no key");
     assert_eq!(error.status, 400);
     assert_eq!(
         error.message,
@@ -787,12 +923,12 @@ fn an_ephemeral_key_is_not_reachable_unless_the_flag_is_set() {
 fn a_configured_key_still_wins_over_an_ephemeral_one() {
     // The order is unchanged: a configured or provisioned source is used, and the
     // ephemeral branch is only ever the last resort.
-    let (overlay, env_trim) = material_env(&[
+    let (harness, overlay, env_trim) = material_state(&[
         ("MORPHEUS_NETWORK", TEST_NETWORK),
         ("MORPHEUS_ALLOW_EPHEMERAL_KEY", "true"),
         ("MORPHEUS_ORACLE_KEY_MATERIAL_JSON", KEY_MATERIAL_JSON),
     ]);
-    let key = oracle_key_material(&overlay, &env_trim).expect("the configured key");
+    let key = oracle_key_material(&harness.state, &overlay, &env_trim).expect("the configured key");
     assert_ne!(key.source, "ephemeral-memory");
     assert_eq!(key.public_key_raw, RECIPIENT_PUBLIC_RAW_B64);
 }
@@ -805,14 +941,15 @@ fn a_sealed_keystore_no_longer_claims_a_capability_this_host_lacks() {
         "MORPHEUS_ORACLE_SEALED_KEYSTORE_JSON",
         "MORPHEUS_ORACLE_SEALED_KEYSTORE_BASE64",
     ] {
-        let (overlay, env_trim) = material_env(&[
+        let (harness, overlay, env_trim) = material_state(&[
             ("MORPHEUS_NETWORK", TEST_NETWORK),
             (
                 name,
                 r#"{"public_key_raw":"AA==","sealed_private_key":"BB=="}"#,
             ),
         ]);
-        let error = oracle_key_material(&overlay, &env_trim).expect_err("unavailable");
+        let error =
+            oracle_key_material(&harness.state, &overlay, &env_trim).expect_err("unavailable");
         assert_eq!(error.status, 400, "{name}");
         assert_eq!(
             error.message,
@@ -835,27 +972,103 @@ fn a_sealed_keystore_no_longer_claims_a_capability_this_host_lacks() {
                     .unwrap_or_default()
             }
         };
-        let key = oracle_key_material(&overlay_with_flag, &env_trim).expect("ephemeral");
+        let key =
+            oracle_key_material(&harness.state, &overlay_with_flag, &env_trim).expect("ephemeral");
         assert_eq!(key.source, "ephemeral-memory", "{name}");
     }
 }
 
 #[test]
-fn an_ephemeral_key_is_minted_per_resolution_and_never_leaks_between_requests() {
-    // This is the sharp edge of the branch, pinned rather than left to a comment:
-    // `docs/ENVIRONMENT.md` calls the ephemeral key process-lifetime, but the
-    // resolution runs per request, so two resolutions produce two different keys.
-    // That matches the sibling `/oracle/key` lane today and it is why the key cannot
-    // carry a ciphertext across requests — but it must never silently become a
-    // STABLE key, which is the failure that would matter. Two calls must differ.
-    let (overlay, env_trim) = material_env(&[
+fn the_ephemeral_key_is_one_process_lifetime_key_not_one_per_resolution() {
+    // `docs/ENVIRONMENT.md` is the contract: "a process-lifetime ephemeral
+    // oracle key ... decryptability ends with the process". This test used to
+    // assert the OPPOSITE — that two resolutions produce two keys — which is the
+    // mismatch the review found: /oracle/public-key advertised key A while
+    // /compute/execute resolved key B, so the advertised key opened nothing.
+    let (harness, overlay, env_trim) = material_state(&[
         ("MORPHEUS_NETWORK", TEST_NETWORK),
         ("MORPHEUS_ALLOW_EPHEMERAL_KEY", "true"),
     ]);
-    let first = oracle_key_material(&overlay, &env_trim).expect("first key");
-    let second = oracle_key_material(&overlay, &env_trim).expect("second key");
-    assert_ne!(
-        first.public_key_raw_bytes, second.public_key_raw_bytes,
-        "an ephemeral key must not be reused across resolutions"
+    let first = oracle_key_material(&harness.state, &overlay, &env_trim).expect("first resolution");
+    let second =
+        oracle_key_material(&harness.state, &overlay, &env_trim).expect("second resolution");
+    assert_eq!(first.source, "ephemeral-memory");
+    assert_eq!(
+        first.public_key_raw, second.public_key_raw,
+        "an ephemeral key must be process-lifetime: a per-resolution key cannot be advertised and then decrypted with"
     );
+    assert_eq!(first.public_key_raw_bytes, second.public_key_raw_bytes);
+    // The same key the state hands out on its own, so nothing re-mints behind
+    // the resolver's back.
+    assert_eq!(
+        first.public_key_raw,
+        harness.state.ephemeral_oracle_key().public_key_raw
+    );
+}
+
+#[test]
+fn the_public_key_endpoint_serves_the_key_the_compute_fold_resolves() {
+    // The invariant in one comparison, without any crypto in the way: what
+    // `/oracle/public-key` advertises is what `/compute/execute` resolves.
+    let overlay = [
+        ("MORPHEUS_NETWORK", TEST_NETWORK),
+        ("NITRO_API_TOKEN", "s3cret"),
+        ("MORPHEUS_ALLOW_EPHEMERAL_KEY", "true"),
+    ];
+    let (harness, map, env_trim) = material_state(&overlay);
+
+    let advertised = handle_oracle_public_key(&harness.state, &json!({})).expect("public-key lane");
+    assert_eq!(advertised.status, 200);
+    assert_eq!(advertised.body["key_source"], "ephemeral-memory");
+    let public_key = advertised.body["public_key"]
+        .as_str()
+        .expect("public_key is a string")
+        .to_string();
+
+    // A second call must not move the key either — the endpoint is not the only
+    // reader of a per-request value.
+    let advertised_again =
+        handle_oracle_public_key(&harness.state, &json!({})).expect("public-key lane, again");
+    assert_eq!(advertised_again.body["public_key"], json!(public_key));
+
+    let resolved =
+        oracle_key_material(&harness.state, &map, &env_trim).expect("the compute fold's key");
+    assert_eq!(
+        resolved.public_key_raw, public_key,
+        "the fold must resolve the key the endpoint advertises"
+    );
+    assert_eq!(resolved.source, "ephemeral-memory");
+}
+
+#[test]
+fn a_payload_sealed_to_the_advertised_key_decrypts_on_the_compute_route() {
+    // The end-to-end shape of the defect: fetch what the host advertises,
+    // encrypt to exactly that, and let compute decrypt it. On the per-resolution
+    // code this fails with "aes-gcm decryption failed" — the advertised key is
+    // not the key compute holds.
+    let overlay = [
+        ("MORPHEUS_NETWORK", TEST_NETWORK),
+        ("NITRO_API_TOKEN", "s3cret"),
+        ("MORPHEUS_ALLOW_EPHEMERAL_KEY", "true"),
+    ];
+    let (harness, _map, _env_trim) = material_state(&overlay);
+
+    let advertised = handle_oracle_public_key(&harness.state, &json!({})).expect("public-key lane");
+    assert_eq!(advertised.status, 200);
+    assert_eq!(advertised.body["key_source"], "ephemeral-memory");
+    let public_key = advertised.body["public_key"]
+        .as_str()
+        .expect("public_key is a string");
+
+    let sealed = seal_to_public_key(public_key, r#"{"function":"hash.sha256","input":{"z":1}}"#);
+
+    let response = handle_compute_execute(&harness.state, &json!({ "encrypted_params": sealed }))
+        .expect("the advertised key decrypts on the compute route");
+    assert_eq!(response["mode"], "builtin");
+    assert_eq!(response["function"], "hash.sha256");
+    // The plaintext that computed is the plaintext that was sealed.
+    let expected = neo_os_core::sha256_hex(
+        stable_stringify(&JsValue::from_json(&json!({ "z": 1 }))).as_bytes(),
+    );
+    assert_eq!(response["result"]["digest"], json!(expected));
 }
