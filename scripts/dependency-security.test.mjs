@@ -131,7 +131,7 @@ test('the apps/web closure resolves to patched versions', () => {
   assert.equal(webManifest.devDependencies?.['eslint-config-next'], '^15.5.26');
   assert.equal(webManifest.devDependencies?.vitest, '^4.1.11');
   assert.equal(rootManifest.overrides?.['fast-uri'], '3.1.6');
-  assert.equal(rootManifest.overrides?.sharp, '0.35.4');
+  assert.equal(rootManifest.overrides?.sharp, '0.35.5');
   assert.equal(rootManifest.overrides?.['source-map-js'], '1.2.2');
 
   const floors = {
@@ -142,7 +142,7 @@ test('the apps/web closure resolves to patched versions', () => {
     'fast-uri': '3.1.6',
     browserslist: '4.28.7',
     'baseline-browser-mapping': '2.11.0',
-    sharp: '0.35.4',
+    sharp: '0.35.5',
   };
   for (const [name, floor] of Object.entries(floors)) {
     for (const { key, version } of lockVersions(name))
@@ -175,6 +175,12 @@ test('high severity transitive advisories stay above their remediation floors', 
     // postcss, so the only route is the root override below.
     'source-map-js': {
       '1.': '1.2.2',
+    },
+    // GHSA-wq5f-xc86-pv6w: sharp < 0.35.5, high, reached through next's
+    // optionalDependencies. 0.35.5 is the patched release and, at the time of
+    // writing, the newest on the official registry.
+    sharp: {
+      '0.': '0.35.5',
     },
   };
 
