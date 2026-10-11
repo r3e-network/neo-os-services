@@ -302,6 +302,23 @@ for (const [lane, source] of Object.entries({
     red(f.run(), /unreviewed.*new-consumer/);
   });
 }
+test('refusing an unreviewed consumer tells a reader how to resolve it', (t) => {
+  // A gate that reddens every branch without naming the remedy will be worked
+  // around, so the refusal must carry the policy path, the two classifications
+  // and the hash of the refusing bytes.
+  const f = fixture(t);
+  f.put('new-consumer.mjs', 'fetch("/vrf/random");');
+  const result = f.run();
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  const message = result.stdout + result.stderr;
+  assert.match(message, /unreviewed integration input new-consumer\.mjs/);
+  assert.ok(message.includes(policyPath), `refusal does not name ${policyPath}`);
+  assert.ok(message.includes(sha('fetch("/vrf/random");').sha256), 'refusal omits the hash');
+  for (const classification of ['non-value', 'value-bearing-known-debt']) {
+    assert.ok(message.includes(classification), `refusal omits ${classification}`);
+  }
+  assert.match(message, /never add one to silence the gate/);
+});
 test('base comparison catches opaque dynamically constructed consumers', (t) => {
   const f = fixture(t);
   f.put('opaque.mjs', 'fetch(["/v", "rf/", "ran", "dom"].join(""));');

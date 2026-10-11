@@ -219,7 +219,11 @@ function main() {
     if (MARKER.test(bytes.toString('utf8')) || changedSet.has(path)) {
       requireRule(
         input,
-        `unreviewed integration input ${path}; policy review required (caller flags are not proof)`
+        `unreviewed integration input ${path}; policy review required (caller flags are not proof). ` +
+          `Resolve it by reviewing these bytes and adding one review to ${POLICY} whose inputs ` +
+          `bind "${path}" to sha256 ${hash(bytes)}, classified either "non-value" with a ` +
+          `justification, or "value-bearing-known-debt" under the approved DEC-CU-22 entry. ` +
+          `An entry is that review; never add one to silence the gate.`
       );
     }
   }
