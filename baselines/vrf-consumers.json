@@ -537,6 +537,17 @@
           "sha256": "18a090b5c17971e2878e92ccad8c7716713e1de522163032d647a0298cff501a"
         }
       }
+    },
+    {
+      "consumer": "cu-179-randomized-input-harness",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "CU-179 offline randomized-input harness for the relayer and enclave request plane. It draws every case from three committed seeds through its own xorshift32, so it holds no entropy source, and it reads no random result: the \"random\" it names is the router request-type label, and the oracle-random, feed, price, envelope and sponsor paths are asserted only on shapes, refusals, request-id stringification and clamp monotonicity. Its inputs are synthetic and it awards no value. This review covers this file and no other part of the CU-179 change.",
+      "inputs": {
+        "fuzz-testing/services-inputs.mjs": {
+          "sha256": "002dbab3f199616f7ff8bfd488eebfc144686c9f89a2720dd5e3c1a69739182c"
+        }
+      }
     }
   ]
 }
