@@ -143,7 +143,7 @@
           "sha256": "b8db1b3a52cfa12198d62f9a42f2613a612979a197f80aec5558ec345327a845"
         },
         "workers/nitro-enclave-host/tests/unit/compute_execute.rs": {
-          "sha256": "c8b97b43472f49ee744903caa9717e0da422265842f0e5dbb1f7e443b91e9c77"
+          "sha256": "1b1a06ae4d9e83e87d97661dd1fb487f8397a07426a14d257d1538e385bab3a1"
         },
         "workers/nitro-enclave-host/tests/unit/provision.rs": {
           "sha256": "aa13b8b07ee0d8e1d5b3b7d7e3e97485f0348b494456c5811307c1d539553da2"
@@ -306,7 +306,7 @@
           "sha256": "6e95c9a9dd36cd5ebcc20d03c5549d6285b0f70cba4c6f6e7a2830258f78ed0e"
         },
         "workers/morpheus-relayer/src/router.js": {
-          "sha256": "57034057da8038d191d0ae79e0b1fad0fb526cb47a30c6fc63664f2758e0a81a"
+          "sha256": "919586c7c4c574c20a69506d139b394ac8fc2c380dacbf55ef9674b761d5b267"
         },
         "workers/neo-os-relayer/src/config_introspect.rs": {
           "sha256": "108eb7baec8e545a7addee153d7ef3609ff959c440164e34b25e8fa31f895666"
@@ -356,7 +356,7 @@
       "justification": "Operational configuration or policy validation names the VRF lane but does not use its output to choose a reward or settlement. This exact-file review does not authorize live operations or classify downstream consumers.",
       "inputs": {
         "package-lock.json": {
-          "sha256": "8b600feb302a4b149c7719a0e71a070e3228b862b679f689145c2d0146ff519b"
+          "sha256": "8c28d18374825d0eec0dec37b319f8573e8d7aae95c5f9cdccfa02aafd373a93"
         }
       }
     },
