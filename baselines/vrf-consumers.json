@@ -548,6 +548,20 @@
           "sha256": "002dbab3f199616f7ff8bfd488eebfc144686c9f89a2720dd5e3c1a69739182c"
         }
       }
+    },
+    {
+      "consumer": "cu-230-policy-binding-freshness",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "CU-230 policy-binding freshness reporter and its tests. The reporter reads this policy, hashes the bytes of each bound input with node:crypto sha256, compares them with the recorded hash and prints the difference; with --base it reads the same paths at a base commit through git show to say whether the change under test caused the staleness. It holds no entropy source and consumes no random result: the only randomness-shaped strings in either file are the name of the VRF-consumer gate they report for and a marked fixture the tests use to build a repository that gate accepts. Neither file reaches a chain, wallet, database or payout, and neither awards value. This review covers these two files and no other part of the CU-230 change.",
+      "inputs": {
+        "scripts/check-policy-binding-freshness.mjs": {
+          "sha256": "471092018242f7cc6410b497234489b26a5dab47a07cb91f0bdc347818ee075b"
+        },
+        "scripts/check-policy-binding-freshness.test.mjs": {
+          "sha256": "68e07598cf832eeb422e32fc84d0c8cf8f474ec936b99bd89ab2a0adfed820de"
+        }
+      }
     }
   ]
 }

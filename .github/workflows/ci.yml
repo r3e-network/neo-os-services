@@ -64,6 +64,24 @@ jobs:
       # Exercise gate regressions before any repository gate can stop the job.
       - run: npm run test:scripts
       - run: node --test packages/shared/src/public-runtime.test.mjs
+      # A dependency bump changes package-lock.json, which is a reviewed input of
+      # baselines/vrf-consumers.json, so the bump invalidates that binding. The VRF gate
+      # refuses that, but it is step 23 of this job and the audit at step 7 is red for
+      # advisories it did not introduce, so the bump's own run never reaches it — which is
+      # how the same stale lockfile binding landed three times in one week and was each
+      # time cleared by a later, unrelated branch. This reports every stale binding here,
+      # above the audit and above the drift guard that rewrites package-lock.json in place,
+      # and on a pull request it says which ones this change caused.
+      - name: Policy bindings are fresh in the change that touches them
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+            node scripts/check-policy-binding-freshness.mjs --base "$BASE_SHA"
+          else
+            node scripts/check-policy-binding-freshness.mjs
+          fi
       # Blocking, and scoped: production dependencies may carry no advisory at or above
       # moderate, and every dev-only advisory needs a dated, owner-assigned entry in
       # config/npm-audit-exceptions.json (today GHSA-vfj7-8cjw-p6xm: braces behind
