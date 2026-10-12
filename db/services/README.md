@@ -26,6 +26,7 @@ Apply the migrations in order:
 22. `20260806231613_distributed_rate_limits.sql`
 23. `20260908040427_relayer_delivery_v2.sql`
 24. `20260920102300_relayer_delivery_completion_identity.sql`
+25. `20261012120000_relayer_delivery_sponsor.sql`
 
 Optional:
 
@@ -40,6 +41,7 @@ Optional:
 - compute job records
 - feed snapshots
 - relayer durable jobs
+- sponsor intent journal and reserved fee/action budgets for the delivery kind `sponsor`
 - automation jobs and automation runs
 - built-in compute function catalog
 - RLS policies for project-owned data

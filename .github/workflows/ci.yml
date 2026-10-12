@@ -206,14 +206,15 @@ jobs:
           echo "$RUNNER_TEMP/local-chain-bin" >> "$GITHUB_PATH"
       - name: Local-chain relayer scan and delivery acceptance
         run: python3 scripts/test-relayer-local-chain.py
-      - name: Durable delivery PostgreSQL commit and lease acceptance
+      - name: Install PostgreSQL for delivery acceptance
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql
           for candidate in /usr/lib/postgresql/*/bin; do
-            if test -x "$candidate/initdb"; then export PATH="$candidate:$PATH"; fi
+            if test -x "$candidate/initdb"; then echo "$candidate" >> "$GITHUB_PATH"; fi
           done
-          bash scripts/test-relayer-delivery-v2.sh
+      - name: Durable delivery PostgreSQL commit and lease acceptance
+        run: bash scripts/test-relayer-delivery-v2.sh
       - name: Guard against Cargo.lock drift
         run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Checkout NeoNexus contract consumer

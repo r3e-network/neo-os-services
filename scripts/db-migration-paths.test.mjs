@@ -19,10 +19,12 @@ const root = path.resolve(import.meta.dirname, '..');
 const MIGRATIONS_DIR = 'db/services/migrations';
 
 // Every DeliveryJob schema change the acceptance script must apply. neo-os-web's
-// protocol registry names these two files as the DeliveryJob authority.
+// protocol registry names the first two files as the DeliveryJob authority; the
+// sponsor file adds the sponsor kind, intent journal and budget tables beside it.
 const DELIVERY_MIGRATIONS = [
   '20260908040427_relayer_delivery_v2.sql',
   '20260920102300_relayer_delivery_completion_identity.sql',
+  '20261012120000_relayer_delivery_sponsor.sql',
 ];
 
 test('no tracked file points at the retired top-level migration directory', () => {
