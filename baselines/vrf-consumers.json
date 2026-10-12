@@ -431,7 +431,7 @@
           "sha256": "061b3b0dd159c6b23b61981f381c9210af5279cbc9145c001149e5cb3024ebb0"
         },
         "workers/nitro-enclave-host/src/lib.rs": {
-          "sha256": "6268673b23ccf27af2a64a6458462d776ec0bb8e2bb17d8d080ebce4834bbb0b"
+          "sha256": "be403ab1de54cc331f87fd8fd3a200ba2b6edee9159828da23a881985ef94eeb"
         },
         "workers/nitro-enclave-host/src/paymaster.rs": {
           "sha256": "f76867d383e27809f24412dfd752beccbff34f55a7e425481566bfea5a54a50c"
@@ -449,10 +449,10 @@
           "sha256": "61339dbade97261c9a55c7a3a7d0f3da504d08cf8303831da9252ef732d90b9d"
         },
         "workers/nitro-enclave-host/src/bin/enclave_host.rs": {
-          "sha256": "8dff50a86c716700e60c8550e2bf0edf952ad7870724a73464228635810d204f"
+          "sha256": "720bcabbe452a57317c4e7d5672f4a9f387599f6cc51d0e0af676e10c341ff9e"
         },
         "workers/nitro-enclave-host/src/feed_sign.rs": {
-          "sha256": "64455dc9ada7cd6b83e99dd0dfe29c8c4b0c9d65235583d840d5b8eda225a0a1"
+          "sha256": "98b6aa7b7934206d264628dad59d0ba8a27cd2dbe8665998c817f10fea9479fd"
         },
         "workers/nitro-enclave-host/src/feed_status.rs": {
           "sha256": "9ce7652b96b7d435decae2c0313a3d770ff40ee0b14e340475026304d4f9e372"
@@ -461,7 +461,7 @@
           "sha256": "7f0d1b64d586d22826727d3504865743269259c47446e12ae9e5f1079904c864"
         },
         "workers/nitro-enclave-host/src/state.rs": {
-          "sha256": "7192a3779756376f9e6d761d08ce4922504073121f54ccc7195965b18b201883"
+          "sha256": "64e9af2691779de84340f85f41a5ee1118dc9a2db72790ca5d125fe53bf271fe"
         },
         "workers/nitro-enclave-host/src/compute_execute.rs": {
           "sha256": "66c018136cb1cb0280351c479feeb4c434062ee45d89b4c6b942e9d8fe02503d"
@@ -560,6 +560,23 @@
         },
         "scripts/check-policy-binding-freshness.test.mjs": {
           "sha256": "68e07598cf832eeb422e32fc84d0c8cf8f474ec936b99bd89ab2a0adfed820de"
+        }
+      }
+    },
+    {
+      "consumer": "public-feed-quorum",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "The key-free public-source price quorum behind the feed PriceSource seam: a median of at least two independent venues, an inclusive 5 percent deviation guard, and a refusal when a single source would decide a quote. It fetches unauthenticated public market data and returns price numbers to the existing feed planner; it consumes no randomness, drives no payout, and adds no new signing or settlement lane. The HTTP-boundary suite entry is the host boot refusal for an unknown FEED_PRICE_PLANE, so a typo cannot fall back to the single-source plane. None of these inputs is a VRF consumer.",
+      "inputs": {
+        "workers/nitro-enclave-host/src/feed_public_quorum.rs": {
+          "sha256": "75736bef763a6d27273cf79b565074fd9ff3c38272fe69944d4e9452ce7740e7"
+        },
+        "workers/nitro-enclave-host/tests/unit/feed_public_quorum.rs": {
+          "sha256": "53137fc872c57a673411c17712af35c3e7a9a04027c91b471baaf899fa2d2656"
+        },
+        "deploy/nitro/enclave-host.test.mjs": {
+          "sha256": "57c49d8f913658434e78628f690f6c46c3074f7aef879a0de6573655d7066fa1"
         }
       }
     }

@@ -30,6 +30,7 @@ pub mod bridge;
 pub mod compute_execute;
 pub mod custody;
 pub mod dispatch;
+pub mod feed_public_quorum;
 pub mod feed_sign;
 pub mod feed_status;
 pub mod fulfill;

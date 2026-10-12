@@ -1148,7 +1148,11 @@ fn fetch_prices_recording(
 
 /// `Math.max(Number(FEED_TD_TIMEOUT_MS || 25000), 1000)` — an unparsable
 /// value is NaN in JS; the sane fallback here is the default.
-fn feed_td_timeout_ms(overlay: &BTreeMap<String, String>) -> u64 {
+///
+/// `pub(crate)` so the public-source quorum plane reads the ONE price-plane
+/// timeout knob instead of inventing a second one. The knob means "how long a
+/// price fetch may take", whichever venue set serves it.
+pub(crate) fn feed_td_timeout_ms(overlay: &BTreeMap<String, String>) -> u64 {
     let raw = overlay
         .get("FEED_TD_TIMEOUT_MS")
         .map(String::as_str)

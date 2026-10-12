@@ -149,10 +149,21 @@ pub trait BridgePlane: Send + Sync {
     ) -> BridgeReply;
 }
 
-/// The feed price plane: one batched TwelveData `/price` call over the
-/// enclave egress lane in production, a canned map in tests. The reply is
-/// keyed by the ORIGINAL request symbol — unmapped symbols and dropped
-/// quotes are simply absent (`missing` to the fold).
+/// The feed price plane for `/feed/sign`: what the enclave is willing to put a
+/// signature on.
+///
+/// Two implementations exist. `TwelveDataPrices` is one batched TwelveData
+/// `/price` call over the enclave egress lane; `PublicSourcePrices` is the
+/// key-free public-source quorum. The reply is keyed by the ORIGINAL request
+/// symbol — unmapped symbols and dropped quotes are simply absent (`missing` to
+/// the fold).
+///
+/// An implementation of this trait answers for numbers that will be SIGNED, so
+/// it carries the property that makes the signature mean something: **a single
+/// external party must not decide a value**. The keyed plane does not satisfy
+/// that and is the reason the quorum plane exists; a future implementation that
+/// does not aggregate independent sources is not an implementation of this
+/// seam's purpose, whatever it compiles to. See `docs/FEED-PUBLIC-QUORUM.md`.
 pub trait PriceSource: Send + Sync {
     fn fetch_prices(
         &self,

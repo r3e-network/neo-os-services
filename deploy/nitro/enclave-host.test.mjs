@@ -396,3 +396,29 @@ test('an unreviewed MORPHEUS_NETWORK stops the host before it listens', async ()
   assert.equal(result.stdout, '', 'the host must not report that it is listening');
   await assert.rejects(fetch(`http://127.0.0.1:${port}/health`), 'nothing may listen on the port');
 });
+
+test('an unknown FEED_PRICE_PLANE stops the host before it listens', async () => {
+  const port = await freePort();
+  // The price plane is dark and default-off (DEC-CU-30). An operator who types
+  // `public_quorum` must not be served by the single-source plane they thought
+  // they had replaced, so an unknown label is a refusal rather than a fallback.
+  const result = spawnSync(HOST_BIN, {
+    env: {
+      ...baseEnv(),
+      HOST: '127.0.0.1',
+      ENCLAVE_PORT: String(port),
+      NITRO_API_TOKEN: 'parity-suite-token',
+      MORPHEUS_NETWORK: 'testnet',
+      FEED_PRICE_PLANE: 'public_quorum',
+    },
+    encoding: 'utf8',
+    timeout: 20_000,
+  });
+  assert.equal(result.status, 1, `stderr: ${result.stderr}`);
+  assert.match(
+    result.stderr,
+    /refusing to serve — invalid FEED_PRICE_PLANE "public_quorum"; expected "twelvedata" or "public-quorum"/
+  );
+  assert.equal(result.stdout, '', 'the host must not report that it is listening');
+  await assert.rejects(fetch(`http://127.0.0.1:${port}/health`), 'nothing may listen on the port');
+});

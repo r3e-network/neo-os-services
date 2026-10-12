@@ -450,6 +450,10 @@ These are intentionally left unset in production unless you explicitly want the 
   English: Dev-only override that disables the Node permission model for script/WASM child processes (the model is ON by default). Ignored — fail closed — when `NODE_ENV=production`. Replaces the retired `SCRIPT_CHILD_ENABLE_PERMISSION_MODEL` toggle, which no longer has any effect.
   中文：仅用于开发的覆盖项：关闭脚本/WASM 子进程的 Node permission model（默认开启）。当 `NODE_ENV=production` 时该覆盖被忽略（fail closed）。取代已失效的 `SCRIPT_CHILD_ENABLE_PERMISSION_MODEL`。
 
+- `FEED_PRICE_PLANE`
+  English: Which price plane serves `/feed/sign` in the Nitro enclave host. Unset, empty or `twelvedata` keeps the keyed TwelveData single-source plane — the default, and what every running system has today. `public-quorum` selects the key-free public-source quorum (`docs/FEED-PUBLIC-QUORUM.md`): three venues, a median, a 5 % deviation guard, and a single source refused. Any other value refuses to boot instead of silently falling back. Built dark (DEC-CU-30): it ships with the next enclave build, not before.
+  中文：决定 Nitro enclave 主机的 `/feed/sign` 使用哪个价格通道。不写、留空或 `twelvedata` 使用带 key 的 TwelveData 单源通道——即默认值，也是当前所有运行中的系统所用的通道。`public-quorum` 选择无 key 的公开源 quorum（见 `docs/FEED-PUBLIC-QUORUM.md`）：三个数据源、取中位数、5% 偏差守卫，单一数据源直接拒绝。填写其他任何值都会拒绝启动，而不是静默回退。按 DEC-CU-30 以 dark 方式构建：随下一次 enclave 构建发布，在此之前不会生效。
+
 - `MORPHEUS_RELAYER_ENCLAVE_FULFILL`
   English: Enables the compute-in-enclave fulfillment lane in the relayer. Required in production for `random.generate`: when `NODE_ENV=production` and this flag is unset, VRF fulfillment refuses the relayer-local `crypto.randomBytes` fallback and fails closed as a terminal config error (no retry, no on-chain failure callback). Rollout note: activate together with `NODE_ENV=production` on relayer services or VRF fulfillment halts.
   中文：在 relayer 中启用 enclave 内计算履约通道。生产环境 `random.generate` 必需：当 `NODE_ENV=production` 且未设置本标志时，VRF 履约拒绝 relayer 本地 `crypto.randomBytes` 回退并以 terminal config error fail closed（不重试、不上链失败回调）。上线注意：需与 relayer 服务的 `NODE_ENV=production` 配套启用，否则 VRF 履约会停止。

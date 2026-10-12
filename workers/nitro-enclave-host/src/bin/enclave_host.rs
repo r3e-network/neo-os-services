@@ -30,12 +30,13 @@ use nitro_attest::release::NsmAttestation;
 
 use nitro_enclave_host::custody::{CustodySigner, ReqwestCustodyTransport};
 use nitro_enclave_host::dispatch::dispatch;
+use nitro_enclave_host::feed_public_quorum::{PublicSourcePrices, ReqwestPublicQuotes};
 use nitro_enclave_host::feed_sign::TwelveDataPrices;
 use nitro_enclave_host::feed_status::PricePlaneStatus;
 use nitro_enclave_host::kms_release::ProductionKms;
 use nitro_enclave_host::neodid::ReqwestJwksFetcher;
 use nitro_enclave_host::overlay::EnvOverlay;
-use nitro_enclave_host::state::{AppState, KmsDiag};
+use nitro_enclave_host::state::{AppState, KmsDiag, PriceSource};
 use nitro_enclave_host::DispatchOutcome;
 use nitro_enclave_host::RUNTIME_NAME;
 
@@ -104,6 +105,32 @@ fn main() {
     // writers agreeing.
     let price_plane_status = Arc::new(Mutex::new(PricePlaneStatus::default()));
 
+    // Which plane serves `/feed/sign`. DEC-CU-30: built dark and default-off —
+    // the keyed TwelveData plane stays in front until an operator names the
+    // public-source quorum, and an unknown label refuses to boot instead of
+    // silently serving the single-source plane the operator thought they had
+    // replaced. Same fail-closed disposition `resolve_network` applies below.
+    let price_plane = match nitro_enclave_host::feed_public_quorum::select_price_plane(
+        overlay
+            .read()
+            .expect("overlay lock")
+            .get("FEED_PRICE_PLANE"),
+    ) {
+        Ok(plane) => plane,
+        Err(message) => {
+            eprintln!("enclave_host: refusing to serve — {message}");
+            std::process::exit(1);
+        }
+    };
+    let price_plane_impl: Box<dyn PriceSource> = match price_plane {
+        nitro_enclave_host::feed_public_quorum::PricePlane::TwelveData => {
+            Box::new(TwelveDataPrices::new(overlay.clone()))
+        }
+        nitro_enclave_host::feed_public_quorum::PricePlane::PublicQuorum => Box::new(
+            PublicSourcePrices::new(Box::new(ReqwestPublicQuotes), overlay.clone()),
+        ),
+    };
+
     let app_state = Arc::new(AppState {
         overlay: overlay.clone(),
         runtime_token_kms_version: AtomicU64::new(0),
@@ -113,7 +140,7 @@ fn main() {
             Box::new(ReqwestCustodyTransport::new()),
         )),
         kms: Box::new(ProductionKms::new()),
-        price: Box::new(TwelveDataPrices::new(overlay.clone())),
+        price: price_plane_impl,
         oracle_io: Box::new(ProductionOracleIo),
         jwks_fetcher: Box::new(ReqwestJwksFetcher),
         oracle_runtime: Mutex::new(neo_os_compute::oracle::providers::ProviderRuntime::default()),
@@ -182,6 +209,7 @@ fn main() {
                 "port": port,
                 "network": network,
                 "execution_plane": "rust-in-process",
+                "price_plane": nitro_enclave_host::feed_public_quorum::PricePlane::as_str(price_plane),
             })
         );
         axum::serve(listener, router)
