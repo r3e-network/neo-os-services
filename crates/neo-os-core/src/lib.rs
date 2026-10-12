@@ -32,6 +32,11 @@
 //! - `retry` — `computeRetryDelayMs` exponential backoff with jitter
 //! - `cursor` — request cursor floor + checkpoint block validation
 //! - `secret_redaction` — secret-name / secret-value log redaction
+//! - `sponsor_intent` — the sponsorable intent decision for the DELIVER sponsor
+//!   lane: script shape (`registerAccount`, `executeSponsoredUserOp`), target
+//!   and fee ceiling, refused with a frozen code vocabulary. First-party, not a
+//!   port; `n3_tx` gained its decoder half alongside it so the shape question is
+//!   answered against the same wire definition that emits the script.
 //!
 //! Nothing here performs IO. Consumers: the enclave host, the custody service
 //! (attestation binding) and, later, the Rust relayer.
@@ -77,6 +82,7 @@ pub mod neo_encoding;
 pub mod network_identity;
 pub mod retry;
 pub mod secret_redaction;
+pub mod sponsor_intent;
 pub mod stable_stringify;
 pub mod state;
 

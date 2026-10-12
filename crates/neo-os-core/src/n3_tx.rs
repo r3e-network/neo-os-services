@@ -60,6 +60,9 @@ const OP_PUSHINT8: u8 = 0x00;
 const OP_PUSHINT16: u8 = 0x01;
 const OP_PUSHINT32: u8 = 0x02;
 const OP_PUSHINT64: u8 = 0x03;
+// 0x04 and 0x05 are PUSHINT128 and PUSHINT256: wider integer pushes the encoder
+// never emits but a wallet may. The decoder accepts the whole 0x00..=0x05 range.
+const OP_PUSHINT256: u8 = 0x05;
 const OP_PUSHDATA1: u8 = 0x0c;
 const OP_PUSHDATA2: u8 = 0x0d;
 const OP_PUSHDATA4: u8 = 0x0e;
@@ -69,8 +72,11 @@ const OP_PUSHF: u8 = 0x09;
 const OP_PUSHNULL: u8 = 0x0b;
 const OP_PUSHM1: u8 = 0x0f;
 const OP_PUSH0: u8 = 0x10;
+const OP_PUSH16: u8 = 0x20;
 const OP_PACK: u8 = 0xc0;
 const OP_SYSCALL: u8 = 0x41;
+/// Length of a `UInt160` in wire order.
+pub const HASH160_LEN: usize = 20;
 /// `InteropServiceCode.SYSTEM_CONTRACT_CALL` (`System.Contract.Call`).
 const SYSTEM_CONTRACT_CALL: [u8; 4] = [0x62, 0x7d, 0x5b, 0x52];
 /// `CallFlags.All` — `createScript`'s default — pushed via PUSH16.
@@ -207,6 +213,336 @@ fn signed_le_twos(value: i64) -> Vec<u8> {
         8
     };
     value.to_le_bytes()[..width].to_vec()
+}
+
+/// Why an invocation script could not be reduced to one contract call.
+///
+/// Every variant means *no description of this script*, which is the only safe
+/// answer to hand a policy that must decide on what a transaction will do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum N3DecodeError {
+    /// The script contained no `System.Contract.Call`.
+    NoCall,
+    /// More than one call, or stack items left over once the call was popped, so
+    /// the script does more (or claims more) than one call describes.
+    NotOneCall,
+    /// The script ended in the middle of an operand.
+    Truncated,
+    /// An opcode outside the push/pack/syscall subset appeared. A script that
+    /// jumps or computes a hash at run time cannot be reduced to fixed facts.
+    UnsupportedOpcode(u8),
+    /// A `SYSCALL` was not `System.Contract.Call`.
+    UnsupportedSyscall([u8; 4]),
+    /// A `System.Contract.Call` did not pop `(args, flags, method, contract)`.
+    MalformedCall,
+}
+
+impl std::fmt::Display for N3DecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoCall => f.write_str("script performs no contract call"),
+            Self::NotOneCall => f.write_str("script does not perform exactly one contract call"),
+            Self::Truncated => f.write_str("script ends in the middle of an operand"),
+            Self::UnsupportedOpcode(opcode) => {
+                write!(f, "unsupported opcode 0x{opcode:02x}")
+            }
+            Self::UnsupportedSyscall(interop) => {
+                write!(f, "unsupported syscall {:02x?}", interop)
+            }
+            Self::MalformedCall => {
+                f.write_str("contract call does not pop args, flags, method, contract")
+            }
+        }
+    }
+}
+
+impl std::error::Error for N3DecodeError {}
+
+/// One `System.Contract.Call` decoded out of an invocation script.
+///
+/// The inverse of [`create_invoke_script`]: `contract` is in **display order**,
+/// the order that function takes, so a decoded target compares directly against
+/// an `0x…` 40-hex hash. Argument byte strings are the raw wire bytes, so a
+/// `Hash160` argument still has to be reversed before it is compared in display
+/// order — the same split `hash160_param_bytes` makes on the way in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvokeCall {
+    /// Target contract in display order.
+    pub contract: [u8; 20],
+    /// Method name as pushed.
+    pub method: String,
+    /// `CallFlags` value as pushed.
+    pub call_flags: u8,
+    /// Method arguments in declared order.
+    pub args: Vec<InvokeArg>,
+}
+
+/// A stack item produced by the subset of the VM an invocation script uses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InvokeArg {
+    /// `PUSHNULL`.
+    Null,
+    /// `PUSHT` / `PUSHF`.
+    Bool(bool),
+    /// A little-endian two's-complement integer, exactly as pushed.
+    Integer(Vec<u8>),
+    /// A `PUSHDATA*` byte string.
+    ByteString(Vec<u8>),
+    /// A `PACK`ed array, in declared order.
+    Array(Vec<InvokeArg>),
+}
+
+impl InvokeArg {
+    /// The item as a signed integer, if it is integer-shaped and fits in 128
+    /// bits. Short pushes are sign-extended from their own top byte.
+    pub fn as_i128(&self) -> Option<i128> {
+        let bytes = match self {
+            Self::Integer(bytes) => bytes.as_slice(),
+            _ => return None,
+        };
+        if bytes.is_empty() || bytes.len() > 16 {
+            return None;
+        }
+        let mut buf = [0u8; 16];
+        let sign = if bytes[bytes.len() - 1] & 0x80 != 0 {
+            0xff
+        } else {
+            0x00
+        };
+        buf[..bytes.len()].copy_from_slice(bytes);
+        for slot in &mut buf[bytes.len()..] {
+            *slot = sign;
+        }
+        Some(i128::from_le_bytes(buf))
+    }
+
+    pub fn as_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Self::ByteString(bytes) => Some(bytes),
+            _ => None,
+        }
+    }
+
+    pub fn as_items(&self) -> Option<&[InvokeArg]> {
+        match self {
+            Self::Array(items) => Some(items.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// A byte string that decodes as UTF-8.
+    pub fn as_text(&self) -> Option<String> {
+        let bytes = self.as_bytes()?;
+        String::from_utf8(bytes.to_vec()).ok()
+    }
+
+    pub fn is_integer(&self) -> bool {
+        matches!(self, Self::Integer(_))
+    }
+
+    /// Whether this integer is strictly negative. The sign bit of a
+    /// little-endian two's-complement word is the top bit of its last byte.
+    pub fn is_negative_integer(&self) -> bool {
+        match self {
+            Self::Integer(bytes) => match bytes.last() {
+                Some(top) => top & 0x80 != 0,
+                None => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// The item as a non-negative `u64`, if it is one. `None` covers a negative
+    /// value and a value wider than 64 bits; the caller decides which of those
+    /// is a shape failure and which is an amount no ceiling can hold.
+    pub fn as_non_negative_u64(&self) -> Option<u64> {
+        let bytes = match self {
+            Self::Integer(bytes) => bytes.as_slice(),
+            _ => return None,
+        };
+        if self.is_negative_integer() {
+            return None;
+        }
+        let mut width = bytes.len();
+        while width > 0 && bytes[width - 1] == 0 {
+            width -= 1;
+        }
+        if width > 8 {
+            return None;
+        }
+        let mut value: u64 = 0;
+        for (index, byte) in bytes[..width].iter().enumerate() {
+            value |= u64::from(*byte) << (8 * index);
+        }
+        Some(value)
+    }
+
+    /// `IsUnsignedIntegerWithinBytes` from
+    /// `neo-os-aa/contracts/UnifiedSmartWallet.Execution.cs`: the value must be
+    /// non-negative and its minimal signed little-endian form, with one trailing
+    /// sign byte trimmed, must fit in `max_bytes`.
+    pub fn is_unsigned_within(&self, max_bytes: usize) -> bool {
+        let bytes = match self {
+            Self::Integer(bytes) => bytes.as_slice(),
+            _ => return false,
+        };
+        if self.is_negative_integer() {
+            return false;
+        }
+        let mut width = bytes.len();
+        while width > 0 && bytes[width - 1] == 0 {
+            width -= 1;
+        }
+        width <= max_bytes
+    }
+}
+
+/// Decode exactly one `System.Contract.Call` out of an invocation script —
+/// the inverse of [`create_invoke_script`], and the same push/pack/syscall
+/// subset `workers/neo-signer/src/tx.rs` accepts for a whole transaction.
+///
+/// Anything else is refused: a script that jumps, calls another function, or
+/// derives a hash at run time cannot be reduced to a fixed list of facts, and
+/// acting on it would mean trusting the caller's description of it.
+pub fn decode_invoke_call(script: &[u8]) -> Result<InvokeCall, N3DecodeError> {
+    let mut cursor = DecodeCursor::new(script);
+    let mut stack: Vec<InvokeArg> = Vec::new();
+    let mut call: Option<InvokeCall> = None;
+    while cursor.remaining() > 0 {
+        let opcode = cursor.u8()?;
+        match opcode {
+            OP_PUSHINT8..=OP_PUSHINT256 => {
+                let width = 1usize << (opcode - OP_PUSHINT8);
+                stack.push(InvokeArg::Integer(cursor.bytes(width)?.to_vec()));
+            }
+            OP_PUSHT | OP_PUSHF => stack.push(InvokeArg::Bool(opcode == OP_PUSHT)),
+            OP_PUSHNULL => stack.push(InvokeArg::Null),
+            OP_PUSHDATA1..=OP_PUSHDATA4 => {
+                let width = 1usize << (opcode - OP_PUSHDATA1);
+                let length = cursor.le_usize(width)?;
+                stack.push(InvokeArg::ByteString(cursor.bytes(length)?.to_vec()));
+            }
+            OP_PUSHM1 => stack.push(InvokeArg::Integer(vec![0xff])),
+            OP_PUSH0..=OP_PUSH16 => stack.push(InvokeArg::Integer(vec![opcode - OP_PUSH0])),
+            OP_PACK => {
+                let count = stack
+                    .pop()
+                    .and_then(|item| item.as_i128())
+                    .ok_or(N3DecodeError::MalformedCall)?;
+                if !(0..=MAX_PACK_ITEMS).contains(&count) || count as usize > stack.len() {
+                    return Err(N3DecodeError::MalformedCall);
+                }
+                let start = stack.len() - count as usize;
+                // `PACK` pops and appends, so array index 0 is the item on top
+                // of the stack — the reverse of `split_off`'s push order. Without
+                // this reversal a two-argument call would be read with its
+                // arguments swapped.
+                let mut items = stack.split_off(start);
+                items.reverse();
+                stack.push(InvokeArg::Array(items));
+            }
+            OP_SYSCALL => {
+                let mut interop = [0u8; 4];
+                interop.copy_from_slice(cursor.bytes(4)?);
+                if interop != SYSTEM_CONTRACT_CALL {
+                    return Err(N3DecodeError::UnsupportedSyscall(interop));
+                }
+                if call.is_some() {
+                    return Err(N3DecodeError::NotOneCall);
+                }
+                call = Some(pop_invoke_call(&mut stack)?);
+            }
+            other => return Err(N3DecodeError::UnsupportedOpcode(other)),
+        }
+    }
+    let call = call.ok_or(N3DecodeError::NoCall)?;
+    // Every push the script made must have been consumed by that one call.
+    // Leftover items mean the script is not fully described by it.
+    if !stack.is_empty() {
+        return Err(N3DecodeError::NotOneCall);
+    }
+    Ok(call)
+}
+
+/// Pop `(args, flags, method, contract)` for one syscall. The script pushes the
+/// args array first and the contract hash last, so the contract is on top. The
+/// contract comes back in display order.
+fn pop_invoke_call(stack: &mut Vec<InvokeArg>) -> Result<InvokeCall, N3DecodeError> {
+    let mut wire = stack
+        .pop()
+        .and_then(|item| item.as_bytes().map(|bytes| bytes.to_vec()))
+        .filter(|bytes| bytes.len() == HASH160_LEN)
+        .ok_or(N3DecodeError::MalformedCall)?;
+    wire.reverse();
+    let mut contract = [0u8; HASH160_LEN];
+    contract.copy_from_slice(&wire);
+
+    let method = stack
+        .pop()
+        .and_then(|item| item.as_text())
+        .ok_or(N3DecodeError::MalformedCall)?;
+    let flags = stack
+        .pop()
+        .and_then(|item| item.as_i128())
+        .and_then(|flags| u8::try_from(flags).ok())
+        .ok_or(N3DecodeError::MalformedCall)?;
+    let args = match stack.pop().ok_or(N3DecodeError::MalformedCall)? {
+        InvokeArg::Array(items) => items,
+        _ => return Err(N3DecodeError::MalformedCall),
+    };
+    Ok(InvokeCall {
+        contract,
+        method,
+        call_flags: flags,
+        args,
+    })
+}
+
+/// Bound on `PACK` so a malformed script cannot make us allocate on its word.
+/// Matches `workers/neo-signer/src/tx.rs`.
+const MAX_PACK_ITEMS: i128 = 1_024;
+
+/// A bounds-checked cursor. Every read is checked against the *remaining input*
+/// before anything is allocated, so a hostile length prefix costs a comparison
+/// rather than a huge reservation.
+struct DecodeCursor<'a> {
+    data: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> DecodeCursor<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        DecodeCursor { data, offset: 0 }
+    }
+
+    fn remaining(&self) -> usize {
+        self.data.len() - self.offset
+    }
+
+    fn bytes(&mut self, length: usize) -> Result<&'a [u8], N3DecodeError> {
+        let end = self
+            .offset
+            .checked_add(length)
+            .filter(|end| *end <= self.data.len())
+            .ok_or(N3DecodeError::Truncated)?;
+        let slice = &self.data[self.offset..end];
+        self.offset = end;
+        Ok(slice)
+    }
+
+    fn u8(&mut self) -> Result<u8, N3DecodeError> {
+        Ok(self.bytes(1)?[0])
+    }
+
+    /// Read a length written as `width` little-endian bytes.
+    fn le_usize(&mut self, width: usize) -> Result<usize, N3DecodeError> {
+        let bytes = self.bytes(width)?;
+        let mut value: u64 = 0;
+        for (index, byte) in bytes.iter().enumerate() {
+            value |= u64::from(*byte) << (8 * index);
+        }
+        usize::try_from(value).map_err(|_| N3DecodeError::Truncated)
+    }
 }
 
 /// A signature witness: the push-a-signature invocation script and the

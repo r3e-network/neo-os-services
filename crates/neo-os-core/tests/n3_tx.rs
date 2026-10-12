@@ -6,7 +6,9 @@
 //! emission; the `Base64Bytes` cases pin the `ContractParam.byteArray`
 //! base64-decode quirk.
 
-use neo_os_core::n3_tx::{create_invoke_script, ContractParam, FeedSigner, FeedTx};
+use neo_os_core::n3_tx::{
+    create_invoke_script, decode_invoke_call, ContractParam, FeedSigner, FeedTx, InvokeArg,
+};
 
 const FEED_N3_CONTRACT: [u8; 20] = [
     0x03, 0x01, 0x3f, 0x49, 0xc4, 0x2a, 0x14, 0x54, 0x6c, 0x8b, 0xbe, 0x58, 0xf9, 0xd4, 0x34, 0xc3,
@@ -283,4 +285,86 @@ fn zeroed_tx_message_is_byte_exact() {
         hex(&feed_tx.message_for_signing(TESTNET_MAGIC)),
         "4e454f33e36db879e194fea51ebec92f15167c3d627d35f0e1df7bb624b13ed62a25d0da"
     );
+}
+
+/// The decoder is the encoder's inverse: whatever `create_invoke_script` emits,
+/// `decode_invoke_call` reads back as the same display-order contract, the same
+/// method and the same arguments. This is what stops a downstream shape check
+/// from validating a script this repository never produces.
+#[test]
+fn decode_invoke_call_round_trips_create_invoke_script() {
+    let args = feed_args(
+        &["TWELVEDATA:NEO-USD", "BINANCE:GAS-USDT"],
+        &[1001, 1002],
+        &[2_000_000, 3_000_000],
+        &[1_718_352_000, 1_718_352_001],
+        &[
+            "0d85465d97521b3659a2de0b338eb032",
+            "0d85465d97521b3659a2de0b338eb032",
+        ],
+    );
+    let script =
+        create_invoke_script(&FEED_N3_CONTRACT, "updateFeeds", &args).expect("valid fixture");
+    let call = decode_invoke_call(&script).expect("the encoder's own output must decode");
+
+    assert_eq!(call.contract, FEED_N3_CONTRACT);
+    assert_eq!(call.method, "updateFeeds");
+    assert_eq!(call.args.len(), 6);
+
+    // Argument order is declared order: `PACK` pops and appends, so the decoder
+    // reverses the split-off run the same way `pop_call` does.
+    match &call.args[0] {
+        InvokeArg::Array(items) => {
+            assert_eq!(items.len(), 2);
+            assert!(
+                matches!(&items[0], InvokeArg::ByteString(bytes) if bytes == b"TWELVEDATA:NEO-USD")
+            );
+            assert!(
+                matches!(&items[1], InvokeArg::ByteString(bytes) if bytes == b"BINANCE:GAS-USDT")
+            );
+        }
+        other => panic!("expected the pairs array, got {other:?}"),
+    }
+    match &call.args[1] {
+        InvokeArg::Array(items) => {
+            assert_eq!(items[0].as_i128(), Some(1001));
+            assert_eq!(items[1].as_i128(), Some(1002));
+        }
+        other => panic!("expected the rounds array, got {other:?}"),
+    }
+}
+
+/// Hash160 arguments go on the wire in wire order and come back in display
+/// order, so a decoded account id compares directly against the `0x…` form the
+/// sponsor journal stores.
+#[test]
+fn decode_invoke_call_returns_display_order_hashes() {
+    let display = [
+        0x03, 0x01, 0x3f, 0x49, 0xc4, 0x2a, 0x14, 0x54, 0x6c, 0x8b, 0xbe, 0x58, 0xf9, 0xd4, 0x34,
+        0xc3, 0x51, 0x7f, 0xcc, 0xab,
+    ];
+    let account = [
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        0x00, 0x12, 0x34, 0x56, 0x78,
+    ];
+    let args = vec![
+        ContractParam::Hash160(format!("0x{}", hex::encode(account))),
+        ContractParam::Integer(3600),
+    ];
+    let script = create_invoke_script(&display, "registerAccount", &args).expect("valid fixture");
+    let call = decode_invoke_call(&script).expect("the encoder's own output must decode");
+
+    assert_eq!(call.contract, display);
+    match &call.args[0] {
+        InvokeArg::ByteString(bytes) => {
+            assert_eq!(bytes.len(), 20);
+            let mut round_tripped = [0u8; 20];
+            round_tripped.copy_from_slice(bytes);
+            round_tripped.reverse();
+            assert_eq!(round_tripped, account);
+        }
+        other => panic!("expected the account id byte string, got {other:?}"),
+    }
+    assert!(matches!(call.args[1], InvokeArg::Integer(_)));
+    assert_eq!(call.args[1].as_i128(), Some(3600));
 }
