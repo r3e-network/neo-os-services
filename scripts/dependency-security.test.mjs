@@ -127,15 +127,25 @@ test('the declared Node range is one every installed package supports', () => {
 });
 
 test('the apps/web closure resolves to patched versions', () => {
-  assert.equal(webManifest.dependencies?.next, '^15.5.26');
+  assert.equal(webManifest.dependencies?.next, '^15.5.27');
   assert.equal(webManifest.devDependencies?.['eslint-config-next'], '^15.5.26');
   assert.equal(webManifest.devDependencies?.vitest, '^4.1.11');
   assert.equal(rootManifest.overrides?.['fast-uri'], '3.1.6');
   assert.equal(rootManifest.overrides?.sharp, '0.35.5');
   assert.equal(rootManifest.overrides?.['source-map-js'], '1.2.2');
+  // next 15.5.27 clears GHSA-4jqv-mc3x-m676 and GHSA-mcj8-r9mp-w47p; the nested self-key is
+  // npm's way to pin a package's own version under overrides (the h3 form).
+  assert.equal(rootManifest.overrides?.next?.['.'], '15.5.27');
+  assert.equal(rootManifest.overrides?.next?.postcss, '8.5.26');
+  // argparse 2.0.1 drops the sprintf-js dependency that GHSA-hp3w-g68c-fv3c rides in on, and it
+  // is the release js-yaml 4 pairs with. Forced here because js-yaml 3 declares argparse ^1.0.7
+  // and the 1.x line ends at 1.0.10, the last release inside the advisory chain. js-yaml 3's
+  // library never loads argparse (only its bin does), and that bin's addArgument/parseArgs call
+  // sites still run on 2.x; 3.x rejects the `version` keyword the bin passes and is not safe here.
+  assert.equal(rootManifest.overrides?.argparse, '2.0.1');
 
   const floors = {
-    next: '15.5.24',
+    next: '15.5.27',
     'eslint-config-next': '15.5.24',
     vitest: '4.1.11',
     '@vitest/mocker': '4.1.11',
@@ -143,6 +153,7 @@ test('the apps/web closure resolves to patched versions', () => {
     browserslist: '4.28.7',
     'baseline-browser-mapping': '2.11.0',
     sharp: '0.35.5',
+    argparse: '2.0.1',
   };
   for (const [name, floor] of Object.entries(floors)) {
     for (const { key, version } of lockVersions(name))
@@ -156,9 +167,28 @@ test('the apps/web closure resolves to patched versions', () => {
     assert.ok(!floor || semver.gte(version, floor), `${key} has vulnerable js-yaml ${version}`);
   }
   // The floors above must bind to something: apps/web really resolves these.
-  for (const name of ['next', 'eslint-config-next', 'vitest', '@vitest/mocker', 'sharp']) {
+  for (const name of [
+    'next',
+    'eslint-config-next',
+    'vitest',
+    '@vitest/mocker',
+    'sharp',
+    'argparse',
+  ]) {
     assert.ok(lockVersions(name).length > 0, `the root lock no longer resolves ${name}`);
   }
+});
+
+test('sprintf-js never re-enters the root lock', () => {
+  // GHSA-hp3w-g68c-fv3c covers every published release of sprintf-js (range `*`, top of the line
+  // is 1.1.3), so the only remediation is keeping the package out of the tree. argparse 1.x is
+  // its only in-tree consumer; the argparse floor above holds that door shut. If a new consumer
+  // appears, this test fails before an audit report does.
+  assert.deepEqual(
+    lockVersions('sprintf-js'),
+    [],
+    'the root lock resolves sprintf-js; every release is covered by GHSA-hp3w-g68c-fv3c'
+  );
 });
 
 test('high severity transitive advisories stay above their remediation floors', () => {

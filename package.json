@@ -176,6 +176,7 @@
     "sharp": "0.35.5",
     "lodash": "4.18.1",
     "next": {
+      ".": "15.5.27",
       "postcss": "8.5.26"
     },
     "postcss": "8.5.26",
@@ -185,7 +186,8 @@
       "@opentelemetry/core": "2.9.0"
     },
     "tmp": "0.2.7",
-    "source-map-js": "1.2.2"
+    "source-map-js": "1.2.2",
+    "argparse": "2.0.1"
   },
   "dependencies": {
     "ethers": "^6.13.0"

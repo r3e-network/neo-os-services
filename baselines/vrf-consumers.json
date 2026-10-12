@@ -356,7 +356,7 @@
       "justification": "Operational configuration or policy validation names the VRF lane but does not use its output to choose a reward or settlement. This exact-file review does not authorize live operations or classify downstream consumers.",
       "inputs": {
         "package-lock.json": {
-          "sha256": "8c28d18374825d0eec0dec37b319f8573e8d7aae95c5f9cdccfa02aafd373a93"
+          "sha256": "a1d4d91ec1c4b3264a95fd0d7f1ca3efa6874ef9302a9799df04f683b46154ee"
         }
       }
     },
