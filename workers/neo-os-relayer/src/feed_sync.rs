@@ -850,7 +850,7 @@ fn deliver_n3_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter + Sync, N: N
                 .call(
                     "invokescript",
                     json!([
-                        neo_os_core::base64::encode_standard(&tx.serialize_unsigned()),
+                        neo_os_core::base64::encode_standard(tx.script),
                         [{"account": normalize_hash160(&updater.script_hash), "scopes": "CalledByEntry"}]
                     ]),
                 )
@@ -2243,6 +2243,97 @@ mod tests {
             super::feed_baseline(&state, "neo_n3")["NEO-USD"]["price"],
             123.0
         );
+    }
+
+    /// `invokescript` takes a **script**, not a transaction. Every feed
+    /// simulation must carry the exact bytes the node will execute; handing it
+    /// the unsigned transaction serialization makes the node execute
+    /// transaction framing as opcodes and fault with interpreter errors that
+    /// look like contract bugs. The initial simulation and the final
+    /// simulation are two call sites of the same rule and are pinned together.
+    #[test]
+    fn the_final_feed_simulation_carries_the_script_not_the_transaction() {
+        let mut state = create_empty_relayer_state();
+        let transport = N3FeedTransport::new();
+        let result = process_feed_sync_with(
+            &config("neo_n3"),
+            &mut state,
+            1_700_000_000_000.0,
+            &transport,
+            &NoWait(Mutex::new(1_700_000_000_000)),
+            &FixedNonce(1),
+        );
+        assert!(result.error.is_none(), "{result:?}");
+
+        // The invocation script every simulation must carry. Reconstructed
+        // with the same operation and plan the test host signs.
+        let contract: [u8; 20] =
+            hex::decode("03013f49c42a14546c8bbe58f9d434c3517fccab")
+                .unwrap()
+                .try_into()
+                .unwrap();
+        let expected_script = create_invoke_script(
+            &contract,
+            "updateFeeds",
+            &[
+                ContractParam::Array(vec![ContractParam::String(
+                    "TWELVEDATA:NEO-USD".into(),
+                )]),
+                ContractParam::Array(vec![ContractParam::Integer(1)]),
+                ContractParam::Array(vec![ContractParam::Integer(123_000_000)]),
+                ContractParam::Array(vec![ContractParam::Integer(1_700_000_000)]),
+                ContractParam::Array(vec![ContractParam::Base64Bytes(
+                    "0123456789abcdef0123456789abcdef".into(),
+                )]),
+                ContractParam::Array(vec![ContractParam::Integer(0)]),
+            ],
+        )
+        .expect("expected script");
+
+        // Transaction framing is strictly longer and starts with the version
+        // byte; a simulation that carries it is the defect this test pins.
+        let framing_probe = FeedTx {
+            nonce: 1,
+            valid_until_block: 1_500,
+            system_fee: 200_000,
+            network_fee: 123_456,
+            signer: FeedSigner {
+                script_hash: [0u8; 20],
+            },
+            script: &expected_script,
+        }
+        .serialize_unsigned();
+        assert!(
+            framing_probe.len() > expected_script.len(),
+            "framing must be longer than the bare script"
+        );
+
+        let calls = transport.calls.lock().unwrap();
+        let invoke_calls: Vec<&(String, String)> = calls
+            .iter()
+            .filter(|(_, body)| body.contains("\"method\":\"invokescript\""))
+            .collect();
+        assert!(
+            invoke_calls.len() >= 2,
+            "expected the initial and final simulations, got {} invokescript calls",
+            invoke_calls.len()
+        );
+        for (url, body) in &invoke_calls {
+            let request: serde_json::Value =
+                serde_json::from_str(body).unwrap_or_else(|error| {
+                    panic!("invokescript call to {url} is not JSON: {error}\n{body}")
+                });
+            assert_eq!(request["method"], "invokescript");
+            let encoded = request["params"][0]
+                .as_str()
+                .expect("invokescript script parameter");
+            let decoded = neo_os_core::base64::decode_lenient(encoded);
+            assert_eq!(
+                decoded.as_slice(),
+                expected_script.as_slice(),
+                "the invokescript simulation at {url} must carry the invocation script, not the transaction framing"
+            );
+        }
     }
 
     #[test]
