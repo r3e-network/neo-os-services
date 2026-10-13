@@ -499,6 +499,22 @@ function checkNamed(observed, name) {
   return evaluateAcceptance(observed).checks.find((entry) => entry.name === name);
 }
 
+/**
+ * The good observation with a chosen fee charge, the sponsor debit re-derived so
+ * the balance identity `sponsorDelta === -(reimbursementUnits + feesCharged)`
+ * holds exactly. Isolating a single clause of `check/sponsor-charged` is only
+ * possible when the balance clause cannot fire first.
+ */
+function observationCharging(feesCharged, declaredFeeUnits) {
+  const observed = goodObservation();
+  observed.balances.feesCharged = feesCharged;
+  observed.balances.declaredFeeUnits = declaredFeeUnits;
+  observed.balances.sponsorDelta = -(
+    observed.balances.reimbursementUnits + observed.balances.feesCharged
+  );
+  return observed;
+}
+
 test('every_acceptance_check_is_named_and_present', () => {
   const result = evaluateAcceptance(goodObservation());
   assert.deepEqual(
@@ -567,9 +583,33 @@ test('an_uncharged_sponsor_cannot_report_green', () => {
 });
 
 test('a_charge_larger_than_the_declared_fee_cannot_report_green', () => {
-  const observed = goodObservation();
-  observed.balances.feesCharged = observed.balances.declaredFeeUnits + 1;
-  assert.equal(checkNamed(observed, 'check/sponsor-charged').ok, false);
+  // The sponsor debit is re-derived from the inflated charge, so the balance
+  // identity still holds exactly. Without that the balance clause fails the
+  // check before the declared-fee ceiling is ever reached, and deleting the
+  // ceiling clause would leave every test green.
+  const overcharged = observationCharging(12_500_001, 12_500_000);
+  assert.equal(checkNamed(overcharged, 'check/sponsor-charged').ok, false);
+  assert.equal(evaluateAcceptance(overcharged).ok, false);
+
+  // The identical observation at the declared fee is green, so the ceiling
+  // breach is the only difference between the two and the only reason the one
+  // above is red.
+  assert.equal(evaluateAcceptance(observationCharging(12_500_000, 12_500_000)).ok, true);
+});
+
+test('a_zero_fee_charge_cannot_report_green', () => {
+  // A self-consistent observation whose only defect is that no fee was charged:
+  // the sponsor still paid the reimbursement, so the balance identity holds and
+  // `check/recipient-paid` is untouched. Only `feesCharged > 0` can reject it.
+  const zeroFee = observationCharging(0, 12_500_000);
+  assert.equal(checkNamed(zeroFee, 'check/recipient-paid').ok, true);
+  assert.equal(checkNamed(zeroFee, 'check/sponsor-charged').ok, false);
+  assert.equal(evaluateAcceptance(zeroFee).ok, false);
+
+  // The identical observation with a one-unit fee is green, so the missing fee
+  // is the only difference between the two and the only reason the one above is
+  // red.
+  assert.equal(evaluateAcceptance(observationCharging(1, 12_500_000)).ok, true);
 });
 
 test('an_unpaid_recipient_cannot_report_green', () => {
