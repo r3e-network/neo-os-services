@@ -151,12 +151,12 @@ If one of these is wrong, the system usually stops working.
   中文：relayer 监控、任务、重试、重放接口使用的管理员 key。
 
 - `MORPHEUS_SIGNING_ADMIN_API_KEY`
-  English: Admin key for `/api/sign/payload`.
-  中文：`/api/sign/payload` 使用的管理员 key。
+  English: Admin key for the signing admin scope. The `/api/sign/payload` web proxy was retired (CU-149): the measured image refuses blind payload signing with 503 unless it sets `ENCLAVE_ALLOW_BLIND_SIGN=1`, which the shipped posture does not, so the public endpoint advertised a lane that could not answer. The key is still a required, pairwise-distinct credential.
+  中文：签名管理员 scope 使用的管理员 key。`/api/sign/payload` Web 代理已下线（CU-149）：测量镜像在未设置 `ENCLAVE_ALLOW_BLIND_SIGN=1` 时以 503 拒绝盲签，而发布姿态并不设置它，因此该公开端点指向一个无法应答的通道。该 key 仍是必需且两两不同的凭据。
 
 - `MORPHEUS_RELAY_ADMIN_API_KEY`
-  English: Admin key for `/api/relay/transaction`.
-  中文：`/api/relay/transaction` 使用的管理员 key。
+  English: Admin key for the relay admin scope. The `/api/relay/transaction` web proxy was retired (CU-149): the host has no `/relay/transaction`, and transaction submission goes through the relayer, not the enclave. The key is still a required, pairwise-distinct credential.
+  中文：relay 管理员 scope 使用的管理员 key。`/api/relay/transaction` Web 代理已下线（CU-149）：host 并无 `/relay/transaction`，交易提交走 relayer 而非 enclave。该 key 仍是必需且两两不同的凭据。
 
 - `MORPHEUS_OPERATOR_API_KEY`
   English: Operator/control-plane credential. Production does not reuse it as

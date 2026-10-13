@@ -337,6 +337,45 @@ fn run(
             crate::oracle_read::handle_oracle_public_key(state, &payload)
         }
 
+        // The read-only catalog plane (CU-149). Every arm is an authenticated
+        // read of a static catalog or of the signing plane's own role report:
+        // no handler takes a request body, so nothing a caller sends can change
+        // what the answer says. `classify` already refused the write methods.
+        Target::FeedsCatalog => {
+            let (_payload, _slot) = admit!(state, headers, Target::FeedsCatalog, body);
+            Ok(DispatchOutcome::ok(crate::catalog::handle_feeds_catalog(
+                state,
+            )?))
+        }
+
+        Target::Providers => {
+            let (_payload, _slot) = admit!(state, headers, Target::Providers, body);
+            Ok(DispatchOutcome::ok(crate::catalog::handle_providers(
+                state,
+            )?))
+        }
+
+        Target::NeoDidProviders => {
+            let (_payload, _slot) = admit!(state, headers, Target::NeoDidProviders, body);
+            Ok(DispatchOutcome::ok(
+                crate::catalog::handle_neo_did_providers(state)?,
+            ))
+        }
+
+        Target::NeoDidRuntime => {
+            let (_payload, _slot) = admit!(state, headers, Target::NeoDidRuntime, body);
+            Ok(DispatchOutcome::ok(crate::catalog::handle_neo_did_runtime(
+                state,
+            )?))
+        }
+
+        Target::ComputeFunctions => {
+            let (_payload, _slot) = admit!(state, headers, Target::ComputeFunctions, body);
+            Ok(DispatchOutcome::ok(
+                crate::catalog::handle_compute_functions(state)?,
+            ))
+        }
+
         Target::NotFound => Ok(DispatchOutcome {
             status: 404,
             body: serde_json::json!({ "error": "not found", "path": path }),

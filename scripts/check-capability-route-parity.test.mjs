@@ -209,13 +209,49 @@ const addProbeLane = (root) =>
 `
     )
   );
-const giveHostTheProbeRoute = (root) =>
+const giveHostAProbeRoute = (root, route) =>
   editFile(root, HOST_ROUTES, (source) =>
     source.replace(
       '        if matches_route(path, "/oracle/feed") {',
-      `        if matches_route(path, "${PROBE_ROUTE}") {\n            return Target::OracleFeed;\n        }\n        if matches_route(path, "/oracle/feed") {`
+      `        if matches_route(path, "${route}") {\n            return Target::OracleFeed;\n        }\n        if matches_route(path, "/oracle/feed") {`
     )
   );
+const giveHostTheProbeRoute = (root) => giveHostAProbeRoute(root, PROBE_ROUTE);
+
+// The same synthetic treatment for the web-proxy lifecycle. Those tests used to
+// reach into the shipped baseline for whichever real dead proxy was listed
+// first and rewrite it, which made them notice exactly the change they exist to
+// survive: CU-149 repairs or removes those proxies. A probe proxy aimed at a
+// route the host does not have keeps the rules under test separate from the
+// debt under repair, so deleting the last real entry is a non-event here.
+const PROBE_PROXY_ROUTE = '/api/parity/probe-proxy';
+const PROBE_PROXY_TARGET = '/parity/probe-proxy';
+const PROBE_PROXY_METHOD = 'POST';
+const probeProxyEntry = (overrides = {}) => ({
+  route: PROBE_PROXY_ROUTE,
+  target: PROBE_PROXY_TARGET,
+  method: PROBE_PROXY_METHOD,
+  reason: 'a synthetic proxy the test aims at a route the host does not have',
+  owner: 'the test',
+  expires: '2026-11-30',
+  ...overrides,
+});
+const addProbeProxy = (root) => {
+  writeFile(
+    root,
+    `${WEB_API}/parity/probe-proxy/route.ts`,
+    [
+      "import { proxyToNitro } from '@/lib/nitro';",
+      '',
+      'export async function POST(request) {',
+      '  const body = await request.text();',
+      `  return proxyToNitro('${PROBE_PROXY_TARGET}', { method: '${PROBE_PROXY_METHOD}', body }, { route: '${PROBE_PROXY_ROUTE}' });`,
+      '}',
+      '',
+    ].join('\n')
+  );
+  editBaseline(root, (baseline) => baseline.dead_web_proxies.push(probeProxyEntry()));
+};
 
 /** A registry with the given entries, in whatever layout the test wants to try. */
 const registryWith = (entries) => `const CAPABILITIES = [\n${entries}\n];\n`;
@@ -654,12 +690,12 @@ test('every proxyToNitro call site in the real tree is read, with its target and
     assert.match(proxy.target, /^\/[^?*]*$/, `${proxy.route}: a path, no query`);
     assert.match(proxy.method, /^[A-Z]+$/);
   }
+  // The derived-key proxy is the method-repair case: the host serves
+  // /keys/derived for POST only, so the proxy sends POST. Its target is a plain
+  // literal now; the reader's template-literal handling is pinned by the
+  // synthetic case in `parseProxyCalls reads a call whatever its layout`.
   const derived = proxies.find((proxy) => proxy.route === '/api/runtime/keys/derived');
-  assert.deepEqual(
-    [derived.target, derived.method],
-    ['/keys/derived', 'GET'],
-    'a template literal with an interpolated query is read, query dropped, method kept'
-  );
+  assert.deepEqual([derived.target, derived.method], ['/keys/derived', 'POST']);
   const execute = proxies.find((proxy) => proxy.route === '/api/compute/execute');
   assert.deepEqual([execute.target, execute.method], ['/compute/execute', 'POST']);
 });
@@ -887,10 +923,11 @@ test('RUN 1: without the baseline the gate is red, and the report counts what th
   const result = runGate(root);
   assert.equal(result.status, 1, 'the gate exits 1 with no baseline');
   assert.match(result.out, /no baseline at baselines\/capability-route-parity\.json/);
-  assert.ok(
-    parts.deadIds.length > 0 && parts.deadProxies.length > 0,
-    'the tree has dead lanes today'
-  );
+  // The real tree's remaining debt is whatever it is: the counts below are
+  // asserted against it, not against a fixed number, so a change that repairs
+  // a lane (CU-149 did) does not turn this red. Dead ids are still expected —
+  // the gate's reason to exist is that they are invisible without it.
+  assert.ok(parts.deadIds.length > 0, 'the tree has dead ids today');
   assert.ok(
     result.out.includes(`${parts.deadIds.length} declared capability ids without a host route`),
     `the id count (${parts.deadIds.length}) is reported`
@@ -1079,45 +1116,51 @@ test('a live id baselined as dead is stale, and a retired lane is never a dead i
 
 test('a baselined proxy pins the target and the method it was recorded with', (t) => {
   const root = fixtureTree(t);
-  const [victim] = readBaseline(root).dead_web_proxies;
+  addProbeProxy(root);
 
   // Re-pointed at another dead route.
-  editFile(root, `${WEB_API}${victim.route.slice('/api'.length)}/route.ts`, (source) =>
-    source.replace(`'${victim.target}'`, `'${victim.target}-elsewhere'`)
+  editFile(root, `${WEB_API}/parity/probe-proxy/route.ts`, (source) =>
+    source.replace(`'${PROBE_PROXY_TARGET}'`, `'${PROBE_PROXY_TARGET}-elsewhere'`)
   );
   const moved = auditTree(root);
   assert.equal(moved.length, 1, moved.join('\n'));
-  assert.match(moved[0], new RegExp(`web proxy ${victim.route} now sends .*-elsewhere`));
-  assert.match(moved[0], new RegExp(`baseline records ${victim.method} ${victim.target}`));
+  assert.match(moved[0], new RegExp(`web proxy ${PROBE_PROXY_ROUTE} now sends .*-elsewhere`));
+  assert.match(
+    moved[0],
+    new RegExp(`baseline records ${PROBE_PROXY_METHOD} ${PROBE_PROXY_TARGET}`)
+  );
 });
 
 test('a baselined proxy that changes method is a new finding, not the old debt', (t) => {
   const root = fixtureTree(t);
+  addProbeProxy(root);
   editBaseline(root, (baseline) => {
-    const entry = baseline.dead_web_proxies.find((e) => e.route === '/api/relay/transaction');
+    const entry = baseline.dead_web_proxies.find((e) => e.route === PROBE_PROXY_ROUTE);
     entry.method = 'PUT';
   });
   const problems = auditTree(root);
   assert.equal(problems.length, 1, problems.join('\n'));
   assert.match(
     problems[0],
-    /web proxy \/api\/relay\/transaction now sends POST \/relay\/transaction/
+    new RegExp(
+      `web proxy ${PROBE_PROXY_ROUTE} now sends ${PROBE_PROXY_METHOD} ${PROBE_PROXY_TARGET}`
+    )
   );
-  assert.match(problems[0], /baseline records PUT \/relay\/transaction/);
+  assert.match(problems[0], new RegExp(`baseline records PUT ${PROBE_PROXY_TARGET}`));
 });
 
 test('a baselined proxy that becomes live leaves a stale entry behind', (t) => {
+  // The host gains the lane the probe proxy aims at and the probe id declares:
+  // both baselined entries go stale at once, which is the edit CU-149 makes.
   const root = fixtureTree(t);
-  const target = '/compute/functions';
-  editFile(root, HOST_ROUTES, (source) =>
-    source.replace(
-      '    if (method == "GET" || method == "POST") && matches_route(path, "/oracle/public-key") {',
-      `    if method == "GET" && matches_route(path, "${target}") {\n        return Target::Health;\n    }\n    if (method == "GET" || method == "POST") && matches_route(path, "/oracle/public-key") {`
-    )
-  );
+  addProbeLane(root);
+  addProbeProxy(root);
+  editBaseline(root, (baseline) => baseline.dead_capability_ids.push(probeEntry()));
+  giveHostAProbeRoute(root, PROBE_ROUTE);
+  giveHostAProbeRoute(root, PROBE_PROXY_TARGET);
   const problems = auditTree(root).join('\n');
-  assert.match(problems, /baseline web proxy \/api\/compute\/functions is not dead/);
-  assert.match(problems, /baseline capability id compute_functions is not dead/);
+  assert.match(problems, new RegExp(`baseline web proxy ${PROBE_PROXY_ROUTE} is not dead`));
+  assert.match(problems, new RegExp(`baseline capability id ${PROBE_ID} is not dead`));
 });
 
 test('auditRouteParity is pure enough to be driven directly, with no filesystem', () => {
@@ -1260,9 +1303,33 @@ test('loadBaseline names what each entry is missing', () => {
       (b) => (b.dead_capability_ids[0].expires = '2026-99-99'),
       /no real calendar date/,
     ],
-    ['a proxy without a target', (b) => delete b.dead_web_proxies[0].target, /has no target path/],
-    ['a proxy without a method', (b) => delete b.dead_web_proxies[0].method, /has no HTTP method/],
-    ['a lower-case method', (b) => (b.dead_web_proxies[0].method = 'get'), /has no HTTP method/],
+    // The shipped baseline's proxy list is empty once CU-149 has repaired the
+    // last one, so these three seed a synthetic entry to damage rather than
+    // reaching for a real one.
+    [
+      'a proxy without a target',
+      (b) => {
+        b.dead_web_proxies.push(deadProxy('/api/x', '/x', 'GET', '2026-11-30'));
+        delete b.dead_web_proxies[0].target;
+      },
+      /has no target path/,
+    ],
+    [
+      'a proxy without a method',
+      (b) => {
+        b.dead_web_proxies.push(deadProxy('/api/x', '/x', 'GET', '2026-11-30'));
+        delete b.dead_web_proxies[0].method;
+      },
+      /has no HTTP method/,
+    ],
+    [
+      'a lower-case method',
+      (b) => {
+        b.dead_web_proxies.push(deadProxy('/api/x', '/x', 'GET', '2026-11-30'));
+        b.dead_web_proxies[0].method = 'get';
+      },
+      /has no HTTP method/,
+    ],
     [
       'an id listed twice',
       (b) => b.dead_capability_ids.push({ ...b.dead_capability_ids[0] }),
@@ -1288,7 +1355,10 @@ test('loadBaseline names what each entry is missing', () => {
     assert.throws(() => loadBaseline(value), /must be a JSON object/);
   }
   const twoMethods = shippedBaseline();
-  twoMethods.dead_web_proxies.push({ ...twoMethods.dead_web_proxies[0], method: 'DELETE' });
+  twoMethods.dead_web_proxies.push(
+    deadProxy('/api/x', '/x', 'GET', '2026-11-30'),
+    deadProxy('/api/x', '/x', 'DELETE', '2026-11-30')
+  );
   assert.doesNotThrow(() => loadBaseline(twoMethods), 'one route may be dead for two methods');
 });
 
@@ -1408,20 +1478,23 @@ test('--base: pushing an expiry out fails, pulling one in does not', (t) => {
 
 test('--base: re-pointing a baselined proxy at another dead route fails even when the baseline is edited to match', (t) => {
   const root = fixtureTree(t, { git: true });
-  const [victim] = readBaseline(root).dead_web_proxies;
-  const moved = `${victim.target}-elsewhere`;
-  editFile(root, `${WEB_API}${victim.route.slice('/api'.length)}/route.ts`, (source) =>
-    source.replace(`'${victim.target}'`, `'${moved}'`)
+  // The probe has to be in the base commit, or the entry would be an addition
+  // and the gate would fail for that reason instead of the one under test.
+  addProbeProxy(root);
+  commitAll(root);
+  const moved = `${PROBE_PROXY_TARGET}-elsewhere`;
+  editFile(root, `${WEB_API}/parity/probe-proxy/route.ts`, (source) =>
+    source.replace(`'${PROBE_PROXY_TARGET}'`, `'${moved}'`)
   );
   editBaseline(root, (baseline) => {
-    baseline.dead_web_proxies.find((entry) => entry.route === victim.route).target = moved;
+    baseline.dead_web_proxies.find((entry) => entry.route === PROBE_PROXY_ROUTE).target = moved;
   });
   assert.equal(runGate(root).status, 0, 'the tree and the edited baseline agree');
   const result = runGate(root, { args: ['--base', 'HEAD'] });
   assert.equal(result.status, 1);
   assert.match(
     result.out,
-    new RegExp(`baseline web proxy ${victim.route} was re-pointed since HEAD`)
+    new RegExp(`baseline web proxy ${PROBE_PROXY_ROUTE} was re-pointed since HEAD`)
   );
 });
 

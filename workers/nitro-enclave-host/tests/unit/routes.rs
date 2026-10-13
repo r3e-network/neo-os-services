@@ -160,3 +160,64 @@ fn matches_route_agrees_with_the_node_implementation() {
         "/oracle/fulfill"
     ));
 }
+
+// ---------------------------------------------------------------------------
+// The read-only catalog plane (CU-149)
+// ---------------------------------------------------------------------------
+
+/// Every catalog lane the capability registry declares and the web proxies
+/// reach. Read-only means the classifier serves it for GET and for nothing
+/// else: a POST that reaches a catalog body would be a write surface wearing
+/// a read-only name.
+const CATALOG_ROUTES: [(&str, Target); 5] = [
+    ("/feeds/catalog", Target::FeedsCatalog),
+    ("/providers", Target::Providers),
+    ("/neodid/providers", Target::NeoDidProviders),
+    ("/neodid/runtime", Target::NeoDidRuntime),
+    ("/compute/functions", Target::ComputeFunctions),
+];
+
+#[test]
+fn the_catalog_routes_classify_for_get_only() {
+    for (path, target) in CATALOG_ROUTES {
+        assert_eq!(classify_get(path), target, "GET {path}");
+        assert_eq!(
+            classify_get(&format!("/mainnet{path}")),
+            target,
+            "GET /mainnet{path}"
+        );
+        assert_eq!(
+            classify_get(&format!("/testnet{path}")),
+            target,
+            "GET /testnet{path}"
+        );
+        for method in ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
+            assert_eq!(
+                classify(method, path),
+                Target::NotFound,
+                "{method} {path} must not reach a read-only catalog lane"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_catalog_route_names_its_canonical_path() {
+    // Admission control keys on the canonical path, so the prefixed form
+    // shares one capacity counter with the exact form.
+    for (path, target) in CATALOG_ROUTES {
+        assert_eq!(target.canonical_path(), Some(path), "{path}");
+    }
+}
+
+#[test]
+fn the_catalog_routes_do_not_shadow_each_other() {
+    // '/neodid/providers' ends with '/providers' as a string, so the
+    // first-occurrence + end-of-path rule has to be what separates them.
+    assert_eq!(classify_get("/neodid/providers"), Target::NeoDidProviders);
+    assert_eq!(classify_get("/providers"), Target::Providers);
+    assert_eq!(classify_get("/providers/extra"), Target::NotFound);
+    assert_eq!(classify_get("/neodid/providers/extra"), Target::NotFound);
+    assert_eq!(classify_get("/x/providers"), Target::Providers);
+    assert_eq!(classify_get("/x/neodid/providers"), Target::NeoDidProviders);
+}

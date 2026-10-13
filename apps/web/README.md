@@ -33,8 +33,6 @@ It serves four roles:
 - `/api/internal/control-plane/callback-broadcast`
 - `/api/internal/control-plane/automation-execute`
 - `/api/provider-configs`
-- `/api/sign/payload`
-- `/api/relay/transaction`
 
 ## Validation
 

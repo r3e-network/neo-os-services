@@ -14,9 +14,14 @@ const handleGet = createRateLimitedHandler(
 
     const url = new URL(request.url);
     const role = (url.searchParams.get('role') || 'worker').trim() || 'worker';
+    // The host serves /keys/derived for POST only: `classify` falls through to
+    // NotFound on a method mismatch, so a GET here was a 404 behind an
+    // authorised public endpoint. The role travels in the body, not the query
+    // string, because `handle_keys_derived` reads `role` from the payload and
+    // the dispatcher never forwards query parameters to a POST lane.
     return proxyToNitro(
-      `/keys/derived?role=${encodeURIComponent(role)}`,
-      { method: 'GET' },
+      '/keys/derived',
+      { method: 'POST', body: JSON.stringify({ role }) },
       {
         route: '/api/runtime/keys/derived',
         category: 'runtime',

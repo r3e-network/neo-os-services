@@ -1063,3 +1063,102 @@ fn signing_lanes_refuse_an_unreviewed_host_network() {
         assert_nothing_signed(&harness, route);
     }
 }
+
+// ---------------------------------------------------------------------------
+// The read-only catalog plane (CU-149)
+// ---------------------------------------------------------------------------
+
+const CATALOG_PATHS: [&str; 5] = [
+    "/feeds/catalog",
+    "/providers",
+    "/neodid/providers",
+    "/neodid/runtime",
+    "/compute/functions",
+];
+
+fn catalog_harness() -> TestState {
+    test_state(
+        &healthy_overlay(),
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    )
+}
+
+#[test]
+fn the_catalog_routes_answer_with_the_declared_body_shapes() {
+    let harness = catalog_harness();
+    let headers = bearer("s3cret");
+
+    let feeds = dispatch_outcome(&harness, "GET", "/feeds/catalog", &headers, "");
+    assert_eq!(feeds.status, 200);
+    assert!(feeds.body["pairs"].is_array(), "{}", feeds.body);
+
+    let providers = dispatch_outcome(&harness, "GET", "/providers", &headers, "");
+    assert_eq!(providers.status, 200);
+    assert!(providers.body["providers"].is_array(), "{}", providers.body);
+    assert!(providers.body["providers"][0]["id"].is_string());
+
+    let neodid = dispatch_outcome(&harness, "GET", "/neodid/providers", &headers, "");
+    assert_eq!(neodid.status, 200);
+    assert!(neodid.body["providers"].is_array(), "{}", neodid.body);
+    assert_eq!(neodid.body["providers"][0]["id"], "web3auth");
+
+    let runtime = dispatch_outcome(&harness, "GET", "/neodid/runtime", &headers, "");
+    assert_eq!(runtime.status, 200);
+    assert_eq!(runtime.body["service"], "neodid");
+    assert_eq!(runtime.body["verifier_curve"], "secp256r1");
+    assert_eq!(
+        runtime.body["verification_public_key"],
+        "02f8a5a1e0f3b6c9d2e5f8a1b4c7d0e3f6a9b2c5d8e1f4a7b0c3d6e9f2a5b8c1"
+    );
+
+    let functions = dispatch_outcome(&harness, "GET", "/compute/functions", &headers, "");
+    assert_eq!(functions.status, 200);
+    assert!(functions.body["functions"].is_array());
+    assert!(functions.body["names"].is_array());
+    assert_eq!(functions.body["names"][0], "hash.sha256");
+}
+
+#[test]
+fn the_catalog_routes_serve_the_network_prefixed_form_too() {
+    let harness = catalog_harness();
+    let headers = bearer("s3cret");
+    for path in CATALOG_PATHS {
+        let exact = dispatch_outcome(&harness, "GET", path, &headers, "");
+        let prefixed = dispatch_outcome(&harness, "GET", &format!("/mainnet{path}"), &headers, "");
+        assert_eq!(exact.status, 200, "GET {path}");
+        assert_eq!(prefixed.status, 200, "GET /mainnet{path}");
+        assert_eq!(exact.body, prefixed.body, "GET {path}");
+    }
+}
+
+#[test]
+fn a_catalog_lane_is_read_only_at_the_dispatch_too() {
+    // The classifier refuses a write method, and so does dispatch: the same
+    // path under POST is the 404 catch-all, not a catalog body.
+    let harness = catalog_harness();
+    let headers = bearer("s3cret");
+    for path in CATALOG_PATHS {
+        for method in ["POST", "PUT", "DELETE"] {
+            let outcome = dispatch_outcome(&harness, method, path, &headers, "{}");
+            assert_eq!(outcome.status, 404, "{method} {path}");
+            assert_eq!(
+                outcome.body,
+                json!({ "error": "not found", "path": path }),
+                "{method} {path}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_catalog_routes_still_require_the_runtime_token() {
+    let harness = catalog_harness();
+    for path in CATALOG_PATHS {
+        let outcome = dispatch_outcome(&harness, "GET", path, &plain(), "");
+        assert_eq!(outcome.status, 401, "GET {path}");
+        assert_eq!(outcome.body, error_body("unauthorized"), "GET {path}");
+    }
+}

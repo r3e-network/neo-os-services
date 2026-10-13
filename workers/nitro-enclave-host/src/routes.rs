@@ -66,6 +66,11 @@ pub enum Target {
     SessionSettle,
     AutomationExecute,
     OracleFeed,
+    FeedsCatalog,
+    Providers,
+    NeoDidProviders,
+    NeoDidRuntime,
+    ComputeFunctions,
     NotFound,
 }
 
@@ -153,6 +158,32 @@ pub fn classify(method: &str, path: &str) -> Target {
     if (method == "GET" || method == "POST") && matches_route(path, "/oracle/public-key") {
         return Target::OraclePublicKey;
     }
+    // The read-only catalog plane (CU-149): the listings and descriptors the
+    // capability registry has always declared and `docs/USER_GUIDE.md` already
+    // documents as direct runtime calls. GET only — a write method on one of
+    // these paths falls through to the same 404 an unknown path gets, so a
+    // catalog lane can never become a write surface by accident.
+    if method == "GET" {
+        // More specific first. `/neodid/providers` is a one-segment prefix
+        // plus `/providers`, so `matches_route("/neodid/providers", "/providers")`
+        // is true: the narrower arm has to run first or the general one claims
+        // the path.
+        if matches_route(path, "/neodid/providers") {
+            return Target::NeoDidProviders;
+        }
+        if matches_route(path, "/neodid/runtime") {
+            return Target::NeoDidRuntime;
+        }
+        if matches_route(path, "/feeds/catalog") {
+            return Target::FeedsCatalog;
+        }
+        if matches_route(path, "/providers") {
+            return Target::Providers;
+        }
+        if matches_route(path, "/compute/functions") {
+            return Target::ComputeFunctions;
+        }
+    }
     Target::NotFound
 }
 
@@ -190,6 +221,11 @@ impl Target {
             Target::SessionSettle => "/session/settle",
             Target::AutomationExecute => "/automation/execute",
             Target::OracleFeed => "/oracle/feed",
+            Target::FeedsCatalog => "/feeds/catalog",
+            Target::Providers => "/providers",
+            Target::NeoDidProviders => "/neodid/providers",
+            Target::NeoDidRuntime => "/neodid/runtime",
+            Target::ComputeFunctions => "/compute/functions",
             Target::Health
             | Target::Attestation
             | Target::Provision

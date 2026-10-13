@@ -27,6 +27,7 @@ pub mod attestation;
 pub mod auth;
 pub mod automation;
 pub mod bridge;
+pub mod catalog;
 pub mod compute_execute;
 pub mod custody;
 pub mod dispatch;

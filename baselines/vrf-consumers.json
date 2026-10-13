@@ -104,7 +104,7 @@
           "sha256": "a0ba913fe0743b3faf2597b4bcee2f662b452d961174cd27d4980375e41979bc"
         },
         "workers/nitro-enclave-host/tests/unit/dispatch.rs": {
-          "sha256": "f693b43c66bad116b023184599848f411d294fad32ae0f1240767ea7cff0aa9a"
+          "sha256": "bfdec5533ed82f65aa1cf99d062fafea97c966926b480ba52c4da1e3a4717b52"
         },
         "workers/nitro-enclave-host/tests/unit/fulfill.rs": {
           "sha256": "0d79bd31b9c2db3fce3b67aed78ff214993f8c9352f4f25ef8434c73a6ca5ca7"
@@ -116,7 +116,7 @@
           "sha256": "3f71ea0306a664bcc9e68a38210a195543c4fb2f856cf6b92097210474204b48"
         },
         "workers/nitro-enclave-host/tests/unit/routes.rs": {
-          "sha256": "e3f426fc370ac8905781a0646bbe7134984ff97b9d7540a8f73d37e5fdd2e77d"
+          "sha256": "90c9a78d3ac30f0468f82a74e2731f41a0df68321e778a093fed1c42073d8085"
         },
         "workers/nitro-enclave-host/tests/unit/secret_root.rs": {
           "sha256": "3991b54a38a19d3c4cfd9dab23a444607410a569244f9591b52eb19dddb97f4f"
@@ -167,9 +167,6 @@
       "inputs": {
         "apps/web/app/api/control-plane/automation/execute/route.ts": {
           "sha256": "708a2a99613c02866c26eff687aa82e03c0655530fbe5b86580860a714237075"
-        },
-        "apps/web/app/api/sign/payload/route.ts": {
-          "sha256": "396e3e7a67b68bf731839f0a0c97e3b3d79c560d1a416179f3c38d0e3a865140"
         },
         "apps/web/lib/control-plane.ts": {
           "sha256": "2f036f21d5ee26ce6ee441e3c91fe66556f54ab23fbf4c8e6035c60078b4a9d7"
@@ -434,19 +431,19 @@
           "sha256": "7921520bd6f60733a9fe0e3c7459b871f53a20511aa3a2a4a3ab9256b9091680"
         },
         "workers/nitro-enclave-host/src/dispatch.rs": {
-          "sha256": "8febb1bba6ee15b180a9ed7c5e85a92746b02eb487a7f74d71844b84808a19c8"
+          "sha256": "77f91d926fa8ad773e977d04fff18aa7ec9e560bd841ea6d7db79567cd851235"
         },
         "workers/nitro-enclave-host/src/fulfill.rs": {
           "sha256": "6091de4a1273a390fc9e594e5f87d9ecadc708c9c509223fab73463dfe98e9c4"
         },
         "workers/nitro-enclave-host/src/lib.rs": {
-          "sha256": "be403ab1de54cc331f87fd8fd3a200ba2b6edee9159828da23a881985ef94eeb"
+          "sha256": "70c836ee48fbeb6f90d42693f356f2c4382521a00af3f6ee43b164111e48dfa4"
         },
         "workers/nitro-enclave-host/src/paymaster.rs": {
           "sha256": "f76867d383e27809f24412dfd752beccbff34f55a7e425481566bfea5a54a50c"
         },
         "workers/nitro-enclave-host/src/routes.rs": {
-          "sha256": "7170bb0c8c3c10ccfcd68d1341429332345b742fda14c7b8f352d54125309f1f"
+          "sha256": "3eb0338bf2439d778cd891aba769578b77966c68828f58d7f1a82a339bc80935"
         },
         "workers/nitro-enclave-host/src/secret_root.rs": {
           "sha256": "16c21aa54714b8cc613761d06a49e1bf68e96146c951f430510f38a64b6c0d5b"
@@ -618,6 +615,35 @@
         },
         "package.json": {
           "sha256": "7131065e9eafbb2d211b90988eae4ac51fc89e322c2c776f6331a449c5c6c0d7"
+        }
+      }
+    },
+    {
+      "consumer": "cu-149-host-catalog-routes",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "CU-149 read-only host catalog plane and the web proxy repairs that aim at it. GET-only listings and descriptors assembled from static catalogs in neo-os-compute and from the signing plane's own role report; the retired sign/relay web proxies; the GET/POST repair on the derived-key proxy; their tests; and the shrink-only capability-route-parity debt record. None of these files consumes VRF output to choose, pay or settle anything: the catalog bodies are fixed lists, the derived-key proxy forwards a role name, and the parity baseline is a record of dead routes.",
+      "inputs": {
+        "workers/nitro-enclave-host/src/catalog.rs": {
+          "sha256": "37799dc08efd0d0c58889fdf8e0dc6c6032e4136eb69bccf8cbceaa7d4511d5e"
+        },
+        "workers/nitro-enclave-host/tests/unit/catalog.rs": {
+          "sha256": "1205cfe72bfbe43a7df7a8e4306cadb00e49a6629aa52928885af21c5453b052"
+        },
+        "apps/web/app/api/runtime/keys/derived/route.ts": {
+          "sha256": "cd2a549161dcaa73d452c5fce6726b5feac5d8c450a216e6df7188fe64f737ef"
+        },
+        "apps/web/__tests__/retired-proxy-routes.test.ts": {
+          "sha256": "4bf6c90413002aad7a089194805dcfbd70ea235531bf04de89b5dc5bda67fd8c"
+        },
+        "apps/web/__tests__/runtime-keys-derived-proxy.test.ts": {
+          "sha256": "da53f1f98e61bd956a459a9b40c3bf880852dd51a1613a5a5384e8ac028703df"
+        },
+        "baselines/capability-route-parity.json": {
+          "sha256": "651363db79c51813874157caaa08eb2723a113889db0c6861f036bd40e44f828"
+        },
+        "scripts/check-capability-route-parity.test.mjs": {
+          "sha256": "623a64e5cf49454eb1deaa45945c71289d30afdc6ac92bd1b5673dd53d9e295d"
         }
       }
     }

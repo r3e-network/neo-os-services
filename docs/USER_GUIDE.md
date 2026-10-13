@@ -609,9 +609,20 @@ It is not for:
 
 ### Inspect runtime and provider catalog
 
+From web API:
+
 ```bash
 curl http://localhost:3000/api/neodid/runtime
 curl http://localhost:3000/api/neodid/providers
+```
+
+Or call the host directly (read-only, GET only):
+
+```bash
+curl "$MORPHEUS_RUNTIME_URL/neodid/runtime" \
+  -H "Authorization: Bearer $MORPHEUS_RUNTIME_TOKEN"
+curl "$MORPHEUS_RUNTIME_URL/neodid/providers" \
+  -H "Authorization: Bearer $MORPHEUS_RUNTIME_TOKEN"
 ```
 
 The runtime response includes:
@@ -622,6 +633,13 @@ The runtime response includes:
 - `verifier_curve`
 - `web3auth.jwks_url`
 - `web3auth.audience_configured`
+
+`verification_public_key` is the worker role's compressed secp256r1 public key — the
+key a resolver pins when it verifies NeoDID ticket signatures. `app_id`,
+`instance_id` and `compose_hash` are `null`: the runtime descriptor source
+(`getNitroInfo`) reports `runtime`, `network` and `client_kind` and never carried
+those three fields, so no caller should read an enclave identity out of them. Use
+`/attestation` for the measured document.
 
 ### Direct bind example
 
