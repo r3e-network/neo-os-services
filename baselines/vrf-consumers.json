@@ -297,7 +297,7 @@
           "sha256": "d2492f4a0fe47ba7d8b1eecce6075c7a1f1e08947ee41fc275701fae8970b403"
         },
         "workers/morpheus-relayer/src/config.js": {
-          "sha256": "ac50a7c6e05efc0f0cb2dc49f85ea0921b77044ceb50ff6cec16abfb1dd03991"
+          "sha256": "bdd72256677e4281be8f88d4e8608df870309cdd9cb37bbdd8c009da43d58966"
         },
         "workers/morpheus-relayer/src/fulfillment/classifier.js": {
           "sha256": "1863f6b07e72b057312fd49048588e49722bb9ed27bfbd41e2b6bf911c1d1650"
@@ -525,7 +525,7 @@
           "sha256": "f8d3b1d1832f59a25fea848eed77653b5ff90afc7a0bac48dffba4a61ed2041c"
         },
         "crates/neo-os-core/src/config.rs": {
-          "sha256": "82889ab40f4e18f25b49aba51513bb0c87513182e7bdeb063f047be903d92356"
+          "sha256": "e282a022a65afd6dcc7047725287632e56b9c7c69eb32cddbaec9dcca1e5e6a5"
         },
         "scripts/test-relayer-local-chain.py": {
           "sha256": "c1cf7c4495d8b61e49fad7cb5b0ca1c5279bd60e49ba546aff94214c61049724"

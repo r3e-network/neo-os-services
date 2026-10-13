@@ -424,6 +424,51 @@
               "useDerivedKeys": {
                 "__t": "bool",
                 "v": false
+              },
+              "sponsorCustodyKeyId": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "sponsor": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": ""
+              },
+              "port": {
+                "__t": "number",
+                "v": "9465"
+              },
+              "contract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feeCeilingUnits": {
+                "__t": "number",
+                "v": "0"
+              },
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "leaseMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "confirmAttempts": {
+                "__t": "number",
+                "v": "5"
+              },
+              "confirmWaitMs": {
+                "__t": "number",
+                "v": "1000"
+              },
+              "principalHeader": {
+                "__t": "string",
+                "v": ""
               }
             }
           },
@@ -489,6 +534,10 @@
                     "v": ""
                   },
                   "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "sponsor": {
                     "__t": "string",
                     "v": ""
                   }
@@ -1064,6 +1113,51 @@
               "useDerivedKeys": {
                 "__t": "bool",
                 "v": false
+              },
+              "sponsorCustodyKeyId": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "sponsor": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": ""
+              },
+              "port": {
+                "__t": "number",
+                "v": "9465"
+              },
+              "contract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feeCeilingUnits": {
+                "__t": "number",
+                "v": "0"
+              },
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "leaseMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "confirmAttempts": {
+                "__t": "number",
+                "v": "5"
+              },
+              "confirmWaitMs": {
+                "__t": "number",
+                "v": "1000"
+              },
+              "principalHeader": {
+                "__t": "string",
+                "v": ""
               }
             }
           },
@@ -1133,6 +1227,10 @@
                     "v": ""
                   },
                   "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "sponsor": {
                     "__t": "string",
                     "v": ""
                   }
@@ -1729,6 +1827,51 @@
               "useDerivedKeys": {
                 "__t": "bool",
                 "v": false
+              },
+              "sponsorCustodyKeyId": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "sponsor": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": ""
+              },
+              "port": {
+                "__t": "number",
+                "v": "9465"
+              },
+              "contract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feeCeilingUnits": {
+                "__t": "number",
+                "v": "0"
+              },
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "leaseMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "confirmAttempts": {
+                "__t": "number",
+                "v": "5"
+              },
+              "confirmWaitMs": {
+                "__t": "number",
+                "v": "1000"
+              },
+              "principalHeader": {
+                "__t": "string",
+                "v": ""
               }
             }
           },
@@ -1799,6 +1942,10 @@
                     "v": ""
                   },
                   "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "sponsor": {
                     "__t": "string",
                     "v": ""
                   }
@@ -2376,6 +2523,51 @@
               "useDerivedKeys": {
                 "__t": "bool",
                 "v": false
+              },
+              "sponsorCustodyKeyId": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "sponsor": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": ""
+              },
+              "port": {
+                "__t": "number",
+                "v": "9465"
+              },
+              "contract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feeCeilingUnits": {
+                "__t": "number",
+                "v": "0"
+              },
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "leaseMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "confirmAttempts": {
+                "__t": "number",
+                "v": "5"
+              },
+              "confirmWaitMs": {
+                "__t": "number",
+                "v": "1000"
+              },
+              "principalHeader": {
+                "__t": "string",
+                "v": ""
               }
             }
           },
@@ -2442,6 +2634,10 @@
                     "v": ""
                   },
                   "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "sponsor": {
                     "__t": "string",
                     "v": ""
                   }
@@ -3014,6 +3210,51 @@
               "useDerivedKeys": {
                 "__t": "bool",
                 "v": false
+              },
+              "sponsorCustodyKeyId": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "sponsor": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": ""
+              },
+              "port": {
+                "__t": "number",
+                "v": "9465"
+              },
+              "contract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feeCeilingUnits": {
+                "__t": "number",
+                "v": "0"
+              },
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "leaseMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "confirmAttempts": {
+                "__t": "number",
+                "v": "5"
+              },
+              "confirmWaitMs": {
+                "__t": "number",
+                "v": "1000"
+              },
+              "principalHeader": {
+                "__t": "string",
+                "v": ""
               }
             }
           },
@@ -3079,6 +3320,10 @@
                     "v": ""
                   },
                   "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "sponsor": {
                     "__t": "string",
                     "v": ""
                   }
@@ -3648,6 +3893,51 @@
               "useDerivedKeys": {
                 "__t": "bool",
                 "v": false
+              },
+              "sponsorCustodyKeyId": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "sponsor": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": ""
+              },
+              "port": {
+                "__t": "number",
+                "v": "9465"
+              },
+              "contract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feeCeilingUnits": {
+                "__t": "number",
+                "v": "0"
+              },
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "leaseMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "confirmAttempts": {
+                "__t": "number",
+                "v": "5"
+              },
+              "confirmWaitMs": {
+                "__t": "number",
+                "v": "1000"
+              },
+              "principalHeader": {
+                "__t": "string",
+                "v": ""
               }
             }
           },
@@ -3713,6 +4003,10 @@
                     "v": ""
                   },
                   "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "sponsor": {
                     "__t": "string",
                     "v": ""
                   }
@@ -4598,6 +4892,51 @@
               "useDerivedKeys": {
                 "__t": "bool",
                 "v": false
+              },
+              "sponsorCustodyKeyId": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "sponsor": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": ""
+              },
+              "port": {
+                "__t": "number",
+                "v": "9465"
+              },
+              "contract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feeCeilingUnits": {
+                "__t": "number",
+                "v": "0"
+              },
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "leaseMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "confirmAttempts": {
+                "__t": "number",
+                "v": "5"
+              },
+              "confirmWaitMs": {
+                "__t": "number",
+                "v": "1000"
+              },
+              "principalHeader": {
+                "__t": "string",
+                "v": ""
               }
             }
           },
@@ -4663,6 +5002,10 @@
                     "v": ""
                   },
                   "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "sponsor": {
                     "__t": "string",
                     "v": ""
                   }
@@ -5237,6 +5580,51 @@
               "useDerivedKeys": {
                 "__t": "bool",
                 "v": false
+              },
+              "sponsorCustodyKeyId": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "sponsor": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": ""
+              },
+              "port": {
+                "__t": "number",
+                "v": "9465"
+              },
+              "contract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feeCeilingUnits": {
+                "__t": "number",
+                "v": "0"
+              },
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "leaseMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "confirmAttempts": {
+                "__t": "number",
+                "v": "5"
+              },
+              "confirmWaitMs": {
+                "__t": "number",
+                "v": "1000"
+              },
+              "principalHeader": {
+                "__t": "string",
+                "v": ""
               }
             }
           },
@@ -5302,6 +5690,10 @@
                     "v": ""
                   },
                   "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "sponsor": {
                     "__t": "string",
                     "v": ""
                   }
@@ -5876,6 +6268,51 @@
               "useDerivedKeys": {
                 "__t": "bool",
                 "v": false
+              },
+              "sponsorCustodyKeyId": {
+                "__t": "string",
+                "v": ""
+              }
+            }
+          },
+          "sponsor": {
+            "__t": "object",
+            "v": {
+              "host": {
+                "__t": "string",
+                "v": ""
+              },
+              "port": {
+                "__t": "number",
+                "v": "9465"
+              },
+              "contract": {
+                "__t": "string",
+                "v": ""
+              },
+              "feeCeilingUnits": {
+                "__t": "number",
+                "v": "0"
+              },
+              "enabled": {
+                "__t": "bool",
+                "v": false
+              },
+              "leaseMs": {
+                "__t": "number",
+                "v": "60000"
+              },
+              "confirmAttempts": {
+                "__t": "number",
+                "v": "5"
+              },
+              "confirmWaitMs": {
+                "__t": "number",
+                "v": "1000"
+              },
+              "principalHeader": {
+                "__t": "string",
+                "v": ""
               }
             }
           },
@@ -5941,6 +6378,10 @@
                     "v": ""
                   },
                   "fee_funder": {
+                    "__t": "string",
+                    "v": ""
+                  },
+                  "sponsor": {
                     "__t": "string",
                     "v": ""
                   }

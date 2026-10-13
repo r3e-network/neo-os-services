@@ -30,6 +30,19 @@ use crate::sponsor::{
     JournalError, Principal, Reservation, SponsorApi, SponsorCode, SponsorIntentRequest,
     SponsorJob, SponsorJournal, SponsorRefusal, SponsorResult, SponsorSettings, SponsorSubmit,
 };
+use crate::sponsor_submit::ChainSubmit;
+use crate::transport::RelayerHttpTransport;
+
+/// The wired surface `serve_configured` builds: a real journal over the
+/// blocking transport and a real chain submit over the same transport.
+type WiredSponsorApi = SponsorApi<
+    DbSponsorJournal<RelayerHttpTransport>,
+    ChainSubmit<RelayerHttpTransport, RelayerHttpTransport>,
+>;
+
+/// What `prepare` hands back to the async server: the surface, the principal
+/// source, and the bind address.
+type PreparedSponsor = (Arc<WiredSponsorApi>, Arc<dyn PrincipalSource>, String, u16);
 
 /// What the surface is given. Assembled by whoever authenticates the request;
 /// nothing here is read out of the body except `body`.
@@ -387,14 +400,25 @@ where
             .iter()
             .filter_map(|(name, value)| Some((name.as_str(), value.to_str().ok()?))),
     );
-    let response = handle(
-        &state.api,
-        &SponsorHttpRequest {
-            principal: state.principals.resolve(&headers),
-            idempotency_key,
-            body: String::from_utf8_lossy(&body).into_owned(),
+    let request = SponsorHttpRequest {
+        principal: state.principals.resolve(&headers),
+        idempotency_key,
+        body: String::from_utf8_lossy(&body).into_owned(),
+    };
+    // The journal and the send are blocking clients. Running them inside the
+    // handler's own poll would block the executor and can panic inside
+    // `reqwest::blocking`; the work therefore runs on a blocking task.
+    let api = Arc::clone(&state.api);
+    let response = match tokio::task::spawn_blocking(move || handle(&api, &request)).await {
+        Ok(response) => response,
+        Err(error) => ApiResponse {
+            status: 500,
+            body: json!({
+                "code": SponsorCode::JournalRefused.as_str(),
+                "detail": format!("the sponsor request task failed: {error}"),
+            }),
         },
-    );
+    };
     (
         StatusCode::from_u16(response.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
         [(header::CONTENT_TYPE, "application/json")],
@@ -454,8 +478,29 @@ where
 /// key identity at startup, so there is no second place to configure it.
 pub async fn serve_configured(
     config: &crate::config::RelayerConfig,
-    transport: &crate::transport::RelayerHttpTransport,
+    transport: &RelayerHttpTransport,
 ) -> Result<(), String> {
+    // Every leg of the wiring below is a blocking HTTP call into the custody
+    // service and the delivery store. A blocking client may not be used in the
+    // middle of a future's poll, so the whole assembly runs on a thread that is
+    // allowed to block and only the server itself stays asynchronous.
+    let config = config.clone();
+    let transport = transport.clone();
+    let prepared = tokio::task::spawn_blocking(move || prepare(&config, &transport))
+        .await
+        .map_err(|error| format!("sponsor wiring task failed: {error}"))??;
+    let (api, principals, host, port) = prepared;
+    serve(&host, port, api, principals)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Assemble the sponsor surface. Blocking: custody identity, delivery client
+/// and RPC construction all talk HTTP.
+fn prepare(
+    config: &crate::config::RelayerConfig,
+    transport: &RelayerHttpTransport,
+) -> Result<PreparedSponsor, String> {
     let settings = settings_from(config)?;
     let sponsor = config
         .raw
@@ -518,7 +563,7 @@ pub async fn serve_configured(
             lease_ms,
             account_scope: account_scope.clone(),
         },
-        submit: crate::sponsor_submit::ChainSubmit {
+        submit: ChainSubmit {
             custody,
             signer,
             rpc,
@@ -544,15 +589,13 @@ pub async fn serve_configured(
         .unwrap_or("127.0.0.1")
         .to_string();
     let port = unsigned(&sponsor, "port", 9_465).clamp(1, u64::from(u16::MAX)) as u16;
-    serve(&host, port, api, principals)
-        .await
-        .map_err(|error| error.to_string())
+    Ok((api, principals, host, port))
 }
 
 /// The settings a request is judged against. The kill switch defaults to
 /// **halted**: a money lane that is on because nobody said otherwise is the
 /// wrong default.
-fn settings_from(config: &crate::config::RelayerConfig) -> Result<SponsorSettings, String> {
+pub fn settings_from(config: &crate::config::RelayerConfig) -> Result<SponsorSettings, String> {
     let sponsor = config
         .raw
         .get("sponsor")
@@ -603,7 +646,24 @@ fn required(
 }
 
 fn unsigned(value: &Value, field: &str, default: u64) -> u64 {
-    value.get(field).and_then(Value::as_u64).unwrap_or(default)
+    value
+        .get(field)
+        .and_then(|entry| {
+            entry.as_u64().or_else(|| {
+                // Resolved settings reach this module through
+                // `js_value_to_json`, which stores every JS number as an
+                // `f64`; `serde_json` reports `as_u64() == None` for those. A
+                // ceiling or a lease read as "absent" would silently become a
+                // default, so an integral value is accepted from either
+                // representation and a fractional one is refused rather than
+                // truncated.
+                entry.as_f64().and_then(|number| {
+                    (number.is_finite() && number >= 0.0 && number.fract() == 0.0)
+                        .then_some(number as u64)
+                })
+            })
+        })
+        .unwrap_or(default)
 }
 
 fn decode_hash160(value: &str) -> Result<[u8; 20], String> {

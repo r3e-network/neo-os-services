@@ -1409,7 +1409,94 @@ pub fn derive_pure_fields_with_rpc_urls(
         )),
     );
     nitro.set("useDerivedKeys", JsValue::Bool(use_derived_keys));
+    nitro.set(
+        "sponsorCustodyKeyId",
+        JsValue::Str(js_trim(&source.env(&["SIGNER_ROLE_SPONSOR_KEY_ID"])).to_string()),
+    );
     cfg.set("nitro", JsValue::Object(nitro));
+
+    // sponsor (the DELIVER sponsor lane, `POST /sponsor/intent`). Every field
+    // the surface reads is configuration and none of it may be declared by a
+    // client, so the whole block is projected from the process environment here
+    // and nothing writes it from a request. `enabled` is the kill switch and is
+    // halted unless it is explicitly turned on.
+    let mut sponsor_obj = JsObject::new();
+    sponsor_obj.set(
+        "host",
+        JsValue::Str(js_trim(&source.env(&["MORPHEUS_SPONSOR_HOST"])).to_string()),
+    );
+    sponsor_obj.set(
+        "port",
+        JsValue::Number(js_min(
+            js_max(
+                parse_numeric_env(
+                    &JsValue::Str(source.env(&["MORPHEUS_SPONSOR_PORT"])),
+                    9465.0,
+                ),
+                1.0,
+            ),
+            65535.0,
+        )),
+    );
+    sponsor_obj.set(
+        "contract",
+        JsValue::Str(js_trim(&source.env(&["MORPHEUS_SPONSOR_CONTRACT"])).to_string()),
+    );
+    sponsor_obj.set(
+        "feeCeilingUnits",
+        JsValue::Number(js_min(
+            js_max(
+                parse_numeric_env(
+                    &JsValue::Str(source.env(&["MORPHEUS_SPONSOR_FEE_CEILING_UNITS"])),
+                    0.0,
+                ),
+                0.0,
+            ),
+            20_000_000.0,
+        )),
+    );
+    sponsor_obj.set(
+        "enabled",
+        JsValue::Bool(parse_boolean_env(
+            &JsValue::Str(source.env(&["MORPHEUS_SPONSOR_ENABLED"])),
+            false,
+        )),
+    );
+    sponsor_obj.set(
+        "leaseMs",
+        JsValue::Number(js_max(
+            parse_numeric_env(
+                &JsValue::Str(source.env(&["MORPHEUS_SPONSOR_LEASE_MS"])),
+                60_000.0,
+            ),
+            0.0,
+        )),
+    );
+    sponsor_obj.set(
+        "confirmAttempts",
+        JsValue::Number(js_max(
+            parse_numeric_env(
+                &JsValue::Str(source.env(&["MORPHEUS_SPONSOR_CONFIRM_ATTEMPTS"])),
+                5.0,
+            ),
+            0.0,
+        )),
+    );
+    sponsor_obj.set(
+        "confirmWaitMs",
+        JsValue::Number(js_max(
+            parse_numeric_env(
+                &JsValue::Str(source.env(&["MORPHEUS_SPONSOR_CONFIRM_WAIT_MS"])),
+                1_000.0,
+            ),
+            0.0,
+        )),
+    );
+    sponsor_obj.set(
+        "principalHeader",
+        JsValue::Str(js_trim(&source.env(&["MORPHEUS_SPONSOR_PRINCIPAL_HEADER"])).to_string()),
+    );
+    cfg.set("sponsor", JsValue::Object(sponsor_obj));
 
     // neo_n3
     let mut neo_n3_obj = JsObject::new();
@@ -1517,6 +1604,10 @@ pub fn derive_pure_fields_with_rpc_urls(
     custody_key_ids.set(
         "fee_funder",
         JsValue::Str(js_trim(&source.env(&["SIGNER_ROLE_FEE_FUNDER_KEY_ID"])).to_string()),
+    );
+    custody_key_ids.set(
+        "sponsor",
+        JsValue::Str(js_trim(&source.env(&["SIGNER_ROLE_SPONSOR_KEY_ID"])).to_string()),
     );
     neo_n3_obj.set("custodyKeyIds", JsValue::Object(custody_key_ids));
     let mut fee_top_up = JsObject::new();

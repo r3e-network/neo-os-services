@@ -694,6 +694,28 @@ export function createRelayerConfig() {
         MAX_REQUEST_TIMEOUT_MS
       ),
       useDerivedKeys,
+      sponsorCustodyKeyId: trimString(env('SIGNER_ROLE_SPONSOR_KEY_ID')),
+    },
+    // The DELIVER sponsor lane (`POST /sponsor/intent`). Every field the surface
+    // reads is configuration and none of it may be declared by a client, so the
+    // whole block is projected from the process environment here. `enabled` is
+    // the kill switch and is halted unless it is explicitly turned on.
+    sponsor: {
+      host: trimString(env('MORPHEUS_SPONSOR_HOST')),
+      port: Math.min(
+        Math.max(parseNumericEnv(env('MORPHEUS_SPONSOR_PORT'), 9465), 1),
+        65535
+      ),
+      contract: trimString(env('MORPHEUS_SPONSOR_CONTRACT')),
+      feeCeilingUnits: Math.min(
+        Math.max(parseNumericEnv(env('MORPHEUS_SPONSOR_FEE_CEILING_UNITS'), 0), 0),
+        20_000_000
+      ),
+      enabled: parseBoolean(env('MORPHEUS_SPONSOR_ENABLED'), false),
+      leaseMs: Math.max(parseNumericEnv(env('MORPHEUS_SPONSOR_LEASE_MS'), 60_000), 0),
+      confirmAttempts: Math.max(parseNumericEnv(env('MORPHEUS_SPONSOR_CONFIRM_ATTEMPTS'), 5), 0),
+      confirmWaitMs: Math.max(parseNumericEnv(env('MORPHEUS_SPONSOR_CONFIRM_WAIT_MS'), 1_000), 0),
+      principalHeader: trimString(env('MORPHEUS_SPONSOR_PRINCIPAL_HEADER')),
     },
     neo_n3: {
       scanMode:
@@ -734,6 +756,7 @@ export function createRelayerConfig() {
         updater: trimString(env('SIGNER_ROLE_UPDATER_KEY_ID')),
         oracle_verifier: trimString(env('SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID')),
         fee_funder: trimString(env('SIGNER_ROLE_FEE_FUNDER_KEY_ID')),
+        sponsor: trimString(env('SIGNER_ROLE_SPONSOR_KEY_ID')),
       },
       feeTopUp: {
         enabled: parseBoolean(env('MORPHEUS_RELAYER_NEO_N3_AUTO_TOPUP_ENABLED'), true),

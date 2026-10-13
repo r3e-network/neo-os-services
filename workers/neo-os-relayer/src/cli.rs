@@ -249,10 +249,25 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             start_metrics_server(host, port, path, &config.state_file).await?;
         }
         "serve:sponsor" => {
-            let transport = crate::transport::RelayerHttpTransport::new();
-            crate::sponsor_api::serve_configured(&config, &transport)
+            // `RelayerHttpTransport` owns a `reqwest::blocking` client whose
+            // inner runtime must not be created or dropped in the async context
+            // `main` runs. Every other CLI mode constructs its transport inside
+            // `spawn_blocking` for exactly this reason; this mode keeps the
+            // client alive for the life of the server, so both the build and the
+            // final drop run on a blocking thread.
+            let transport =
+                tokio::task::spawn_blocking(crate::transport::RelayerHttpTransport::new)
+                    .await
+                    .map_err(|error| {
+                        std::io::Error::other(format!("sponsor transport task failed: {error}"))
+                    })?;
+            let served = crate::sponsor_api::serve_configured(&config, &transport).await;
+            tokio::task::spawn_blocking(move || drop(transport))
                 .await
-                .map_err(std::io::Error::other)?;
+                .map_err(|error| {
+                    std::io::Error::other(format!("sponsor transport drop task failed: {error}"))
+                })?;
+            served.map_err(std::io::Error::other)?;
         }
         "once" => {
             let result = run_relayer_once(&config).await.map_err(|e| {
