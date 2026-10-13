@@ -614,7 +614,7 @@
           "sha256": "8523fddcddea1c0a1d38fc4f6ce227c81a63cc6ca94a0b25f394ad8e0f32eb50"
         },
         "workers/neo-os-relayer/src/feed_sync.rs": {
-          "sha256": "e741447773668d6bf8157d32c4e49bd13cfe993e7876e96ab140606241d3885f"
+          "sha256": "2f128b0bec7fdf34a76c7a80ed40eba6e541a58107a09f839993591409600b50"
         },
         "package.json": {
           "sha256": "7131065e9eafbb2d211b90988eae4ac51fc89e322c2c776f6331a449c5c6c0d7"

@@ -2267,18 +2267,15 @@ mod tests {
 
         // The invocation script every simulation must carry. Reconstructed
         // with the same operation and plan the test host signs.
-        let contract: [u8; 20] =
-            hex::decode("03013f49c42a14546c8bbe58f9d434c3517fccab")
-                .unwrap()
-                .try_into()
-                .unwrap();
+        let contract: [u8; 20] = hex::decode("03013f49c42a14546c8bbe58f9d434c3517fccab")
+            .unwrap()
+            .try_into()
+            .unwrap();
         let expected_script = create_invoke_script(
             &contract,
             "updateFeeds",
             &[
-                ContractParam::Array(vec![ContractParam::String(
-                    "TWELVEDATA:NEO-USD".into(),
-                )]),
+                ContractParam::Array(vec![ContractParam::String("TWELVEDATA:NEO-USD".into())]),
                 ContractParam::Array(vec![ContractParam::Integer(1)]),
                 ContractParam::Array(vec![ContractParam::Integer(123_000_000)]),
                 ContractParam::Array(vec![ContractParam::Integer(1_700_000_000)]),
@@ -2319,10 +2316,9 @@ mod tests {
             invoke_calls.len()
         );
         for (url, body) in &invoke_calls {
-            let request: serde_json::Value =
-                serde_json::from_str(body).unwrap_or_else(|error| {
-                    panic!("invokescript call to {url} is not JSON: {error}\n{body}")
-                });
+            let request: serde_json::Value = serde_json::from_str(body).unwrap_or_else(|error| {
+                panic!("invokescript call to {url} is not JSON: {error}\n{body}")
+            });
             assert_eq!(request["method"], "invokescript");
             let encoded = request["params"][0]
                 .as_str()
