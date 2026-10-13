@@ -929,3 +929,113 @@ fn refusals_are_reproducible() {
     assert_eq!(first.to_string(), second.to_string());
     assert!(first.to_string().starts_with("SPONSOR_INTENT_WRONG_TARGET"));
 }
+
+// ---------------------------------------------------------------------------
+// 7. The fee is measured, never declared (CU-151)
+//
+// CU-150 left one obligation to the sponsor API: `transaction_fee_units` must
+// be read from the unsigned transaction envelope that is about to be signed
+// and broadcast. These tests pin that hand-off against the real encoder, so a
+// caller cannot reintroduce a declared figure by passing one.
+// ---------------------------------------------------------------------------
+
+use neo_os_core::n3_tx::{parse_unsigned_tx, FeedSigner, FeedTx};
+
+const FEE_PAYER: [u8; 20] = [
+    0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88,
+    0x88, 0x88, 0x88, 0x88,
+];
+
+fn envelope(script: &[u8], system_fee: u64, network_fee: u64) -> Vec<u8> {
+    FeedTx {
+        nonce: 1,
+        valid_until_block: 42,
+        system_fee,
+        network_fee,
+        signer: FeedSigner {
+            script_hash: FEE_PAYER,
+        },
+        script,
+    }
+    .serialize_unsigned()
+}
+
+#[test]
+fn the_fee_the_validator_prices_is_read_from_the_envelope() {
+    let script = register_account_script();
+    let bytes = envelope(&script, 1_000, 250);
+    let parsed = parse_unsigned_tx(&bytes).expect("the encoder's own envelope must parse");
+    let measured = parsed
+        .transaction_fee_units()
+        .expect("fee fits the datoshi domain");
+
+    let accepted = validate_sponsorable_intent(&SponsorIntentRequest {
+        script: &parsed.script,
+        sponsorable_contract: AA_CONTRACT,
+        fee_ceiling_units: CEILING,
+        transaction_fee_units: measured,
+    })
+    .expect("a priced-by-envelope intent is sponsorable");
+
+    assert_eq!(measured, 1_250);
+    assert_eq!(accepted.transaction_fee_units, 1_250);
+    assert_eq!(accepted.reimbursement_units, 0);
+    assert_eq!(accepted.sponsor_fee_units, 1_250);
+}
+
+#[test]
+fn a_sponsored_operation_prices_the_envelope_fee_plus_the_script_claim() {
+    let script = execute_sponsored_script(4_000);
+    let parsed = parse_unsigned_tx(&envelope(&script, 1_000, 250)).expect("valid envelope");
+    let measured = parsed.transaction_fee_units().expect("fee fits");
+
+    let accepted = validate_sponsorable_intent(&SponsorIntentRequest {
+        script: &parsed.script,
+        sponsorable_contract: AA_CONTRACT,
+        fee_ceiling_units: CEILING,
+        transaction_fee_units: measured,
+    })
+    .expect("valid sponsored operation");
+
+    assert_eq!(accepted.reimbursement_units, 4_000);
+    assert_eq!(accepted.sponsor_fee_units, 5_250);
+}
+
+#[test]
+fn an_envelope_whose_measured_fee_exceeds_the_ceiling_is_refused() {
+    // The submitter cannot declare its way under the ceiling: the figure the
+    // validator prices is the one in the bytes that will be signed.
+    let script = register_account_script();
+    let parsed =
+        parse_unsigned_tx(&envelope(&script, 9_000_000, 2_000_000)).expect("valid envelope");
+    let measured = parsed.transaction_fee_units().expect("fee fits");
+
+    let refused = validate_sponsorable_intent(&SponsorIntentRequest {
+        script: &parsed.script,
+        sponsorable_contract: AA_CONTRACT,
+        fee_ceiling_units: CEILING,
+        transaction_fee_units: measured,
+    })
+    .unwrap_err();
+
+    assert_eq!(refused.code, SponsorIntentCode::FeeOverCeiling);
+}
+
+#[test]
+fn the_script_the_validator_sees_is_the_one_inside_the_envelope() {
+    // There is no separate script field on the request. The bytes that are
+    // priced and the bytes that are validated come from the same envelope.
+    let script = register_account_script();
+    let parsed = parse_unsigned_tx(&envelope(&script, 10, 10)).expect("valid envelope");
+
+    let accepted = validate_sponsorable_intent(&SponsorIntentRequest {
+        script: &parsed.script,
+        sponsorable_contract: AA_CONTRACT,
+        fee_ceiling_units: CEILING,
+        transaction_fee_units: parsed.transaction_fee_units().expect("fee fits"),
+    })
+    .expect("valid intent");
+
+    assert_eq!(parsed.script, script);
+    assert_eq!(accepted.method, SponsorableMethod::RegisterAccount);
+}

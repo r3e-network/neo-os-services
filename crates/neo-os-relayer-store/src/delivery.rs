@@ -96,6 +96,27 @@ fn decode_job(value: Value) -> Result<DeliveryJob, String> {
     Ok(job)
 }
 
+/// The reservation `morpheus_delivery_sponsor_reserve` holds.
+///
+/// One shape for one fact: the sponsor API builds this and the store sends it,
+/// so there is no second field list that could drift from the RPC's arguments.
+/// Identity is `(network, principal, idempotency_key)`; everything else must
+/// match on a retry or the store raises `sponsor idempotency conflict`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SponsorReservation {
+    pub network: String,
+    pub principal: String,
+    pub idempotency_key: String,
+    /// The called contract, display order (`0x` + 40 hex).
+    pub contract: String,
+    /// The sponsor account the transaction consumes a nonce for, display order.
+    pub account: String,
+    /// The derived intent facts.
+    pub intent: Value,
+    /// The approved ceiling for one intent, GAS datoshi.
+    pub fee_ceiling_units: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeliveryJob {
     pub job_key: String,
@@ -244,6 +265,69 @@ impl<T: HttpTransport> DeliveryStore<'_, T> {
         let result = self.rpc("transition", json!({"p_job":job.job_key,"p_owner":owner,"p_generation":job.generation,"p_op":op,"p_data":data,"p_lease_ms":lease_ms}), now_ms)?;
         decode_job(result)
     }
+    /// `morpheus_delivery_sponsor_reserve` — the only writer of a sponsor
+    /// intent and of every budget counter. One database transaction journals
+    /// the intent, debits the three budgets and enqueues the bound delivery
+    /// job, so a job can never exist unreserved and a reservation can never
+    /// survive a failed enqueue.
+    ///
+    /// It is also the idempotency primitive: an identical retry returns the
+    /// original job and charges nothing, and a retry that reuses the key with a
+    /// different intent is SQLSTATE `22023` `sponsor idempotency conflict`.
+    /// The caller never decides which of the two happened by inspecting a row.
+    pub fn sponsor_reserve(
+        &self,
+        reservation: &SponsorReservation,
+        now_ms: u64,
+    ) -> Result<DeliveryJob, String> {
+        let result = self.rpc(
+            "sponsor_reserve",
+            json!({
+                "p_network": self.client.config().network,
+                "p_principal": reservation.principal,
+                "p_idempotency_key": reservation.idempotency_key,
+                "p_contract": reservation.contract,
+                "p_account": reservation.account,
+                "p_intent": reservation.intent,
+                "p_fee_ceiling_units": reservation.fee_ceiling_units,
+            }),
+            now_ms,
+        )?;
+        decode_job(result)
+    }
+
+    /// A delivery transition that passes `data` to the store **verbatim**.
+    ///
+    /// [`Self::transition`] wraps the `prepared` stage in the feed lane's
+    /// `content_base64` envelope. The sponsor guard reads
+    /// `journal.prepared.fee_ceiling_units` off the stage object itself, so the
+    /// sponsor lane must not go through that wrapper. Every other operation is
+    /// byte-identical to [`Self::transition`].
+    pub fn sponsor_stage(
+        &self,
+        job: &DeliveryJob,
+        owner: &str,
+        op: &str,
+        data: Value,
+        lease_ms: u64,
+        now_ms: u64,
+    ) -> Result<DeliveryJob, String> {
+        validate_delivery_operation(op)?;
+        let result = self.rpc(
+            "transition",
+            json!({
+                "p_job": job.job_key,
+                "p_owner": owner,
+                "p_generation": job.generation,
+                "p_op": op,
+                "p_data": data,
+                "p_lease_ms": lease_ms,
+            }),
+            now_ms,
+        )?;
+        decode_job(result)
+    }
+
     pub fn checkpoint(
         &self,
         chain: &str,

@@ -22,6 +22,9 @@ pub mod heartbeat;
 pub mod observe;
 pub mod relayer;
 pub mod scan;
+pub mod sponsor;
+pub mod sponsor_api;
+pub mod sponsor_submit;
 pub mod transport;
 pub mod xcm;
 pub mod xcm_lane;
@@ -29,6 +32,7 @@ pub mod xcm_lane;
 pub use config::{create_relayer_config, create_relayer_config_from_env, RelayerConfig};
 pub use observe::{render_prometheus_metrics, TOP_LEVEL_COUNTERS};
 pub use relayer::{run_relayer_loop, run_relayer_once};
+pub use sponsor::{SponsorApi, SponsorCode, SponsorSettings};
 pub use xcm::CrossChainMessage;
 pub use xcm_lane::{
     drain_xcm_lane, enqueue_xcm_message, relay_xcm_message, relay_xcm_to_neo_n3, relay_xcm_to_neox,

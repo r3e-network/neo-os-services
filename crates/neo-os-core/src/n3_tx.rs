@@ -662,6 +662,225 @@ fn push_varuint(out: &mut Vec<u8>, value: usize) {
     }
 }
 
+// ---- unsigned transaction envelopes ----
+
+/// Why an unsigned envelope could not be framed.
+///
+/// The sponsor path pays for exactly one wire shape, so anything that is not
+/// that shape is refused rather than half-parsed: a partially-understood
+/// transaction is the one thing a fee payer must never sign.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum N3TxParseError {
+    /// The bytes end before a complete field.
+    Truncated,
+    /// Bytes remain after the declared script.
+    TrailingBytes,
+    /// `version` is not the 0 the encoder emits.
+    UnsupportedVersion,
+    /// Not exactly one signer.
+    SignerCount,
+    /// The signer's scope is not the single `CalledByEntry` the encoder emits.
+    SignerScope,
+    /// A non-zero attribute count; the encoder emits none.
+    Attributes,
+    /// The script length is not in the canonical `num2VarInt` form, or names
+    /// more bytes than the envelope carries.
+    ScriptLength,
+}
+
+impl std::fmt::Display for N3TxParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Truncated => "the envelope ends before a complete field",
+            Self::TrailingBytes => "the envelope has bytes after the invocation script",
+            Self::UnsupportedVersion => "the envelope is not a version-0 transaction",
+            Self::SignerCount => "the envelope does not carry exactly one signer",
+            Self::SignerScope => "the signer scope is not CalledByEntry",
+            Self::Attributes => "the envelope carries transaction attributes",
+            Self::ScriptLength => "the invocation script length is not canonical",
+        })
+    }
+}
+
+impl std::error::Error for N3TxParseError {}
+
+/// One unsigned Neo N3 transaction, framed exactly as
+/// [`FeedTx::serialize_unsigned`] emits it.
+///
+/// The public fields are in the same order the public surface uses elsewhere in
+/// this module: `signer` is **display order**, the `0x…` 40-hex form, so a
+/// comparison against a journal column is a byte comparison. Parsing is the
+/// inverse of the encoder and re-serialising a parsed envelope reproduces the
+/// input bytes exactly, so a second encoding of the same transaction cannot
+/// slip past a caller that prices or signs these bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsignedTx {
+    pub nonce: u32,
+    pub valid_until_block: u32,
+    pub system_fee: u64,
+    pub network_fee: u64,
+    /// The fee payer, display order.
+    pub signer: [u8; HASH160_LEN],
+    pub script: Vec<u8>,
+}
+
+impl UnsignedTx {
+    /// The view the encoder takes, so the two never diverge on the wire.
+    fn as_feed_tx(&self) -> FeedTx<'_> {
+        FeedTx {
+            nonce: self.nonce,
+            valid_until_block: self.valid_until_block,
+            system_fee: self.system_fee,
+            network_fee: self.network_fee,
+            signer: FeedSigner {
+                script_hash: self.signer,
+            },
+            script: &self.script,
+        }
+    }
+
+    /// `Transaction.serialize(false)` for this envelope. Byte-identical to the
+    /// bytes [`parse_unsigned_tx`] accepted.
+    pub fn serialize_unsigned(&self) -> Vec<u8> {
+        self.as_feed_tx().serialize_unsigned()
+    }
+
+    /// `Transaction.serialize(true)`: the unsigned serialization plus the
+    /// witness array.
+    pub fn serialize_signed(&self, witnesses: &[Witness]) -> Vec<u8> {
+        self.as_feed_tx().serialize_signed(witnesses)
+    }
+
+    /// The transaction hash the chain and `getapplicationlog` key on.
+    pub fn hash_display(&self) -> String {
+        self.as_feed_tx().hash_display()
+    }
+
+    /// `SystemFee + NetworkFee`, the amount the fee payer spends on this
+    /// transaction. `None` when the sum leaves the datoshi domain, so a caller
+    /// refuses rather than wraps.
+    pub fn transaction_fee_units(&self) -> Option<u64> {
+        self.system_fee.checked_add(self.network_fee)
+    }
+}
+
+/// Read a `FeedTx::serialize_unsigned` envelope. The inverse of that encoder,
+/// and nothing more: it frames the transaction and makes no claim about what
+/// the invocation script means.
+pub fn parse_unsigned_tx(bytes: &[u8]) -> Result<UnsignedTx, N3TxParseError> {
+    let mut read = Reader::new(bytes);
+    let version = read.byte()?;
+    if version != 0 {
+        return Err(N3TxParseError::UnsupportedVersion);
+    }
+    let nonce = read.u32()?;
+    let system_fee = read.u64()?;
+    let network_fee = read.u64()?;
+    let valid_until_block = read.u32()?;
+    if read.byte()? != 1 {
+        return Err(N3TxParseError::SignerCount);
+    }
+    let mut signer = read.array::<HASH160_LEN>()?;
+    // The wire carries the account little-endian; the public surface is display
+    // order, matching `decode_invoke_call`'s hashes and the journal's `contract`
+    // column.
+    signer.reverse();
+    if read.byte()? != WITNESS_SCOPE_CALLED_BY_ENTRY {
+        return Err(N3TxParseError::SignerScope);
+    }
+    if read.byte()? != 0 {
+        return Err(N3TxParseError::Attributes);
+    }
+    let script_len = read.canonical_varuint()?;
+    let script = read.take(script_len)?;
+    if !read.done() {
+        return Err(N3TxParseError::TrailingBytes);
+    }
+    Ok(UnsignedTx {
+        nonce,
+        valid_until_block,
+        system_fee,
+        network_fee,
+        signer,
+        script: script.to_vec(),
+    })
+}
+
+/// A bounds-checked cursor over a fixed buffer. Every field read is exact, so a
+/// short buffer is [`N3TxParseError::Truncated`] and never a zero default.
+struct Reader<'a> {
+    bytes: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Reader { bytes, at: 0 }
+    }
+
+    fn take(&mut self, count: usize) -> Result<&'a [u8], N3TxParseError> {
+        let end = self
+            .at
+            .checked_add(count)
+            .ok_or(N3TxParseError::Truncated)?;
+        let slice = self
+            .bytes
+            .get(self.at..end)
+            .ok_or(N3TxParseError::Truncated)?;
+        self.at = end;
+        Ok(slice)
+    }
+
+    fn byte(&mut self) -> Result<u8, N3TxParseError> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], N3TxParseError> {
+        let slice = self.take(N)?;
+        let mut out = [0u8; N];
+        out.copy_from_slice(slice);
+        Ok(out)
+    }
+
+    fn u32(&mut self) -> Result<u32, N3TxParseError> {
+        Ok(u32::from_le_bytes(self.array()?))
+    }
+
+    fn u64(&mut self) -> Result<u64, N3TxParseError> {
+        Ok(u64::from_le_bytes(self.array()?))
+    }
+
+    /// `num2VarInt`, accepted only in the single form [`push_varuint`] emits.
+    /// A second encoding of the same length is a second encoding of the same
+    /// transaction, and a fee payer must sign exactly one of them.
+    fn canonical_varuint(&mut self) -> Result<usize, N3TxParseError> {
+        let lead = self.byte()?;
+        match lead {
+            0x00..=0xfc => Ok(usize::from(lead)),
+            0xfd => {
+                let value = u16::from_le_bytes(self.array()?) as usize;
+                if value < 0xfd {
+                    return Err(N3TxParseError::ScriptLength);
+                }
+                Ok(value)
+            }
+            0xfe => {
+                let value = u32::from_le_bytes(self.array()?) as usize;
+                if value <= 0xffff {
+                    return Err(N3TxParseError::ScriptLength);
+                }
+                Ok(value)
+            }
+            // `push_varuint` never emits the 8-byte form.
+            _ => Err(N3TxParseError::ScriptLength),
+        }
+    }
+
+    fn done(&self) -> bool {
+        self.at == self.bytes.len()
+    }
+}
+
 // ---- script-hash derivation (custody identity + address forms) ----
 
 /// `Hash160`: RIPEMD160(SHA256(bytes)) — the Neo script-hash function.

@@ -7,7 +7,8 @@
 //! base64-decode quirk.
 
 use neo_os_core::n3_tx::{
-    create_invoke_script, decode_invoke_call, ContractParam, FeedSigner, FeedTx, InvokeArg,
+    create_invoke_script, decode_invoke_call, parse_unsigned_tx, ContractParam, FeedSigner, FeedTx,
+    InvokeArg, Witness, WITNESS_SCOPE_CALLED_BY_ENTRY,
 };
 
 const FEED_N3_CONTRACT: [u8; 20] = [
@@ -367,4 +368,210 @@ fn decode_invoke_call_returns_display_order_hashes() {
     }
     assert!(matches!(call.args[1], InvokeArg::Integer(_)));
     assert_eq!(call.args[1].as_i128(), Some(3600));
+}
+
+// ---------------------------------------------------------------------------
+// Unsigned transaction envelopes (CU-151). `parse_unsigned_tx` is the inverse
+// of `FeedTx::serialize_unsigned`, so the sponsor API can measure `SystemFee +
+// NetworkFee` out of the bytes it is about to sign rather than accepting a
+// figure the submitter declared.
+// ---------------------------------------------------------------------------
+
+fn sample_tx() -> FeedTx<'static> {
+    // A static script so the returned FeedTx can outlive the call site.
+    static SCRIPT: [u8; 4] = [0x0c, 0x01, 0x41, 0x42];
+    FeedTx {
+        nonce: 0x01020304,
+        valid_until_block: 1_234_567,
+        system_fee: 1_234_567_890_123,
+        network_fee: 456_789,
+        signer: FeedSigner {
+            script_hash: UPDATER_SCRIPT_HASH,
+        },
+        script: &SCRIPT,
+    }
+}
+
+#[test]
+fn parse_unsigned_tx_round_trips_every_field_the_encoder_emits() {
+    let tx = sample_tx();
+    let bytes = tx.serialize_unsigned();
+    let parsed = parse_unsigned_tx(&bytes).expect("the encoder's own output must parse");
+
+    assert_eq!(parsed.nonce, tx.nonce);
+    assert_eq!(parsed.valid_until_block, tx.valid_until_block);
+    assert_eq!(parsed.system_fee, tx.system_fee);
+    assert_eq!(parsed.network_fee, tx.network_fee);
+    assert_eq!(parsed.signer, UPDATER_SCRIPT_HASH);
+    assert_eq!(parsed.script, tx.script);
+    // Re-serialising the parsed envelope must reproduce the exact bytes, so a
+    // caller cannot smuggle a second encoding past the sponsor.
+    assert_eq!(parsed.serialize_unsigned(), bytes);
+}
+
+#[test]
+fn the_transaction_fee_is_the_sum_of_the_two_envelope_fees() {
+    let tx = sample_tx();
+    let parsed = parse_unsigned_tx(&tx.serialize_unsigned()).expect("valid envelope");
+    assert_eq!(
+        parsed.transaction_fee_units(),
+        Some(tx.system_fee + tx.network_fee)
+    );
+}
+
+#[test]
+fn a_fee_sum_outside_the_datoshi_domain_is_reported_as_none_rather_than_wrapped() {
+    let mut tx = sample_tx();
+    tx.system_fee = u64::MAX;
+    tx.network_fee = 1;
+    let parsed = parse_unsigned_tx(&tx.serialize_unsigned()).expect("valid envelope");
+    assert_eq!(parsed.transaction_fee_units(), None);
+}
+
+#[test]
+fn the_transaction_hash_is_the_unsigned_hash_the_relayer_polls() {
+    let tx = sample_tx();
+    let parsed = parse_unsigned_tx(&tx.serialize_unsigned()).expect("valid envelope");
+    assert_eq!(parsed.hash_display(), tx.hash_display());
+}
+
+#[test]
+fn parse_unsigned_tx_refuses_an_empty_envelope() {
+    assert!(parse_unsigned_tx(&[]).is_err());
+}
+
+#[test]
+fn parse_unsigned_tx_refuses_a_truncated_envelope() {
+    let bytes = sample_tx().serialize_unsigned();
+    for cut in 1..bytes.len() {
+        assert!(
+            parse_unsigned_tx(&bytes[..cut]).is_err(),
+            "a {cut}-byte prefix of a {}-byte envelope must not parse",
+            bytes.len()
+        );
+    }
+}
+
+#[test]
+fn parse_unsigned_tx_refuses_trailing_bytes() {
+    let mut bytes = sample_tx().serialize_unsigned();
+    bytes.push(0);
+    assert!(parse_unsigned_tx(&bytes).is_err());
+}
+
+#[test]
+fn parse_unsigned_tx_refuses_a_signed_envelope() {
+    // The witness array rides after the unsigned serialization, so a signed
+    // transaction is exactly the shape this parser must refuse: the sponsor
+    // signs the envelope it was given and never one that already carries a
+    // witness.
+    let signed = sample_tx().serialize_signed(&[Witness {
+        invocation_script: vec![0x0c, 0x21],
+        verification_script: vec![0x41],
+    }]);
+    assert!(parse_unsigned_tx(&signed).is_err());
+}
+
+#[test]
+fn parse_unsigned_tx_refuses_more_than_one_signer() {
+    let mut bytes = sample_tx().serialize_unsigned();
+    // The signer count is the byte immediately after validUntilBlock
+    // (version 1 + nonce 4 + systemFee 8 + networkFee 8 + validUntilBlock 4).
+    bytes[1 + 4 + 8 + 8 + 4] = 2;
+    assert!(parse_unsigned_tx(&bytes).is_err());
+}
+
+#[test]
+fn parse_unsigned_tx_refuses_a_signer_scope_other_than_called_by_entry() {
+    let mut bytes = sample_tx().serialize_unsigned();
+    let scope_index = 1 + 4 + 8 + 8 + 4 + 1 + 20;
+    assert_eq!(bytes[scope_index], WITNESS_SCOPE_CALLED_BY_ENTRY);
+    bytes[scope_index] = 0x80; // Global, the one scope a sponsor key must never carry
+    assert!(parse_unsigned_tx(&bytes).is_err());
+}
+
+#[test]
+fn parse_unsigned_tx_refuses_a_nonzero_attribute_count() {
+    let mut bytes = sample_tx().serialize_unsigned();
+    let attribute_count_index = 1 + 4 + 8 + 8 + 4 + 1 + 20 + 1;
+    bytes[attribute_count_index] = 1;
+    assert!(parse_unsigned_tx(&bytes).is_err());
+}
+
+#[test]
+fn parse_unsigned_tx_refuses_a_nonzero_version() {
+    let mut bytes = sample_tx().serialize_unsigned();
+    bytes[0] = 1;
+    assert!(parse_unsigned_tx(&bytes).is_err());
+}
+
+#[test]
+fn parse_unsigned_tx_refuses_a_noncanonical_script_length() {
+    // `num2VarInt` emits a bare length byte below 0xfd; a 0xfd escape for the
+    // same short length is a second encoding of one transaction and must not
+    // be accepted alongside the canonical one.
+    let canonical = sample_tx().serialize_unsigned();
+    let script_len_index = 1 + 4 + 8 + 8 + 4 + 1 + 20 + 1 + 1;
+    assert_eq!(canonical[script_len_index], 4);
+    let mut escaped = Vec::new();
+    escaped.extend_from_slice(&canonical[..script_len_index]);
+    escaped.push(0xfd);
+    escaped.extend_from_slice(&4u16.to_le_bytes());
+    escaped.extend_from_slice(&canonical[script_len_index + 1..]);
+    assert!(parse_unsigned_tx(&escaped).is_err());
+}
+
+#[test]
+fn parse_unsigned_tx_refuses_an_overlong_script_length() {
+    let canonical = sample_tx().serialize_unsigned();
+    let script_len_index = 1 + 4 + 8 + 8 + 4 + 1 + 20 + 1 + 1;
+    let mut oversize = canonical.clone();
+    oversize[script_len_index] = 0xff;
+    assert!(parse_unsigned_tx(&oversize).is_err());
+}
+
+#[test]
+fn the_parsed_envelope_carries_the_signer_in_display_order() {
+    // `serialize_unsigned` writes the account little-endian; the public surface
+    // is display order, so the parsed signer must be the constant as written
+    // in this file, not its byte reversal.
+    let parsed = parse_unsigned_tx(&sample_tx().serialize_unsigned()).expect("valid envelope");
+    assert_eq!(parsed.signer, UPDATER_SCRIPT_HASH);
+    let mut wire_order = UPDATER_SCRIPT_HASH;
+    wire_order.reverse();
+    assert_ne!(parsed.signer, wire_order);
+}
+
+#[test]
+fn unsigned_tx_exposes_no_second_script_decoder() {
+    // The envelope carries an invocation script; its shape question is
+    // CU-150's `decode_invoke_call`, and this parser only frames it. A parsed
+    // envelope therefore hands back exactly the script bytes and no claim
+    // about what they mean.
+    let account = [
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        0x00, 0x12, 0x34, 0x56, 0x78,
+    ];
+    let script = create_invoke_script(
+        &UPDATER_SCRIPT_HASH,
+        "registerAccount",
+        &[
+            ContractParam::Hash160(format!("0x{}", hex::encode(account))),
+            ContractParam::Integer(3600),
+        ],
+    )
+    .expect("valid fixture");
+    let tx = FeedTx {
+        nonce: 7,
+        valid_until_block: 99,
+        system_fee: 5,
+        network_fee: 6,
+        signer: FeedSigner {
+            script_hash: UPDATER_SCRIPT_HASH,
+        },
+        script: &script,
+    };
+    let parsed = parse_unsigned_tx(&tx.serialize_unsigned()).expect("valid envelope");
+    assert_eq!(parsed.script, script);
+    assert!(!parsed.script.is_empty());
 }

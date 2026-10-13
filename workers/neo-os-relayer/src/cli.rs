@@ -19,6 +19,7 @@ const CLI_MODES: &[&str] = &[
     "metrics",
     "metrics:prom",
     "serve:metrics",
+    "serve:sponsor",
     "config:validate",
     "config:dump",
     "health",
@@ -246,6 +247,12 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .unwrap_or("/metrics");
 
             start_metrics_server(host, port, path, &config.state_file).await?;
+        }
+        "serve:sponsor" => {
+            let transport = crate::transport::RelayerHttpTransport::new();
+            crate::sponsor_api::serve_configured(&config, &transport)
+                .await
+                .map_err(std::io::Error::other)?;
         }
         "once" => {
             let result = run_relayer_once(&config).await.map_err(|e| {
