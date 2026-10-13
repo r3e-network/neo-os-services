@@ -35,6 +35,7 @@
     "check:capability-route-parity": "node scripts/check-capability-route-parity.mjs",
     "check:tracked-build-outputs": "node scripts/check-tracked-build-outputs.mjs",
     "check:custody-plane": "node scripts/custody-plane-e2e.mjs",
+    "check:e2e-private-chain": "node scripts/test-e2e-private-chain.mjs",
     "test:signer:rust": "cargo test -p neo-signer --all-targets --locked",
     "start:signer:rust": "cargo run --locked -p neo-signer --bin signer_service -- serve",
     "test:enclave-host:rust": "cargo test -p nitro-enclave-host --all-targets --locked",

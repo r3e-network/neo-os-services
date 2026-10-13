@@ -18,6 +18,26 @@ use neo_os_chain_n3::tx::{
 use neo_os_chain_n3::HttpTransport;
 
 const PUBLIC_KEY: &str = "0315b41fcf6671b6400237730bc8a261dcb64e25cc17de9878576c78eace1c9146";
+
+fn base64_decode(value: &str) -> Vec<u8> {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut bits: u32 = 0;
+    let mut held = 0u32;
+    let mut out = Vec::new();
+    for byte in value.bytes().filter(|b| *b != b'=') {
+        let index = ALPHABET
+            .iter()
+            .position(|candidate| *candidate == byte)
+            .expect("base64 alphabet") as u32;
+        held = (held << 6) | index;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((held >> bits) as u8);
+        }
+    }
+    out
+}
 const SCRIPT_HASH_LE: &str = "3124a38a74f447b120b551db00f513ec674318c9";
 
 /// FIFO scripted transport: every call pops the next (status, body). Calls are
@@ -145,6 +165,53 @@ fn signer() -> CustodySigner {
 }
 
 const WITNESS_REPLY: &str = "{\"allowed\":true,\"key_id\":\"updater-key\",\"script_hash\":\"0x3124a38a74f447b120b551db00f513ec674318c9\",\"address\":\"NeFG5A79AJovUz4BStpnmFyQChLvQkuW72\",\"digest\":\"aabb\",\"invocation_script\":\"40de\",\"verification_script\":\"0c210315b41fcf6671b6400237730bc8a261dcb64e25cc17de9878576c78eace1c91464156e7b327\",\"public_key\":\"0315b41fcf6671b6400237730bc8a261dcb64e25cc17de9878576c78eace1c9146\"}";
+
+/// `invokescript` takes a **script**, not a transaction. The pre-broadcast
+/// simulation must carry the exact bytes the node will execute; handing it the
+/// unsigned transaction serialization makes the node execute transaction
+/// framing as opcodes and fault with interpreter errors that look like contract
+/// bugs.
+#[test]
+fn the_test_invoke_carries_the_script_not_the_transaction() {
+    let custody_transport = ScriptedTransport::new(&[(200, WITNESS_REPLY), (200, WITNESS_REPLY)]);
+    let rpc_transport = ScriptedTransport::new(&[
+        (200, r#"{"jsonrpc":"2.0","id":1,"result":1234}"#),
+        (
+            200,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"state":"HALT","gasconsumed":"100000000"}}"#,
+        ),
+        (
+            200,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"networkfee":"1234567"}}"#,
+        ),
+        (200, r#"{"jsonrpc":"2.0","id":1,"result":true}"#),
+    ]);
+    let custody = custody_client(&custody_transport);
+    let client = rpc_client(&rpc_transport);
+    let script: &[u8] = &[0x01, 0x02, 0x03];
+
+    build_sign_and_broadcast(
+        &client,
+        &custody,
+        &signer(),
+        &FixedNonce(305419896),
+        script,
+        &BroadcastOptions::default(),
+    )
+    .expect("broadcast succeeds");
+
+    let calls = rpc_transport.calls.lock().unwrap();
+    let request: serde_json::Value =
+        serde_json::from_str(calls[1].split_once(" :: ").unwrap().1).unwrap();
+    assert_eq!(request["method"], "invokescript");
+    let encoded = request["params"][0].as_str().expect("script param");
+    let decoded = base64_decode(encoded);
+    assert_eq!(
+        decoded.as_slice(),
+        script,
+        "the test invoke must carry the invocation script"
+    );
+}
 
 #[test]
 fn broadcast_happy_path_shapes_fees_and_signs_twice() {

@@ -402,6 +402,35 @@ jobs:
       - name: Fulfill fresh kernel request through the host
         run: python3 scripts/test-host-private-chain.py
 
+  # One request through the whole trust path on a disposable private chain:
+  # the kernel queues it, the Rust relayer discovers and delivers it, the Rust
+  # host fulfils it, the real custody service signs the digest, and the kernel
+  # verifies that signature and stores the result. Composes the local-chain
+  # seam and the host acceptance above, which each stand in for the other legs.
+  e2e-private-chain:
+    needs: changes
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: .nvmrc
+      - name: Install acceptance dependencies
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal
+          dotnet tool install --tool-path "$RUNNER_TEMP/e2e-chain-bin" Neo.Compiler.CSharp --version 3.9.1
+          dotnet tool install --tool-path "$RUNNER_TEMP/e2e-chain-bin" Neo.Express --version 3.10.1
+          echo "$RUNNER_TEMP/e2e-chain-bin" >> "$GITHUB_PATH"
+          cargo fetch --locked
+      - name: Kernel, relayer, host and custody on a private chain
+        run: |
+          source scripts/dotnet_env.sh
+          node scripts/test-e2e-private-chain.mjs
+
   # Foundry suite for the EVM (Neo X) mirror contracts. Gated on contracts-evm/** changes via
   # the 'evm' paths-filter output. solc 0.8.35 / evm_version paris are pinned in
   # contracts-evm/foundry.toml, and the harness is offline (local Vm interface in

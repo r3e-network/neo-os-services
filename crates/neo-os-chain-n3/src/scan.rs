@@ -404,7 +404,7 @@ pub fn scan_oracle_request_block<T: HttpTransport>(
                     .get("contract")
                     .and_then(Value::as_str)
                     .unwrap_or("");
-                if strip0x_lowercase(notification_contract) != target_contract {
+                if strip0x_lowercase(notification_contract) != strip0x_lowercase(target_contract) {
                     continue;
                 }
                 let event_name = notification
@@ -820,5 +820,81 @@ mod tests {
     fn utf8_param_encoder_matches_the_js() {
         assert_eq!(encode_utf8_byte_array_param_value("{}"), "e30=");
         assert_eq!(encode_utf8_byte_array_param_value(""), "");
+    }
+
+    /// The configured oracle contract is a 20-byte script hash, and every
+    /// documented configuration writes it with an `0x` prefix, while the RPC
+    /// notification's `contract` field is normalized to bare lowercase hex
+    /// before it is compared. A scan must match on the 20 bytes, never on the
+    /// spelling of the configured value.
+    #[test]
+    fn a_request_notification_is_found_whatever_the_hash_prefix() {
+        const HASH: &str = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
+
+        struct Reply;
+        impl crate::HttpTransport for Reply {
+            fn post(&self, _url: &str, body: &str) -> Result<(u16, String), String> {
+                let request: Value = serde_json::from_str(body).map_err(|e| e.to_string())?;
+                let result = match request["method"].as_str().unwrap_or_default() {
+                    "getblock" => {
+                        serde_json::json!({ "tx": [{ "txid": format!("0x{}", "ab".repeat(32)) }] })
+                    }
+                    "getapplicationlog" => serde_json::json!({
+                        "executions": [{
+                            "notifications": [{
+                                "contract": format!("0x{HASH}"),
+                                "eventname": "MiniAppRequestQueued",
+                                "state": { "value": [
+                                    {"type":"Integer","value":"7"},
+                                    {"type":"String","value":"cu88.private"},
+                                    {"type":"String","value":"compute.run"},
+                                    {"type":"String","value":"compute_hash"},
+                                    {"type":"String","value":"NbrXdur6FV9bx33ME1jxjoKyQMBLZCWtDL"},
+                                    {"type":"String","value":"NVVqfbA31We3H39aQvNAPoCvUwoNooXdL4"},
+                                    {"type":"ByteArray","value":"e30="}
+                                ]}
+                            }]
+                        }]
+                    }),
+                    other => return Err(format!("unexpected method {other}")),
+                };
+                Ok((
+                    200,
+                    serde_json::json!({"jsonrpc":"2.0","id":1,"result":result}).to_string(),
+                ))
+            }
+            fn get(&self, _url: &str) -> Result<(u16, String), String> {
+                unreachable!("the block scan never performs a GET")
+            }
+            fn post_local(&self, url: &str, body: &str) -> Result<(u16, String), String> {
+                self.post(url, body)
+            }
+        }
+
+        let client = NeoRpcClient::new_local(
+            Reply,
+            vec!["http://127.0.0.1:23456".to_string()],
+            "test",
+            894710606,
+        )
+        .unwrap();
+        for target in [
+            format!("0x{HASH}"),
+            HASH.to_string(),
+            format!("0x{}", HASH.to_uppercase()),
+        ] {
+            let events = scan_oracle_request_block(&client, 1, &target)
+                .unwrap_or_else(|error| panic!("scan refused target {target}: {error}"));
+            assert_eq!(
+                events.len(),
+                1,
+                "target spelling {target} must match the kernel"
+            );
+            assert_eq!(events[0].request_id, "7");
+            assert_eq!(events[0].app_id, "cu88.private");
+        }
+        let other =
+            scan_oracle_request_block(&client, 1, &format!("0x{}", "11".repeat(20))).unwrap();
+        assert!(other.is_empty(), "a different contract must not match");
     }
 }

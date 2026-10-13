@@ -719,7 +719,7 @@ fn deliver_n3_feed<T: HttpTransport + N3HttpTransport, W: EvmWaiter + Sync, N: N
         .call(
             "invokescript",
             json!([
-                neo_os_core::base64::encode_standard(&zero_tx.serialize_unsigned()),
+                neo_os_core::base64::encode_standard(zero_tx.script),
                 [{"account": normalize_hash160(&updater.script_hash), "scopes": "CalledByEntry"}]
             ]),
         )

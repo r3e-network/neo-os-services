@@ -68,3 +68,43 @@ The kernel verifies the signature and stores the completed result; the harness
 also checks corrupt-signature and duplicate-fulfillment rejection. Wallets and
 chain data are deleted on exit. This does not exercise the relayer or production
 custody/attestation transport.
+
+## End-to-end: kernel, relayer, host and custody
+
+`scripts/test-e2e-private-chain.mjs` is the composition of the two halves above,
+with every stand-in removed. It runs one MiniApp request through the whole trust
+path on a disposable private chain:
+
+1. an unmodified `MorpheusOracle` kernel deploys to a fresh Neo Express chain;
+2. a real `signer_service` custody vault is provisioned, the private-chain
+   wallet is taken into it as the updater key, and the kernel's runtime
+   verifier is pointed at the custody `oracle_verifier` key;
+3. a request is queued on chain and a **corrupt signature is refused** while it
+   is still pending — the verifier is live, not vacuous;
+4. `neo-os-relayer once` discovers the request, delivers it to `enclave_host`,
+   and the host signs its fulfillment digest through custody;
+5. the relayer pins the returned key identity to the custody key it resolved and
+   submits `fulfillRequest`, where the kernel **verifies the signature** and
+   stores the result;
+6. a second delivery of the settled request is **refused on chain** and leaves
+   the stored request unchanged.
+
+Run it from the repository root after building the kernel:
+
+```sh
+source scripts/dotnet_env.sh
+node scripts/test-e2e-private-chain.mjs
+```
+
+It needs Rust 1.98, .NET 10, Neo Express 3.10.1 and nccs 3.9.1, and it builds
+`signer_service`, `enclave_host` and `neo-os-relayer` itself. Every process
+binds loopback; no public RPC, database, container or cloud account is used.
+Chain state, wallet material and custody state live in a temporary directory
+that is deleted on exit. The `e2e-private-chain` CI job runs the same command.
+
+The measured-contract override above is what lets a freshly deployed kernel be
+fulfilled at all, and the harness binds the same kernel hash into the host
+override and the relayer's `neo_n3.oracleContract`, then reads the relayer's own
+resolved configuration back and asserts the three agree. This proves the wiring
+on a disposable chain; it says nothing about enclave measurement, KMS
+provisioning or production topology.

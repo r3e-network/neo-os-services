@@ -588,6 +588,38 @@
           "sha256": "57c49d8f913658434e78628f690f6c46c3074f7aef879a0de6573655d7066fa1"
         }
       }
+    },
+    {
+      "consumer": "private-chain-request-path-acceptance",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Disposable private-chain acceptance for the kernel, relayer, host and custody request path, and the two delivery-path fixes that path required to run at all. Nothing here generates randomness or awards economic value: the only signature that settles anything is the kernel's own verification of a fulfillment digest, and both controls are refusals. Review covers these exact files only, not future tests or live deployments.",
+      "inputs": {
+        "scripts/test-e2e-private-chain.mjs": {
+          "sha256": "6dcf913aec3df4589dff98c53a1aa34f0a27060ead5dbd91c7227a08e9c30f57"
+        },
+        "scripts/lib-e2e-private-chain.mjs": {
+          "sha256": "7573e5c98974f2b281d90734071306b2660f768e5caeb152d661d5ad1dd81500"
+        },
+        "scripts/lib-e2e-private-chain.test.mjs": {
+          "sha256": "3a4c4336e5a5cf6298470c6dde356ec2a4c0cbd313f8a97e091dd6c7e616ddbe"
+        },
+        "crates/neo-os-chain-n3/src/scan.rs": {
+          "sha256": "81e064c30199f9088c194dcd19f706f465ee27db00488adbc156486b48f2076a"
+        },
+        "crates/neo-os-chain-n3/src/tx.rs": {
+          "sha256": "5ae4102ed0ec1667a820bedc6dcad976a82be85320f6d21cfe5632974e25af70"
+        },
+        "crates/neo-os-chain-n3/tests/tx_broadcast.rs": {
+          "sha256": "8523fddcddea1c0a1d38fc4f6ce227c81a63cc6ca94a0b25f394ad8e0f32eb50"
+        },
+        "workers/neo-os-relayer/src/feed_sync.rs": {
+          "sha256": "e741447773668d6bf8157d32c4e49bd13cfe993e7876e96ab140606241d3885f"
+        },
+        "package.json": {
+          "sha256": "7131065e9eafbb2d211b90988eae4ac51fc89e322c2c776f6331a449c5c6c0d7"
+        }
+      }
     }
   ]
 }

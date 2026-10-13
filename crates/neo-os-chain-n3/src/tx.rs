@@ -295,7 +295,7 @@ pub fn build_and_sign<T: HttpTransport, N: NonceSource>(
         .call(
             "invokescript",
             json!([
-                base64(zero_fee_tx.serialize_unsigned().as_slice()),
+                base64(zero_fee_tx.script),
                 [{ "account": signer_hash, "scopes": "CalledByEntry" }]
             ]),
         )
