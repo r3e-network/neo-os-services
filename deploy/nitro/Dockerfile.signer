@@ -49,12 +49,14 @@ COPY crates/neo-os-chain-n3/Cargo.toml crates/neo-os-chain-n3/Cargo.toml
 COPY crates/neo-os-chain-evm/Cargo.toml crates/neo-os-chain-evm/Cargo.toml
 COPY crates/neo-os-relayer-store/Cargo.toml crates/neo-os-relayer-store/Cargo.toml
 COPY crates/neo-os-service-runtime/Cargo.toml crates/neo-os-service-runtime/Cargo.toml
+COPY intent-trading/Cargo.toml intent-trading/Cargo.toml
 COPY workers/neo-os-relayer/Cargo.toml workers/neo-os-relayer/Cargo.toml
 RUN mkdir -p workers/neo-signer/src/bin workers/nitro-enclave-host/src \
       crates/neo-os-core/src crates/nitro-attest/src/bin crates/nitro-init/src \
       crates/neo-os-compute/src crates/neo-os-games/src \
       crates/neo-os-chain-n3/src crates/neo-os-chain-evm/src \
       crates/neo-os-relayer-store/src crates/neo-os-service-runtime/src \
+      intent-trading/src \
       workers/neo-os-relayer/src \
   && printf '' > workers/neo-signer/src/lib.rs \
   && printf 'fn main() {}\n' > workers/neo-signer/src/bin/signer_service.rs \
@@ -71,6 +73,7 @@ RUN mkdir -p workers/neo-signer/src/bin workers/nitro-enclave-host/src \
   && printf '' > crates/neo-os-chain-evm/src/lib.rs \
   && printf '' > crates/neo-os-relayer-store/src/lib.rs \
   && printf '' > crates/neo-os-service-runtime/src/lib.rs \
+  && printf '' > intent-trading/src/lib.rs \
   && printf '' > workers/neo-os-relayer/src/lib.rs \
   && printf 'fn main() {}\n' > workers/neo-os-relayer/src/main.rs \
   && cargo fetch --locked
