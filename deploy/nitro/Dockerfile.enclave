@@ -74,6 +74,7 @@ COPY crates/neo-os-chain-n3/Cargo.toml crates/neo-os-chain-n3/Cargo.toml
 COPY crates/neo-os-chain-evm/Cargo.toml crates/neo-os-chain-evm/Cargo.toml
 COPY crates/neo-os-relayer-store/Cargo.toml crates/neo-os-relayer-store/Cargo.toml
 COPY crates/neo-os-service-runtime/Cargo.toml crates/neo-os-service-runtime/Cargo.toml
+COPY intent-trading/Cargo.toml intent-trading/Cargo.toml
 COPY workers/neo-signer/Cargo.toml workers/neo-signer/Cargo.toml
 COPY workers/nitro-enclave-host/Cargo.toml workers/nitro-enclave-host/Cargo.toml
 COPY workers/neo-os-relayer/Cargo.toml workers/neo-os-relayer/Cargo.toml
@@ -84,6 +85,7 @@ RUN mkdir -p crates/neo-os-core/src crates/nitro-attest/src crates/nitro-init/sr
       crates/neo-os-compute/src crates/neo-os-games/src \
       crates/neo-os-chain-n3/src crates/neo-os-chain-evm/src \
       crates/neo-os-relayer-store/src crates/neo-os-service-runtime/src \
+      intent-trading/src \
       workers/neo-signer/src workers/nitro-enclave-host/src workers/neo-os-relayer/src \
   && echo "pub fn placeholder() {}" > crates/neo-os-core/src/lib.rs \
   && echo "pub fn placeholder() {}" > crates/nitro-attest/src/lib.rs \
@@ -94,6 +96,7 @@ RUN mkdir -p crates/neo-os-core/src crates/nitro-attest/src crates/nitro-init/sr
   && echo "pub fn placeholder() {}" > crates/neo-os-chain-evm/src/lib.rs \
   && echo "pub fn placeholder() {}" > crates/neo-os-relayer-store/src/lib.rs \
   && echo "pub fn placeholder() {}" > crates/neo-os-service-runtime/src/lib.rs \
+  && echo "pub fn placeholder() {}" > intent-trading/src/lib.rs \
   && echo "pub fn placeholder() {}" > workers/neo-signer/src/lib.rs \
   && echo "pub fn placeholder() {}" > workers/nitro-enclave-host/src/lib.rs \
   && echo "fn main() {}" > workers/nitro-enclave-host/src/main.rs \
