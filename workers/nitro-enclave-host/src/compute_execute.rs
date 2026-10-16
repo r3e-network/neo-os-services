@@ -62,6 +62,7 @@ pub fn handle_compute_execute(
     state: &AppState,
     body: &serde_json::Value,
 ) -> Result<serde_json::Value, RuntimeError> {
+    resolve_payload_network(state, body)?;
     // One env snapshot for the whole fold — the child read accumulated
     // process.env per request; the overlay snapshot is the same idea with
     // provisioned values shadowing the image base.
@@ -76,6 +77,7 @@ pub fn handle_compute_execute(
     // resolveConfidentialPayload (crypto.js:643) — the direct-ciphertext
     // aliases decrypt in-process; the ref lane needs egress and fails closed.
     let payload = resolve_confidential_payload(state, body, &overlay, &env_trim)?;
+    let network = resolve_payload_network(state, &payload)?;
 
     // `trimString(resolved.mode || (function || compute_fn ? 'builtin' :
     // 'script')) || 'script'` — mode is NOT lowercased: 'SCRIPT' runs
@@ -140,7 +142,6 @@ pub fn handle_compute_execute(
     reject_caller_supplied_signing_key(&payload)?;
     let payload_bytes = stable_stringify(&JsValue::from_json(&result)).into_bytes();
     let output_hash = neo_os_core::sha256_hex(&payload_bytes);
-    let network = resolve_payload_network(state, &payload)?;
     let signed = sign_worker_bytes(state, &network, &payload_bytes)?;
     let tee_attestation = build_tee_attestation(state, &payload, "worker", &output_hash)?;
 
@@ -349,15 +350,37 @@ pub(crate) fn reject_caller_supplied_signing_key(
 /// read by the same strict parser the compute lanes use
 /// ([`neo_os_compute::core::resolve_payload_network_strict`]). Only a missing,
 /// `null` or empty-string alias falls back. Any other explicit value that is
-/// not a reviewed network, `false` and `0` included, is a 400 instead of being
-/// mapped to a different network identity.
+/// not a reviewed network, `false` and `0` included, is a 400. Every alias
+/// must agree with this AppState, even when a higher-priority alias is present.
+/// Internal and decrypted calls cannot select another context.
 pub(crate) fn resolve_payload_network(
     state: &AppState,
     payload: &serde_json::Value,
 ) -> Result<String, RuntimeError> {
     let fallback = state.resolve_network()?;
-    neo_os_compute::core::resolve_payload_network_strict(payload, &fallback)
-        .map_err(|message| http_error(400, message))
+    for alias in [
+        "network",
+        "morpheus_network",
+        "runtime_network",
+        "environment",
+    ] {
+        if let Some(value) = payload.get(alias) {
+            let selected = neo_os_compute::core::resolve_payload_network_strict(
+                &serde_json::json!({alias: value}),
+                &fallback,
+            )
+            .map_err(|message| http_error(400, message))?;
+            if selected != fallback {
+                return Err(http_error(
+                    400,
+                    format!(
+                        "payload network {selected} does not match the host network {fallback}"
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(fallback)
 }
 
 /// Sign through a ready, identity-consistent worker custody role.
@@ -374,6 +397,12 @@ pub(crate) fn sign_worker_hex(
     network: &str,
     data_hex: &str,
 ) -> Result<serde_json::Value, RuntimeError> {
+    if state.resolve_network()? != network {
+        return Err(http_error(
+            400,
+            "signing network does not match the host context",
+        ));
+    }
     let report = state.signer.role_report(network, "worker");
     if !(report.ok && report.materialized) || report.public_key.trim().is_empty() {
         return Err(http_error(

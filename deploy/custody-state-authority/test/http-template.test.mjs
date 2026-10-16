@@ -15,14 +15,6 @@ function resourceSection(template, resourceName, nextResourceName) {
   return template.slice(start, end);
 }
 
-function leadingKeysForAction(section, action) {
-  const start = section.indexOf(`Action: ${action}`);
-  assert.notEqual(start, -1, `missing action ${action}`);
-  const nextStatement = section.indexOf('\n              - Effect:', start + 1);
-  const statement = section.slice(start, nextStatement === -1 ? section.length : nextStatement);
-  return [...statement.matchAll(/- '([^']+#\*)'/g)].map((match) => match[1]);
-}
-
 function event(overrides = {}) {
   return {
     requestContext: { requestId: 'request-1', http: { method: 'POST' } },
@@ -120,7 +112,7 @@ test('SAM template pins the independent state, storage, signing and parent bound
   );
   const parentAllowSection = parentRole.slice(0, parentRole.indexOf('        - PolicyName: Deny'));
   assert.doesNotMatch(parentAllowSection, /dynamodb:|s3:|kms:/);
-  assert.match(parentRole, /Effect: Deny[\s\S]*dynamodb:TransactWriteItems/);
+  assert.match(parentRole, /Effect: Deny[\s\S]*dynamodb:ConditionCheckItem/);
   assert.match(parentRole, /Effect: Deny[\s\S]*s3:PutObject/);
   assert.match(template, /RECEIPT_KEY_ID: !Ref ReceiptKeyId/);
   assert.match(template, /VerifyHeadAndPresignExactSnapshotVersion/);
@@ -145,34 +137,13 @@ test('SAM template pins the independent state, storage, signing and parent bound
     assert.match(template, new RegExp(`${variable}: !Ref`));
   }
   assert.match(template, /Resource: !Sub '\$\{SnapshotBucket\.Arn\}\/snapshots\/v2\/\*'/);
-  const uploadRole = resourceSection(template, 'UploadTicketFunctionRole', 'UploadTicketFunction');
   const statusRole = resourceSection(template, 'UploadStatusFunctionRole', 'UploadStatusFunction');
   assert.match(statusRole, /kms:Decrypt/);
   assert.match(statusRole, /kms:GenerateDataKey/);
   assert.match(statusRole, /kms:ViaService:/);
   assert.match(statusRole, /s3:ListBucketVersions/);
   assert.match(template, /StageName:[\s\S]*?AllowedValues:\n\s+- '\$default'/);
-  assert.deepEqual(leadingKeysForAction(uploadRole, 'dynamodb:GetItem'), [
-    'SESSION#*',
-    'COMMIT#*',
-    'STATE#*',
-  ]);
-  assert.deepEqual(leadingKeysForAction(uploadRole, 'dynamodb:TransactWriteItems'), [
-    'STATE#*',
-    'COMMIT#*',
-  ]);
-  const downloadRole = resourceSection(
-    template,
-    'DownloadTicketFunctionRole',
-    'DownloadTicketFunction'
-  );
-  assert.deepEqual(leadingKeysForAction(downloadRole, 'dynamodb:GetItem'), [
-    'SESSION#*',
-    'STATE#*',
-  ]);
-  const renewRole = resourceSection(template, 'RenewFunctionRole', 'RenewFunction');
-  assert.deepEqual(leadingKeysForAction(renewRole, 'dynamodb:GetItem'), ['SESSION#*', 'STATE#*']);
-  assert.deepEqual(leadingKeysForAction(renewRole, 'dynamodb:UpdateItem'), ['STATE#*']);
+  // Parsed route-by-route network grants are checked in custody-authority-template.test.mjs.
   assert.equal((template.match(/Type: AWS::Serverless::Function/g) || []).length, 9);
   for (const route of [
     '/v1/challenges',

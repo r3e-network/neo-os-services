@@ -886,6 +886,9 @@ pub fn test_state(
         price_plane_status: Arc::new(Mutex::new(crate::feed_status::PricePlaneStatus::default())),
         overload: neo_os_compute::overload::OverloadGuard::new(),
         ephemeral_oracle_key: Mutex::new(None),
+        automation_executions: Mutex::new(Default::default()),
+        game_sessions: Mutex::new(neo_os_games::session::SessionStore::new()),
+        feed_runtime: Default::default(),
     };
     TestState {
         attest,

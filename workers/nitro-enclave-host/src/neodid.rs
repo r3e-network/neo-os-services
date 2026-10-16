@@ -115,6 +115,16 @@ fn handle_ticket(
         ));
     }
     let resolved = resolve_confidential_payload(state, body, &overlay_map, &env_trim)?;
+    // Preserve the existing primary-label errors before checking every alias.
+    let network = resolve_signing_network(state, mode, &resolved)?;
+    // Confidential fields are assertions about the already-selected context,
+    // never a second selector. Validate before provider verification or signing.
+    let route = if mode == "neodid_recovery_ticket" {
+        "/neodid/recovery-ticket"
+    } else {
+        "/neodid"
+    };
+    crate::network_profiles::assert_payload_network(&state.resolve_network()?, route, &resolved)?;
 
     let env_reader: EnvReader = &|name: &str| overlay_map.get(name).cloned();
     let verify_id_token = |request: &Web3AuthVerifyRequest<'_>| {
@@ -132,7 +142,6 @@ fn handle_ticket(
     // signed custody-side under the worker role; caller-supplied key material
     // is rejected exactly like on every other signing lane.
     reject_caller_supplied_signing_key(&resolved)?;
-    let network = resolve_signing_network(state, mode, &resolved)?;
     let digest_bytes = extract_digest_bytes(&result)?;
     let digest_signed = sign_worker_hex(state, &network, &hex::encode(&digest_bytes))?;
     let mut result = result;

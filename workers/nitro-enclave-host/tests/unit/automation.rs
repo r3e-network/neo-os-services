@@ -8,7 +8,6 @@ use support::*;
 
 #[test]
 fn executes_real_nested_work_and_enforces_idempotency() {
-    reset_executions_for_tests();
     let harness = test_state(
         &healthy_overlay(),
         FakeAttest::with_document(b"doc"),
@@ -62,4 +61,46 @@ fn executes_real_nested_work_and_enforces_idempotency() {
             .status,
         400
     );
+}
+
+#[test]
+fn network_contexts_do_not_share_automation_replay_records() {
+    let mainnet = test_state(
+        &[("MORPHEUS_NETWORK", "mainnet")],
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let testnet = test_state(
+        &[("MORPHEUS_NETWORK", "testnet")],
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let payload = json!({
+        "automation_id": "same-job-on-two-networks", "idempotency_key": "network-context-isolation-1",
+        "execution": { "request_type": "compute_hash", "payload": { "function": "hash.sha256", "input": { "value": 7 } } }
+    });
+    assert_eq!(
+        handle_automation_execute(&mainnet.state, &payload)
+            .unwrap()
+            .status,
+        200
+    );
+    assert_eq!(
+        handle_automation_execute(&testnet.state, &payload)
+            .unwrap()
+            .status,
+        200
+    );
+    assert_eq!(mainnet.signer.sign_calls().len(), 1);
+    assert_eq!(
+        testnet.signer.sign_calls().len(),
+        1,
+        "testnet must execute independently, not replay mainnet's signed result"
+    );
+    assert_eq!(mainnet.signer.sign_calls()[0].0, "mainnet");
+    assert_eq!(testnet.signer.sign_calls()[0].0, "testnet");
 }

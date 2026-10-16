@@ -22,10 +22,10 @@ exactly, or with a single prefix segment. `POST` only; every other method is a
 
 ### Headers
 
-| header | required | meaning |
-| --- | --- | --- |
-| `Idempotency-Key` (or `x-idempotency-key`) | yes | 1–128 characters. The durable identity of this request. |
-| `x-neoos-principal` | yes | The principal the authenticated hop established. Configurable via `sponsor.principalHeader`. |
+| header                                     | required | meaning                                                                                      |
+| ------------------------------------------ | -------- | -------------------------------------------------------------------------------------------- |
+| `Idempotency-Key` (or `x-idempotency-key`) | yes      | 1–128 characters. The durable identity of this request.                                      |
+| `x-neoos-principal`                        | yes      | The principal the authenticated hop established. Configurable via `sponsor.principalHeader`. |
 
 **There is no principal in the body.** The principal arrives from the hop in
 front of this service and is handed to the state machine as a typed value. Until
@@ -47,12 +47,12 @@ to become a fact.
 
 Everything the sponsor pays for is read out of those bytes:
 
-| fact | where it comes from |
-| --- | --- |
-| the invocation script | the envelope's `script` |
-| the sponsor account | the envelope's signer |
-| the transaction fee | `SystemFee + NetworkFee` in the envelope |
-| the transaction hash | the envelope's own hash |
+| fact                    | where it comes from                                  |
+| ----------------------- | ---------------------------------------------------- |
+| the invocation script   | the envelope's `script`                              |
+| the sponsor account     | the envelope's signer                                |
+| the transaction fee     | `SystemFee + NetworkFee` in the envelope             |
+| the transaction hash    | the envelope's own hash                              |
 | the reimbursement claim | the `reimbursementAmount` argument inside the script |
 
 The envelope must be exactly the shape
@@ -109,17 +109,17 @@ state without paying again.
 
 ### Refusals
 
-| status | `code` | when |
-| --- | --- | --- |
-| 503 | `SPONSOR_DISABLED` | the kill switch is halted |
-| 401 | `SPONSOR_PRINCIPAL_REQUIRED` | no principal reached the surface |
-| 400 | `SPONSOR_REQUEST_INVALID` | the body or the envelope could not be understood, or the intent validator refused (see `intent_code`) |
-| 400 | `SPONSOR_IDEMPOTENCY_KEY_REQUIRED` | missing or blank key |
-| 409 | `SPONSOR_IDEMPOTENCY_CONFLICT` | the key already names a different intent |
-| 429 | `SPONSOR_BUDGET_EXHAUSTED` | a budget cap refused the reservation |
-| 500 | `SPONSOR_JOURNAL_REFUSED` | the durable record refused or disagreed |
-| 500 | `SPONSOR_RECEIPT_MISMATCH` | a receipt came back for a transaction other than the signed one |
-| 502 | `SPONSOR_SEND_REFUSED` | the signature or the send was refused and nothing is in flight |
+| status | `code`                             | when                                                                                                  |
+| ------ | ---------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 503    | `SPONSOR_DISABLED`                 | the kill switch is halted                                                                             |
+| 401    | `SPONSOR_PRINCIPAL_REQUIRED`       | no principal reached the surface                                                                      |
+| 400    | `SPONSOR_REQUEST_INVALID`          | the body or the envelope could not be understood, or the intent validator refused (see `intent_code`) |
+| 400    | `SPONSOR_IDEMPOTENCY_KEY_REQUIRED` | missing or blank key                                                                                  |
+| 409    | `SPONSOR_IDEMPOTENCY_CONFLICT`     | the key already names a different intent                                                              |
+| 429    | `SPONSOR_BUDGET_EXHAUSTED`         | a budget cap refused the reservation                                                                  |
+| 500    | `SPONSOR_JOURNAL_REFUSED`          | the durable record refused or disagreed                                                               |
+| 500    | `SPONSOR_RECEIPT_MISMATCH`         | a receipt came back for a transaction other than the signed one                                       |
+| 502    | `SPONSOR_SEND_REFUSED`             | the signature or the send was refused and nothing is in flight                                        |
 
 ```json
 {
@@ -159,12 +159,12 @@ Nothing reaches the network before `stage:signed` is durable. A crash at any
 point is safe, and each state is covered by a test in
 `workers/neo-os-relayer/tests/sponsor_api.rs`:
 
-| crash point | what a retry does |
-| --- | --- |
-| before `reserve` | reserves normally; nothing has been spent |
-| after `reserve`, before `sign` | finishes the **same** reservation; one reservation, one payment |
-| after `stage:signed` | resends the **journaled** bytes; never re-signs |
-| after a confirmed receipt | answers from the journal; touches neither the store's stages nor the send port |
+| crash point                    | what a retry does                                                              |
+| ------------------------------ | ------------------------------------------------------------------------------ |
+| before `reserve`               | reserves normally; nothing has been spent                                      |
+| after `reserve`, before `sign` | finishes the **same** reservation; one reservation, one payment                |
+| after `stage:signed`           | resends the **journaled** bytes; never re-signs                                |
+| after a confirmed receipt      | answers from the journal; touches neither the store's stages nor the send port |
 
 Idempotency is the store's, not the API's. `morpheus_delivery_sponsor_reserve`
 writes the intent, debits the three budgets and enqueues the bound delivery job
@@ -187,15 +187,15 @@ that was refused a moment earlier is accepted.
 
 Under `sponsor` in the relayer configuration:
 
-| key | default | meaning |
-| --- | --- | --- |
-| `host`, `port` | `127.0.0.1:9465` | where the route listens |
-| `contract` | — | the one sponsorable contract, `0x` + 40 hex, display order |
-| `feeCeilingUnits` | — | approved ceiling for one intent, GAS datoshi (1–20000000) |
-| `enabled` | `false` | the kill switch |
-| `leaseMs` | `60000` | the delivery lease a request takes for its own commit |
-| `confirmAttempts`, `confirmWaitMs` | `5`, `1000` | application-log polling |
-| `principalHeader` | `x-neoos-principal` | the hop header carrying the principal |
+| key                                | default             | meaning                                                    |
+| ---------------------------------- | ------------------- | ---------------------------------------------------------- |
+| `host`, `port`                     | `127.0.0.1:9465`    | where the route listens                                    |
+| `contract`                         | —                   | the one sponsorable contract, `0x` + 40 hex, display order |
+| `feeCeilingUnits`                  | —                   | approved ceiling for one intent, GAS datoshi (1–20000000)  |
+| `enabled`                          | `false`             | the kill switch                                            |
+| `leaseMs`                          | `60000`             | the delivery lease a request takes for its own commit      |
+| `confirmAttempts`, `confirmWaitMs` | `5`, `1000`         | application-log polling                                    |
+| `principalHeader`                  | `x-neoos-principal` | the hop header carrying the principal                      |
 
 Plus the existing relayer keys: `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` for
 the delivery store, `nitro.custodyUrl` / `nitro.custodyToken` for the signer

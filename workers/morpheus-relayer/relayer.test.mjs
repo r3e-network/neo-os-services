@@ -1720,6 +1720,7 @@ test('createRelayerConfig maps custody signer-service env into the config', () =
     'SIGNER_ROLE_UPDATER_KEY_ID',
     'SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID',
     'SIGNER_ROLE_FEE_FUNDER_KEY_ID',
+    'SIGNER_ROLE_SPONSOR_KEY_ID',
   ];
   const previous = new Map(keys.map((key) => [key, process.env[key]]));
 
@@ -1728,6 +1729,7 @@ test('createRelayerConfig maps custody signer-service env into the config', () =
   process.env.SIGNER_ROLE_UPDATER_KEY_ID = 'key-updater';
   process.env.SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID = 'key-verifier';
   process.env.SIGNER_ROLE_FEE_FUNDER_KEY_ID = 'key-funder';
+  delete process.env.SIGNER_ROLE_SPONSOR_KEY_ID;
 
   try {
     const config = createRelayerConfig();
@@ -1737,7 +1739,36 @@ test('createRelayerConfig maps custody signer-service env into the config', () =
       updater: 'key-updater',
       oracle_verifier: 'key-verifier',
       fee_funder: 'key-funder',
+      sponsor: '',
     });
+    assert.equal(config.nitro.sponsorCustodyKeyId, '');
+  } finally {
+    for (const [key, value] of previous.entries()) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test('createRelayerConfig keeps sponsor custody explicit and consistent across both projections', () => {
+  const keys = ['SIGNER_ROLE_SPONSOR_KEY_ID', 'SIGNER_ROLE_UPDATER_KEY_ID'];
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  process.env.SIGNER_ROLE_UPDATER_KEY_ID = 'key-updater-must-not-sponsor';
+  try {
+    for (const [input, expected] of [
+      [undefined, ''],
+      ['', ''],
+      ['   ', ''],
+      ['key-sponsor', 'key-sponsor'],
+      ['  key-sponsor  ', 'key-sponsor'],
+    ]) {
+      if (input === undefined) delete process.env.SIGNER_ROLE_SPONSOR_KEY_ID;
+      else process.env.SIGNER_ROLE_SPONSOR_KEY_ID = input;
+      const config = withIsolatedRelayerSigner(() => createRelayerConfig());
+      assert.equal(config.neo_n3.custodyKeyIds.sponsor, expected);
+      assert.equal(config.nitro.sponsorCustodyKeyId, expected);
+      assert.equal(config.neo_n3.custodyKeyIds.updater, 'key-updater-must-not-sponsor');
+    }
   } finally {
     for (const [key, value] of previous.entries()) {
       if (value === undefined) delete process.env[key];

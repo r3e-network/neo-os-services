@@ -5,12 +5,21 @@ import { appConfig } from './config';
 import { NETWORKS } from './onchain-data';
 import {
   DEFAULT_NEODID_SERVICE_DID,
+  DID_RESOLUTION_ERROR_INVALID_DID,
+  DID_RESOLUTION_ERROR_INVALID_VERIFICATION_KEY,
   MORPHEUS_DID_METHOD,
   MORPHEUS_NEODID_DID_CONTEXT,
   MORPHEUS_NEODID_NETWORK,
   MORPHEUS_NEODID_SERVICE,
   buildNeoDidServiceDid,
 } from './neodid-did-common';
+import type { DidResolutionErrorCode } from './neodid-did-common';
+
+export {
+  DID_RESOLUTION_ERROR_INVALID_DID,
+  DID_RESOLUTION_ERROR_INVALID_VERIFICATION_KEY,
+} from './neodid-did-common';
+export type { DidResolutionErrorCode } from './neodid-did-common';
 
 const DID_DOCUMENT_CONTENT_TYPE = 'application/did+ld+json';
 const DID_RESOLUTION_CONTENT_TYPE = 'application/ld+json;profile="https://w3id.org/did-resolution"';
@@ -81,7 +90,57 @@ function decodeDidSegment(value: string) {
   }
 }
 
+// The runtime snapshot arrives as JSON from another service. Keep the declared
+// types only, so a malformed response cannot leak an object or a number into
+// the resolution metadata or into the document's runtime endpoint.
+function runtimeText(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function runtimeRecord(value: unknown): unknown {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+}
+
+// Pre-coerced display fields for the #runtime service endpoint. The service
+// builder takes this narrow shape rather than the raw snapshot, so it cannot
+// read `runtime.verification_public_key` and derive anything from key material
+// the guard has not already accepted as a JWK.
+type RuntimeEcho = {
+  app_id: string | null;
+  compose_hash: string | null;
+  verification_public_key: string | null;
+  verifier_curve: string | null;
+  web3auth: unknown;
+};
+
+function toRuntimeEcho(runtime: NeoDidRuntimeSnapshot | null): RuntimeEcho {
+  return {
+    app_id: runtimeText(runtime?.app_id),
+    compose_hash: runtimeText(runtime?.compose_hash),
+    verification_public_key: runtimeText(runtime?.verification_public_key),
+    verifier_curve: runtimeText(runtime?.verifier_curve) ?? 'secp256r1',
+    web3auth: runtimeRecord(runtime?.web3auth),
+  };
+}
+
+// Check UTF-16 code units without requiring the newer String.isWellFormed API.
+// A high surrogate must consume exactly one following low surrogate.
+function isWellFormedUtf16(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const trailing = value.charCodeAt(index + 1);
+      if (!(trailing >= 0xdc00 && trailing <= 0xdfff)) return false;
+      index += 1;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function parseMorpheusDid(rawDid: string): ParsedMorpheusDid | null {
+  if (typeof rawDid !== 'string') return null;
   const trimmed = String(rawDid || '').trim();
   if (!trimmed) return null;
 
@@ -120,7 +179,12 @@ function parseMorpheusDid(rawDid: string): ParsedMorpheusDid | null {
   }
 
   const normalizedAccountId = subject.trim();
-  if (!normalizedAccountId || Buffer.byteLength(normalizedAccountId, 'utf8') > 160) return null;
+  if (
+    !normalizedAccountId ||
+    !isWellFormedUtf16(normalizedAccountId) ||
+    Buffer.byteLength(normalizedAccountId, 'utf8') > 160
+  )
+    return null;
   return {
     did: `did:${MORPHEUS_DID_METHOD}:${network}:aa:${encodeURIComponent(normalizedAccountId)}`,
     kind,
@@ -151,24 +215,93 @@ async function fetchNeoDidRuntimeSnapshot(): Promise<NeoDidRuntimeSnapshot | nul
   }
 }
 
-function compressedP256ToJwk(compressedHex: string) {
-  const normalized = String(compressedHex || '')
-    .replace(/^0x/i, '')
-    .trim();
-  if (!/^(02|03)[0-9a-fA-F]{64}$/.test(normalized)) return null;
+type VerificationJwk = {
+  kty: 'EC';
+  crv: 'P-256';
+  x: string;
+  y: string;
+  kid: string;
+};
+
+// Three-way outcome of the single verification-key derivation. 'absent' means
+// no key is configured (declared-types policy: missing, null, or a non-string
+// is not a key); 'accepted' carries the only JWK any builder may publish;
+// 'refused' is the DEC-DS-17 typed refusal for key material that is present
+// but unusable — including a present empty string, which is a declaration of
+// a key that cannot work, not an absent one.
+type VerificationKeyOutcome =
+  | { status: 'absent' }
+  | { status: 'accepted'; jwk: VerificationJwk }
+  | {
+      status: 'refused';
+      code: typeof DID_RESOLUTION_ERROR_INVALID_VERIFICATION_KEY;
+      message: string;
+    };
+
+const COMPRESSED_P256_POINT = /^(02|03)[0-9a-fA-F]{64}$/;
+const INVALID_KEY_MESSAGE =
+  'verification_public_key must be a compressed P-256 point that lies on the curve.';
+
+// Guard around the curve derivation (DEC-DS-17). A present key that is not a
+// usable compressed P-256 point — malformed encoding, off the curve, or empty
+// after normalization — is bad data: refuse it with a stable code instead of
+// throwing out of the document builder or silently dropping the key and serving
+// a weaker document. The conversion call is bounded (one regex, one
+// ECDH.convertKey on 33 bytes), and every failure of that call maps to the same
+// refusal code.
+function compressedP256ToJwk(compressedHex: unknown): VerificationKeyOutcome {
+  // Declared-types policy: only a string is a key.
+  if (typeof compressedHex !== 'string') {
+    return { status: 'absent' };
+  }
+  // Normalize with the intent to accept: trim incidental whitespace first so
+  // the conventional 0x prefix is still seen, then strip it, then trim again
+  // in case whitespace hid behind the prefix.
+  const normalized = compressedHex.trim().replace(/^0x/i, '').trim();
+  // An empty or whitespace-only string (and the prefix-only form) is a present
+  // declaration of a key that cannot work — the "present but unusable" class.
+  // Refuse it; never fall through to ECDH.convertKey on an empty buffer, which
+  // does not throw and would mint a garbage JWK.
+  if (!normalized) {
+    return {
+      status: 'refused',
+      code: DID_RESOLUTION_ERROR_INVALID_VERIFICATION_KEY,
+      message: INVALID_KEY_MESSAGE,
+    };
+  }
+  if (!COMPRESSED_P256_POINT.test(normalized)) {
+    return {
+      status: 'refused',
+      code: DID_RESOLUTION_ERROR_INVALID_VERIFICATION_KEY,
+      message: INVALID_KEY_MESSAGE,
+    };
+  }
 
   const compressed = Buffer.from(normalized, 'hex');
-  const converted = ECDH.convertKey(compressed, 'prime256v1', undefined, undefined, 'uncompressed');
+  let converted;
+  try {
+    converted = ECDH.convertKey(compressed, 'prime256v1', undefined, undefined, 'uncompressed');
+  } catch {
+    // A syntactically well-formed compressed point that is not on the curve.
+    return {
+      status: 'refused',
+      code: DID_RESOLUTION_ERROR_INVALID_VERIFICATION_KEY,
+      message: INVALID_KEY_MESSAGE,
+    };
+  }
   const uncompressed = Buffer.isBuffer(converted) ? converted : Buffer.from(converted, 'binary');
   const x = uncompressed.subarray(1, 33);
   const y = uncompressed.subarray(33, 65);
 
   return {
-    kty: 'EC',
-    crv: 'P-256',
-    x: base64Url(x),
-    y: base64Url(y),
-    kid: base64Url(createHash('sha256').update(compressed).digest()),
+    status: 'accepted',
+    jwk: {
+      kty: 'EC',
+      crv: 'P-256',
+      x: base64Url(x),
+      y: base64Url(y),
+      kid: base64Url(createHash('sha256').update(compressed).digest()),
+    },
   };
 }
 
@@ -184,7 +317,7 @@ function buildCommonDocumentMetadata(
 ) {
   return {
     canonicalId: parsed.did,
-    versionId: runtime?.compose_hash || 'unversioned',
+    versionId: runtimeText(runtime?.compose_hash) ?? 'unversioned',
     network: parsed.network,
     anchorContract: NETWORKS.neo_n3.neodid,
   };
@@ -192,13 +325,16 @@ function buildCommonDocumentMetadata(
 
 function buildServiceDidDocument(
   parsed: ParsedMorpheusDid,
-  runtime: NeoDidRuntimeSnapshot | null,
-  origin: string
+  runtimeEcho: RuntimeEcho,
+  origin: string,
+  verificationJwk: VerificationJwk | null
 ) {
   const did = parsed.did;
   const publicRuntimeUrl = appConfig.publicNitroApiUrls[0] || appConfig.nitroApiUrl;
   const resolverUrl = `${origin}/api/neodid/resolve?did=${encodeURIComponent(did)}`;
-  const verificationJwk = compressedP256ToJwk(runtime?.verification_public_key || '');
+  // The JWK is derived once, at the guard, and only an accepted key reaches
+  // this builder. This function takes a narrow display echo rather than the
+  // raw runtime snapshot, so nothing downstream can derive from key material.
   const verificationMethodId = `${did}#tee-verifier`;
   const verificationMethod = verificationJwk
     ? [
@@ -261,11 +397,11 @@ function buildServiceDidDocument(
             : '',
           viewer_url: `${origin}/launchpad/neodid-resolver?did=${encodeURIComponent(did)}`,
           documentation_url: `${origin}/docs/neodid`,
-          app_id: runtime?.app_id || null,
-          compose_hash: runtime?.compose_hash || null,
-          verification_public_key: runtime?.verification_public_key || null,
-          verifier_curve: runtime?.verifier_curve || 'secp256r1',
-          web3auth: runtime?.web3auth || null,
+          app_id: runtimeEcho.app_id,
+          compose_hash: runtimeEcho.compose_hash,
+          verification_public_key: runtimeEcho.verification_public_key,
+          verifier_curve: runtimeEcho.verifier_curve,
+          web3auth: runtimeEcho.web3auth,
         },
       },
     ],
@@ -331,36 +467,56 @@ function prefersDidDocument(accept: string | null | undefined, format: string | 
     .includes(DID_DOCUMENT_CONTENT_TYPE);
 }
 
+function buildResolutionRefusal(error: DidResolutionErrorCode, message: string): ResolveDidResult {
+  return {
+    status: 400,
+    contentType: DID_RESOLUTION_CONTENT_TYPE,
+    body: {
+      didResolutionMetadata: {
+        error,
+        message,
+        contentType: DID_RESOLUTION_CONTENT_TYPE,
+      },
+      didDocument: null,
+      didDocumentMetadata: {},
+    },
+  };
+}
+
 export async function resolveMorpheusDid(
   did: string,
   options: ResolveDidOptions
 ): Promise<ResolveDidResult> {
   const parsed = parseMorpheusDid(did);
   if (!parsed) {
-    return {
-      status: 400,
-      contentType: DID_RESOLUTION_CONTENT_TYPE,
-      body: {
-        didResolutionMetadata: {
-          error: 'invalidDid',
-          message:
-            'Expected did:morpheus:neo_n3:service:neodid, did:morpheus:neo_n3:vault:<hash160>, or did:morpheus:neo_n3:aa:<account-id>.',
-          contentType: DID_RESOLUTION_CONTENT_TYPE,
-        },
-        didDocument: null,
-        didDocumentMetadata: {},
-      },
-    };
+    return buildResolutionRefusal(
+      DID_RESOLUTION_ERROR_INVALID_DID,
+      'Expected did:morpheus:neo_n3:service:neodid, did:morpheus:neo_n3:vault:<hash160>, or did:morpheus:neo_n3:aa:<account-id>.'
+    );
   }
 
   const runtime = await fetchNeoDidRuntimeSnapshot();
   const origin = normalizeOrigin(options.origin);
   const wantsDocument = prefersDidDocument(options.accept, options.format);
   const contentType = wantsDocument ? DID_DOCUMENT_CONTENT_TYPE : DID_RESOLUTION_CONTENT_TYPE;
-  const didDocument =
-    parsed.kind === 'service'
-      ? buildServiceDidDocument(parsed, runtime, origin)
-      : buildSubjectDidDocument(parsed, origin);
+
+  let didDocument: Record<string, unknown>;
+  if (parsed.kind === 'service') {
+    // Derive once, at the guard. An unusable key refuses the whole resolution:
+    // nothing that depends on the key is derived or served (DEC-DS-17).
+    const keyOutcome = compressedP256ToJwk(runtime?.verification_public_key);
+    if (keyOutcome.status === 'refused') {
+      return buildResolutionRefusal(keyOutcome.code, keyOutcome.message);
+    }
+    didDocument = buildServiceDidDocument(
+      parsed,
+      toRuntimeEcho(runtime),
+      origin,
+      keyOutcome.status === 'accepted' ? keyOutcome.jwk : null
+    );
+  } else {
+    didDocument = buildSubjectDidDocument(parsed, origin);
+  }
 
   if (wantsDocument) {
     return {

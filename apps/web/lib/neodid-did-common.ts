@@ -6,6 +6,20 @@ export const MORPHEUS_NEODID_DID_CONTEXT = [
   'https://w3id.org/security/suites/jws-2020/v1',
 ] as const;
 
+// Stable DID-resolution error codes. Callers and tests compare against these
+// constants; never string-match the literals at call sites. `invalidDid` is the
+// W3C DID Resolution shape this resolver already used. `invalidVerificationKey`
+// is the NeoDID code for a present verification key that is not a usable
+// compressed P-256 point (malformed encoding or off the curve): bad data, not a
+// server fault. A genuine internal fault is distinguishable in logs — it is a
+// 500 rather than this 400 refusal.
+export const DID_RESOLUTION_ERROR_INVALID_DID = 'invalidDid';
+export const DID_RESOLUTION_ERROR_INVALID_VERIFICATION_KEY = 'invalidVerificationKey';
+
+export type DidResolutionErrorCode =
+  | typeof DID_RESOLUTION_ERROR_INVALID_DID
+  | typeof DID_RESOLUTION_ERROR_INVALID_VERIFICATION_KEY;
+
 function trimSegment(value: string) {
   return String(value || '').trim();
 }

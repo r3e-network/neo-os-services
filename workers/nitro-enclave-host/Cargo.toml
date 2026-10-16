@@ -38,6 +38,7 @@ neo-os-chain-evm = { path = "../../crates/neo-os-chain-evm" }
 neo-os-core = { path = "../../crates/neo-os-core" }
 neo-os-games = { path = "../../crates/neo-os-games" }
 neo-os-service-runtime = { path = "../../crates/neo-os-service-runtime" }
+neo-signer = { path = "../neo-signer" }
 nitro-attest = { path = "../../crates/nitro-attest" }
 # The custody signing plane's backing transport. Same version/features as
 # nitro-attest's, so the lockfile carries one tree: the host already trusted
@@ -60,5 +61,9 @@ aws-lc-rs = "1.18"
 # The oracle folds' ephemeral-key fallback generates real X25519 material —
 # the compute engine already carries this exact version, so no new tree.
 rand = "0.8"
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tower = { version = "0.5", features = ["util"] }
 url = "2"
+
+[dev-dependencies]
+tempfile = "3"

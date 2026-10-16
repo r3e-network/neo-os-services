@@ -2,6 +2,40 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
+import { parse as parseToml } from 'smol-toml';
+
+function dependencyEntries(manifest, workspace) {
+  const entries = [];
+  const collect = (scope, target) => {
+    for (const kind of [
+      'dependencies',
+      'dev-dependencies',
+      'build-dependencies',
+      'dev_dependencies',
+      'build_dependencies',
+    ]) {
+      for (const [name, declaration] of Object.entries(scope[kind] || {})) {
+        let definition = declaration;
+        const inherited = declaration?.workspace === true;
+        if (inherited) {
+          definition = workspace.dependencies?.[name];
+          if (definition === undefined) throw new Error('unresolved workspace dependency');
+        }
+        entries.push({
+          name,
+          package: definition?.package || name,
+          definition,
+          inherited,
+          kind,
+          target,
+        });
+      }
+    }
+  };
+  collect(manifest, null);
+  for (const [target, scope] of Object.entries(manifest.target || {})) collect(scope, target);
+  return entries;
+}
 
 const REQUIRED_DOCS = [
   'docs/RUST_SERVICE_MIGRATION.md',
@@ -322,12 +356,87 @@ export function auditRustMigration(root = process.cwd()) {
     /\bPassthrough\b/,
     'route classifier contains a passthrough target'
   );
-  reject(
-    hostManifest,
-    read(root, hostManifest),
-    /^\s*(?:neo-signer|scrypt|ed25519-dalek)\s*=/m,
-    'enclave host must call custody instead of linking a private-key custody implementation'
+  // The approved single-process topology embeds the canonical custody router.
+  // This is a source-structure drift check; behavioral admission and exact
+  // source review remain mandatory. It is not a Rust parser or sandbox.
+  const hostManifestSource = read(root, hostManifest);
+  const embeddedBootstrap = 'workers/nitro-enclave-host/src/custody_bootstrap.rs';
+  let dependencies = [];
+  try {
+    dependencies = dependencyEntries(
+      parseToml(hostManifestSource),
+      parseToml(read(root, 'Cargo.toml')).workspace || {}
+    );
+  } catch {
+    failures.push(`${hostManifest}: cannot validate Cargo dependency declarations`);
+  }
+  for (const dependency of dependencies) {
+    if (['scrypt', 'ed25519-dalek'].includes(dependency.package)) {
+      failures.push(
+        `${hostManifest}: enclave host must not duplicate private-key custody cryptography`
+      );
+    }
+  }
+  const signerDependencies = dependencies.filter(
+    (dependency) => dependency.package === 'neo-signer' || dependency.name === 'neo-signer'
   );
+  let canonicalSigner = false;
+  for (const dependency of signerDependencies) {
+    if (dependency.name !== 'neo-signer' || dependency.package !== 'neo-signer') {
+      failures.push(
+        `${hostManifest}: renamed signer dependencies bypass the reviewed embedded boundary`
+      );
+    }
+    if (
+      dependency.name === 'neo-signer' &&
+      dependency.package === 'neo-signer' &&
+      dependency.kind === 'dependencies' &&
+      dependency.target === null &&
+      !dependency.inherited &&
+      typeof dependency.definition === 'object' &&
+      Object.keys(dependency.definition).length === 1 &&
+      dependency.definition.path === '../neo-signer'
+    ) {
+      canonicalSigner = true;
+    } else {
+      failures.push(`${hostManifest}: embedded custody must use the canonical workspace signer`);
+    }
+  }
+  // Validate the bootstrap whenever signer is declared, even when that
+  // declaration is rejected. Never exempt a file solely by its pathname.
+  if (signerDependencies.length > 0) {
+    if (requireFile(embeddedBootstrap)) {
+      const bootstrap = read(root, embeddedBootstrap);
+      requireMatch(
+        embeddedBootstrap,
+        bootstrap,
+        /EmbeddedCustodyRuntime::boot\(/,
+        'embedded custody must use the measured bootstrap'
+      );
+      requireMatch(
+        embeddedBootstrap,
+        bootstrap,
+        /BootGuard::required\(/,
+        'embedded custody must require attested boot'
+      );
+      reject(
+        embeddedBootstrap,
+        bootstrap,
+        /\b(?:SignerService|ApiState|Store|MasterKey|SigningKey|SecretKey)\b|\bneo_signer\s*(?:as\b|;|::\s*\{)|\bneo_signer\s*::\s*(?!(?:attestation|auth|embedded|network|vault_profile)\b)/,
+        'embedded bootstrap must not bypass the custody API or access private keys'
+      );
+    }
+  }
+  for (const sourcePath of rustSources(root, 'workers/nitro-enclave-host/src')) {
+    if (sourcePath !== embeddedBootstrap || !canonicalSigner) {
+      reject(
+        sourcePath,
+        read(root, sourcePath),
+        /\bneo_signer\b/,
+        'only the measured bootstrap may import custody implementation types'
+      );
+    }
+  }
   const hostProductionSources = rustSources(root, 'workers/nitro-enclave-host/src')
     .map((relativePath) => read(root, relativePath))
     .join('\n');

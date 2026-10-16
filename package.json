@@ -40,7 +40,7 @@
     "start:signer:rust": "cargo run --locked -p neo-signer --bin signer_service -- serve",
     "test:enclave-host:rust": "cargo test -p nitro-enclave-host --all-targets --locked",
     "start:enclave-host:rust": "cargo run --locked -p nitro-enclave-host --bin enclave_host",
-    "check:host-http": "node --test deploy/nitro/enclave-host.test.mjs",
+    "check:host-http": "node --test --test-concurrency=1 deploy/nitro/enclave-host.test.mjs deploy/nitro/enclave-networks.test.mjs deploy/nitro/enclave-capacity.test.mjs deploy/nitro/enclave-oracle-family.test.mjs deploy/nitro/enclave-embedded-boot.test.mjs",
     "check:relayer:rust": "cargo clippy -p neo-os-relayer --all-targets --locked -- -D warnings",
     "test:relayer:rust": "cargo test -p neo-os-relayer --all-targets --locked",
     "check:relayer": "npm run check:relayer:rust",
@@ -153,6 +153,7 @@
     "@typescript-eslint/parser": "^8.57.1",
     "eslint": "^8.57.0",
     "prettier": "^3.3.0",
+    "smol-toml": "1.9.1",
     "solc": "0.8.35"
   },
   "overrides": {

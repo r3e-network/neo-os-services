@@ -18,8 +18,7 @@ use sha2::{Digest, Sha256};
 mod support;
 use support::*;
 
-/// Every test here shares the process-wide session store, and the test
-/// harness runs tests on parallel threads: hold this for the whole test.
+/// Serialize the larger engine fixtures to keep their local resource use bounded.
 static STORE_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn store_test_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -82,7 +81,6 @@ fn post(harness: &TestState, route: &str, payload: &Json) -> DispatchOutcome {
 #[test]
 fn the_game_lane_keys_its_hmacs_with_the_game_session_subkey() {
     let _store = store_test_lock();
-    reset_sessions_for_tests();
     let root_hex = "07".repeat(32);
     let harness = test_state(
         &[
@@ -125,7 +123,6 @@ fn the_game_lane_keys_its_hmacs_with_the_game_session_subkey() {
 #[test]
 fn rust_session_routes_cover_every_engine_and_sign_the_fixed_codec() {
     let _store = store_test_lock();
-    reset_sessions_for_tests();
     let root_hex = "07".repeat(32);
     let harness = test_state(
         &[
@@ -538,22 +535,22 @@ fn expected_binding(app_id: &str, game_id: u64, player_display_hex: &str) -> Vec
     hasher.finalize().to_vec()
 }
 
-fn evict_live_sessions() {
-    if let Some(store) = SESSIONS.get() {
-        store.lock().expect("session store").clear();
-    }
+fn evict_live_sessions(harness: &TestState) {
+    harness
+        .state
+        .game_sessions
+        .lock()
+        .expect("session store")
+        .clear();
 }
 
-fn restart_session_store() {
-    if let Some(store) = SESSIONS.get() {
-        *store.lock().expect("session store") = SessionStore::new();
-    }
+fn restart_session_store(harness: &TestState) {
+    *harness.state.game_sessions.lock().expect("session store") = SessionStore::new();
 }
 
 #[test]
 fn kernel_lane_refuses_a_session_played_by_another_account() {
     let _store = store_test_lock();
-    restart_session_store();
     let harness = kernel_harness();
     let owner = player(21);
     let other = player(22);
@@ -580,7 +577,6 @@ fn kernel_lane_refuses_a_session_played_by_another_account() {
 #[test]
 fn kernel_lane_consumes_the_session_and_binds_the_result_to_the_game() {
     let _store = store_test_lock();
-    restart_session_store();
     let harness = kernel_harness();
     let owner = player(23);
     let started = 2_000_000;
@@ -609,11 +605,11 @@ fn kernel_lane_consumes_the_session_and_binds_the_result_to_the_game() {
     assert_eq!(second["success"], false, "{second}");
     assert!(second["result_bytes_base64"].is_null(), "{second}");
 
-    evict_live_sessions();
+    evict_live_sessions(&harness);
     let rebuilt = kernel_fulfill(&harness, "603", &owner.hash, &payload);
     assert_eq!(rebuilt["success"], false, "{rebuilt}");
 
-    restart_session_store();
+    restart_session_store(&harness);
     harness.oracle_io.set_now_ms(started + 30 * DAY_MS);
     let month_later = kernel_fulfill(&harness, "604", &owner.hash, &payload);
     assert_eq!(month_later["success"], false, "{month_later}");
@@ -626,7 +622,6 @@ fn kernel_lane_consumes_the_session_and_binds_the_result_to_the_game() {
 #[test]
 fn kernel_lane_loss_is_the_shared_game_result_v2_vector() {
     let _store = store_test_lock();
-    restart_session_store();
     let vectors: Json = serde_json::from_str(include_str!(
         "../../../../crates/neo-os-games/tests/vectors/game-result-v2.vectors.json"
     ))
@@ -691,4 +686,27 @@ fn kernel_lane_loss_is_the_shared_game_result_v2_vector() {
     let loss_answer_hash: [u8; 32] = Sha256::digest(format!("loss|{ops_digest}")).into();
     assert_eq!(bytes[33..65], loss_answer_hash, "loss answer hash");
     assert_ne!(bytes[1..65], vector[1..65]);
+}
+
+#[test]
+fn a_session_identity_cannot_override_its_runtime_network() {
+    let _store = store_test_lock();
+    let root_hex = "07".repeat(32);
+    let mainnet = test_state(
+        &[
+            ("MORPHEUS_NETWORK", "mainnet"),
+            ("MORPHEUS_GAME_SECRET_ROOT_HEX", &root_hex),
+            ("MORPHEUS_GAME_SECRET_ROOT_SOURCE", "nitro-recipient-kms"),
+        ],
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let testnet_identity = identity("miniapp-sudoku", 12345);
+    let reply = handle_session_start(&mainnet.state, &testnet_identity).unwrap();
+    assert_ne!(
+        reply.status, 200,
+        "an authentic testnet identity cannot allocate a mainnet session"
+    );
 }

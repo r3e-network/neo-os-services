@@ -5,7 +5,7 @@
       "consumer": "isolated-regression-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Test harnesses, vectors and generators exercise request routing, signatures and byte formats with synthetic inputs; their assertions do not award economic value to users. Review covers these exact files only, not future tests or live deployments.",
+      "justification": "Test harnesses, vectors and generators exercise request routing, signatures and byte formats with synthetic inputs; their assertions do not award economic value to users. Current network-context, scoped-state and sponsor-projection fixtures preserve this boundary. Tests of signing or game results do not classify the production signing authority, game engines or settlement consumers as non-value. Review covers these exact files only, not future tests or live deployments.",
       "inputs": {
         "apps/web/__tests__/control-plane.test.ts": {
           "sha256": "6de119dd0f5ebda3a3cc046514d1130c5070b2ad9847a6220e50d4dbecac9435"
@@ -80,7 +80,7 @@
           "sha256": "1e83b015dd67366b4f52fbc4c290b5cd67f3ccc24d37e31ff0fbfce998b91294"
         },
         "workers/morpheus-relayer/relayer.test.mjs": {
-          "sha256": "c01da1cb483de4d7fbe7808f677be62c384a7bc08373681b189436d896957c6e"
+          "sha256": "3da13ec43377c7cf1461c71af1ec94c449050ef5bba864d1275fe3e05007901d"
         },
         "workers/morpheus-relayer/src/fulfillment.test.mjs": {
           "sha256": "b426790409e3bfe0542427e7aca59da874c8bf26c2e76974cc66f52649cc1c53"
@@ -122,13 +122,13 @@
           "sha256": "3991b54a38a19d3c4cfd9dab23a444607410a569244f9591b52eb19dddb97f4f"
         },
         "workers/nitro-enclave-host/tests/unit/session.rs": {
-          "sha256": "ae40d1c25452a7b45fb1bec41827c024d8f8093426d2efa192dfa2f083971914"
+          "sha256": "2f26ce98189eceead84e0b8b4826d51f2e2680adc83cbd5c58b9388db07255d0"
         },
         "workers/nitro-enclave-host/tests/unit/sign.rs": {
           "sha256": "a94c7b465a2c52385b2222109aa48ad847b0b459d5a12ec21429d7982f848da4"
         },
         "workers/nitro-enclave-host/tests/unit/vrf.rs": {
-          "sha256": "df63dbb54a57d2f66f7ec42aacea4fc80be95e2afeb0f43a8db62eeb90450132"
+          "sha256": "92c53f7366c8479b3e3e47bd04095fc409e1f0bd030ffd03e539cc476ada252e"
         },
         "workers/nitro-worker/src/capabilities.test.mjs": {
           "sha256": "81958e6018b72875b3887bc43a72228b7f9bf3d2a5ae7cd54e182df5d5f8a96c"
@@ -149,7 +149,7 @@
           "sha256": "263f6b94a5e2493d2b5f235e1587fca5a006518985045169ae2a270c181c25d9"
         },
         "workers/nitro-enclave-host/tests/unit/support.rs": {
-          "sha256": "b8db1b3a52cfa12198d62f9a42f2613a612979a197f80aec5558ec345327a845"
+          "sha256": "494576659b2064f88fa9e099811732f4c0914a4ca35773c7496853ee56619d9d"
         },
         "workers/nitro-enclave-host/tests/unit/compute_execute.rs": {
           "sha256": "1b1a06ae4d9e83e87d97661dd1fb487f8397a07426a14d257d1538e385bab3a1"
@@ -288,7 +288,7 @@
       "consumer": "oracle-delivery-adapters",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Transport, dispatch and compatibility generation for oracle results. These exact adapters do not select rewards or settle wagers; final consumers require separate review, including the explicitly recorded dice debt. Forwarding is not proof that a caller is non-value.",
+      "justification": "Transport, dispatch and compatibility generation for oracle results, including the unchanged sponsor projection expressed by the current config adapter. These exact adapters do not select rewards or settle wagers; final consumers require separate review, including the explicitly recorded dice debt. Forwarding is not proof that a caller is non-value.",
       "inputs": {
         "deploy/evm/neox-fulfiller.mjs": {
           "sha256": "8e86f13d6fae7b4dc56e5257d0360e1fab1dfdfd798abfc7c435b06d7bce9646"
@@ -297,7 +297,7 @@
           "sha256": "d2492f4a0fe47ba7d8b1eecce6075c7a1f1e08947ee41fc275701fae8970b403"
         },
         "workers/morpheus-relayer/src/config.js": {
-          "sha256": "bdd72256677e4281be8f88d4e8608df870309cdd9cb37bbdd8c009da43d58966"
+          "sha256": "6f8ec5f8a00e7c52e315b6491fa23bee130fe5a99132babe3cb7ec854b8e2aa7"
         },
         "workers/morpheus-relayer/src/fulfillment/classifier.js": {
           "sha256": "1863f6b07e72b057312fd49048588e49722bb9ed27bfbd41e2b6bf911c1d1650"
@@ -359,10 +359,10 @@
       "consumer": "package-lock.json",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Operational configuration or policy validation names the VRF lane but does not use its output to choose a reward or settlement. This exact-file review does not authorize live operations or classify downstream consumers.",
+      "justification": "Locked development dependency metadata adds the TOML parser used by the crypto-ownership gate, with its exact version and integrity. It defines no random-output economic allocation. This classification covers the lock metadata only, not the security of all resolved implementations or permission to deploy them.",
       "inputs": {
         "package-lock.json": {
-          "sha256": "a1d4d91ec1c4b3264a95fd0d7f1ca3efa6874ef9302a9799df04f683b46154ee"
+          "sha256": "82c9e0b31bb902e5772081f6eda19914cd8711a717aa342e822d382b0f28d5a3"
         }
       }
     },
@@ -370,10 +370,10 @@
       "consumer": "scripts/check-rust-migration.mjs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Operational configuration or policy validation names the VRF lane but does not use its output to choose a reward or settlement. This exact-file review does not authorize live operations or classify downstream consumers.",
+      "justification": "Architecture enforcement parses actual TOML dependency forms and bounds the host to the canonical native signer and reviewed bootstrap interfaces. It refuses private-key implementations and alternate dependency paths. This policy checker defines no random-output payout; its non-value classification does not exempt the signing authority that it checks.",
       "inputs": {
         "scripts/check-rust-migration.mjs": {
-          "sha256": "c9d09491ec14474394f8cc5df9ac54fd1ef664c6658f159db12e39a627d60bd5"
+          "sha256": "0cb2f4013a40be0723f6aeb009e75a8eebd264d673d3e5f5665f52c7edff612d"
         }
       }
     },
@@ -425,10 +425,10 @@
       "consumer": "host-vrf-and-nested-automation",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Host direct, oracle and automation dispatch plus generation, custody signing and UUID/session support, and the oracle envelope key-material module those lanes resolve keys through. These files expose primitives but do not define an economic payoff from the VRF bytes. Their callers are independently reviewed; this entry grants no runtime caller exemption.",
+      "justification": "Host direct, oracle and nested automation dispatch, context-scoped state, custody signing, session identifiers and oracle key material. These files supply primitives, select network contexts and authenticate results; they do not define an economic payoff from random bytes. Arbitrary caller programs, game engines, signed-price consumers and settlement contracts remain independently classified. Custody signing and identity recovery remain value-moving security authority; this narrow random-output classification grants no caller or deployment exemption.",
       "inputs": {
         "workers/nitro-enclave-host/src/automation.rs": {
-          "sha256": "7921520bd6f60733a9fe0e3c7459b871f53a20511aa3a2a4a3ab9256b9091680"
+          "sha256": "6ed52895df57a1f8101eec98f7389c7dbc6db2394aa5e8a65e9d8ad2f0482dd9"
         },
         "workers/nitro-enclave-host/src/dispatch.rs": {
           "sha256": "77f91d926fa8ad773e977d04fff18aa7ec9e560bd841ea6d7db79567cd851235"
@@ -437,7 +437,7 @@
           "sha256": "6091de4a1273a390fc9e594e5f87d9ecadc708c9c509223fab73463dfe98e9c4"
         },
         "workers/nitro-enclave-host/src/lib.rs": {
-          "sha256": "70c836ee48fbeb6f90d42693f356f2c4382521a00af3f6ee43b164111e48dfa4"
+          "sha256": "50b98008d08a9f4d89447a5389455feb3c7a601a659ce0cf15c932a951b0be64"
         },
         "workers/nitro-enclave-host/src/paymaster.rs": {
           "sha256": "f76867d383e27809f24412dfd752beccbff34f55a7e425481566bfea5a54a50c"
@@ -449,13 +449,13 @@
           "sha256": "16c21aa54714b8cc613761d06a49e1bf68e96146c951f430510f38a64b6c0d5b"
         },
         "workers/nitro-enclave-host/src/session.rs": {
-          "sha256": "6902321d3a6cdf30e8d4a3c2e5e7e79be8fec7b1b69365e5fdb1edc04f82eb0d"
+          "sha256": "e15a97c97f39fbc9b72966759505cfc79f5f44c982fc5ba195a2497ce36494d4"
         },
         "workers/nitro-enclave-host/src/vrf.rs": {
           "sha256": "61339dbade97261c9a55c7a3a7d0f3da504d08cf8303831da9252ef732d90b9d"
         },
         "workers/nitro-enclave-host/src/bin/enclave_host.rs": {
-          "sha256": "720bcabbe452a57317c4e7d5672f4a9f387599f6cc51d0e0af676e10c341ff9e"
+          "sha256": "7ef0a66e60bf070c7dfaa1fea02ef1aeedb297a9dd2555ca617ac9ef29993d89"
         },
         "workers/nitro-enclave-host/src/feed_sign.rs": {
           "sha256": "98b6aa7b7934206d264628dad59d0ba8a27cd2dbe8665998c817f10fea9479fd"
@@ -467,10 +467,10 @@
           "sha256": "7f0d1b64d586d22826727d3504865743269259c47446e12ae9e5f1079904c864"
         },
         "workers/nitro-enclave-host/src/state.rs": {
-          "sha256": "64e9af2691779de84340f85f41a5ee1118dc9a2db72790ca5d125fe53bf271fe"
+          "sha256": "ffbaa8b44b133933b13d0eb9f4954fa37823c47ac6b8a90e1e4c82a0d9e2c8e9"
         },
         "workers/nitro-enclave-host/src/compute_execute.rs": {
-          "sha256": "66c018136cb1cb0280351c479feeb4c434062ee45d89b4c6b942e9d8fe02503d"
+          "sha256": "2d6124e6f3098dbd24e3e3a366fd9a581dc13a552d53a9c331aa4f7319b37a05"
         },
         "crates/neo-os-compute/src/oracle/crypto.rs": {
           "sha256": "5dc853f17b62b79959221a79c99b6bd07bdf202a879b12e1cf65501e1ad847c5"
@@ -479,10 +479,10 @@
           "sha256": "4f6d25aa5a50854e030722186e25442dcb9b52a669a50fa1418465d77548a8a8"
         },
         "workers/nitro-enclave-host/src/neodid.rs": {
-          "sha256": "cd661e9ab712fd5ab15749a829e5bc07a66d10eebdb1c69e64814bc1c37253f0"
+          "sha256": "2c2c4279fac4efa36c7326842600a9226866aa7a0e130d39d615d002afca0e22"
         },
         "workers/nitro-enclave-host/src/oracle_read.rs": {
-          "sha256": "4e420cf1d623fce08bae505253cde885fc0e710f1fcaba1f586d8f0967d5e92b"
+          "sha256": "83f0b22cf6513680b3e8dc82bc8f0b1eddbfe59d26528049eb8c3748b237c658"
         }
       }
     },
@@ -590,7 +590,7 @@
       "consumer": "private-chain-request-path-acceptance",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Disposable private-chain acceptance for the kernel, relayer, host and custody request path, and the two delivery-path fixes that path required to run at all. Nothing here generates randomness or awards economic value: the only signature that settles anything is the kernel's own verification of a fulfillment digest, and both controls are refusals. Review covers these exact files only, not future tests or live deployments.",
+      "justification": "Disposable private-chain acceptance for the kernel, relayer, host and custody request path and the delivery-path fixes it exercises. Package configuration also runs the five real-host HTTP test files serially and adds the TOML parser development dependency used by the architecture guard. These test and dependency declarations define no random-output economic award. Private-chain settlement uses disposable local state; this review does not authorize live signing or classify downstream consumers.",
       "inputs": {
         "scripts/test-e2e-private-chain.mjs": {
           "sha256": "6dcf913aec3df4589dff98c53a1aa34f0a27060ead5dbd91c7227a08e9c30f57"
@@ -614,7 +614,7 @@
           "sha256": "2f128b0bec7fdf34a76c7a80ed40eba6e541a58107a09f839993591409600b50"
         },
         "package.json": {
-          "sha256": "7131065e9eafbb2d211b90988eae4ac51fc89e322c2c776f6331a449c5c6c0d7"
+          "sha256": "ab631e381bc5b0309683a01ba89a4e7400b173a9fd53398fab880d67aef53c3f"
         }
       }
     },
@@ -644,6 +644,556 @@
         },
         "scripts/check-capability-route-parity.test.mjs": {
           "sha256": "623a64e5cf49454eb1deaa45945c71289d30afdc6ac92bd1b5673dd53d9e295d"
+        }
+      }
+    },
+    {
+      "consumer": "Cargo.lock",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Combines host embedded-signer/test dependencies with exact quinn-proto/rustls security patch package blocks. Dependency resolution metadata does not use random outputs for rewards. Security properties of resolved implementations still matter. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "Cargo.lock": {
+          "sha256": "202bd09c6b8912b34aa5ae0f4d0458b48e1a597049da811f045c3e90dc31e4d4"
+        }
+      }
+    },
+    {
+      "consumer": "apps/web/lib/neodid-did-common.ts",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Defines stable typed DID/key refusal codes and deterministic service/vault/account namespace constructors. Constructs identity identifiers and error taxonomy without any random-output economic decision. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "apps/web/lib/neodid-did-common.ts": {
+          "sha256": "85c2045349d5e47226c644975cd5ba2c68c0b6115b7dc45eadaad94866700a57"
+        }
+      }
+    },
+    {
+      "consumer": "apps/web/lib/neodid-did.ts",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Validates bounded UTF16 account subjects and typed service P256 keys, refuses present unusable keys once, and publishes accepted JWK/public runtime metadata. Identity resolution uses deterministic hashes/curve conversion and does not produce a VRF payout or select economic recipients. Published recovery and fee endpoint descriptions are metadata. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "apps/web/lib/neodid-did.ts": {
+          "sha256": "352309f9247bf4eeb230d34482e614f53e1ab4af1d045c9ddda194eaa7094e1e"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/custody-state-authority/src/authority.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Captures immutable admitted network in the full scope, separates snapshot paths, binds fresh/cached receipt body bytes and receipt id before atomic persistence, and preserves session/replay/lease/CAS checks. Random challenges/session tokens are authentication secrets; the CAS winner is a successful state commit, not a lottery winner. Receipt signing does not select a random payout. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/custody-state-authority/src/authority.mjs": {
+          "sha256": "482e94bdb4c3dc1ec9d3fbac91780f82eb938dcea56c0510112231244457aaa5"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/custody-state-authority/src/constants.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Admits only exact mainnet/testnet strings and defines wire schemas, entity tags and bounded protocol sizes. Protocol constants and network validation do not consume randomness for economic allocation. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/custody-state-authority/src/constants.mjs": {
+          "sha256": "08c38866768184e1f342ed0fb6428e2553275a23c0ef3ae5eb5fae25cd89522d"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/custody-state-authority/src/dynamo-repository.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Freezes repository network; preserves legacy TestNet physical keys while prefixing MainNet, rejects crossed arguments before SDK calls and refuses foreign stored labels. Conditional state persistence and commit claims authenticate/fence custody; no random-output reward selection is present. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/custody-state-authority/src/dynamo-repository.mjs": {
+          "sha256": "a6ed062cb504362fdb5635cd1f30d2280f60348ffc05e088482aebb6a40e62a5"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/custody-state-authority/src/runtime.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Copies and validates environment/resource values before the first await, passes explicit network to repository and caches the authority instance. Runtime factory and environment configuration select a security context without mapping random results into economic choices. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/custody-state-authority/src/runtime.mjs": {
+          "sha256": "5ad8b06f86c70d26004ce6522faeca8bde57d5d3d52102da3e80826f75b8214f"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/custody-state-authority/template.yaml",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Requires explicit network/service/key selection, wires expected network, limits each route IAM role to network/entity keys and scoped S3/KMS operations. Deployment policy governs authority access and resource isolation; it does not implement a random-outcome payment rule. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/custody-state-authority/template.yaml": {
+          "sha256": "2917b5ebc30b59d93b8331ad63f14881dee5f7ab9e2ca0ec565f05e979e1680b"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/custody-state-authority/test/authority.test.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Updates stored fixture scope queries for explicit TestNet and checks crossed session rejection while retaining the authority auth/replay/lease/CAS suite. Synthetic protocol assertions and in-memory repositories are non-value tests, even when receipt text describes commit ownership. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/custody-state-authority/test/authority.test.mjs": {
+          "sha256": "26fd0b0faddd28ae51f8ce7978f9fc0af6ed85664edd3c56323aeeec7a47a90a"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/custody-state-authority/test/dynamo-repository.test.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Exercises exact network admission, Dynamo physical keys/conditions, refusal before I/O and stored-label checks across record types with SDK command doubles. Synthetic repository command assertions do not choose or transfer economic payouts. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/custody-state-authority/test/dynamo-repository.test.mjs": {
+          "sha256": "532b4ff7c67cf1e58ce3fa6c7960f203127c05b6710dd0719ad811f6a68ba61c"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/custody-state-authority/test/helpers.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Adds network to test config/HEAD scope and memory-repository identifiers; retains deterministic randomness and synthetic crypto helpers. Fixture random bytes are reproducibility/authentication inputs, not production VRF rewards. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/custody-state-authority/test/helpers.mjs": {
+          "sha256": "8ebd8b4918cb1a72adf3bfecb267d7aa478ae266d8730e89b3717be4080fcc4e"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/custody-state-authority/test/http-template.test.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Asserts HTTP authentication/media/original-body handling and required template/attestation wiring, including explicit network admission. HTTP/template regression checks contain no live economic random consumer. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/custody-state-authority/test/http-template.test.mjs": {
+          "sha256": "d82911c0b784fff0e871e1e61673035b335194f704080c7acf1ca2e2a67c63c2"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/custody-state-authority/test/network-runtime.test.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Runs real authority functions over shared synthetic durable maps; checks parallel network state/replays, canonical TestNet bytes and foreign signed bytes hidden inside admitted wrappers. Randomness is limited to synthetic auth/signature fixtures. The concurrent CAS results are not economic winner selection. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/custody-state-authority/test/network-runtime.test.mjs": {
+          "sha256": "9dbba18e2b0a41ceed5dc24ddfa58a9bd4dd117a409927d0aefe4469728a1420"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/custody-state-authority/test/runtime-config.test.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Runs isolated environment child processes to reject invalid networks and verify startup snapshot configuration remains stable across later environment changes. Test-only runtime factory checks have no payout or settlement logic. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/custody-state-authority/test/runtime-config.test.mjs": {
+          "sha256": "c1bc1ae0089711cd3ee87d026b5e3c8a79e649952603c2600f69c44d403df158"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/custody-state-authority/test/template-runtime.test.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Resolves the template environment for each network and starts actual runtime code in a child with intercepted SDK calls, checking resulting namespace. Tests the template-to-runtime security join with synthetic public configuration, not a random-output economic consumer. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/custody-state-authority/test/template-runtime.test.mjs": {
+          "sha256": "b0265217ff88c7727293e22a367a1a728c51e2887ecc9001214bd02926afe5d5"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/nitro/enclave-capacity.test.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "New loopback HTTP regression fixture starts single/dual-context hosts and tests body deadlines, global admission, cancellation and recovery. The cancellation regression explicitly probes admission before releasing parked signer requests. The inputs are loopback sockets, fake custody responses and synthetic requests; assertions concern occupancy/status, not random bytes mapped to winners, amounts or settlement. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/nitro/enclave-capacity.test.mjs": {
+          "sha256": "bc2c1715d780f200048cb52cca0df8863fe2d72d9e18eed4e7f435208f206b71"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/nitro/enclave-embedded-boot.test.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "New startup subprocess fixture refuses missing/partial custody plans and unconfigured production dual vaults before the listener, while retaining observable unconfigured development mode. This file only makes startup/refusal assertions with deliberately incomplete local configurations. It neither selects rewards from randomness nor signs/distributes value. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/nitro/enclave-embedded-boot.test.mjs": {
+          "sha256": "039c16228fcc02d5f6f7281c80ddb6a698e202a1919e012bf76b4723609d7df0"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/nitro/enclave-networks.test.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "New real-loopback HTTP fixture checks profile selection, isolated bearer credentials, conflicting selectors, invalid configuration and raw-path/header ambiguity. Network labels, status codes and synthetic tokens are the tested outputs. No lottery, wager, random recipient or transfer-amount rule exists in the fixture. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/nitro/enclave-networks.test.mjs": {
+          "sha256": "6f84945149c6f0e3776ab9e2953a6e211e54572f6cec744a879e35ecc615d56c"
+        }
+      }
+    },
+    {
+      "consumer": "deploy/nitro/enclave-oracle-family.test.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "New direct/nested HTTP golden-vector fixture preserves accepted family aliases, rejects conflicting deployment aliases and distinguishes JavaScript whitespace from NEL. Public synthetic encryption vectors and alias/status assertions do not allocate economic value. Decryption success in a fixture is unrelated to a reward rule. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/nitro/enclave-oracle-family.test.mjs": {
+          "sha256": "7a3459ac55a247dc57a6eaed21d619514939de66dd6b05ea0601b5095d650286"
+        }
+      }
+    },
+    {
+      "consumer": "scripts/check-rust-migration.test.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Exercises valid quoted/dotted/table forms and bypass attempts using renamed/target/build/workspace/optional/duplicate/malformed dependencies plus host crypto/bootstrap guard cases. Temporary policy fixtures and assertions are non-value tests. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "scripts/check-rust-migration.test.mjs": {
+          "sha256": "1eff7123b22f2d8bcd8d86948d2d065c99706664ff181de667213cc28080fb7c"
+        }
+      }
+    },
+    {
+      "consumer": "scripts/custody-authority-template.test.mjs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Parses actual YAML intrinsic tags, evaluates network conditions, compares least-privilege grants to real repository physical keys and captures actual SDK transaction items. Policy acceptance/refusal testing with fixed identifiers has no random reward allocation. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "scripts/custody-authority-template.test.mjs": {
+          "sha256": "e21ec7f684e3151ca33febb9b4fc44ddb1da17ddb6ec1b1b2de7815b64cb35d1"
+        }
+      }
+    },
+    {
+      "consumer": "vendor/neo-os-did.pin.json",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Pins17 explicit source-to-destination mappings to9c with SHA256 digests, including current resolver/common/host/docs and unchanged contract artifacts. Provenance metadata identifies trusted identity implementation bytes; it does not implement reward allocation. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "vendor/neo-os-did.pin.json": {
+          "sha256": "7602383de174e21879c466a40aa068888e99f7cf2cb655de145a02910b638fa8"
+        }
+      }
+    },
+    {
+      "consumer": "workers/neo-signer/src/api.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Carries an Arc process lease in ApiState and attaches the immutable vault profile and lease to the ready service after provisioning. HTTP authentication, key grants, provisioning and signature dispatch do not select an economic winner or payout from a random result. Retaining the lease across detached work protects exclusivity rather than allocating value. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/neo-signer/src/api.rs": {
+          "sha256": "6553b63aecbce896a1f90ae371a36d62e737fcc075bcf87fb7c8fd9c2a34e4a2"
+        }
+      }
+    },
+    {
+      "consumer": "workers/neo-signer/src/attestation.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Adds an explicit mandatory BootGuard with optional expected PCR0, preserving fresh challenge verification. Challenge entropy is a replay and boot-authenticity control, not a random reward or settlement input. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/neo-signer/src/attestation.rs": {
+          "sha256": "43257ef6132f1ae86cb4b3d35cc8e448807dee4c6ec56347c900b28eec0d93ef"
+        }
+      }
+    },
+    {
+      "consumer": "workers/neo-signer/src/bin/signer_service.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Public CLI validates an explicit matching network without opening a vault; production attested serve uses the canonical embedded runtime and nonlegacy workload auth. Selects and starts a network-bound security service. CLI configuration and process wiring do not consume random outputs to decide payouts. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/neo-signer/src/bin/signer_service.rs": {
+          "sha256": "a374d4e38b5479d7e4bc0763840950914801fe1c181e7ce0b6caedf7a8441180"
+        }
+      }
+    },
+    {
+      "consumer": "workers/neo-signer/src/coordinator.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Validates the full profile/binding and exact public-network labels before session use, snapshot I/O, HEAD decoding and commit receipts. Session transport, attestation nonce, canonical operation digests and receipt signatures authenticate durable state. None maps random output to recipient, reward or amount. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/neo-signer/src/coordinator.rs": {
+          "sha256": "52943179fc38a5ba3251503131472520fcd84c738fa3f9255b5e3f8268f95552"
+        }
+      }
+    },
+    {
+      "consumer": "workers/neo-signer/src/durable.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Fences on invalid receipt/HEAD, derives network from candidate binding and checks previous/next equality before canonical commit digest. Commit ordering and cryptographic integrity protect the ledger; entropy is not used to determine economic allocation. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/neo-signer/src/durable.rs": {
+          "sha256": "a9c26319fa2a96d81ee6034e02ea5eb0412a440abe58f6dfc72c029739f25c2f"
+        }
+      }
+    },
+    {
+      "consumer": "workers/neo-signer/src/embedded.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Validates explicit network/profile/audience/body limits, refuses plaintext master-key fallbacks, takes a filesystem lease, requires fresh attestation and exposes a sealed native router. Bootstrap exposes authorized custody APIs and retains their lease; it neither generates VRF game outcomes nor chooses payout beneficiaries. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/neo-signer/src/embedded.rs": {
+          "sha256": "1e5efaf5fb9354f8030b41f7a4913406eddd1a1ada5ebbd1a18e8d4ac1eded2d"
+        }
+      }
+    },
+    {
+      "consumer": "workers/neo-signer/src/lib.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Exports the canonical embedded runtime module. Library export wiring changes the API surface but contains no random-output economic consumer. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/neo-signer/src/lib.rs": {
+          "sha256": "d9ef98b016a25ca176fc55ed1d18b00f75d23d79f9901d4b77a3a012d3e50a8f"
+        }
+      }
+    },
+    {
+      "consumer": "workers/neo-signer/src/service.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Stores immutable vault profile and lease; checks admitted network/family and stored chain identity before key open/import and cached or fresh signing. Transaction policy, spend limits and signatures may move value, but this file does not interpret a VRF/random result to select a winner, recipient or reward amount. Auth tokens and key randomness are security material. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/neo-signer/src/service.rs": {
+          "sha256": "444ee6aa1e563eed419ac2a618120e906943ba8fb9bd06d7d8b9c99bf6fd8fc4"
+        }
+      }
+    },
+    {
+      "consumer": "workers/neo-signer/src/snapshot.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Maps only complete matching N3-magic/NeoX-chain-id pairs to MainNet or TestNet and binds encrypted snapshots to vault/profile/root/schema context. Snapshot nonces/encryption protect confidentiality and integrity; they do not distribute economic value based on a random result. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/neo-signer/src/snapshot.rs": {
+          "sha256": "af3cd52cb4c966e0f2b3b7309d178d8f21e9ae40943887aca187da983dd6983f"
+        }
+      }
+    },
+    {
+      "consumer": "workers/neo-signer/tests/durable_state.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Synthetic signed receipts exercise two independent HEAD histories and wrong-network receipt/HEAD fencing; later retry remains fenced and no second coordinator call occurs. Assertions over temporary stores and synthetic receipt keys test custody integrity, not a live payment or lottery. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/neo-signer/tests/durable_state.rs": {
+          "sha256": "9e1eeebd180a87dfb31239700709665549272d8c3419839b18a947d2d098c135"
+        }
+      }
+    },
+    {
+      "consumer": "workers/neo-signer/tests/embedded_runtime.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Exercises real exported router/lease lifetimes, synthetic fresh/replayed/zero PCR input, forbidden plaintext, independent network contexts and pending-body admission. Temporary local boot fixtures and public fake profiles do not award value; their nonce randomness calibrates attestation/lease behavior. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/neo-signer/tests/embedded_runtime.rs": {
+          "sha256": "07e14601581664b6de69fd5e33bb570f7c022b7e1b5c4358e789ef4f4c88d6b3"
+        }
+      }
+    },
+    {
+      "consumer": "workers/neo-signer/tests/unit/api.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Runs real local API signing/grant/policy paths: both-network positives, foreign imports/transactions/raw/cached completions/families refuse; workload replay and detached ready/pending lease retention are asserted. Synthetic local keys and transactions exercise value-moving APIs without broadcasting or allocating random-output rewards. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/neo-signer/tests/unit/api.rs": {
+          "sha256": "014c190b6fa8dc521a4670f7f685900591fa14cd3c7e3080db8bc5953a4bfb55"
+        }
+      }
+    },
+    {
+      "consumer": "workers/neo-signer/tests/unit/coordinator.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Expands actual RSA-OAEP session exchange to both networks, shares the canonical vector candidate and includes network decoder regressions. Protocol vectors and local synthetic session transport verify cryptographic bytes and refusal behavior, not economic outcome selection. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/neo-signer/tests/unit/coordinator.rs": {
+          "sha256": "9dcccf66cc2637da72c6d2d5c234aa52ad23ac536c5ee9c4ac2cfa7043cf55c7"
+        }
+      }
+    },
+    {
+      "consumer": "workers/neo-signer/tests/unit/coordinator_network.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Checks all scope fields and labels, exact old/new domain bytes, mixed bindings, wrong receipt wrappers and zero transport requests on crossed inputs. Decoder and canonicalization tests have synthetic values; they do not award economic value. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/neo-signer/tests/unit/coordinator_network.rs": {
+          "sha256": "c09bb5ff7ca027b9b9cfca60015031865e7683b397114b51f79b796b416ccd77"
+        }
+      }
+    },
+    {
+      "consumer": "workers/neo-signer/tests/vault_profile.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Invokes actual signer_service validate-vault-profile for both networks and malformed/crossed selectors, asserts public identity hashes and no data directory creation. Public profile validation fixtures are a boot configuration check; no random reward or private-key release occurs. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/neo-signer/tests/vault_profile.rs": {
+          "sha256": "8ac97c8212fdc14ca90f2ff384141018a8732d085cf2557bc1674e39adedb47d"
+        }
+      }
+    },
+    {
+      "consumer": "workers/nitro-enclave-host/Cargo.toml",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Adds the in-process neo-signer path dependency and Tokio sync/time, Tower utilities and tempfile test support used by the native adapter, admission and fixtures. Dependency declarations add no executable random-output payoff mapping of their own. This classification covers manifest metadata, not the behavior of linked dependencies. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/nitro-enclave-host/Cargo.toml": {
+          "sha256": "7e7040f58eb1d4f24b7f5d5960032bd0812a470abc0970f563d8ff3787e48f00"
+        }
+      }
+    },
+    {
+      "consumer": "workers/nitro-enclave-host/src/custody_bootstrap.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "New fail-closed plan validates network, absolute paths, bounded profile bytes/digest, environment, internal URL and canonical workload audience. All plans are checked for cross-vault identity/root/path/audience reuse before guarded native boot. Plan validation and boot/router construction contain no random-output allocation rule. Deduplicating canonical audience protects authentication; it does not classify the transactions custody can authorize. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/nitro-enclave-host/src/custody_bootstrap.rs": {
+          "sha256": "732b4e156efde451ad827c224e07df2dfca2f205cc16f8c683d693c3cda41771"
+        }
+      }
+    },
+    {
+      "consumer": "workers/nitro-enclave-host/src/embedded_custody.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "New in-process transport binds a literal network-specific internal origin to one router; preserves bearer and body; restricts host-facing methods/routes; bounds request/response sizes and refuses malformed replies. The adapter transports explicitly requested operations without interpreting random output. No award or transfer selection is performed by its routing/serialization logic. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/nitro-enclave-host/src/embedded_custody.rs": {
+          "sha256": "8cf00eca94f3881c650e826f9bbba632da94f8d8654aec3b3d5b847182942e35"
+        }
+      }
+    },
+    {
+      "consumer": "workers/nitro-enclave-host/src/network_profiles.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "New parser requires two complete network profiles without ambient credentials, rejects duplicate map keys, and selects only canonical routes with consistent physical-header/query/body aliases. Native custody paths are recognized. Family exceptions are route-specific. Labels select an execution/security context; they do not select an economic winner or amount from randomness. Family alias compatibility is grammar, not authorization to switch deployment. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/nitro-enclave-host/src/network_profiles.rs": {
+          "sha256": "7eed6bfe91d870b1b4c6053e5e24432148e1db5535b11a40069782a9bb8b3a25"
+        }
+      }
+    },
+    {
+      "consumer": "workers/nitro-enclave-host/src/oracle_feed.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Replaces cached/global feed state with context-scoped durable observation files and per-file process-local locks. Validates provenance/container shape, refuses linked/nonregular state and ambiguous filenames, uses exclusive owned temporary files and atomic replacement. Fetches, aggregates and signs quotes; pending publication remains failure. Quote aggregation/thresholds and disk bookkeeping are deterministic with respect to provider inputs; temp filenames use PID/sequence, not payoff randomness. This file does not map random output to awards or transfers. Signed prices can still influence economically significant downstream decisions. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/nitro-enclave-host/src/oracle_feed.rs": {
+          "sha256": "5df5d19602396687a02079de686db8fc4744f040f3094a4aa3f79fa6de9c0dcf"
+        }
+      }
+    },
+    {
+      "consumer": "workers/nitro-enclave-host/tests/unit/automation.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Removes global-store reset and adds two-network replay isolation, retaining actual nested hash computation, idempotent replay and conflicting-descriptor rejection. Synthetic jobs and signature call counts test replay semantics, with no allocation or transfer from random bytes. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/nitro-enclave-host/tests/unit/automation.rs": {
+          "sha256": "0715a7e6c87f52fc3bf4edecfae9a399c7574a8dfaa525605385cf848200c19d"
+        }
+      }
+    },
+    {
+      "consumer": "workers/nitro-enclave-host/tests/unit/custody_bootstrap.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "New local profile/boot fixtures cover complete plans, canonical-equivalent audience refusal before any boot, shared identities, missing/digest/foreign configuration, failed attestation, distinct retained leases and partial-boot rollback. Synthetic profile hashes, local lease ownership and refusal assertions do not select economic rewards. Generated fixture material is not operator key evidence. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/nitro-enclave-host/tests/unit/custody_bootstrap.rs": {
+          "sha256": "9626ba9dd26fc8e34d300a22cb0b7c87ead6c510748746905bceef1644262b12"
+        }
+      }
+    },
+    {
+      "consumer": "workers/nitro-enclave-host/tests/unit/embedded_custody.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "New transport tests combine a counting router with a real local custody service, temporary database, fixed test master key and generated test signing keys. They check auth preservation, route limits, bounded replies, actual P256 verification and grant refusal. Fixture signing authenticates test bytes; there is no live transfer or random payoff. Real cryptographic verification in a local fixture is stronger than a dummy signer but still synthetic economic input. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/nitro-enclave-host/tests/unit/embedded_custody.rs": {
+          "sha256": "3c41b40bb5fa441f36fd2e292f8ed24f0fb87f5a56365406c4a12b94a194140a"
+        }
+      }
+    },
+    {
+      "consumer": "workers/nitro-enclave-host/tests/unit/native_admission.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "New binary-private fixtures block a native custody operation, abort the caller and verify global occupancy across networks; task panic must close with 500 and return all permits. The observable output is admission/lifetime behavior around synthetic signing work. No random economic allocation is computed. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/nitro-enclave-host/tests/unit/native_admission.rs": {
+          "sha256": "2e062d8d8bab72c69344efb4c448468c07dcb9b6483a29b9dee11738728c830a"
+        }
+      }
+    },
+    {
+      "consumer": "workers/nitro-enclave-host/tests/unit/neodid.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Adds selected-context tests for shadowed foreign/malformed aliases, both-network positives, omitted labels, encrypted payloads, production key refusal and provider-before-validation ordering across all four ticket routes. Existing synthetic JWT/signature/cache assertions remain. Synthetic identity tokens, locally generated JWT keys and asserted signature-call counts test identity authority; they award no value from random results. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/nitro-enclave-host/tests/unit/neodid.rs": {
+          "sha256": "419666938e35fe29d42b7a5741a7dff347b7407cf91b93b07400e08bc854d6f0"
+        }
+      }
+    },
+    {
+      "consumer": "workers/nitro-enclave-host/tests/unit/network_context.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "New handler-level tests use independent MainNet/TestNet states and encrypted payloads to check every alias before compute/provider/signing effects, with matching positive controls and recovery-family compatibility. Randomness supports test encryption; responses and negative call counts are assertions, not economic allocations. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/nitro-enclave-host/tests/unit/network_context.rs": {
+          "sha256": "f0b7c40ac59be1294ea45dcc0123afb07f748a3b17e98eebd0b8906b6253a753"
+        }
+      }
+    },
+    {
+      "consumer": "workers/nitro-enclave-host/tests/unit/network_profiles.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "New pure routing/profile regressions test boot-policy-only inheritance, duplicate headers/configuration, canonical routes, all deployment aliases and exact route-specific family/whitespace exceptions. These are deterministic string/parser fixtures; no random economic outcome exists. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/nitro-enclave-host/tests/unit/network_profiles.rs": {
+          "sha256": "6091bc256754f25d4bb0e0857e06fe914693c83497246f1d11118419ae864f00"
+        }
+      }
+    },
+    {
+      "consumer": "workers/nitro-enclave-host/tests/unit/oracle_feed.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Adds isolated temporary files and fake-provider fixtures covering scoped migration/restart, overlapping writers, alias locks, refusal before effects, record shape, temp collisions, real failed rename and persistence failure. Existing quote test retains pending-publication failure. Fake quotes, local file histories and signature-call assertions do not allocate economic value. The fixture explicitly refuses to treat observations as successful chain submission. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "inputs": {
+        "workers/nitro-enclave-host/tests/unit/oracle_feed.rs": {
+          "sha256": "741a7cc9e3643286db96b2e300ea76ead3d31f441cdc1c82eb08936771ab892c"
         }
       }
     }

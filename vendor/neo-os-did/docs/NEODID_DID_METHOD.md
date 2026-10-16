@@ -299,3 +299,58 @@ curl "https://oracle.meshmini.app/mainnet/neodid/resolve?did=did:morpheus:neo_n3
 - 当 runtime metadata 可用时，service DID 会包含实时 verifier public key。
 - Vault DID 和 AA DID 是 namespace 描述，不是 claim 披露。
 - 真正的权威锚点仍然是 Neo N3 合约和 NeoNS 域名。
+
+## 12. Resolution errors / 解析错误
+
+Failed resolutions answer HTTP 400 with a DID Resolution envelope and `didDocument: null`. Error
+values are stable codes exported as named constants from `neodid-did-common` (re-exported by the
+resolver); compare against the constants, never against string literals.
+
+| Constant | Code | When |
+| --- | --- | --- |
+| `DID_RESOLUTION_ERROR_INVALID_DID` | `invalidDid` | the DID string is not a well-formed `did:morpheus:neo_n3:{service\|vault\|aa}:…` identifier |
+| `DID_RESOLUTION_ERROR_INVALID_VERIFICATION_KEY` | `invalidVerificationKey` | a present `verification_public_key` is not a usable compressed P-256 point (malformed encoding, off the curve, or empty after normalization) |
+
+A present verification key that cannot be used is **bad data, not a server fault**: the resolver
+refuses the key and everything derived from it (the service DID document and its verification
+methods) and never falls back to a document without the key. It never raises an unhandled exception
+and never answers 500 for this case. A genuine internal fault is distinguishable in logs: it is a
+500 (for example an uncaught `ERR_CRYPTO_OPERATION_FAILED` from anywhere outside the key guard),
+whereas corrupt snapshot key material is always the 400 `invalidVerificationKey` refusal above.
+
+Only a **missing**, **`null`**, or **non-string** key is genuinely absent: the document still
+resolves, with no verification method. A present empty or whitespace-only string (including the
+prefix-only forms `0x` / `0X`) is a declaration of a key that cannot work and is refused like any
+other unusable key. A valid compressed point is accepted with or without the conventional `0x`
+prefix and with incidental surrounding whitespace.
+
+解析失败时返回 HTTP 400 的 DID Resolution envelope，且 `didDocument: null`。错误码从
+`neodid-did-common` 导出为命名常量（resolver 会再导出），请与常量比较，不要做字符串匹配。
+
+| 常量 | 错误码 | 场景 |
+| --- | --- | --- |
+| `DID_RESOLUTION_ERROR_INVALID_DID` | `invalidDid` | DID 字符串不是合法的 `did:morpheus:neo_n3:{service\|vault\|aa}:…` |
+| `DID_RESOLUTION_ERROR_INVALID_VERIFICATION_KEY` | `invalidVerificationKey` | `verification_public_key` 存在，但不是可用的压缩 P-256 点（编码错误、不在曲线上，或规范化后为空） |
+
+存在但不可用的验证密钥是**坏数据，不是服务端故障**：resolver 拒绝该密钥以及一切依赖它派生的
+内容（service DID document 及其 verification methods），绝不会退化成没有密钥的文档，也不会
+抛出未处理异常或返回 500。真正的内部故障在日志中可区分：那是 500（例如密钥 guard 之外未捕获的
+`ERR_CRYPTO_OPERATION_FAILED`），而坏的 snapshot 密钥永远是上面的 400 `invalidVerificationKey`。
+
+只有**缺失**、**`null`** 或**非字符串**的密钥才算真正缺席：文档仍可解析，但没有 verification
+method。存在但为空或仅含空白的字符串（包括只有前缀的 `0x` / `0X`）是“声明了一个不可用的密钥”，
+与其它不可用密钥一样被拒绝。合法压缩点可带可不带 `0x` 前缀，也可带首尾空白。
+
+Example refusal / 拒绝示例：
+
+```json
+{
+  "didResolutionMetadata": {
+    "error": "invalidVerificationKey",
+    "message": "verification_public_key must be a compressed P-256 point that lies on the curve.",
+    "contentType": "application/ld+json;profile=\"https://w3id.org/did-resolution\""
+  },
+  "didDocument": null,
+  "didDocumentMetadata": {}
+}
+```

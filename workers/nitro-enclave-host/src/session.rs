@@ -12,7 +12,6 @@
 //! only settle the session its requester played, once.
 
 use rand::RngCore;
-use std::sync::{Mutex, OnceLock};
 
 use neo_os_core::js_value::JsValue;
 use neo_os_core::stable_stringify::stable_stringify;
@@ -32,8 +31,6 @@ use crate::{DispatchOutcome, RuntimeError};
 const GAME_SECRET_ROOT_ENV: &str = "MORPHEUS_GAME_SECRET_ROOT_HEX";
 const GAME_SECRET_SOURCE_ENV: &str = "MORPHEUS_GAME_SECRET_ROOT_SOURCE";
 const KMS_SOURCE: &str = "nitro-recipient-kms";
-
-static SESSIONS: OnceLock<Mutex<SessionStore>> = OnceLock::new();
 
 struct GameKeyMaterial {
     session_key: [u8; 32],
@@ -55,7 +52,7 @@ pub fn handle_session_start(
     let now_ms = state.oracle_io.now_ms() as f64;
     let mut fresh_token = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut fresh_token);
-    let reply = session_store()?.start(
+    let reply = session_store(state)?.start(
         payload,
         &material.session_key,
         &material.public_key,
@@ -78,7 +75,7 @@ pub fn handle_session_step(
         None => return Ok(protocol_error(503, "game key material unavailable")),
     };
     let now_ms = state.oracle_io.now_ms() as f64;
-    let reply = session_store()?.step(payload, &material.session_key, now_ms);
+    let reply = session_store(state)?.step(payload, &material.session_key, now_ms);
     Ok(reply.into())
 }
 
@@ -130,7 +127,7 @@ fn finalize_session(
     };
     let now_ms = state.oracle_io.now_ms() as f64;
     let direct = lane == FinalizeLane::Direct;
-    let reply = session_store()?.finalize(payload, &material.session_key, now_ms, lane);
+    let reply = session_store(state)?.finalize(payload, &material.session_key, now_ms, lane);
     if reply.status != 200 || direct {
         return Ok(reply.into());
     }
@@ -180,14 +177,19 @@ fn finalize_session(
     Ok(DispatchOutcome::ok(Json::Object(body)))
 }
 
-fn session_store() -> Result<std::sync::MutexGuard<'static, SessionStore>, RuntimeError> {
-    SESSIONS
-        .get_or_init(|| Mutex::new(SessionStore::new()))
+fn session_store(
+    state: &AppState,
+) -> Result<std::sync::MutexGuard<'_, SessionStore>, RuntimeError> {
+    state
+        .game_sessions
         .lock()
         .map_err(|_| http_error(500, "game session state unavailable"))
 }
 
 fn game_key_material(state: &AppState, network: &str) -> Option<GameKeyMaterial> {
+    if state.resolve_network().ok()?.as_str() != network {
+        return None;
+    }
     let secret_root = {
         let overlay = state.overlay.read().ok()?;
         if overlay.get_trimmed(GAME_SECRET_SOURCE_ENV).as_deref() != Some(KMS_SOURCE) {
@@ -230,15 +232,6 @@ impl From<SessionReply> for DispatchOutcome {
             status: reply.status,
             body: reply.body,
         }
-    }
-}
-
-/// A fresh store, as after a process restart: live sessions and settled
-/// records both go.
-#[cfg(test)]
-fn reset_sessions_for_tests() {
-    if let Some(store) = SESSIONS.get() {
-        *store.lock().expect("session test lock") = SessionStore::new();
     }
 }
 

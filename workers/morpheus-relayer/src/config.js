@@ -702,10 +702,7 @@ export function createRelayerConfig() {
     // the kill switch and is halted unless it is explicitly turned on.
     sponsor: {
       host: trimString(env('MORPHEUS_SPONSOR_HOST')),
-      port: Math.min(
-        Math.max(parseNumericEnv(env('MORPHEUS_SPONSOR_PORT'), 9465), 1),
-        65535
-      ),
+      port: Math.min(Math.max(parseNumericEnv(env('MORPHEUS_SPONSOR_PORT'), 9465), 1), 65535),
       contract: trimString(env('MORPHEUS_SPONSOR_CONTRACT')),
       feeCeilingUnits: Math.min(
         Math.max(parseNumericEnv(env('MORPHEUS_SPONSOR_FEE_CEILING_UNITS'), 0), 0),

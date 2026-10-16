@@ -8,9 +8,10 @@
 //! `submission_unavailable`, never as anchored.
 
 use std::collections::HashMap;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use neo_os_compute::core::EnvReader;
 use neo_os_compute::js::{js_stringify, js_to_number, js_trim_string, js_truthy};
@@ -41,15 +42,21 @@ use serde_json::{json, Map, Value as Json};
 
 use crate::compute_execute::{
     build_lane_signed_envelope, build_tee_attestation, reject_caller_supplied_signing_key,
-    sign_worker_bytes,
+    resolve_payload_network, sign_worker_bytes,
 };
 use crate::state::AppState;
 use crate::{http_error, DispatchOutcome, RuntimeError};
 
-static FEED_RUN: OnceLock<Mutex<()>> = OnceLock::new();
-static FEED_STATES: OnceLock<Mutex<HashMap<PathBuf, Json>>> = OnceLock::new();
-static FEED_STATE_WRITE_FAILURES: AtomicU64 = AtomicU64::new(0);
+// A file is the serialization boundary, including two contexts that happen to
+// use the same path. Weak entries are pruned so retired contexts do not leak.
+type FeedFileKey = (u64, u64, String);
+static FEED_LOCKS: OnceLock<Mutex<HashMap<FeedFileKey, Weak<Mutex<()>>>>> = OnceLock::new();
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Default)]
+pub struct FeedRuntime {
+    write_failures: AtomicU64,
+}
 
 struct ResolvedQuote {
     quote: Json,
@@ -71,6 +78,7 @@ pub fn handle_oracle_feed(
         return Err(http_error(400, "oracle feed payload must be a JSON object"));
     }
     reject_caller_supplied_signing_key(payload)?;
+    resolve_payload_network(state, payload)?;
     if should_fast_ack_oracle_feed(payload) {
         return Ok(DispatchOutcome {
             status: 409,
@@ -84,10 +92,6 @@ pub fn handle_oracle_feed(
         });
     }
 
-    let _run = FEED_RUN
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .map_err(|_| http_error(500, "oracle feed execution state unavailable"))?;
     let overlay = state.overlay.read().expect("overlay lock").merged_map();
     let env: EnvReader<'_> = &|name| overlay.get(name).cloned();
     let scope =
@@ -106,7 +110,11 @@ pub fn handle_oracle_feed(
     );
     let now_ms = state.oracle_io.now_ms();
     let state_path = feed_state_path(env, &scope.network, &scope.target_chain);
-    let mut feed_state = load_feed_state(&state_path, env)?;
+    let lock = feed_file_lock(&state_path)?;
+    let _run = lock
+        .lock()
+        .map_err(|_| http_error(500, "oracle feed execution state unavailable"))?;
+    let mut feed_state = load_feed_state(&state_path, env, &scope.network, &scope.target_chain)?;
     let mut sync_results = Vec::new();
     let mut errors = Vec::new();
     let mut aggregations = Map::new();
@@ -304,6 +312,10 @@ pub fn handle_oracle_feed(
 
     let persistence_error = save_feed_state(&state_path, &feed_state).err();
     if let Some(message) = persistence_error.as_ref() {
+        state
+            .feed_runtime
+            .write_failures
+            .fetch_add(1, Ordering::Relaxed);
         errors.push(json!({
             "state_path": state_path.to_string_lossy(),
             "error": format!("feed state persistence failed: {message}"),
@@ -320,7 +332,7 @@ pub fn handle_oracle_feed(
         "sync_results": sync_results,
         "errors": errors,
         "state_persisted": persistence_error.is_none(),
-        "state_write_failures_total": FEED_STATE_WRITE_FAILURES.load(Ordering::Relaxed),
+        "state_write_failures_total": state.feed_runtime.write_failures.load(Ordering::Relaxed),
         "sync_policy": policy.to_json(),
     });
     if !aggregations.is_empty() {
@@ -605,43 +617,182 @@ fn scoped_feed_state_path(base: &Path, network: &str, target_chain: &str) -> Pat
     }
 }
 
-fn load_feed_state(path: &Path, env: EnvReader<'_>) -> Result<Json, RuntimeError> {
-    let cache = FEED_STATES.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(state) = cache
-        .lock()
-        .map_err(|_| http_error(500, "oracle feed state cache unavailable"))?
-        .get(path)
-        .cloned()
+fn feed_filename(path: &Path) -> Result<&str, RuntimeError> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| http_error(503, "invalid feed state filename"))?;
+    // Restrict the leaf alphabet so case folding also covers filesystems with
+    // case/Unicode normalization. Parent directory aliases use inode identity.
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
     {
-        return Ok(state);
+        return Err(http_error(503, "feed state filename must contain only ASCII letters, digits, dots, underscores or hyphens"));
     }
+    Ok(name)
+}
+
+fn feed_file_key(path: &Path) -> Result<FeedFileKey, RuntimeError> {
+    let filename = feed_filename(path)?.to_ascii_lowercase();
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)
+        .map_err(|_| http_error(503, "oracle feed state directory unavailable"))?;
+    let parent = std::fs::metadata(parent)
+        .map_err(|_| http_error(503, "oracle feed state directory unavailable"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // Do not key by the file inode: atomic rename changes it while the
+        // original operation still holds its lock. Case-sensitive filesystems
+        // may conservatively serialize separate case variants.
+        Ok((parent.dev(), parent.ino(), filename))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (parent, filename);
+        Err(http_error(
+            503,
+            "oracle feed state requires a Unix filesystem",
+        ))
+    }
+}
+
+fn feed_file_lock(path: &Path) -> Result<Arc<Mutex<()>>, RuntimeError> {
+    let key = feed_file_key(path)?;
+    let mut locks = FEED_LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| http_error(500, "oracle feed execution state unavailable"))?;
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        return Ok(lock);
+    }
+    let lock = Arc::new(Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    Ok(lock)
+}
+
+fn load_feed_state(
+    path: &Path,
+    env: EnvReader<'_>,
+    network: &str,
+    target_chain: &str,
+) -> Result<Json, RuntimeError> {
     let base = env("MORPHEUS_FEED_STATE_PATH")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(DEFAULT_FEED_STATE_PATH));
-    let mut state = read_state_file(path)
-        .or_else(|| (base != path).then(|| read_state_file(&base)).flatten())
-        .unwrap_or_else(|| json!({ "records": {} }));
-    records_mut(&mut state);
-    cache
-        .lock()
-        .map_err(|_| http_error(500, "oracle feed state cache unavailable"))?
-        .insert(path.to_path_buf(), state.clone());
+    let scope = json!({"network":network, "target_chain":target_chain});
+    // Disk is authoritative. Never cache a failed write or silently reset an
+    // unreadable/corrupt baseline; both can repeat a round after restart.
+    let (mut state, legacy) = match read_state_file(path)? {
+        Some(value) => (value, false),
+        None => match read_state_file(&base)? {
+            Some(value) => (value, true),
+            None => (json!({"records":{}}), false),
+        },
+    };
+    if !state.is_object()
+        || !state
+            .get("records")
+            .and_then(Json::as_object)
+            .is_some_and(|records| records.values().all(Json::is_object))
+    {
+        return Err(http_error(
+            503,
+            "invalid oracle feed state records; repair the baseline before retrying",
+        ));
+    }
+    if (legacy && state.get("scope").is_none())
+        || state.get("scope").is_some_and(|value| value != &scope)
+    {
+        return Err(http_error(
+            503,
+            "oracle feed history needs matching network and chain provenance before migration",
+        ));
+    }
+    // Existing scoped filenames remain compatible; every new write records
+    // explicit provenance, and unscoped history is never guessed into a network.
+    state["scope"] = scope;
     Ok(state)
 }
 
-fn read_state_file(path: &Path) -> Option<Json> {
-    let raw = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&raw).ok()
+fn regular_state_metadata(path: &Path) -> Result<Option<std::fs::Metadata>, RuntimeError> {
+    feed_filename(path)?;
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if metadata.is_file() && metadata.nlink() == 1 {
+                    return Ok(Some(metadata));
+                }
+            }
+            Err(http_error(
+                503,
+                "oracle feed state must be a regular file without symbolic or hard links",
+            ))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(http_error(503, "oracle feed state metadata unavailable")),
+    }
+}
+
+fn same_file(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        left.is_file()
+            && right.is_file()
+            && left.dev() == right.dev()
+            && left.ino() == right.ino()
+            && right.nlink() == 1
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (left, right);
+        false
+    }
+}
+
+fn read_state_file(path: &Path) -> Result<Option<Json>, RuntimeError> {
+    let Some(expected) = regular_state_metadata(path)? else {
+        return Ok(None);
+    };
+    let read = || -> std::io::Result<String> {
+        let mut file = std::fs::File::open(path)?;
+        if !same_file(&expected, &file.metadata()?) {
+            return Err(std::io::Error::other("feed state file identity changed"));
+        }
+        let mut raw = String::new();
+        file.read_to_string(&mut raw)?;
+        Ok(raw)
+    };
+    match read() {
+        Ok(raw) => serde_json::from_str(&raw).map(Some).map_err(|_| {
+            http_error(
+                503,
+                "invalid oracle feed state JSON; repair the baseline before retrying",
+            )
+        }),
+        Err(_) => Err(http_error(
+            503,
+            "oracle feed state cannot be read; refusing to reset history",
+        )),
+    }
 }
 
 fn save_feed_state(path: &Path, state: &Json) -> Result<(), String> {
-    FEED_STATES
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .map_err(|_| "oracle feed state cache unavailable".to_string())?
-        .insert(path.to_path_buf(), state.clone());
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(parent).map_err(|error| record_write_error(error.to_string()))?;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     let file_name = path
         .file_name()
         .and_then(|value| value.to_str())
@@ -654,36 +805,42 @@ fn save_feed_state(path: &Path, state: &Json) -> Result<(), String> {
     ));
     let raw = serde_json::to_string_pretty(state)
         .map(|value| format!("{value}\n"))
-        .map_err(|error| record_write_error(error.to_string()))?;
-    if let Err(error) = std::fs::write(&temp, raw) {
-        let _ = std::fs::remove_file(&temp);
-        return Err(record_write_error(error.to_string()));
-    }
-    if let Err(first) = std::fs::rename(&temp, path) {
-        // Unix replaces atomically. Windows refuses an existing destination;
-        // its narrow fallback removes exactly this scoped file before retrying.
-        if path.exists() {
-            let _ = std::fs::remove_file(path);
+        .map_err(|error| error.to_string())?;
+    write_feed_state(path, &temp, parent, &raw)
+}
+
+fn write_feed_state(path: &Path, temp: &Path, parent: &Path, raw: &str) -> Result<(), String> {
+    regular_state_metadata(path).map_err(|error| error.message)?;
+    // A collision belongs to another operation: no cleanup until exclusive
+    // creation succeeds, and none after the name has been moved into place.
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temp)
+        .map_err(|error| error.to_string())?;
+    let mut renamed = false;
+    let result = (|| -> std::io::Result<()> {
+        file.write_all(raw.as_bytes())?;
+        file.sync_all()?;
+        // Never remove the previous baseline after a failed rename. On the
+        // supported Linux/macOS hosts this replaces it atomically.
+        std::fs::rename(temp, path)?;
+        renamed = true;
+        std::fs::File::open(parent)?.sync_all()
+    })();
+    if let Err(error) = result {
+        if !renamed
+            && file
+                .metadata()
+                .ok()
+                .zip(std::fs::symlink_metadata(temp).ok())
+                .is_some_and(|(owned, current)| same_file(&owned, &current))
+        {
+            let _ = std::fs::remove_file(temp);
         }
-        if let Err(second) = std::fs::rename(&temp, path) {
-            let _ = std::fs::remove_file(&temp);
-            return Err(record_write_error(format!("{first}; retry: {second}")));
-        }
+        return Err(error.to_string());
     }
     Ok(())
-}
-
-fn record_write_error(message: String) -> String {
-    FEED_STATE_WRITE_FAILURES.fetch_add(1, Ordering::Relaxed);
-    message
-}
-
-#[cfg(test)]
-fn reset_feed_state_for_tests() {
-    if let Some(states) = FEED_STATES.get() {
-        states.lock().expect("feed state test lock").clear();
-    }
-    FEED_STATE_WRITE_FAILURES.store(0, Ordering::Relaxed);
 }
 
 #[cfg(test)]

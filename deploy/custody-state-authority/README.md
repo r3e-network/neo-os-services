@@ -1,4 +1,4 @@
-# TestNet Custody State Authority
+# Custody State Authority
 
 This directory is an independent AWS SAM service for coordinating durable custody
 snapshots. It provides a strongly consistent, fenced HEAD; immutable snapshot
@@ -8,10 +8,13 @@ receipts.
 It is **not a production release by itself**. The authority now performs strict
 Nitro attestation verification, but rollout remains blocked until the matching
 signer client, reproducible EIF measurements, receipt public-key pin, and the
-TestNet restart/takeover/restore drill all pass together.
+selected-network restart/takeover/restore drill all pass together.
 
-The implementation is TestNet-only. There is no network parameter or MainNet
-mode.
+Each authority admits one explicitly selected immutable network: `testnet` or
+`mainnet`. `ExpectedNetwork` has no default and is passed unchanged to the runtime
+as `EXPECTED_NETWORK`. Missing, mixed-case, whitespace or unknown selections are
+rejected. This template does not by itself establish the one-enclave, one-business-
+process deployment topology; that integration still requires separate evidence.
 
 ## Security Model
 
@@ -19,6 +22,13 @@ The coordinator, not the Nitro parent, owns durable state. The parent role emitt
 by the stack can invoke the API and has explicit denials for direct DynamoDB, S3,
 and coordinator-KMS access. Lambda roles are separate per route and receive only
 the DynamoDB/S3/KMS actions needed by that route.
+DynamoDB transactions require permissions for each underlying `PutItem`,
+`UpdateItem` or `ConditionCheckItem`, not an IAM action named
+`TransactWriteItems`. Transaction-only grants require
+`dynamodb:EnclosingOperation=TransactWriteItems` and the selected leading-key
+namespace. Upload-status also needs a transaction-only condition check of HEAD
+before and after S3 version resolution. These grants do not allow standalone
+state writes, cross-network keys, or missing leading-key context.
 
 API Gateway uses IAM authorization. SigV4 therefore occupies the standard
 `Authorization` header. Once an enclave decrypts its sealed session capability,
@@ -99,7 +109,7 @@ The core independently compares the verified claims to the challenge and PCR
 pins, then encrypts the 256-bit session token to that attested RSA key with
 RSA-OAEP-SHA256. The session response never contains a plaintext token. Runtime
 acceptance additionally requires a positive document emitted by the exact
-admitted TestNet EIF; generated certificate fixtures cannot establish that
+admitted network-specific EIF; generated certificate fixtures cannot establish that
 deployment-specific fact.
 
 ## Data Model
@@ -115,6 +125,16 @@ One DynamoDB table uses `pk`/`sk` string keys. `scope` below is the exact
 | HEAD          | `STATE#scope / HEAD`           | Permanent   | Exact conditional CAS only |
 | Commit claim  | `COMMIT#scope#id / CLAIM`      | Permanent   | Insert only                |
 | COMMIT        | `COMMIT#scope#id / RECORD`     | Permanent   | Insert only                |
+
+The table above is the existing TestNet layout. MainNet prefixes each partition
+key with `mainnet#`; sort keys are unchanged. Route IAM policies select exactly
+one of these namespaces, including session proof/replay records. TestNet object
+keys remain `snapshots/v2/<vault>/<profile>/...`; MainNet uses
+`snapshots/v2/mainnet/<vault>/<profile>/...`. S3 object and version-list grants
+are limited to the selected network's exact vault/profile prefix. Bucket-wide
+denials still protect every retained snapshot against deletion and unencrypted
+writes. KMS permits the bucket ARN encryption context because S3 Bucket Keys use
+it; S3 permissions enforce the object-prefix boundary.
 
 Every authority read uses `ConsistentRead: true`, including HEAD and idempotency
 lookups. A commit transaction binds the vault, profile, network set, root-key
@@ -160,8 +180,8 @@ identifiers are 1-128 ASCII characters matching
 `[A-Za-z0-9][A-Za-z0-9._:@-]*`. State routes require both SigV4 IAM
 authorization and `x-custody-session`.
 
-This TestNet template is one dedicated authority per immutable vault profile.
-`ExpectedVaultId`, `ExpectedProfileId`, `ExpectedNetworkId`, and
+This template binds one immutable network and vault profile.
+`ExpectedNetwork`, `ExpectedVaultId`, `ExpectedProfileId`, `ExpectedNetworkId`, and
 `ExpectedRootCommitment` must be copied from the reviewed profile/released root;
 challenge issuance rejects every other tuple before attestation. PCR0/1/2 must
 all be nonzero, which prevents accidentally admitting a debug enclave.
@@ -336,7 +356,24 @@ sam build --template-file template.yaml
 ```
 
 Do not deploy until the signer client tests pass and the attestation acceptance
-evidence is reviewed against the exact reproducible TestNet EIF measurements.
-MainNet requires a separate reviewed stack, identities, keys, bucket, table,
-receipt key and complete TestNet recovery evidence; this template cannot select
-MainNet.
+evidence is reviewed against the exact reproducible EIF measurements for the
+selected network. The existing custody EIF builder still accepts TestNet only;
+selecting MainNet here does not clear that release gate.
+
+For a reviewed update, explicitly supply `ExpectedNetwork=testnet` or
+`ExpectedNetwork=mainnet`, `ServiceName`, `ReceiptKeyId`, and the exact public
+profile/root/PCR parameters. Service and receipt-key names also have no default;
+they do not infer the network. For an existing TestNet authority, preserve its
+current service name, receipt key ID, vault/profile/network-set/root values and
+resource identities. Choosing `testnet` retains its physical table/object layout.
+Do not repurpose an existing stack by switching its network or profile: that would
+change admission and access to retained state. Treat network/profile identity as
+immutable for the lifetime of an authority and review composition separately.
+
+Before any separately authorized rollout, review a change set for replacements
+or unexpected resource additions, pin the matching receipt key and measured EIF,
+and prove restart/takeover/restore and rollback. Keep the prior template, code,
+parameter set and immutable recovery assets together. Rolling this template back
+without also restoring compatible runtime code would remove `EXPECTED_NETWORK`
+and break initialization. This source patch creates no resources and is not
+permission to deploy or to choose a second host/enclave/process topology.

@@ -173,8 +173,33 @@ fn vrf_random_is_deterministic_and_bound_to_the_request_domain() {
             "network": "mainnet"
         })),
     );
-    assert_eq!(changed_network.status, 200, "{}", changed_network.body);
-    assert_ne!(first.body["randomness"], changed_network.body["randomness"]);
+    assert_eq!(changed_network.status, 400, "{}", changed_network.body);
+    // A different domain must run in its own bound context, not select a
+    // foreign signing key through a payload on the testnet context.
+    let mut main_overlay = vrf_overlay();
+    main_overlay.retain(|(key, _)| *key != "MORPHEUS_NETWORK");
+    main_overlay.push(("MORPHEUS_NETWORK", "mainnet"));
+    let main = test_state(
+        &main_overlay,
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let main_result = dispatch(
+        &main.state,
+        "POST",
+        "/vrf/random",
+        &bearer("s3cret"),
+        &body_json(&json!({"request_id":"bound-1", "module_id":"random.generate"})),
+    );
+    assert_eq!(main_result.status, 200, "{}", main_result.body);
+    assert_ne!(first.body["randomness"], main_result.body["randomness"]);
+    assert!(main
+        .signer
+        .sign_calls()
+        .iter()
+        .all(|call| call.0 == "mainnet"));
 }
 
 #[test]

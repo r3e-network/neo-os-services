@@ -307,6 +307,11 @@ pub struct AppState {
     /// [`AppState::ephemeral_oracle_key`] for why the lifetime is the process
     /// and not the request.
     pub ephemeral_oracle_key: Mutex<Option<OracleKeyMaterial>>,
+    /// Volatile replay/session state belongs to this network context. Sharing
+    /// a process must never share another network's completed signed result.
+    pub automation_executions: Mutex<crate::automation::ExecutionStore>,
+    pub game_sessions: Mutex<neo_os_games::session::SessionStore>,
+    pub feed_runtime: crate::oracle_feed::FeedRuntime,
 }
 
 impl AppState {

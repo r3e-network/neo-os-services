@@ -9,7 +9,6 @@
 //! not a replacement for either one.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
 
 use neo_os_compute::automation::{normalize_automation_execution, AutomationExecution};
 use neo_os_core::js_value::JsValue;
@@ -24,8 +23,6 @@ use crate::{http_error, DispatchOutcome, RuntimeError};
 const MAX_EXECUTIONS: usize = 4_096;
 const COMPLETE_TTL_MS: u64 = 24 * 60 * 60 * 1_000;
 const RUNNING_TTL_MS: u64 = 5 * 60 * 1_000;
-
-static EXECUTIONS: OnceLock<Mutex<ExecutionStore>> = OnceLock::new();
 
 #[derive(Clone)]
 enum ExecutionState {
@@ -42,7 +39,7 @@ struct ExecutionRecord {
 }
 
 #[derive(Default)]
-struct ExecutionStore {
+pub struct ExecutionStore {
     generation: u64,
     records: HashMap<String, ExecutionRecord>,
 }
@@ -53,25 +50,33 @@ pub fn handle_automation_execute(
 ) -> Result<DispatchOutcome, RuntimeError> {
     let execution =
         normalize_automation_execution(payload).map_err(|message| http_error(400, message))?;
+    let network = state.resolve_network()?;
+    let route = resolve_kernel_intent(&execution.execution_request_type);
+    crate::network_profiles::assert_payload_network(
+        &network,
+        route.worker_route,
+        &execution.execution_payload,
+    )?;
     let descriptor = execution.descriptor();
     let digest = sha256_hex(stable_stringify(&JsValue::from_json(&descriptor)).as_bytes());
     let now_ms = state.oracle_io.now_ms();
 
-    if let Some(replay) = claim_execution(&execution.idempotency_key, &digest, now_ms)? {
+    if let Some(replay) = claim_execution(state, &execution.idempotency_key, &digest, now_ms)? {
         return Ok(replay);
     }
 
     let outcome = run_nested(state, &execution);
-    finish_execution(&execution.idempotency_key, &digest, now_ms, &outcome)?;
+    finish_execution(state, &execution.idempotency_key, &digest, now_ms, &outcome)?;
     Ok(outcome)
 }
 
 fn claim_execution(
+    state: &AppState,
     key: &str,
     digest: &str,
     now_ms: u64,
 ) -> Result<Option<DispatchOutcome>, RuntimeError> {
-    let mut store = execution_store()?;
+    let mut store = execution_store(state)?;
     store.prune(now_ms);
     if let Some(record) = store.records.get(key) {
         if record.digest != digest {
@@ -104,12 +109,13 @@ fn claim_execution(
 }
 
 fn finish_execution(
+    state: &AppState,
     key: &str,
     digest: &str,
     now_ms: u64,
     outcome: &DispatchOutcome,
 ) -> Result<(), RuntimeError> {
-    let mut store = execution_store()?;
+    let mut store = execution_store(state)?;
     let transient = matches!(outcome.status, 408 | 425 | 429) || outcome.status >= 500;
     if transient {
         store.records.remove(key);
@@ -224,9 +230,11 @@ fn error_message(body: &Json, status: u16) -> String {
         .unwrap_or_else(|| format!("nested execution failed with HTTP {status}"))
 }
 
-fn execution_store() -> Result<std::sync::MutexGuard<'static, ExecutionStore>, RuntimeError> {
-    EXECUTIONS
-        .get_or_init(|| Mutex::new(ExecutionStore::default()))
+fn execution_store(
+    state: &AppState,
+) -> Result<std::sync::MutexGuard<'_, ExecutionStore>, RuntimeError> {
+    state
+        .automation_executions
         .lock()
         .map_err(|_| http_error(500, "automation execution state unavailable"))
 }
@@ -261,13 +269,6 @@ impl ExecutionStore {
                 "automation execution capacity is temporarily exhausted",
             ))
         }
-    }
-}
-
-#[cfg(test)]
-fn reset_executions_for_tests() {
-    if let Some(store) = EXECUTIONS.get() {
-        store.lock().expect("automation test lock").records.clear();
     }
 }
 

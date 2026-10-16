@@ -1,31 +1,36 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >-
-  NeoOS TestNet custody durable-state authority, isolated from the Nitro parent
+  NeoOS explicitly network-bound custody durable-state authority, isolated from the Nitro parent
   and admitting sessions only after pinned AWS Nitro attestation verification.
 
 Parameters:
   ServiceName:
     Type: String
-    Default: neoos-testnet-custody-state
     AllowedPattern: '^[a-z0-9][a-z0-9-]{2,39}$'
   StageName:
     Type: String
     Default: '$default'
     AllowedValues:
       - '$default'
+  ExpectedNetwork:
+    Type: String
+    AllowedValues:
+      - testnet
+      - mainnet
+    Description: Immutable admitted network; must be selected explicitly and match the vault profile.
   ExpectedPcr0:
     Type: String
     AllowedPattern: '^(?!0{96}$)[0-9a-f]{96}$'
-    Description: Exact SHA-384 PCR0 for the admitted TestNet custody EIF.
+    Description: Exact SHA-384 PCR0 for the admitted custody EIF for ExpectedNetwork.
   ExpectedPcr1:
     Type: String
     AllowedPattern: '^(?!0{96}$)[0-9a-f]{96}$'
-    Description: Exact SHA-384 PCR1 for the admitted TestNet custody EIF.
+    Description: Exact SHA-384 PCR1 for the admitted custody EIF for ExpectedNetwork.
   ExpectedPcr2:
     Type: String
     AllowedPattern: '^(?!0{96}$)[0-9a-f]{96}$'
-    Description: Exact SHA-384 PCR2 for the admitted TestNet custody EIF.
+    Description: Exact SHA-384 PCR2 for the admitted custody EIF for ExpectedNetwork.
   ExpectedVaultId:
     Type: String
     AllowedPattern: '^[0-9a-f]{64}$'
@@ -85,9 +90,11 @@ Parameters:
       - 365
   ReceiptKeyId:
     Type: String
-    Default: neoos-testnet-custody-receipt-v1
     AllowedPattern: '^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$'
     Description: Stable logical verifier key id embedded in canonical receipts.
+
+Conditions:
+  IsMainnet: !Equals [!Ref ExpectedNetwork, mainnet]
 
 Globals:
   Function:
@@ -116,6 +123,7 @@ Globals:
         EXPECTED_PCR2: !Ref ExpectedPcr2
         EXPECTED_VAULT_ID: !Ref ExpectedVaultId
         EXPECTED_PROFILE_ID: !Ref ExpectedProfileId
+        EXPECTED_NETWORK: !Ref ExpectedNetwork
         EXPECTED_NETWORK_ID: !Ref ExpectedNetworkId
         EXPECTED_ROOT_COMMITMENT: !Ref ExpectedRootCommitment
 
@@ -141,7 +149,7 @@ Resources:
             Resource: '*'
       Tags:
         - Key: neoos:network
-          Value: testnet
+          Value: !Ref ExpectedNetwork
         - Key: neoos:component
           Value: custody-state-authority
 
@@ -166,7 +174,7 @@ Resources:
             Resource: '*'
       Tags:
         - Key: neoos:network
-          Value: testnet
+          Value: !Ref ExpectedNetwork
         - Key: neoos:component
           Value: custody-state-authority
 
@@ -190,7 +198,7 @@ Resources:
             Resource: '*'
       Tags:
         - Key: neoos:network
-          Value: testnet
+          Value: !Ref ExpectedNetwork
         - Key: neoos:component
           Value: custody-state-authority
         - Key: neoos:purpose
@@ -224,7 +232,7 @@ Resources:
         Enabled: true
       Tags:
         - Key: neoos:network
-          Value: testnet
+          Value: !Ref ExpectedNetwork
         - Key: neoos:component
           Value: custody-state-authority
 
@@ -258,7 +266,7 @@ Resources:
         Status: Enabled
       Tags:
         - Key: neoos:network
-          Value: testnet
+          Value: !Ref ExpectedNetwork
         - Key: neoos:component
           Value: custody-state-authority
 
@@ -327,13 +335,13 @@ Resources:
         ThrottlingBurstLimit: 50
         ThrottlingRateLimit: 25
       Tags:
-        neoos:network: testnet
+        neoos:network: !Ref ExpectedNetwork
         neoos:component: custody-state-authority
 
   NitroParentInvokeRole:
     Type: AWS::IAM::Role
     Properties:
-      Description: TestNet Nitro parent; API invocation only, with explicit state-write denials.
+      Description: Nitro parent; API invocation only, with explicit state-write denials.
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -362,7 +370,7 @@ Resources:
                   - dynamodb:PartiQLInsert
                   - dynamodb:PartiQLUpdate
                   - dynamodb:PutItem
-                  - dynamodb:TransactWriteItems
+                  - dynamodb:ConditionCheckItem
                   - dynamodb:UpdateItem
                 Resource: !GetAtt AuthorityTable.Arn
               - Effect: Deny
@@ -382,7 +390,7 @@ Resources:
                   - !GetAtt ReceiptSigningKey.Arn
       Tags:
         - Key: neoos:network
-          Value: testnet
+          Value: !Ref ExpectedNetwork
         - Key: neoos:component
           Value: custody-state-authority-parent
 
@@ -419,9 +427,11 @@ Resources:
                 Action: dynamodb:PutItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'CHALLENGE#*'
+                      - !If [IsMainnet, 'mainnet#CHALLENGE#*', 'CHALLENGE#*']
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
@@ -470,17 +480,35 @@ Resources:
                 Action: dynamodb:GetItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'CHALLENGE#*'
+                      - !If [IsMainnet, 'mainnet#CHALLENGE#*', 'CHALLENGE#*']
               - Effect: Allow
-                Action: dynamodb:TransactWriteItems
+                Action: dynamodb:UpdateItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  ForAnyValue:StringEquals:
+                    dynamodb:EnclosingOperation:
+                      - TransactWriteItems
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'CHALLENGE#*'
-                      - 'SESSION#*'
+                      - !If [IsMainnet, 'mainnet#CHALLENGE#*', 'CHALLENGE#*']
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAnyValue:StringEquals:
+                    dynamodb:EnclosingOperation:
+                      - TransactWriteItems
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - !If [IsMainnet, 'mainnet#SESSION#*', 'SESSION#*']
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
@@ -529,17 +557,21 @@ Resources:
                 Action: dynamodb:GetItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'SESSION#*'
-                      - 'STATE#*'
+                      - !If [IsMainnet, 'mainnet#SESSION#*', 'SESSION#*']
+                      - !If [IsMainnet, 'mainnet#STATE#*', 'STATE#*']
               - Effect: Allow
                 Action: dynamodb:PutItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'PROOF#*'
+                      - !If [IsMainnet, 'mainnet#PROOF#*', 'PROOF#*']
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
@@ -588,31 +620,54 @@ Resources:
                 Action: dynamodb:GetItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'SESSION#*'
-                      - 'COMMIT#*'
-                      - 'STATE#*'
+                      - !If [IsMainnet, 'mainnet#SESSION#*', 'SESSION#*']
+                      - !If [IsMainnet, 'mainnet#COMMIT#*', 'COMMIT#*']
+                      - !If [IsMainnet, 'mainnet#STATE#*', 'STATE#*']
               - Effect: Allow
                 Action: dynamodb:PutItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'PROOF#*'
+                      - !If [IsMainnet, 'mainnet#PROOF#*', 'PROOF#*']
               - Effect: Allow
-                Action: dynamodb:TransactWriteItems
+                Action: dynamodb:ConditionCheckItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  ForAnyValue:StringEquals:
+                    dynamodb:EnclosingOperation:
+                      - TransactWriteItems
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'STATE#*'
-                      - 'COMMIT#*'
+                      - !If [IsMainnet, 'mainnet#STATE#*', 'STATE#*']
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAnyValue:StringEquals:
+                    dynamodb:EnclosingOperation:
+                      - TransactWriteItems
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - !If [IsMainnet, 'mainnet#COMMIT#*', 'COMMIT#*']
               - Effect: Allow
                 Action:
                   - s3:PutObject
                   - s3:PutObjectRetention
-                Resource: !Sub '${SnapshotBucket.Arn}/snapshots/v2/*'
+                Resource: !If
+                  - IsMainnet
+                  - !Sub '${SnapshotBucket.Arn}/snapshots/v2/mainnet/${ExpectedVaultId}/${ExpectedProfileId}/*'
+                  - !Sub '${SnapshotBucket.Arn}/snapshots/v2/${ExpectedVaultId}/${ExpectedProfileId}/*'
               - Effect: Allow
                 Action: kms:GenerateDataKey
                 Resource: !GetAtt SnapshotEncryptionKey.Arn
@@ -622,7 +677,10 @@ Resources:
                   StringLike:
                     kms:EncryptionContext:aws:s3:arn:
                       - !GetAtt SnapshotBucket.Arn
-                      - !Sub '${SnapshotBucket.Arn}/*'
+                      - !If
+                        - IsMainnet
+                        - !Sub '${SnapshotBucket.Arn}/snapshots/v2/mainnet/${ExpectedVaultId}/${ExpectedProfileId}/*'
+                        - !Sub '${SnapshotBucket.Arn}/snapshots/v2/${ExpectedVaultId}/${ExpectedProfileId}/*'
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
@@ -671,29 +729,51 @@ Resources:
                 Action: dynamodb:GetItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'SESSION#*'
-                      - 'COMMIT#*'
-                      - 'STATE#*'
+                      - !If [IsMainnet, 'mainnet#SESSION#*', 'SESSION#*']
+                      - !If [IsMainnet, 'mainnet#COMMIT#*', 'COMMIT#*']
+                      - !If [IsMainnet, 'mainnet#STATE#*', 'STATE#*']
               - Effect: Allow
                 Action: dynamodb:PutItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'PROOF#*'
+                      - !If [IsMainnet, 'mainnet#PROOF#*', 'PROOF#*']
+              - Effect: Allow
+                Action: dynamodb:ConditionCheckItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAnyValue:StringEquals:
+                    dynamodb:EnclosingOperation:
+                      - TransactWriteItems
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - !If [IsMainnet, 'mainnet#STATE#*', 'STATE#*']
               - Effect: Allow
                 Action: s3:ListBucketVersions
                 Resource: !GetAtt SnapshotBucket.Arn
                 Condition:
                   StringLike:
-                    s3:prefix: 'snapshots/v2/*'
+                    s3:prefix: !If
+                      - IsMainnet
+                      - !Sub 'snapshots/v2/mainnet/${ExpectedVaultId}/${ExpectedProfileId}/*'
+                      - !Sub 'snapshots/v2/${ExpectedVaultId}/${ExpectedProfileId}/*'
               - Effect: Allow
                 Action:
                   - s3:GetObjectRetention
                   - s3:GetObjectVersion
-                Resource: !Sub '${SnapshotBucket.Arn}/snapshots/v2/*'
+                Resource: !If
+                  - IsMainnet
+                  - !Sub '${SnapshotBucket.Arn}/snapshots/v2/mainnet/${ExpectedVaultId}/${ExpectedProfileId}/*'
+                  - !Sub '${SnapshotBucket.Arn}/snapshots/v2/${ExpectedVaultId}/${ExpectedProfileId}/*'
               - Effect: Allow
                 Action:
                   - kms:Decrypt
@@ -705,7 +785,10 @@ Resources:
                   StringLike:
                     kms:EncryptionContext:aws:s3:arn:
                       - !GetAtt SnapshotBucket.Arn
-                      - !Sub '${SnapshotBucket.Arn}/*'
+                      - !If
+                        - IsMainnet
+                        - !Sub '${SnapshotBucket.Arn}/snapshots/v2/mainnet/${ExpectedVaultId}/${ExpectedProfileId}/*'
+                        - !Sub '${SnapshotBucket.Arn}/snapshots/v2/${ExpectedVaultId}/${ExpectedProfileId}/*'
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
@@ -754,22 +837,29 @@ Resources:
                 Action: dynamodb:GetItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'SESSION#*'
-                      - 'STATE#*'
+                      - !If [IsMainnet, 'mainnet#SESSION#*', 'SESSION#*']
+                      - !If [IsMainnet, 'mainnet#STATE#*', 'STATE#*']
               - Effect: Allow
                 Action: dynamodb:PutItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'PROOF#*'
+                      - !If [IsMainnet, 'mainnet#PROOF#*', 'PROOF#*']
               - Effect: Allow
                 Action:
                   - s3:GetObject
                   - s3:GetObjectVersion
-                Resource: !Sub '${SnapshotBucket.Arn}/snapshots/v2/*'
+                Resource: !If
+                  - IsMainnet
+                  - !Sub '${SnapshotBucket.Arn}/snapshots/v2/mainnet/${ExpectedVaultId}/${ExpectedProfileId}/*'
+                  - !Sub '${SnapshotBucket.Arn}/snapshots/v2/${ExpectedVaultId}/${ExpectedProfileId}/*'
               - Effect: Allow
                 Action: kms:Decrypt
                 Resource: !GetAtt SnapshotEncryptionKey.Arn
@@ -779,7 +869,10 @@ Resources:
                   StringLike:
                     kms:EncryptionContext:aws:s3:arn:
                       - !GetAtt SnapshotBucket.Arn
-                      - !Sub '${SnapshotBucket.Arn}/*'
+                      - !If
+                        - IsMainnet
+                        - !Sub '${SnapshotBucket.Arn}/snapshots/v2/mainnet/${ExpectedVaultId}/${ExpectedProfileId}/*'
+                        - !Sub '${SnapshotBucket.Arn}/snapshots/v2/${ExpectedVaultId}/${ExpectedProfileId}/*'
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
@@ -828,31 +921,66 @@ Resources:
                 Action: dynamodb:GetItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'SESSION#*'
-                      - 'COMMIT#*'
+                      - !If [IsMainnet, 'mainnet#SESSION#*', 'SESSION#*']
+                      - !If [IsMainnet, 'mainnet#COMMIT#*', 'COMMIT#*']
               - Effect: Allow
                 Action: dynamodb:PutItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'PROOF#*'
+                      - !If [IsMainnet, 'mainnet#PROOF#*', 'PROOF#*']
               - Effect: Allow
-                Action: dynamodb:TransactWriteItems
+                Action: dynamodb:ConditionCheckItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  ForAnyValue:StringEquals:
+                    dynamodb:EnclosingOperation:
+                      - TransactWriteItems
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'STATE#*'
-                      - 'COMMIT#*'
+                      - !If [IsMainnet, 'mainnet#COMMIT#*', 'COMMIT#*']
+              - Effect: Allow
+                Action: dynamodb:UpdateItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAnyValue:StringEquals:
+                    dynamodb:EnclosingOperation:
+                      - TransactWriteItems
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - !If [IsMainnet, 'mainnet#STATE#*', 'STATE#*']
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAnyValue:StringEquals:
+                    dynamodb:EnclosingOperation:
+                      - TransactWriteItems
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - !If [IsMainnet, 'mainnet#COMMIT#*', 'COMMIT#*']
               - Effect: Allow
                 Action:
                   - s3:GetObject
                   - s3:GetObjectRetention
                   - s3:GetObjectVersion
-                Resource: !Sub '${SnapshotBucket.Arn}/snapshots/v2/*'
+                Resource: !If
+                  - IsMainnet
+                  - !Sub '${SnapshotBucket.Arn}/snapshots/v2/mainnet/${ExpectedVaultId}/${ExpectedProfileId}/*'
+                  - !Sub '${SnapshotBucket.Arn}/snapshots/v2/${ExpectedVaultId}/${ExpectedProfileId}/*'
               - Effect: Allow
                 Action:
                   - kms:Decrypt
@@ -864,7 +992,10 @@ Resources:
                   StringLike:
                     kms:EncryptionContext:aws:s3:arn:
                       - !GetAtt SnapshotBucket.Arn
-                      - !Sub '${SnapshotBucket.Arn}/*'
+                      - !If
+                        - IsMainnet
+                        - !Sub '${SnapshotBucket.Arn}/snapshots/v2/mainnet/${ExpectedVaultId}/${ExpectedProfileId}/*'
+                        - !Sub '${SnapshotBucket.Arn}/snapshots/v2/${ExpectedVaultId}/${ExpectedProfileId}/*'
               - Effect: Allow
                 Action: kms:Sign
                 Resource: !GetAtt ReceiptSigningKey.Arn
@@ -917,24 +1048,45 @@ Resources:
                 Action: dynamodb:GetItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'SESSION#*'
-                      - 'STATE#*'
+                      - !If [IsMainnet, 'mainnet#SESSION#*', 'SESSION#*']
+                      - !If [IsMainnet, 'mainnet#STATE#*', 'STATE#*']
               - Effect: Allow
                 Action: dynamodb:PutItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'PROOF#*'
+                      - !If [IsMainnet, 'mainnet#PROOF#*', 'PROOF#*']
               - Effect: Allow
-                Action: dynamodb:TransactWriteItems
+                Action: dynamodb:PutItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  ForAnyValue:StringEquals:
+                    dynamodb:EnclosingOperation:
+                      - TransactWriteItems
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'STATE#*'
+                      - !If [IsMainnet, 'mainnet#STATE#*', 'STATE#*']
+              - Effect: Allow
+                Action: dynamodb:UpdateItem
+                Resource: !GetAtt AuthorityTable.Arn
+                Condition:
+                  ForAnyValue:StringEquals:
+                    dynamodb:EnclosingOperation:
+                      - TransactWriteItems
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
+                  ForAllValues:StringLike:
+                    dynamodb:LeadingKeys:
+                      - !If [IsMainnet, 'mainnet#STATE#*', 'STATE#*']
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
@@ -983,24 +1135,30 @@ Resources:
                 Action: dynamodb:GetItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'SESSION#*'
-                      - 'STATE#*'
+                      - !If [IsMainnet, 'mainnet#SESSION#*', 'SESSION#*']
+                      - !If [IsMainnet, 'mainnet#STATE#*', 'STATE#*']
               - Effect: Allow
                 Action: dynamodb:PutItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'PROOF#*'
+                      - !If [IsMainnet, 'mainnet#PROOF#*', 'PROOF#*']
               - Effect: Allow
                 Action: dynamodb:UpdateItem
                 Resource: !GetAtt AuthorityTable.Arn
                 Condition:
+                  'Null':
+                    dynamodb:LeadingKeys: 'false'
                   ForAllValues:StringLike:
                     dynamodb:LeadingKeys:
-                      - 'STATE#*'
+                      - !If [IsMainnet, 'mainnet#STATE#*', 'STATE#*']
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
@@ -1024,7 +1182,7 @@ Resources:
 
 Outputs:
   ApiBaseUrl:
-    Description: IAM-authenticated TestNet custody state authority URL.
+    Description: IAM-authenticated custody state authority URL for the selected network.
     Value: !Sub 'https://${AuthorityApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
   AuthorityTableName:
     Value: !Ref AuthorityTable

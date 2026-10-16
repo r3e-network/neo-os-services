@@ -26,6 +26,21 @@ The ownership split is:
   attestation or derive a domain-separated secret, but it must not carry a
   second protocol implementation.
 
+The selected deployment uses one business process for both networks. Its
+`custody_bootstrap` module may link the canonical workspace `neo-signer` library
+only through `EmbeddedCustodyRuntime`: attested boot, immutable public profiles
+and sealed native routers. Frontier handlers continue to request signatures
+through the policy-aware custody API. They may not construct a vault, open a
+store, obtain private-key objects, or call signing primitives directly. The
+boundary is a library/API ownership boundary inside one address space, not
+independent process or memory isolation. The architecture gate checks this
+source structure; exact-source review and runtime tests remain necessary.
+Cargo dependency checks parse TOML, including quoted keys, dependency tables,
+target-specific declarations and inherited workspace aliases. The host must
+declare the signer directly at its canonical workspace path. Renamed,
+conditional, optional or inherited signer dependencies are rejected; only a
+positively validated canonical declaration permits the bootstrap import exception.
+
 ## API Reference
 
 ### `neo_os_core`

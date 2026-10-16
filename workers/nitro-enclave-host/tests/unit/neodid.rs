@@ -253,7 +253,7 @@ fn tickets_refuse_a_label_for_another_network_before_custody() {
         let (status, message) = error_body(&harness.state, route, &payload);
         assert_eq!(status, 400, "{route}: {message}");
         assert_eq!(
-            message, "ticket network mainnet does not match the host network testnet",
+            message, "payload network mainnet does not match the host network testnet",
             "{route}"
         );
         assert!(harness.signer.sign_calls().is_empty(), "{route}");
@@ -1127,6 +1127,375 @@ fn timestamp_claim_exact_second_boundaries_and_malformed_values() {
                 check_timestamp_claim(&claims, claim, rejects, now).is_err(),
                 "{claim}: {claims}"
             );
+        }
+    }
+}
+
+// Invoke the real adapter directly: an outer dispatcher cannot substitute for
+// the mandatory admission after confidential resolution inside the adapter.
+fn selected_context_ticket(
+    state: &AppState,
+    recovery: bool,
+    payload: &serde_json::Value,
+) -> Result<serde_json::Value, RuntimeError> {
+    if recovery {
+        handle_neo_did_recovery_ticket(state, payload)
+    } else {
+        handle_neo_did_bind(state, payload)
+    }
+}
+
+fn selected_context_payload(network: &str, recovery: bool) -> serde_json::Value {
+    if recovery {
+        let mut payload = recovery_payload(json!("neo_n3"));
+        payload["morpheus_network"] = json!(network);
+        payload
+    } else {
+        json!({
+            "provider": "twitter", "provider_uid": "uid-1",
+            "vault_account": "0x11223344556677889900aabbccddeeff00112233",
+            "network": network,
+        })
+    }
+}
+
+#[test]
+fn selected_context_rejects_shadowed_foreign_aliases_before_custody() {
+    for (network, foreign) in [("testnet", "mainnet"), ("mainnet", "testnet")] {
+        for recovery in [false, true] {
+            for alias in ["morpheus_network", "runtime_network", "environment"] {
+                // Recovery's highest-priority deployment assertion is kept
+                // valid so each lower-priority alias is tested independently.
+                if recovery && alias == "morpheus_network" {
+                    continue;
+                }
+                let mut overlay = recovery_overlay();
+                overlay.retain(|(name, _)| *name != "MORPHEUS_NETWORK");
+                overlay.push(("MORPHEUS_NETWORK", network));
+                let harness = neodid_harness(&overlay);
+                let mut payload = selected_context_payload(network, recovery);
+                payload[alias] = json!(foreign);
+                let result = selected_context_ticket(&harness.state, recovery, &payload);
+                let error = result.expect_err("foreign deployment alias must be refused");
+                assert_eq!(error.status, 400, "{alias}: {error:?}");
+                assert_eq!(
+                    error.message,
+                    format!("payload network {foreign} does not match the host network {network}")
+                );
+                assert!(
+                    harness.signer.sign_calls().is_empty(),
+                    "foreign alias reached custody"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn selected_context_rejects_malformed_shadowed_aliases_before_custody() {
+    for recovery in [false, true] {
+        for alias in ["runtime_network", "environment"] {
+            for invalid in [
+                json!(null),
+                json!(""),
+                json!(" "),
+                json!(false),
+                json!(0),
+                json!([]),
+                json!({}),
+            ] {
+                let harness = neodid_harness(&recovery_overlay());
+                let mut payload = selected_context_payload(TEST_NETWORK, recovery);
+                payload[alias] = invalid;
+                let result = selected_context_ticket(&harness.state, recovery, &payload);
+                let error = result.expect_err("malformed deployment alias must be refused");
+                assert_eq!(error.status, 400, "{alias}: {error:?}");
+                assert!(error.message.contains("network"), "{error:?}");
+                assert!(
+                    harness.signer.sign_calls().is_empty(),
+                    "malformed alias reached custody"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn selected_context_agreeing_aliases_preserve_both_networks_and_recovery_family() {
+    for network in ["testnet", "mainnet"] {
+        for recovery in [false, true] {
+            let mut overlay = recovery_overlay();
+            overlay.retain(|(name, _)| *name != "MORPHEUS_NETWORK");
+            overlay.push(("MORPHEUS_NETWORK", network));
+            let harness = neodid_harness(&overlay);
+            let mut payload = selected_context_payload(network, recovery);
+            for alias in ["morpheus_network", "runtime_network", "environment"] {
+                payload[alias] = json!(network);
+            }
+            selected_context_ticket(&harness.state, recovery, &payload).expect("matching aliases");
+            let calls = harness.signer.sign_calls();
+            assert_eq!(calls.len(), 2);
+            assert!(calls
+                .iter()
+                .all(|call| call.0 == network && call.1 == "worker"));
+            if recovery {
+                payload["network"] = json!("neox");
+                let response = selected_context_ticket(&harness.state, true, &payload)
+                    .expect("NeoX recovery retains its chain family");
+                assert_eq!(response["network"], "neox");
+                let calls = harness.signer.sign_calls();
+                assert_eq!(calls.len(), 4);
+                assert!(calls.iter().all(|call| call.0 == network));
+            }
+        }
+    }
+}
+
+#[test]
+fn selected_context_omitted_labels_use_host_and_invalid_host_fails_closed() {
+    for network in ["testnet", "mainnet", "staging"] {
+        let mut overlay = salted_overlay();
+        overlay.retain(|(name, _)| *name != "MORPHEUS_NETWORK");
+        overlay.push(("MORPHEUS_NETWORK", network));
+        let harness = neodid_harness(&overlay);
+        let mut payload = selected_context_payload(network, false);
+        payload.as_object_mut().unwrap().remove("network");
+        let response = handle_neo_did_bind(&harness.state, &payload);
+        if network == "staging" {
+            assert_eq!(response.unwrap_err().status, 503);
+            assert!(harness.signer.sign_calls().is_empty());
+        } else {
+            response.expect("omitted labels retain the selected context");
+            let calls = harness.signer.sign_calls();
+            assert_eq!(calls.len(), 2);
+            assert!(calls.iter().all(|call| call.0 == network));
+        }
+    }
+}
+
+// Independent caller-side AWS-LC sealing of a public-key response.
+fn seal_to_public_key(recipient_public_key_b64: &str, plaintext: &str) -> String {
+    use aws_lc_rs::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
+    use aws_lc_rs::agreement::{agree_ephemeral, EphemeralPrivateKey, UnparsedPublicKey, X25519};
+    use aws_lc_rs::rand::{SecureRandom as _, SystemRandom};
+    use base64::Engine as _;
+    use hkdf::Hkdf;
+    use neo_os_compute::oracle::crypto::{
+        AES_GCM_IV_LENGTH_BYTES, AES_GCM_TAG_LENGTH_BYTES, ORACLE_ENVELOPE_ALGORITHM,
+        ORACLE_ENVELOPE_INFO, ORACLE_ENVELOPE_VERSION,
+    };
+    use sha2::Sha256;
+
+    let engine = base64::engine::general_purpose::STANDARD;
+    let recipient_public = engine
+        .decode(recipient_public_key_b64)
+        .expect("the advertised public key is base64");
+    assert_eq!(
+        recipient_public.len(),
+        32,
+        "an X25519 public key is 32 bytes"
+    );
+
+    let rng = SystemRandom::new();
+    let sender_private = EphemeralPrivateKey::generate(&X25519, &rng).expect("sender key");
+    let sender_public = sender_private
+        .compute_public_key()
+        .expect("sender public key")
+        .as_ref()
+        .to_vec();
+
+    let mut aes_key = [0u8; 32];
+    agree_ephemeral(
+        sender_private,
+        UnparsedPublicKey::new(&X25519, recipient_public.as_slice()),
+        aws_lc_rs::error::Unspecified,
+        |shared| {
+            let mut info = Vec::with_capacity(ORACLE_ENVELOPE_INFO.len() + 64);
+            info.extend_from_slice(ORACLE_ENVELOPE_INFO);
+            info.extend_from_slice(&sender_public);
+            info.extend_from_slice(&recipient_public);
+            Hkdf::<Sha256>::new(Some(recipient_public.as_slice()), shared)
+                .expand(&info, &mut aes_key)
+                .map_err(|_| aws_lc_rs::error::Unspecified)
+        },
+    )
+    .expect("x25519 agreement");
+
+    let mut iv = [0u8; AES_GCM_IV_LENGTH_BYTES];
+    rng.fill(&mut iv).expect("envelope nonce");
+
+    let sealing =
+        LessSafeKey::new(UnboundKey::new(&AES_256_GCM, &aes_key).expect("aes-256-gcm key"));
+    let mut in_out = plaintext.as_bytes().to_vec();
+    sealing
+        .seal_in_place_append_tag(Nonce::assume_unique_for_key(iv), Aad::empty(), &mut in_out)
+        .expect("seal");
+    let tag = in_out.split_off(in_out.len() - AES_GCM_TAG_LENGTH_BYTES);
+
+    engine.encode(
+        json!({
+            "v": ORACLE_ENVELOPE_VERSION,
+            "alg": ORACLE_ENVELOPE_ALGORITHM,
+            "epk": engine.encode(&sender_public),
+            "iv": engine.encode(iv),
+            "ct": engine.encode(&in_out),
+            "tag": engine.encode(&tag),
+        })
+        .to_string(),
+    )
+}
+
+#[test]
+fn selected_context_confidential_uses_advertised_key_and_checks_decrypted_aliases() {
+    for (network, foreign) in [("testnet", "mainnet"), ("mainnet", "testnet")] {
+        let mut overlay = recovery_overlay();
+        overlay.retain(|(name, _)| *name != "MORPHEUS_NETWORK");
+        overlay.push(("MORPHEUS_NETWORK", network));
+        overlay.push(("MORPHEUS_ALLOW_EPHEMERAL_KEY", "true"));
+        let harness = neodid_harness(&overlay);
+        let public =
+            crate::oracle_read::handle_oracle_public_key(&harness.state, &json!({})).unwrap();
+        let public_key = public.body["public_key"].as_str().unwrap();
+        for recovery in [false, true] {
+            let mut plain = selected_context_payload(network, recovery);
+            plain["environment"] = json!(network);
+            let envelope =
+                json!({"encrypted_params": seal_to_public_key(public_key, &plain.to_string())});
+            let before = harness.signer.sign_calls().len();
+            selected_context_ticket(&harness.state, recovery, &envelope)
+                .expect("advertised key decrypts");
+            assert_eq!(harness.signer.sign_calls().len(), before + 2);
+            plain["environment"] = json!(foreign);
+            let crossed = json!({"network": network, "encrypted_params": seal_to_public_key(public_key, &plain.to_string())});
+            let error = selected_context_ticket(&harness.state, recovery, &crossed)
+                .expect_err("decrypted alias must not switch contexts");
+            assert_eq!(error.status, 400);
+            assert_eq!(
+                error.message,
+                format!("payload network {foreign} does not match the host network {network}")
+            );
+            assert_eq!(harness.signer.sign_calls().len(), before + 2);
+            // The legacy network resolver treats null/empty aliases as
+            // absent. Only the post-decryption assertion rejects these.
+            for invalid in [json!(null), json!("")] {
+                plain["environment"] = invalid;
+                let malformed = json!({"network": network, "encrypted_params": seal_to_public_key(public_key, &plain.to_string())});
+                let error = selected_context_ticket(&harness.state, recovery, &malformed)
+                    .expect_err("decrypted malformed alias must be refused");
+                assert_eq!(error.status, 400);
+                assert!(error.message.contains("network"));
+                assert_eq!(harness.signer.sign_calls().len(), before + 2);
+            }
+        }
+        let again =
+            crate::oracle_read::handle_oracle_public_key(&harness.state, &json!({})).unwrap();
+        assert_eq!(again.body["public_key"], public.body["public_key"]);
+        let other = neodid_harness(&overlay);
+        let envelope = json!({"encrypted_params": seal_to_public_key(public_key, &selected_context_payload(network, false).to_string())});
+        assert!(
+            handle_neo_did_bind(&other.state, &envelope).is_err(),
+            "another state cannot decrypt this state's envelope"
+        );
+        assert!(other.signer.sign_calls().is_empty());
+    }
+}
+
+#[test]
+fn selected_context_confidential_never_enables_a_production_key_fallback() {
+    let mut overlay = salted_overlay();
+    overlay.extend([
+        ("NODE_ENV", "production"),
+        ("NEODID_SECRET_SALT_SOURCE", "nitro-recipient-kms"),
+        ("MORPHEUS_ALLOW_EPHEMERAL_KEY", "true"),
+    ]);
+    let harness = neodid_harness(&overlay);
+    let error = handle_neo_did_bind(
+        &harness.state,
+        &json!({"encrypted_params": "not-an-envelope"}),
+    )
+    .unwrap_err();
+    assert_eq!(error.status, 400);
+    assert!(error
+        .message
+        .contains("MORPHEUS_ALLOW_EPHEMERAL_KEY is not allowed"));
+    assert!(harness.signer.sign_calls().is_empty());
+}
+
+struct AdmissionProbeJwks(Arc<AtomicUsize>);
+impl JwksFetcher for AdmissionProbeJwks {
+    fn fetch_jwks(&self, _: &str) -> Result<serde_json::Value, String> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Err("admission provider probe".to_string())
+    }
+}
+
+#[test]
+fn selected_context_rejects_before_provider_verification_on_every_ticket_route() {
+    type Handler = fn(&AppState, &serde_json::Value) -> Result<serde_json::Value, RuntimeError>;
+    let (_, token) = build_token(&base_claims(), Some("admission-probe"));
+    for (mode, handler) in [
+        ("bind", handle_neo_did_bind as Handler),
+        ("action-ticket", handle_neo_did_action_ticket as Handler),
+        ("recovery-ticket", handle_neo_did_recovery_ticket as Handler),
+        ("zklogin-ticket", handle_neo_did_zklogin_ticket as Handler),
+    ] {
+        let url = format!("https://admission.example.test/{mode}");
+        let mut overlay = salted_overlay();
+        overlay.extend([
+            ("WEB3AUTH_CLIENT_ID", "client-id"),
+            ("WEB3AUTH_JWKS_URL", url.as_str()),
+        ]);
+        let mut harness = neodid_harness(&overlay);
+        let calls = Arc::new(AtomicUsize::new(0));
+        harness.state.jwks_fetcher = Box::new(AdmissionProbeJwks(Arc::clone(&calls)));
+        let mut payload = json!({"provider": "web3auth", "id_token": token, "network": TEST_NETWORK, "environment": "mainnet"});
+        let error = handler(&harness.state, &payload).unwrap_err();
+        assert_eq!(error.status, 400);
+        assert_eq!(
+            error.message,
+            "payload network mainnet does not match the host network testnet"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "{mode} reached provider before network admission"
+        );
+        assert!(harness.signer.sign_calls().is_empty());
+        for invalid in [json!(null), json!("")] {
+            payload["environment"] = invalid;
+            let error = handler(&harness.state, &payload).unwrap_err();
+            assert_eq!(error.status, 400);
+            assert!(error.message.contains("network"));
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            assert!(harness.signer.sign_calls().is_empty());
+        }
+        payload["environment"] = json!(TEST_NETWORK);
+        let error = handler(&harness.state, &payload).unwrap_err();
+        assert!(
+            error.message.contains("admission provider probe"),
+            "{mode}: {error:?}"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "positive control must reach provider"
+        );
+        for family in ["neo_n3", "neox", " NEO_N3 "] {
+            // Failed JWKS fetches are cached; each admission control needs a
+            // fresh probe so a cache hit cannot masquerade as a denied call.
+            reset_jwks_cache_for_tests();
+            payload["network"] = json!(family);
+            let before = calls.load(Ordering::SeqCst);
+            let error = handler(&harness.state, &payload).unwrap_err();
+            if mode == "recovery-ticket" {
+                assert!(error.message.contains("admission provider probe"));
+                assert_eq!(calls.load(Ordering::SeqCst), before + 1);
+            } else {
+                assert_eq!(error.status, 400);
+                assert!(error.message.contains("unsupported Neo network"));
+                assert_eq!(calls.load(Ordering::SeqCst), before);
+            }
+            assert!(harness.signer.sign_calls().is_empty());
         }
     }
 }
