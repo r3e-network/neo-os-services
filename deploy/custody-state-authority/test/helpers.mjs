@@ -23,6 +23,7 @@ export const TEST_CONFIG = Object.freeze({
   uploadUrlTtlSeconds: 120,
   maxSnapshotBytes: 67_109_024,
   expectedScope: {
+    network: 'testnet',
     vaultId: VAULT_ID,
     profileId: PROFILE_ID,
     networkId: NETWORK_ID,
@@ -53,6 +54,7 @@ export async function testRequestProofVerifier({ expectedMethod, expectedPath, n
 function exactHead(head, binding, nowMs, leaseMode = 'live', bindFingerprint = true) {
   if (!head) return false;
   const exact =
+    head.network === binding.network &&
     head.vaultId === binding.vaultId &&
     head.profileId === binding.profileId &&
     head.networkId === binding.networkId &&
@@ -77,7 +79,7 @@ export class MemoryRepository {
   calls = [];
 
   stateId(scope) {
-    return `${scope.vaultId}/${scope.profileId}/${scope.networkId}/${scope.rootCommitment}`;
+    return `${scope.network}/${scope.vaultId}/${scope.profileId}/${scope.networkId}/${scope.rootCommitment}`;
   }
 
   commitId(scope, commitId) {

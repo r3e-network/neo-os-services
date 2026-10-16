@@ -5,7 +5,7 @@ import {
   CHALLENGE_SCHEMA,
   COMMIT_REQUEST_SCHEMA,
   HEAD_SCHEMA,
-  NETWORK,
+  admittedNetwork,
   OPERATION_SCHEMA,
   RECEIPT_SCHEMA,
   REQUEST_PROOF_ALGORITHM,
@@ -35,7 +35,7 @@ import {
 import { ApiError, ConditionalConflictError } from './errors.mjs';
 import { verifyNitroAttestation as denyAttestation } from './attestation.mjs';
 import { sealSessionToken as rsaSealSessionToken } from './session-sealer.mjs';
-import { operationDigest } from './protocol.mjs';
+import { canonicalReceipt, operationDigest } from './protocol.mjs';
 import { verifySessionRequestProof } from './request-proof.mjs';
 
 const PCR_SHA384 = /^[0-9a-f]{96}$/;
@@ -56,6 +56,7 @@ function normalizePcr(value, field) {
 
 function normalizeExpectedScope(scope) {
   return Object.freeze({
+    network: admittedNetwork(scope?.network),
     vaultId: sha256(scope?.vaultId, 'expectedScope.vaultId'),
     profileId: sha256(scope?.profileId, 'expectedScope.profileId'),
     networkId: sha256(scope?.networkId, 'expectedScope.networkId'),
@@ -63,7 +64,7 @@ function normalizeExpectedScope(scope) {
   });
 }
 
-function normalizeConfig(config = {}) {
+export function normalizeConfig(config = {}) {
   return Object.freeze({
     challengeTtlSeconds: positiveInteger(config.challengeTtlSeconds, 'challengeTtlSeconds'),
     sessionTtlSeconds: positiveInteger(config.sessionTtlSeconds, 'sessionTtlSeconds'),
@@ -98,8 +99,9 @@ function pathScope(vaultId, profileId) {
   };
 }
 
-function scopeFrom(vaultId, profileId, networkId, rootCommitment) {
+function scopeFrom(vaultId, profileId, networkId, rootCommitment, network) {
   return {
+    network,
     ...pathScope(vaultId, profileId),
     networkId: sha256(networkId, 'network_id'),
     rootCommitment: sha256(rootCommitment, 'root_commitment'),
@@ -107,11 +109,18 @@ function scopeFrom(vaultId, profileId, networkId, rootCommitment) {
 }
 
 function scopeFromSession(session) {
-  return scopeFrom(session.vaultId, session.profileId, session.networkId, session.rootCommitment);
+  return scopeFrom(
+    session.vaultId,
+    session.profileId,
+    session.networkId,
+    session.rootCommitment,
+    session.network
+  );
 }
 
 function sameScope(record, scope) {
   return (
+    record?.network === scope.network &&
     record?.vaultId === scope.vaultId &&
     record?.profileId === scope.profileId &&
     record?.networkId === scope.networkId &&
@@ -134,7 +143,7 @@ function livePredecessor(head, scope, claim, nowMs) {
 function headDescriptor(head) {
   return {
     schema: HEAD_SCHEMA,
-    network: NETWORK,
+    network: head.network,
     vault_id: head.vaultId,
     profile_id: head.profileId,
     network_id: head.networkId,
@@ -164,7 +173,7 @@ function withHeadFingerprint(head) {
 function publicHead(head) {
   return {
     schema: WIRE_SCHEMA,
-    network: NETWORK,
+    network: head.network,
     vault_id: head.vaultId,
     profile_id: head.profileId,
     network_id: head.networkId,
@@ -224,7 +233,7 @@ function uploadDescriptor({
 }) {
   return {
     schema: UPLOAD_CLAIM_SCHEMA,
-    network: NETWORK,
+    network: scope.network,
     vault_id: scope.vaultId,
     profile_id: scope.profileId,
     network_id: scope.networkId,
@@ -247,7 +256,7 @@ function uploadDescriptor({
 function submissionDescriptor({ scope, ownerId, body }) {
   return {
     schema: COMMIT_REQUEST_SCHEMA,
-    network: NETWORK,
+    network: scope.network,
     vault_id: scope.vaultId,
     profile_id: scope.profileId,
     network_id: scope.networkId,
@@ -294,13 +303,33 @@ function exactCommit(record, requestFingerprint, scope, ownerId) {
   return (
     record &&
     record.requestFingerprint === requestFingerprint &&
-    record.network === NETWORK &&
-    record.vaultId === scope.vaultId &&
-    record.profileId === scope.profileId &&
-    record.networkId === scope.networkId &&
-    record.rootCommitment === scope.rootCommitment &&
+    sameScope(record, scope) &&
+    sameScope(record.head, scope) &&
+    sameReceiptScope(record.receipt, scope) &&
     record.ownerId === ownerId
   );
+}
+
+function sameReceiptScope(receipt, scope) {
+  if (
+    receipt?.network !== scope.network ||
+    receipt?.vault_id !== scope.vaultId ||
+    receipt?.profile_id !== scope.profileId ||
+    receipt?.network_id !== scope.networkId ||
+    receipt?.root_commitment !== scope.rootCommitment
+  )
+    return false;
+  // Check the bytes the signer signs, not just the persisted JSON wrapper.
+  // Signature verification remains mandatory in the custody client.
+  try {
+    const canonical = canonicalReceipt(receipt);
+    return (
+      receipt.payload_base64 === canonical.toString('base64') &&
+      receipt.receipt_id === sha256Hex(canonical)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function assertVerifiedClaims(verification, challenge, expectedPcrs) {
@@ -361,7 +390,7 @@ export function createCustodyStateAuthority({
       throw new ApiError(401, 'session_expired_or_unknown', 'custody session is absent or expired');
     }
     if (
-      session.network !== NETWORK ||
+      !sameScope(session, settings.expectedScope) ||
       session.vaultId !== requestedScope.vaultId ||
       session.profileId !== requestedScope.profileId
     ) {
@@ -417,7 +446,13 @@ export function createCustodyStateAuthority({
       'root_commitment',
       'owner_id',
     ]);
-    const scope = scopeFrom(body.vault_id, body.profile_id, body.network_id, body.root_commitment);
+    const scope = scopeFrom(
+      body.vault_id,
+      body.profile_id,
+      body.network_id,
+      body.root_commitment,
+      settings.expectedScope.network
+    );
     if (!sameScope(scope, settings.expectedScope)) {
       throw new ApiError(
         403,
@@ -431,7 +466,7 @@ export function createCustodyStateAuthority({
     const nonceHex = randomHex(randomBytes, CHALLENGE_NONCE_BYTES);
     const binding = {
       schema: CHALLENGE_SCHEMA,
-      network: NETWORK,
+      network: settings.expectedScope.network,
       challenge_id: challengeId,
       nonce_hex: nonceHex,
       vault_id: scope.vaultId,
@@ -444,7 +479,7 @@ export function createCustodyStateAuthority({
       challengeId,
       nonceHex,
       userDataSha256: fingerprint(binding),
-      network: NETWORK,
+      network: settings.expectedScope.network,
       ...scope,
       ownerId,
       createdAt: isoTime(now),
@@ -463,7 +498,7 @@ export function createCustodyStateAuthority({
     }
     return {
       challenge_id: challengeId,
-      network: NETWORK,
+      network: settings.expectedScope.network,
       schema: WIRE_SCHEMA,
       vault_id: scope.vaultId,
       profile_id: scope.profileId,
@@ -493,6 +528,13 @@ export function createCustodyStateAuthority({
         401,
         'challenge_expired_or_unknown',
         'challenge is absent, consumed or expired'
+      );
+    }
+    if (!sameScope(challenge, settings.expectedScope)) {
+      throw new ApiError(
+        403,
+        'scope_not_authorized',
+        'challenge scope is not admitted by this authority'
       );
     }
     const verification = await verifyAttestation({
@@ -534,7 +576,7 @@ export function createCustodyStateAuthority({
     }
     const session = {
       tokenHash: sha256Hex(token),
-      network: NETWORK,
+      network: settings.expectedScope.network,
       vaultId: challenge.vaultId,
       profileId: challenge.profileId,
       networkId: challenge.networkId,
@@ -563,7 +605,7 @@ export function createCustodyStateAuthority({
       },
       request_header: 'x-custody-session',
       schema: WIRE_SCHEMA,
-      network: NETWORK,
+      network: settings.expectedScope.network,
       vault_id: session.vaultId,
       profile_id: session.profileId,
       network_id: session.networkId,
@@ -806,7 +848,7 @@ export function createCustodyStateAuthority({
     }
     const requestFingerprint = fingerprint(expected);
     const snapshotKey = [
-      SNAPSHOT_PREFIX,
+      scope.network === 'testnet' ? SNAPSHOT_PREFIX : `${SNAPSHOT_PREFIX}/${scope.network}`,
       scope.vaultId,
       scope.profileId,
       expected.generation,
@@ -816,7 +858,7 @@ export function createCustodyStateAuthority({
     const claimNow = clock();
     const claim = {
       requestFingerprint,
-      network: NETWORK,
+      network: settings.expectedScope.network,
       ...scope,
       ownerId,
       epoch: expected.epoch,
@@ -926,8 +968,7 @@ export function createCustodyStateAuthority({
     const ticketNow = clock();
     if (
       !head ||
-      head.networkId !== scope.networkId ||
-      head.rootCommitment !== scope.rootCommitment ||
+      !sameScope(head, scope) ||
       head.ownerId !== expected.ownerId ||
       head.epoch !== expected.epoch ||
       head.snapshotFence !== expected.snapshotFence ||
@@ -1054,7 +1095,7 @@ export function createCustodyStateAuthority({
     const claim = await repository.getClaim(scope, normalized.commit_id);
     const expectedClaim = {
       schema: UPLOAD_CLAIM_SCHEMA,
-      network: NETWORK,
+      network: settings.expectedScope.network,
       vault_id: scope.vaultId,
       profile_id: scope.profileId,
       network_id: scope.networkId,
@@ -1107,7 +1148,7 @@ export function createCustodyStateAuthority({
     });
     const operation = {
       schema: OPERATION_SCHEMA,
-      network: NETWORK,
+      network: settings.expectedScope.network,
       vault_id: scope.vaultId,
       profile_id: scope.profileId,
       network_id: scope.networkId,
@@ -1130,7 +1171,7 @@ export function createCustodyStateAuthority({
     const commitOperationDigest = operationDigest(operation);
     const receiptPayload = {
       schema: RECEIPT_SCHEMA,
-      network: NETWORK,
+      network: settings.expectedScope.network,
       commit_id: normalized.commit_id,
       vault_id: scope.vaultId,
       profile_id: scope.profileId,
@@ -1155,6 +1196,9 @@ export function createCustodyStateAuthority({
       receipt_key_id: receiptSigner.logicalKeyId,
     };
     const receipt = await receiptSigner.sign(receiptPayload);
+    if (!sameReceiptScope(receipt, scope)) {
+      throw new ApiError(502, 'receipt_scope_mismatch', 'receipt signer returned a foreign scope');
+    }
     const commitNow = clock();
     if (leaseExpiresAtMs <= commitNow) {
       throw conflict(
@@ -1165,7 +1209,7 @@ export function createCustodyStateAuthority({
     const record = {
       requestFingerprint,
       claimFingerprint: claim.requestFingerprint,
-      network: NETWORK,
+      network: settings.expectedScope.network,
       ...scope,
       ownerId,
       epoch: normalized.epoch,

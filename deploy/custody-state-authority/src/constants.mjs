@@ -1,4 +1,10 @@
-export const NETWORK = 'testnet';
+// Startup admission is explicit; request data may never select an authority network.
+export function admittedNetwork(value) {
+  if (value !== 'mainnet' && value !== 'testnet') {
+    throw new TypeError('network must be exactly mainnet or testnet');
+  }
+  return value;
+}
 export const ZERO_HASH = '0'.repeat(64);
 export const MAX_U64 = 18_446_744_073_709_551_615n;
 export const SNAPSHOT_CONTENT_TYPE = 'application/octet-stream';

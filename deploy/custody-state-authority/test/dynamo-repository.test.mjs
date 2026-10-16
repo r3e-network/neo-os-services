@@ -46,6 +46,7 @@ function assertExpressionBindings(operation) {
 }
 
 const scope = {
+  network: 'testnet',
   vaultId: '10'.repeat(32),
   profileId: '20'.repeat(32),
   networkId: '30'.repeat(32),
@@ -93,6 +94,7 @@ test('HEAD reads are explicitly strongly consistent', async () => {
     Item: {
       pk: { S: `STATE#${physicalScope}` },
       sk: { S: 'HEAD' },
+      network: { S: scope.network },
       vault_id: { S: scope.vaultId },
       profile_id: { S: scope.profileId },
       network_id: { S: scope.networkId },
@@ -108,7 +110,12 @@ test('HEAD reads are explicitly strongly consistent', async () => {
       updated_at: { S: '2027-01-15T08:00:00.000Z' },
     },
   }));
-  const repository = createDynamoRepository({ client, tableName: 'table', commands });
+  const repository = createDynamoRepository({
+    client,
+    tableName: 'table',
+    commands,
+    network: 'testnet',
+  });
   const head = await repository.getHead(scope);
   assert.equal(head.generation, '11');
   assert.equal(client.calls[0].type, 'GetItem');
@@ -117,9 +124,15 @@ test('HEAD reads are explicitly strongly consistent', async () => {
 
 test('a request proof nonce is persisted once under the session and expires with it', async () => {
   const client = clientWith();
-  const repository = createDynamoRepository({ client, tableName: 'table', commands });
+  const repository = createDynamoRepository({
+    client,
+    tableName: 'table',
+    commands,
+    network: 'testnet',
+  });
   await repository.consumeSessionProof(
     {
+      ...scope,
       tokenHash: '71'.repeat(32),
       publicKeySha256: '72'.repeat(32),
       expiresAt: 1_800_000_300,
@@ -144,7 +157,12 @@ test('a request proof nonce is persisted once under the session and expires with
 
 test('upload claim transaction fences every predecessor dimension', async () => {
   const client = clientWith();
-  const repository = createDynamoRepository({ client, tableName: 'table', commands });
+  const repository = createDynamoRepository({
+    client,
+    tableName: 'table',
+    commands,
+    network: 'testnet',
+  });
   await repository.claimUpload(claim, 1_800_000_000_000);
   const input = client.calls[0].input;
   assert.equal(input.ClientRequestToken, undefined);
@@ -172,7 +190,12 @@ test('upload claim transaction fences every predecessor dimension', async () => 
 
 test('commit atomically checks the immutable claim, CASes HEAD and inserts once', async () => {
   const client = clientWith();
-  const repository = createDynamoRepository({ client, tableName: 'table', commands });
+  const repository = createDynamoRepository({
+    client,
+    tableName: 'table',
+    commands,
+    network: 'testnet',
+  });
   const head = {
     ...scope,
     ownerId: claim.ownerId,
@@ -213,7 +236,7 @@ test('commit atomically checks the immutable claim, CASes HEAD and inserts once'
     snapshotSha256: claim.snapshotSha256,
     snapshotSizeBytes: claim.snapshotSizeBytes,
     committedAt: head.updatedAt,
-    receipt: { receipt_id: 'receipt-12' },
+    receipt: { network: 'testnet', receipt_id: 'receipt-12' },
     head,
   };
   await repository.commit({ claim, record, nowMs: 1_800_000_000_000 });
@@ -252,8 +275,215 @@ test('AWS conditional failures are not mistaken for successful writes', async ()
     error.name = 'TransactionCanceledException';
     throw error;
   });
-  const repository = createDynamoRepository({ client, tableName: 'table', commands });
+  const repository = createDynamoRepository({
+    client,
+    tableName: 'table',
+    commands,
+    network: 'testnet',
+  });
   await assert.rejects(repository.claimUpload(claim, 1_800_000_000_000), {
     name: 'ConditionalConflictError',
   });
+});
+
+for (const network of ['testnet', 'mainnet']) {
+  test(`${network}: Dynamo writes and every conditional fence use admitted network`, async () => {
+    const client = clientWith();
+    const repository = createDynamoRepository({ client, tableName: 'table', commands, network });
+    const bound = { ...claim, network };
+    const head = {
+      ...bound,
+      headHash: bound.snapshotSha256,
+      leaseExpiresAtMs: 1800000060000,
+      updatedAt: bound.createdAt,
+    };
+    const challenge = {
+      ...bound,
+      challengeId: 'challenge',
+      nonceHex: 'aa'.repeat(32),
+      userDataSha256: 'bb'.repeat(32),
+      expiresAt: 1800000300,
+    };
+    const session = {
+      ...bound,
+      tokenHash: 'cc'.repeat(32),
+      pcrs: { pcr0: '01', pcr1: '02', pcr2: '03' },
+      expiresAt: 1800000300,
+    };
+    await repository.putChallenge(challenge);
+    await repository.consumeChallengeAndCreateSession(challenge, session, 1800000000);
+    await repository.takeover({ previous: head, next: head, nowMs: 1800000000000, genesis: true });
+    await repository.takeover({ previous: head, next: head, nowMs: 1800000000000, genesis: false });
+    await repository.renew({ binding: head, next: head, nowMs: 1800000000000 });
+    await repository.claimUpload(bound, 1800000000000);
+    await repository.assertHeadBinding(bound, 1800000000000);
+    await repository.commit({
+      claim: bound,
+      record: { ...bound, head, receipt: { network }, committedAt: bound.createdAt },
+      nowMs: 1800000000000,
+    });
+    let conditions = 0;
+    let writes = 0;
+    for (const call of client.calls) {
+      const operations = call.input.TransactItems?.map((entry) => Object.values(entry)[0]) || [
+        call.input,
+      ];
+      for (const operation of operations) {
+        assertExpressionBindings(operation);
+        if (operation.Item?.network) {
+          writes++;
+          assert.equal(operation.Item.network.S, network);
+        }
+        if (operation.ExpressionAttributeValues?.[':network']) {
+          conditions++;
+          assert.equal(operation.ExpressionAttributeValues[':network'].S, network);
+        }
+        const pk = operation.Item?.pk.S || operation.Key?.pk.S;
+        if (pk) assert.equal(pk.startsWith('mainnet#'), network === 'mainnet');
+      }
+    }
+    assert.equal(writes, 5);
+    assert.equal(conditions, 7);
+  });
+
+  test(`${network}: Dynamo refuses foreign input before I/O`, async () => {
+    const client = clientWith();
+    const repository = createDynamoRepository({ client, tableName: 'table', commands, network });
+    const foreign = { ...claim, network: network === 'mainnet' ? 'testnet' : 'mainnet' };
+    for (const invoke of [
+      () => repository.putChallenge(foreign),
+      () => repository.consumeChallengeAndCreateSession(foreign, foreign, 0),
+      () => repository.consumeSessionProof(foreign, {}, 0),
+      () => repository.getHead(foreign),
+      () => repository.getClaim(foreign, 'commit'),
+      () => repository.getCommit(foreign, 'commit'),
+      () => repository.takeover({ previous: foreign, next: foreign, nowMs: 0, genesis: true }),
+      () => repository.renew({ binding: foreign, next: foreign, nowMs: 0 }),
+      () => repository.claimUpload(foreign, 0),
+      () => repository.assertHeadBinding(foreign, 0),
+      () => repository.commit({ claim: foreign, record: foreign, nowMs: 0 }),
+    ])
+      await assert.rejects(invoke, /network/);
+    assert.equal(client.calls.length, 0);
+  });
+}
+
+test('Dynamo admission requires a canonical public network', () => {
+  for (const network of [undefined, '', 'private', 'MainNet', 'mainnet ', null]) {
+    assert.throws(
+      () => createDynamoRepository({ client: clientWith(), tableName: 'table', commands, network }),
+      /network/
+    );
+  }
+});
+
+test('Dynamo HEAD read preserves its stored network and rejects foreign rows', async () => {
+  for (const network of ['testnet', 'mainnet']) {
+    const item = {
+      network: { S: network },
+      vault_id: { S: scope.vaultId },
+      profile_id: { S: scope.profileId },
+      network_id: { S: scope.networkId },
+      root_commitment: { S: scope.rootCommitment },
+      owner_id: { S: claim.ownerId },
+      epoch: { N: '7' },
+      snapshot_fence: { N: '3' },
+      generation: { N: '11' },
+      previous_hash: { S: claim.previousHash },
+      head_hash: { S: claim.snapshotSha256 },
+      head_fingerprint: { S: claim.headFingerprint },
+      lease_expires_at_ms: { N: '1800000060000' },
+      updated_at: { S: claim.createdAt },
+    };
+    const client = clientWith(async () => ({ Item: structuredClone(item) }));
+    const repository = createDynamoRepository({ client, tableName: 'table', commands, network });
+    assert.equal((await repository.getHead({ ...scope, network })).network, network);
+    item.network.S = network === 'testnet' ? 'mainnet' : 'testnet';
+    await assert.rejects(repository.getHead({ ...scope, network }), /network/);
+    delete item.network;
+    await assert.rejects(repository.getHead({ ...scope, network }), /network/);
+  }
+});
+
+test('every durable record round-trips its network and rejects foreign stored state', async () => {
+  for (const network of ['testnet', 'mainnet']) {
+    const rows = new Map();
+    const id = (key) => `${key.pk.S}/${key.sk.S}`;
+    const client = clientWith(async ({ input }) => {
+      if (input.Key) return { Item: structuredClone(rows.get(id(input.Key))) };
+      const operations = input.TransactItems?.map((entry) => Object.values(entry)[0]) || [input];
+      for (const operation of operations) {
+        if (operation.Item) rows.set(id(operation.Item), structuredClone(operation.Item));
+      }
+      return {};
+    });
+    const repository = createDynamoRepository({ client, tableName: 'table', commands, network });
+    const bound = { ...scope, network };
+    const challenge = {
+      ...bound,
+      challengeId: 'round-trip',
+      nonceHex: 'aa'.repeat(32),
+      userDataSha256: 'bb'.repeat(32),
+      ownerId: claim.ownerId,
+      createdAt: claim.createdAt,
+      expiresAt: 1800000300,
+    };
+    const session = {
+      ...challenge,
+      tokenHash: 'cc'.repeat(32),
+      moduleId: 'unit-module',
+      publicKeySha256: 'dd'.repeat(32),
+      publicKeyDerBase64: 'dW5pdA==',
+      pcrs: { pcr0: '01'.repeat(48), pcr1: '02'.repeat(48), pcr2: '03'.repeat(48) },
+    };
+    const upload = { ...claim, ...bound };
+    const head = {
+      ...upload,
+      headHash: upload.snapshotSha256,
+      snapshotVersionId: 'unit-version',
+      leaseExpiresAtMs: 1800000060000,
+      updatedAt: claim.createdAt,
+    };
+    const record = {
+      ...head,
+      claimFingerprint: upload.requestFingerprint,
+      operationDigest: 'ee'.repeat(32),
+      receipt: { network },
+      committedAt: head.updatedAt,
+      head,
+    };
+    await repository.putChallenge(challenge);
+    await repository.consumeChallengeAndCreateSession(challenge, session, 1800000000);
+    await repository.takeover({ previous: head, next: head, genesis: true, nowMs: 1800000000000 });
+    await repository.claimUpload(upload, 1800000000000);
+    await repository.commit({ claim: upload, record, nowMs: 1800000000000 });
+    await repository.consumeSessionProof(
+      session,
+      {
+        nonceHex: 'ef'.repeat(32),
+        requestDigest: 'f0'.repeat(32),
+        method: 'GET',
+        path: '/unit',
+        bodySha256: '00'.repeat(32),
+        timestampMs: '1800000000000',
+      },
+      1800000000
+    );
+    assert.equal(rows.size, 6);
+    for (const key of rows.keys()) assert.equal(key.startsWith('mainnet#'), network === 'mainnet');
+    const reads = [
+      ['CHALLENGE', () => repository.getChallenge(challenge.challengeId)],
+      ['SESSION', () => repository.getSession(session.tokenHash)],
+      ['HEAD', () => repository.getHead(bound)],
+      ['COMMIT_CLAIM', () => repository.getClaim(bound, upload.commitId)],
+      ['COMMIT', () => repository.getCommit(bound, record.commitId)],
+    ];
+    for (const [entity, read] of reads) {
+      const stored = [...rows.values()].find((row) => row.entity_type.S === entity);
+      assert.equal((await read()).network, network);
+      stored.network.S = network === 'testnet' ? 'mainnet' : 'testnet';
+      await assert.rejects(read, /network/);
+      stored.network.S = network;
+    }
+  }
 });

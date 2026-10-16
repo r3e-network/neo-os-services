@@ -1,4 +1,4 @@
-import { createCustodyStateAuthority } from './authority.mjs';
+import { createCustodyStateAuthority, normalizeConfig } from './authority.mjs';
 import { createDynamoRepository } from './dynamo-repository.mjs';
 import { createReceiptSigner } from './receipt-signer.mjs';
 import { createSnapshotStore } from './snapshot-store.mjs';
@@ -21,6 +21,35 @@ function positiveInteger(name) {
 }
 
 async function buildAuthority() {
+  // Capture and validate all admission settings before the first await.
+  const config = normalizeConfig({
+    challengeTtlSeconds: positiveInteger('CHALLENGE_TTL_SECONDS'),
+    sessionTtlSeconds: positiveInteger('SESSION_TTL_SECONDS'),
+    requestProofMaxSkewSeconds: positiveInteger('REQUEST_PROOF_MAX_SKEW_SECONDS'),
+    leaseDurationSeconds: positiveInteger('LEASE_DURATION_SECONDS'),
+    uploadUrlTtlSeconds: positiveInteger('UPLOAD_URL_TTL_SECONDS'),
+    maxSnapshotBytes: positiveInteger('MAX_SNAPSHOT_BYTES'),
+    expectedScope: {
+      network: process.env.EXPECTED_NETWORK,
+      vaultId: required('EXPECTED_VAULT_ID'),
+      profileId: required('EXPECTED_PROFILE_ID'),
+      networkId: required('EXPECTED_NETWORK_ID'),
+      rootCommitment: required('EXPECTED_ROOT_COMMITMENT'),
+    },
+    expectedPcrs: {
+      pcr0: required('EXPECTED_PCR0'),
+      pcr1: required('EXPECTED_PCR1'),
+      pcr2: required('EXPECTED_PCR2'),
+    },
+  });
+  const resources = Object.freeze({
+    tableName: required('AUTHORITY_TABLE_NAME'),
+    bucketName: required('SNAPSHOT_BUCKET_NAME'),
+    encryptionKeyArn: required('SNAPSHOT_KMS_KEY_ARN'),
+    retentionDays: positiveInteger('SNAPSHOT_RETENTION_DAYS'),
+    keyId: required('RECEIPT_SIGNING_KEY_ARN'),
+    logicalKeyId: required('RECEIPT_KEY_ID'),
+  });
   const [dynamo, s3, kms, presigner] = await Promise.all([
     import('@aws-sdk/client-dynamodb'),
     import('@aws-sdk/client-s3'),
@@ -32,14 +61,15 @@ async function buildAuthority() {
   const kmsClient = new kms.KMSClient({});
   const repository = createDynamoRepository({
     client: dynamoClient,
-    tableName: required('AUTHORITY_TABLE_NAME'),
+    tableName: resources.tableName,
     commands: dynamo,
+    network: config.expectedScope.network,
   });
   const snapshotStore = createSnapshotStore({
     client: s3Client,
-    bucketName: required('SNAPSHOT_BUCKET_NAME'),
-    encryptionKeyArn: required('SNAPSHOT_KMS_KEY_ARN'),
-    retentionDays: positiveInteger('SNAPSHOT_RETENTION_DAYS'),
+    bucketName: resources.bucketName,
+    encryptionKeyArn: resources.encryptionKeyArn,
+    retentionDays: resources.retentionDays,
     PutObjectCommand: s3.PutObjectCommand,
     HeadObjectCommand: s3.HeadObjectCommand,
     GetObjectCommand: s3.GetObjectCommand,
@@ -48,8 +78,8 @@ async function buildAuthority() {
   });
   const receiptSigner = createReceiptSigner({
     client: kmsClient,
-    keyId: required('RECEIPT_SIGNING_KEY_ARN'),
-    logicalKeyId: required('RECEIPT_KEY_ID'),
+    keyId: resources.keyId,
+    logicalKeyId: resources.logicalKeyId,
     SignCommand: kms.SignCommand,
   });
   return createCustodyStateAuthority({
@@ -57,25 +87,7 @@ async function buildAuthority() {
     snapshotStore,
     receiptSigner,
     verifyAttestation: productionAttestationVerifier,
-    config: {
-      challengeTtlSeconds: positiveInteger('CHALLENGE_TTL_SECONDS'),
-      sessionTtlSeconds: positiveInteger('SESSION_TTL_SECONDS'),
-      requestProofMaxSkewSeconds: positiveInteger('REQUEST_PROOF_MAX_SKEW_SECONDS'),
-      leaseDurationSeconds: positiveInteger('LEASE_DURATION_SECONDS'),
-      uploadUrlTtlSeconds: positiveInteger('UPLOAD_URL_TTL_SECONDS'),
-      maxSnapshotBytes: positiveInteger('MAX_SNAPSHOT_BYTES'),
-      expectedScope: {
-        vaultId: required('EXPECTED_VAULT_ID'),
-        profileId: required('EXPECTED_PROFILE_ID'),
-        networkId: required('EXPECTED_NETWORK_ID'),
-        rootCommitment: required('EXPECTED_ROOT_COMMITMENT'),
-      },
-      expectedPcrs: {
-        pcr0: required('EXPECTED_PCR0'),
-        pcr1: required('EXPECTED_PCR1'),
-        pcr2: required('EXPECTED_PCR2'),
-      },
-    },
+    config,
   });
 }
 

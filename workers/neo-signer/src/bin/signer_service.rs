@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
         Some("validate-vault-profile") => {
             anyhow::ensure!(
                 arguments.len() == 3,
-                "usage: validate-vault-profile <file> testnet"
+                "usage: validate-vault-profile <file> <mainnet|testnet>"
             );
             let identity = validate_vault_profile(Path::new(&arguments[1]), &arguments[2])?;
             println!("{}", serde_json::to_string(&identity)?);
@@ -128,8 +128,8 @@ async fn main() -> Result<()> {
 fn validate_vault_profile(path: &Path, expected_network: &str) -> Result<serde_json::Value> {
     use sha2::{Digest, Sha256};
     anyhow::ensure!(
-        expected_network == "testnet",
-        "durable coordinator release is TestNet-only"
+        matches!(expected_network, "mainnet" | "testnet"),
+        "release network must be exactly mainnet or testnet"
     );
     anyhow::ensure!(
         std::fs::metadata(path)?.len() <= 65_536,
@@ -688,7 +688,7 @@ Usage:
                                         no HTTP route for this and there must never be
                                         one.
   signer_service help                   this text
-  signer_service validate-vault-profile <file> testnet
+  signer_service validate-vault-profile <file> <mainnet|testnet>
                                         validate public build configuration only;
                                         no NSM, KMS, database or listener access
 

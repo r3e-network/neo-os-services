@@ -410,6 +410,7 @@ test('unknown transaction results recover through permanent claim and commit rec
   );
   const stored = await repository.getCommit(
     {
+      network: 'testnet',
       vaultId: VAULT_ID,
       profileId: PROFILE_ID,
       networkId: NETWORK_ID,
@@ -573,7 +574,7 @@ test('request shape, owner substitution and cross-binding reads are rejected', a
       profileId: PROFILE_ID,
       token: crossBindingToken,
     }),
-    'head_not_initialized',
-    404
+    'session_scope_mismatch',
+    403
   );
 });

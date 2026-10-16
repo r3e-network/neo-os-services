@@ -220,3 +220,53 @@ fn profile_bound_snapshots_reject_other_profiles_and_roots() {
     assert!(other.open(&envelope, &head).is_err());
     assert!(SnapshotCipher::from_profile(&MasterKey::from_bytes([8; 32]), &first_profile).is_err());
 }
+
+#[test]
+fn profile_build_cli_admits_only_the_explicit_matching_network() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("public-profile.json");
+    let data_dir = directory.path().join("must-not-create");
+    for (network, n3, neox) in [
+        ("testnet", 894_710_606, 12_227_332),
+        ("mainnet", 860_833_102, 47_763),
+    ] {
+        let mut document = profile(&MasterKey::from_bytes([9; 32]));
+        document.environment = network.into();
+        document.networks[0].chain_id = n3;
+        document.networks[1].chain_id = neox;
+        let expected = document.clone().validate().unwrap();
+        std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+        for selector in [
+            "testnet", "mainnet", "private", "MainNet", " mainnet", "testnet ", "",
+        ] {
+            let output = std::process::Command::new(env!("CARGO_BIN_EXE_signer_service"))
+                .args(["validate-vault-profile", path.to_str().unwrap(), selector])
+                .env_clear()
+                .env("SIGNER_SERVICE_ATTESTED_BOOT", "require")
+                .env("SIGNER_SERVICE_DATA_DIR", &data_dir)
+                .output()
+                .unwrap();
+            assert_eq!(
+                output.status.success(),
+                selector == network,
+                "network={network} selector={selector:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if selector == network {
+                let identity: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(identity["environment"], network);
+                assert_eq!(
+                    identity["profile_sha256"],
+                    hex::encode(expected.profile_hash())
+                );
+                assert_eq!(
+                    identity["network_set_sha256"],
+                    hex::encode(expected.network_set_hash())
+                );
+            } else {
+                assert!(output.stdout.is_empty());
+            }
+        }
+        assert!(!data_dir.exists());
+    }
+}

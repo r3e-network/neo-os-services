@@ -1,18 +1,24 @@
-import { ENTITY } from './constants.mjs';
+import { ENTITY, admittedNetwork } from './constants.mjs';
 import { ConditionalConflictError, isConditionalAwsError } from './errors.mjs';
 
 const S = (value) => ({ S: value });
 const N = (value) => ({ N: String(value) });
 
-const key = (pk, sk) => ({ pk: S(pk), sk: S(sk) });
-const challengeKey = (challengeId) => key(`CHALLENGE#${challengeId}`, 'META');
-const sessionKey = (tokenHash) => key(`SESSION#${tokenHash}`, 'META');
-const sessionProofKey = (tokenHash, nonceHex) => key(`PROOF#${tokenHash}#${nonceHex}`, 'META');
+const key = (pk, sk, network) => ({
+  pk: S(admittedNetwork(network) === 'testnet' ? pk : `${network}#${pk}`),
+  sk: S(sk),
+});
+const challengeKey = (challengeId, network) => key(`CHALLENGE#${challengeId}`, 'META', network);
+const sessionKey = (tokenHash, network) => key(`SESSION#${tokenHash}`, 'META', network);
+const sessionProofKey = (tokenHash, nonceHex, network) =>
+  key(`PROOF#${tokenHash}#${nonceHex}`, 'META', network);
 const scopeKey = ({ vaultId, profileId, networkId, rootCommitment }) =>
   `${vaultId}#${profileId}#${networkId}#${rootCommitment}`;
-const stateKey = (scope) => key(`STATE#${scopeKey(scope)}`, 'HEAD');
-const claimKey = (scope, commitId) => key(`COMMIT#${scopeKey(scope)}#${commitId}`, 'CLAIM');
-const commitKey = (scope, commitId) => key(`COMMIT#${scopeKey(scope)}#${commitId}`, 'RECORD');
+const stateKey = (scope) => key(`STATE#${scopeKey(scope)}`, 'HEAD', scope.network);
+const claimKey = (scope, commitId) =>
+  key(`COMMIT#${scopeKey(scope)}#${commitId}`, 'CLAIM', scope.network);
+const commitKey = (scope, commitId) =>
+  key(`COMMIT#${scopeKey(scope)}#${commitId}`, 'RECORD', scope.network);
 
 function stringValue(item, name, required = true) {
   const value = item?.[name]?.S;
@@ -77,6 +83,7 @@ function sessionFrom(item) {
 function headFrom(item) {
   if (!item) return null;
   return {
+    network: stringValue(item, 'network'),
     vaultId: stringValue(item, 'vault_id'),
     profileId: stringValue(item, 'profile_id'),
     networkId: stringValue(item, 'network_id'),
@@ -163,7 +170,7 @@ function commitFrom(item) {
 
 function challengeItem(challenge) {
   return {
-    ...challengeKey(challenge.challengeId),
+    ...challengeKey(challenge.challengeId, challenge.network),
     entity_type: S(ENTITY.challenge),
     challenge_id: S(challenge.challengeId),
     nonce_hex: S(challenge.nonceHex),
@@ -181,7 +188,7 @@ function challengeItem(challenge) {
 
 function sessionItem(session) {
   return {
-    ...sessionKey(session.tokenHash),
+    ...sessionKey(session.tokenHash, session.network),
     entity_type: S(ENTITY.session),
     token_hash: S(session.tokenHash),
     network: S(session.network),
@@ -205,7 +212,7 @@ function headItem(head) {
   const item = {
     ...stateKey(head),
     entity_type: S(ENTITY.head),
-    network: S('testnet'),
+    network: S(head.network),
     vault_id: S(head.vaultId),
     profile_id: S(head.profileId),
     network_id: S(head.networkId),
@@ -311,7 +318,7 @@ const HEAD_NAMES = Object.freeze({
 function headValues(binding, nowMs) {
   return {
     ':head': S(ENTITY.head),
-    ':network': S('testnet'),
+    ':network': S(binding.network),
     ':vault': S(binding.vaultId),
     ':profile': S(binding.profileId),
     ':networkId': S(binding.networkId),
@@ -342,10 +349,18 @@ function predecessorValues(binding, nowMs) {
   return values;
 }
 
-export function createDynamoRepository({ client, tableName, commands }) {
+export function createDynamoRepository({ client, tableName, commands, network }) {
   if (!client || !tableName || !commands) {
     throw new TypeError('client, tableName and DynamoDB command constructors are required');
   }
+
+  const admitted = admittedNetwork(network);
+  const requireNetwork = (record) => {
+    if (record?.network !== admitted)
+      throw new TypeError('record network does not match repository admission');
+    return record;
+  };
+  const readNetwork = (record) => (record === null ? null : requireNetwork(record));
 
   const send = (name, input) => client.send(new commands[name](input));
   const conditional = async (operation) => {
@@ -366,6 +381,7 @@ export function createDynamoRepository({ client, tableName, commands }) {
   };
 
   async function putChallenge(challenge) {
+    requireNetwork(challenge);
     return conditional(() =>
       send('PutItemCommand', {
         TableName: tableName,
@@ -376,10 +392,12 @@ export function createDynamoRepository({ client, tableName, commands }) {
   }
 
   async function getChallenge(challengeId) {
-    return challengeFrom(await consistentGet(challengeKey(challengeId)));
+    return readNetwork(challengeFrom(await consistentGet(challengeKey(challengeId, admitted))));
   }
 
   async function consumeChallengeAndCreateSession(challenge, session, nowSeconds) {
+    requireNetwork(challenge);
+    requireNetwork(session);
     const names = {
       '#entity': 'entity_type',
       '#network': 'network',
@@ -398,7 +416,7 @@ export function createDynamoRepository({ client, tableName, commands }) {
     };
     const values = {
       ':entity': S(ENTITY.challenge),
-      ':network': S('testnet'),
+      ':network': S(admitted),
       ':challenge': S(challenge.challengeId),
       ':vault': S(challenge.vaultId),
       ':profile': S(challenge.profileId),
@@ -416,7 +434,7 @@ export function createDynamoRepository({ client, tableName, commands }) {
           {
             Update: {
               TableName: tableName,
-              Key: challengeKey(challenge.challengeId),
+              Key: challengeKey(challenge.challengeId, challenge.network),
               UpdateExpression: 'SET #consumed = :now',
               ConditionExpression:
                 '#entity = :entity AND #network = :network AND #challenge = :challenge AND #vault = :vault AND #profile = :profile AND #networkId = :networkId AND #root = :root AND #owner = :owner AND #nonce = :nonce AND #binding = :binding AND #expires > :now AND attribute_not_exists(#consumed)',
@@ -437,16 +455,17 @@ export function createDynamoRepository({ client, tableName, commands }) {
   }
 
   async function getSession(tokenHash) {
-    return sessionFrom(await consistentGet(sessionKey(tokenHash)));
+    return readNetwork(sessionFrom(await consistentGet(sessionKey(tokenHash, admitted))));
   }
 
   async function consumeSessionProof(session, proof, nowSeconds) {
+    requireNetwork(session);
     if (session.expiresAt <= nowSeconds) throw new ConditionalConflictError();
     return conditional(() =>
       send('PutItemCommand', {
         TableName: tableName,
         Item: {
-          ...sessionProofKey(session.tokenHash, proof.nonceHex),
+          ...sessionProofKey(session.tokenHash, proof.nonceHex, admitted),
           entity_type: S(ENTITY.sessionProof),
           token_hash: S(session.tokenHash),
           public_key_sha256: S(session.publicKeySha256),
@@ -465,10 +484,13 @@ export function createDynamoRepository({ client, tableName, commands }) {
   }
 
   async function getHead(scope) {
-    return headFrom(await consistentGet(stateKey(scope)));
+    requireNetwork(scope);
+    return readNetwork(headFrom(await consistentGet(stateKey(scope))));
   }
 
   async function takeover({ previous, next, nowMs, genesis }) {
+    requireNetwork(previous);
+    requireNetwork(next);
     const operation = genesis
       ? {
           Put: {
@@ -508,6 +530,8 @@ export function createDynamoRepository({ client, tableName, commands }) {
   }
 
   async function renew({ binding, nowMs, next }) {
+    requireNetwork(binding);
+    requireNetwork(next);
     const result = await conditional(() =>
       send('UpdateItemCommand', {
         TableName: tableName,
@@ -525,11 +549,13 @@ export function createDynamoRepository({ client, tableName, commands }) {
         ReturnValues: 'ALL_NEW',
       })
     );
-    return headFrom(result.Attributes);
+    return readNetwork(headFrom(result.Attributes));
   }
 
   async function claimUpload(claim, nowMs) {
+    requireNetwork(claim);
     const binding = {
+      network: admitted,
       vaultId: claim.vaultId,
       profileId: claim.profileId,
       networkId: claim.networkId,
@@ -566,7 +592,9 @@ export function createDynamoRepository({ client, tableName, commands }) {
   }
 
   async function assertHeadBinding(claim, nowMs) {
+    requireNetwork(claim);
     const binding = {
+      network: admitted,
       vaultId: claim.vaultId,
       profileId: claim.profileId,
       networkId: claim.networkId,
@@ -596,15 +624,22 @@ export function createDynamoRepository({ client, tableName, commands }) {
   }
 
   async function getClaim(scope, commitId) {
-    return claimFrom(await consistentGet(claimKey(scope, commitId)));
+    requireNetwork(scope);
+    return readNetwork(claimFrom(await consistentGet(claimKey(scope, commitId))));
   }
 
   async function getCommit(scope, commitId) {
-    return commitFrom(await consistentGet(commitKey(scope, commitId)));
+    requireNetwork(scope);
+    return readNetwork(commitFrom(await consistentGet(commitKey(scope, commitId))));
   }
 
   async function commit({ claim, record, nowMs }) {
+    requireNetwork(claim);
+    requireNetwork(record);
+    requireNetwork(record.head);
+    requireNetwork(record.receipt);
     const binding = {
+      network: admitted,
       vaultId: claim.vaultId,
       profileId: claim.profileId,
       networkId: claim.networkId,
@@ -641,7 +676,7 @@ export function createDynamoRepository({ client, tableName, commands }) {
     };
     const claimValues = {
       ':claim': S(ENTITY.claim),
-      ':network': S('testnet'),
+      ':network': S(admitted),
       ':fingerprint': S(claim.requestFingerprint),
       ':vault': S(claim.vaultId),
       ':profile': S(claim.profileId),
