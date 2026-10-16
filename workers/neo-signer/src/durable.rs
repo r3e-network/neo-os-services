@@ -397,7 +397,7 @@ impl DurableState {
         let receipt = &result.receipt;
         let expected = &candidate.next;
         anyhow::ensure!(
-            receipt.network == "testnet",
+            receipt.network == self.profile.environment().to_string(),
             "commit receipt network mismatch"
         );
         anyhow::ensure!(
@@ -592,8 +592,17 @@ pub fn canonical_operation(
         receipt.snapshot_size_bytes == candidate.envelope.len(),
         "snapshot size mismatch"
     );
+    anyhow::ensure!(
+        candidate.previous.binding == candidate.next.binding,
+        "commit candidate changed vault binding"
+    );
+    let network = candidate.next.binding.environment()?.to_string();
+    anyhow::ensure!(
+        receipt.network == network,
+        "commit operation network mismatch"
+    );
     let mut encoded = b"neoos/custody-state-operation/v2\0".to_vec();
-    push_field(&mut encoded, b"testnet");
+    push_field(&mut encoded, network.as_bytes());
     encoded.extend_from_slice(&candidate.next.binding.vault_id);
     encoded.extend_from_slice(&candidate.next.binding.profile_hash);
     encoded.extend_from_slice(&candidate.next.binding.network_set_hash);
@@ -623,6 +632,10 @@ fn validate_binding(
     anyhow::ensure!(
         cipher == head,
         "durable HEAD does not match the snapshot cipher binding"
+    );
+    anyhow::ensure!(
+        cipher.environment()? == profile.environment(),
+        "durable HEAD profile network mismatch"
     );
     anyhow::ensure!(
         cipher.profile_hash == *profile.profile_hash(),

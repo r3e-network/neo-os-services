@@ -45,6 +45,19 @@ pub struct VaultBinding {
 }
 
 impl VaultBinding {
+    /// Resolve only a complete, reviewed public-network pair. Response labels
+    /// must never choose the environment for a locally bound custody vault.
+    pub(crate) fn environment(&self) -> Result<Network> {
+        for environment in [Network::Mainnet, Network::Testnet] {
+            if self.neo_n3_magic == network::network_magic(environment)
+                && self.neox_chain_id == network::neox_chain_id(environment)
+            {
+                return Ok(environment);
+            }
+        }
+        bail!("vault binding has an unsupported or mixed network identity")
+    }
+
     pub fn permits_chain(&self, family: ChainFamily) -> bool {
         let required = match family {
             ChainFamily::NeoN3 => NEO_N3_MASK,

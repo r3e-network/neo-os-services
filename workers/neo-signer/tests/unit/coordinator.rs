@@ -156,55 +156,10 @@ fn rust_consumes_the_exact_js_v2_protocol_vector() {
         vector.request_proof_sha256
     );
     assert_eq!(vector.operation.schema, "neoos/custody-state-operation/v2");
-    assert_eq!(vector.operation.network, TESTNET);
+    assert_eq!(vector.operation.network, "testnet");
     assert_eq!(vector.operation.previous_generation, "11");
     let receipt = receipt(&vector.receipt);
-    let binding = VaultBinding {
-        vault_id: hash(&vector.operation.vault_id),
-        neo_n3_magic: 894_710_606,
-        neox_chain_id: 12_239_227,
-        profile_hash: hash(&vector.operation.profile_id),
-        network_set_hash: hash(&vector.operation.network_id),
-        root_key_commitment: hash(&vector.operation.root_commitment),
-        snapshot_format_version: 2,
-        signer_schema_version: 1,
-        allowed_chain_mask: 3,
-    };
-    let previous = AuthorityHead {
-        binding: binding.clone(),
-        generation: counter(&vector.operation.previous_generation),
-        snapshot_fence: counter(&vector.operation.previous_snapshot_fence),
-        previous_snapshot_sha256: [0x44; 32],
-        snapshot_sha256: hash(&vector.operation.previous_snapshot_sha256),
-        epoch: counter(&vector.operation.epoch),
-        owner_id: vector.operation.owner_id.clone(),
-        head_fingerprint: [0x99; 32],
-        lease_expires_at_ms: u64::MAX,
-        commit_id: Some("commit-11".to_string()),
-        snapshot: Some(AuthoritySnapshot {
-            bucket: "prior-bucket".to_string(),
-            key: "prior-key".to_string(),
-            version_id: "prior-version".to_string(),
-            sha256: hash(&vector.operation.previous_snapshot_sha256),
-            size_bytes: 1,
-        }),
-        updated_at: "2027-01-15T08:00:00.000Z".to_string(),
-    };
-    let candidate = CommitCandidate {
-        commit_id: vector.operation.commit_id.clone(),
-        mutation_digest: hash(&vector.operation.mutation_digest),
-        previous,
-        next: SnapshotHead {
-            binding,
-            position: SnapshotPosition {
-                generation: counter(&vector.operation.generation),
-                fence: counter(&vector.operation.snapshot_fence),
-                previous_digest: hash(&vector.operation.previous_snapshot_sha256),
-            },
-            digest: hash(&vector.operation.snapshot_sha256),
-        },
-        envelope: vec![0; vector.operation.snapshot_size_bytes],
-    };
+    let candidate = vector_candidate(&vector);
     assert_eq!(receipt.snapshot_bucket, vector.operation.snapshot_bucket);
     assert_eq!(receipt.snapshot_key, vector.operation.snapshot_key);
     assert_eq!(
@@ -490,6 +445,7 @@ impl AttestationSource for RecordingAttestation {
 }
 
 struct SessionAuthority {
+    network: crate::network::Network,
     binding: VaultBinding,
     public_key: Arc<Mutex<Vec<u8>>>,
     owner_id: Mutex<Option<String>>,
@@ -511,7 +467,7 @@ impl HttpTransport for SessionAuthority {
                 201,
                 serde_json::json!({
                     "challenge_id": "challenge-1",
-                    "network": TESTNET,
+                    "network": self.network.to_string(),
                     "schema": WIRE_SCHEMA,
                     "vault_id": hex::encode(self.binding.vault_id),
                     "profile_id": hex::encode(self.binding.profile_hash),
@@ -566,7 +522,7 @@ impl HttpTransport for SessionAuthority {
                     },
                     "request_header": SESSION_HEADER,
                     "schema": WIRE_SCHEMA,
-                    "network": TESTNET,
+                    "network": self.network.to_string(),
                     "vault_id": hex::encode(self.binding.vault_id),
                     "profile_id": hex::encode(self.binding.profile_hash),
                     "network_id": hex::encode(self.binding.network_set_hash),
@@ -591,11 +547,21 @@ impl HttpTransport for SessionAuthority {
 
 #[test]
 fn session_is_unsealed_only_with_exact_rsa_3072_oaep_sha256() {
-    let profile = Arc::new(crate::vault_profile::test_profile([0x5a; 32]));
+    for network in [
+        crate::network::Network::Mainnet,
+        crate::network::Network::Testnet,
+    ] {
+        session_exchange_for_network(network);
+    }
+}
+
+fn session_exchange_for_network(network: crate::network::Network) {
+    let profile = Arc::new(network_binding::profile(network));
     let cipher =
         SnapshotCipher::from_profile(&MasterKey::from_bytes([0x5a; 32]), &profile).unwrap();
     let public_key = Arc::new(Mutex::new(Vec::new()));
     let transport = Arc::new(SessionAuthority {
+        network,
         binding: cipher.binding().clone(),
         public_key: public_key.clone(),
         owner_id: Mutex::new(None),
@@ -897,3 +863,55 @@ fn stale_local_database_is_refused_before_any_remote_recovery_call() {
     assert!(recover_with_authority(profile, master, &target, authority.clone(), cipher).is_err());
     assert!(authority.calls.lock().unwrap().is_empty());
 }
+
+fn vector_candidate(vector: &ProtocolVector) -> CommitCandidate {
+    let binding = VaultBinding {
+        vault_id: hash(&vector.operation.vault_id),
+        neo_n3_magic: 894_710_606,
+        neox_chain_id: 12_227_332,
+        profile_hash: hash(&vector.operation.profile_id),
+        network_set_hash: hash(&vector.operation.network_id),
+        root_key_commitment: hash(&vector.operation.root_commitment),
+        snapshot_format_version: 2,
+        signer_schema_version: 1,
+        allowed_chain_mask: 3,
+    };
+    let previous = AuthorityHead {
+        binding: binding.clone(),
+        generation: counter(&vector.operation.previous_generation),
+        snapshot_fence: counter(&vector.operation.previous_snapshot_fence),
+        previous_snapshot_sha256: [0x44; 32],
+        snapshot_sha256: hash(&vector.operation.previous_snapshot_sha256),
+        epoch: counter(&vector.operation.epoch),
+        owner_id: vector.operation.owner_id.clone(),
+        head_fingerprint: [0x99; 32],
+        lease_expires_at_ms: u64::MAX,
+        commit_id: Some("commit-11".to_string()),
+        snapshot: Some(AuthoritySnapshot {
+            bucket: "prior-bucket".to_string(),
+            key: "prior-key".to_string(),
+            version_id: "prior-version".to_string(),
+            sha256: hash(&vector.operation.previous_snapshot_sha256),
+            size_bytes: 1,
+        }),
+        updated_at: "2027-01-15T08:00:00.000Z".to_string(),
+    };
+    CommitCandidate {
+        commit_id: vector.operation.commit_id.clone(),
+        mutation_digest: hash(&vector.operation.mutation_digest),
+        previous,
+        next: SnapshotHead {
+            binding,
+            position: SnapshotPosition {
+                generation: counter(&vector.operation.generation),
+                fence: counter(&vector.operation.snapshot_fence),
+                previous_digest: hash(&vector.operation.previous_snapshot_sha256),
+            },
+            digest: hash(&vector.operation.snapshot_sha256),
+        },
+        envelope: vec![0; vector.operation.snapshot_size_bytes],
+    }
+}
+
+#[path = "coordinator_network.rs"]
+mod network_binding;

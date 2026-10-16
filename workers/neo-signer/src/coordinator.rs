@@ -1,4 +1,4 @@
-//! TestNet custody-state authority v3 client.
+//! Network-bound custody-state authority v3 client.
 //!
 //! The parent may proxy packets, but it never supplies state facts. Every API
 //! call is SigV4 signed in the enclave, every successful response is decoded
@@ -38,7 +38,6 @@ use crate::{
 const WIRE_SCHEMA: &str = "neoos/custody-state-wire/v3";
 const HEAD_SCHEMA: &str = "neoos/custody-state-head/v2";
 const RECEIPT_SCHEMA: &str = "neoos/custody-state-receipt/v2";
-const TESTNET: &str = "testnet";
 const SESSION_HEADER: &str = "x-custody-session";
 const REQUEST_PROOF_SCHEMA: &str = "neoos/custody-state-request-proof/v1";
 const REQUEST_PROOF_ALGORITHM: &str = "RSA-PSS-SHA256";
@@ -329,6 +328,9 @@ impl CoordinatorClient {
     }
 
     pub fn takeover(&self, previous: Option<&AuthorityHead>) -> Result<AuthorityHead> {
+        if let Some(head) = previous {
+            self.validate_binding(&head.binding)?;
+        }
         let body = match previous {
             Some(head) => TakeoverRequest {
                 owner_id: self.owner_id().to_string(),
@@ -376,6 +378,7 @@ impl CoordinatorClient {
     }
 
     pub fn renew(&self, previous: &AuthorityHead) -> Result<AuthorityHead> {
+        self.validate_binding(&previous.binding)?;
         let response =
             self.authority_request("POST", "renew", Some(&HeadBindingRequest::from(previous)))?;
         require_status(&response, &[200])?;
@@ -389,6 +392,7 @@ impl CoordinatorClient {
     }
 
     pub fn download_snapshot(&self, head: &AuthorityHead) -> Result<Vec<u8>> {
+        self.validate_binding(&head.binding)?;
         let expected = head
             .snapshot
             .as_ref()
@@ -506,6 +510,14 @@ impl CoordinatorClient {
         )
     }
 
+    fn validate_binding(&self, binding: &VaultBinding) -> Result<()> {
+        anyhow::ensure!(
+            *binding == self.binding,
+            "custody state does not match the coordinator session binding"
+        );
+        Ok(())
+    }
+
     fn decode_head(&self, body: &[u8]) -> Result<AuthorityHead> {
         AuthorityHead::from_wire(decode_json(body)?, &self.binding)
     }
@@ -608,6 +620,8 @@ impl CoordinatorClient {
 
 impl DurableCoordinator for CoordinatorClient {
     fn commit(&self, candidate: &CommitCandidate) -> Result<CommitResult> {
+        self.validate_binding(&candidate.previous.binding)?;
+        self.validate_binding(&candidate.next.binding)?;
         let (mut snapshot, version_id) = self.upload(candidate)?;
         snapshot.version_id = version_id.clone();
         self.submit_commit(candidate, &snapshot, &version_id)
@@ -908,8 +922,8 @@ fn validate_header(name: &str, value: &str) -> Result<()> {
 
 fn validate_profile_binding(profile: &ValidatedVaultProfile, binding: &VaultBinding) -> Result<()> {
     anyhow::ensure!(
-        profile.environment().to_string() == TESTNET,
-        "coordinator is TestNet-only"
+        binding.environment()? == profile.environment(),
+        "coordinator profile network mismatch"
     );
     anyhow::ensure!(
         binding.profile_hash == *profile.profile_hash(),
@@ -1053,7 +1067,7 @@ struct ExpectedPcrs {
 impl ChallengeResponse {
     fn validate(&self, binding: &VaultBinding) -> Result<()> {
         anyhow::ensure!(
-            self.schema == WIRE_SCHEMA && self.network == TESTNET,
+            self.schema == WIRE_SCHEMA && self.network == binding.environment()?.to_string(),
             "challenge schema mismatch"
         );
         anyhow::ensure!(
@@ -1140,7 +1154,7 @@ struct SealedSessionToken {
 impl SessionResponse {
     fn validate(&self, binding: &VaultBinding, owner_id: &str, key_hash: &[u8; 32]) -> Result<()> {
         anyhow::ensure!(
-            self.schema == WIRE_SCHEMA && self.network == TESTNET,
+            self.schema == WIRE_SCHEMA && self.network == binding.environment()?.to_string(),
             "session schema mismatch"
         );
         anyhow::ensure!(
@@ -1543,7 +1557,7 @@ pub(crate) struct WireReceipt {
 impl CommitResponse {
     fn into_result(self, binding: &VaultBinding) -> Result<CommitResult> {
         let head = AuthorityHead::from_wire(self.head, binding)?;
-        let receipt = self.receipt.into_receipt()?;
+        let receipt = self.receipt.into_receipt(binding)?;
         let _ = self.idempotent;
         if let Some(request_id) = &self.request_id {
             validate_text(request_id, "request id", 256)?;
@@ -1553,9 +1567,9 @@ impl CommitResponse {
 }
 
 impl WireReceipt {
-    fn into_receipt(self) -> Result<CommitReceipt> {
+    fn into_receipt(self, binding: &VaultBinding) -> Result<CommitReceipt> {
         anyhow::ensure!(
-            self.schema == RECEIPT_SCHEMA && self.network == TESTNET,
+            self.schema == RECEIPT_SCHEMA && self.network == binding.environment()?.to_string(),
             "receipt schema mismatch"
         );
         anyhow::ensure!(
@@ -1667,7 +1681,7 @@ struct ErrorDetail {
 impl AuthorityHead {
     pub(crate) fn from_wire(wire: WireHead, binding: &VaultBinding) -> Result<Self> {
         anyhow::ensure!(
-            wire.schema == WIRE_SCHEMA && wire.network == TESTNET,
+            wire.schema == WIRE_SCHEMA && wire.network == binding.environment()?.to_string(),
             "HEAD schema mismatch"
         );
         anyhow::ensure!(

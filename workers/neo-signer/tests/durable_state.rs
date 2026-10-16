@@ -45,18 +45,22 @@ enum Behavior {
     Valid,
     Fail,
     WrongGeneration,
+    WrongNetwork,
+    WrongHeadNetwork,
 }
 
 struct Coordinator {
     signing_key: SigningKey,
+    network: Network,
     behavior: Mutex<Behavior>,
     candidates: Mutex<Vec<CommitCandidate>>,
 }
 
 impl Coordinator {
-    fn new(signing_key: SigningKey) -> Self {
+    fn new(signing_key: SigningKey, network: Network) -> Self {
         Self {
             signing_key,
+            network,
             behavior: Mutex::new(Behavior::Valid),
             candidates: Mutex::new(Vec::new()),
         }
@@ -72,10 +76,13 @@ impl DurableCoordinator for Coordinator {
         self.candidates.lock().unwrap().push(candidate.clone());
         match *self.behavior.lock().unwrap() {
             Behavior::Fail => bail!("simulated ambiguous coordinator failure"),
-            Behavior::Valid | Behavior::WrongGeneration => {}
+            Behavior::Valid
+            | Behavior::WrongGeneration
+            | Behavior::WrongNetwork
+            | Behavior::WrongHeadNetwork => {}
         }
         let mut receipt = CommitReceipt {
-            network: "testnet".to_string(),
+            network: self.network.to_string(),
             vault_id: candidate.next.binding.vault_id,
             profile_hash: candidate.next.binding.profile_hash,
             network_set_hash: candidate.next.binding.network_set_hash,
@@ -107,6 +114,11 @@ impl DurableCoordinator for Coordinator {
         if matches!(*self.behavior.lock().unwrap(), Behavior::WrongGeneration) {
             receipt.generation += 1;
         }
+        // Model an authority that signs the wrong network label with an otherwise
+        // trusted key and the exact candidate operation digest.
+        if matches!(*self.behavior.lock().unwrap(), Behavior::WrongNetwork) {
+            receipt.network = other_network(self.network).to_string();
+        }
         receipt.payload = canonical_receipt(&receipt);
         receipt.receipt_id = sha2::Sha256::digest(&receipt.payload).into();
         let signature: Signature = self.signing_key.sign(&receipt.payload);
@@ -118,7 +130,7 @@ impl DurableCoordinator for Coordinator {
             sha256: receipt.snapshot_sha256,
             size_bytes: receipt.snapshot_size_bytes,
         };
-        let head = AuthorityHead {
+        let mut head = AuthorityHead {
             binding: candidate.next.binding.clone(),
             generation: candidate.next.position.generation,
             snapshot_fence: candidate.next.position.fence,
@@ -132,19 +144,34 @@ impl DurableCoordinator for Coordinator {
             snapshot: Some(snapshot),
             updated_at: "2026-09-11T00:00:00.000Z".to_string(),
         };
+        if matches!(*self.behavior.lock().unwrap(), Behavior::WrongHeadNetwork) {
+            let other = other_network(self.network);
+            head.binding.neo_n3_magic = neo_signer::network::network_magic(other);
+            head.binding.neox_chain_id = neo_signer::network::neox_chain_id(other);
+        }
         Ok(CommitResult { head, receipt })
     }
 
     fn verify_lease(&self, head: &AuthorityHead) -> Result<AuthorityHead> {
         match *self.behavior.lock().unwrap() {
             Behavior::Fail => bail!("simulated remote lease failure"),
-            Behavior::Valid | Behavior::WrongGeneration => Ok(head.clone()),
+            Behavior::Valid
+            | Behavior::WrongGeneration
+            | Behavior::WrongNetwork
+            | Behavior::WrongHeadNetwork => Ok(head.clone()),
         }
     }
 }
 
 fn fixture(
     behavior: Behavior,
+) -> Result<(tempfile::TempDir, Store, Arc<Coordinator>, DurableState)> {
+    network_fixture(behavior, Network::Testnet)
+}
+
+fn network_fixture(
+    behavior: Behavior,
+    network: Network,
 ) -> Result<(tempfile::TempDir, Store, Arc<Coordinator>, DurableState)> {
     let directory = tempfile::tempdir()?;
     let store = Store::open(directory.path().join("signer.db"))?;
@@ -153,10 +180,10 @@ fn fixture(
     let profile = VaultProfile {
         profile_version: PROFILE_VERSION,
         vault_id: "00112233445566778899aabbccddeeff".to_string(),
-        environment: "testnet".to_string(),
+        environment: network.to_string(),
         networks: vec![VaultNetwork {
             chain_family: "neo-n3".to_string(),
-            chain_id: 894_710_606,
+            chain_id: u64::from(neo_signer::network::network_magic(network)),
             genesis_hash: format!("0x{}", "11".repeat(32)),
         }],
         custody_kms_key_arn:
@@ -186,7 +213,7 @@ fn fixture(
     .validate()?;
     let cipher = SnapshotCipher::from_profile(&master, &profile)?;
     let head = AuthorityHead::genesis(cipher.binding().clone(), 3, "session-a".to_string())?;
-    let coordinator = Arc::new(Coordinator::new(receipt_key));
+    let coordinator = Arc::new(Coordinator::new(receipt_key, network));
     coordinator.behavior(behavior);
     let durable =
         DurableState::from_verified_lease(Arc::new(profile), cipher, coordinator.clone(), head)?;
@@ -388,5 +415,46 @@ async fn observable_results_are_withheld_and_health_fails_after_commit_failure()
         serde_json::from_slice::<serde_json::Value>(&body)?["status"],
         "fenced"
     );
+    Ok(())
+}
+
+fn other_network(network: Network) -> Network {
+    match network {
+        Network::Mainnet => Network::Testnet,
+        Network::Testnet => Network::Mainnet,
+        Network::Private => panic!("public-network fixture only"),
+    }
+}
+
+#[test]
+fn both_networks_advance_independent_durable_heads() -> Result<()> {
+    let (_main_dir, main_store, main_coordinator, main) =
+        network_fixture(Behavior::Valid, Network::Mainnet)?;
+    let (_test_dir, test_store, test_coordinator, test) =
+        network_fixture(Behavior::Valid, Network::Testnet)?;
+    let main_first = main.commit(&main_store, [1; 32])?;
+    let test_first = test.commit(&test_store, [1; 32])?;
+    let main_second = main.commit(&main_store, [2; 32])?;
+    assert_eq!(main_second.generation, 2);
+    assert_eq!(test_first.generation, 1);
+    assert_ne!(main_first.binding, test_first.binding);
+    assert!(matches!(test.status(), DurableStatus::Ready(head) if *head == test_first));
+    assert_eq!(main_coordinator.candidates.lock().unwrap().len(), 2);
+    assert_eq!(test_coordinator.candidates.lock().unwrap().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn signed_cross_network_receipts_and_heads_fence_both_networks() -> Result<()> {
+    for network in [Network::Mainnet, Network::Testnet] {
+        for behavior in [Behavior::WrongNetwork, Behavior::WrongHeadNetwork] {
+            let (_directory, store, coordinator, durable) = network_fixture(behavior, network)?;
+            assert!(durable.commit(&store, [3; 32]).is_err());
+            assert!(matches!(durable.status(), DurableStatus::Fenced { .. }));
+            coordinator.behavior(Behavior::Valid);
+            assert!(durable.commit(&store, [4; 32]).is_err());
+            assert_eq!(coordinator.candidates.lock().unwrap().len(), 1);
+        }
+    }
     Ok(())
 }
