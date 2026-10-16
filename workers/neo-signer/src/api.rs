@@ -197,6 +197,8 @@ pub struct ApiState {
 struct Inner {
     vault: RwLock<Vault>,
     attested_boot: bool,
+    // Dropped after the vault and every clone of its pending/ready state.
+    process_lease: Option<Arc<crate::embedded::VaultProcessLease>>,
 }
 
 /// The vault, as this process currently holds it.
@@ -219,6 +221,7 @@ impl ApiState {
             inner: Arc::new(Inner {
                 vault: RwLock::new(Vault::Ready(service)),
                 attested_boot: false,
+                process_lease: None,
             }),
             workload_auth: WorkloadAuthPolicy::new(DEFAULT_WORKLOAD_AUDIENCE, false)
                 .expect("the built-in loopback workload audience is canonical"),
@@ -285,6 +288,7 @@ impl ApiState {
                     mutex: std::sync::Mutex::new(()),
                 }))),
                 attested_boot: true,
+                process_lease: None,
             }),
             workload_auth: WorkloadAuthPolicy::new(DEFAULT_WORKLOAD_AUDIENCE, false)
                 .expect("the built-in loopback workload audience is canonical"),
@@ -292,6 +296,16 @@ impl ApiState {
             request_slots: Arc::new(Semaphore::new(DEFAULT_MAX_IN_FLIGHT_REQUESTS)),
             blocking_slots: Arc::new(Semaphore::new(DEFAULT_MAX_IN_FLIGHT_REQUESTS)),
         }
+    }
+
+    pub(crate) fn with_process_lease(
+        mut self,
+        lease: Arc<crate::embedded::VaultProcessLease>,
+    ) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("attach the process lease before publishing or cloning state")
+            .process_lease = Some(lease);
+        self
     }
 
     /// Replace the fail-closed loopback default with this deployment's one
@@ -378,7 +392,9 @@ impl ApiState {
                 }
             }
         };
-        let result = provision::run(&gate, env, presented);
+        let result = provision::run(&gate, env, presented).map(|service| {
+            service.with_vault_binding(Arc::clone(&gate.profile), self.inner.process_lease.clone())
+        });
         let mut vault = self
             .inner
             .vault

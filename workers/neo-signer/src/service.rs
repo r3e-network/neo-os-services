@@ -261,6 +261,9 @@ pub struct SignerService {
     /// remote durable commit that follows the local decision.
     operation_lock: Arc<Mutex<()>>,
     durable: Option<Arc<DurableState>>,
+    vault_profile: Option<Arc<crate::vault_profile::ValidatedVaultProfile>>,
+    // Last field: drop root, durable state and profile before releasing the lock.
+    process_lease: Option<Arc<crate::embedded::VaultProcessLease>>,
 }
 
 /// Which bytes a signing request covers, and whether value moved afterwards.
@@ -370,7 +373,44 @@ impl SignerService {
             decision_lock: Arc::new(Mutex::new(())),
             operation_lock: Arc::new(Mutex::new(())),
             durable: None,
+            vault_profile: None,
+            process_lease: None,
         }
+    }
+
+    pub(crate) fn with_vault_binding(
+        mut self,
+        profile: Arc<crate::vault_profile::ValidatedVaultProfile>,
+        lease: Option<Arc<crate::embedded::VaultProcessLease>>,
+    ) -> Self {
+        self.vault_profile = Some(profile);
+        self.process_lease = lease;
+        self
+    }
+
+    fn admit_vault_network(
+        &self,
+        network: Network,
+        family: ChainFamily,
+        chain_id: u64,
+    ) -> Result<(), Refusal> {
+        if let Some(profile) = &self.vault_profile {
+            if network != profile.environment()
+                || !profile.document().networks.iter().any(|binding| {
+                    binding.chain_family == family.to_string() && binding.chain_id == chain_id
+                })
+            {
+                return Err(Refusal::denied(
+                    "signer-vault-network-mismatch",
+                    "the key network is not admitted by this custody vault",
+                    format!(
+                        "vault {} refuses {family}/{network}/{chain_id}",
+                        profile.document().vault_id
+                    ),
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Attach a state machine created from an authenticated HEAD and lease.
@@ -2544,6 +2584,14 @@ impl SignerService {
                     format!("no custody record for {key_id}"),
                 )
             })?;
+        self.admit_vault_network(key.network, key.chain_family, key.chain_id())?;
+        if key.chain_family == ChainFamily::NeoN3 {
+            self.admit_vault_network(
+                key.network,
+                key.chain_family,
+                u64::from(key.network_magic()),
+            )?;
+        }
         if key.disabled {
             return Err(Refusal::guard(
                 GuardRejection::KeyDisabled,
@@ -3001,6 +3049,15 @@ impl SignerService {
                 None,
                 "chain id exceeds the durable SQLite integer range",
             );
+        }
+        if let Err(refusal) = self.admit_vault_network(network, chain_family, chain_id) {
+            return Ok(Outcome::Refused(self.refuse(
+                action,
+                credentials,
+                Some(caller),
+                None,
+                &refusal,
+            )?));
         }
         let public_key = match chain_family {
             ChainFamily::NeoN3 => crypto::public_key_from_private(private_key),

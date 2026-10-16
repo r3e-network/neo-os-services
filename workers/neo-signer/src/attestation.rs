@@ -57,6 +57,16 @@ pub struct BootGuard {
 }
 
 impl BootGuard {
+    /// Require fresh attestation without consulting environment switches. The
+    /// optional pin supplements the authoritative KMS image policy.
+    pub fn required(expected_pcr0: Option<&str>) -> anyhow::Result<Self> {
+        Ok(Self {
+            expected_pcr0: expected_pcr0
+                .map(|pin| decode_pcr0(pin.trim()).map_err(anyhow::Error::msg))
+                .transpose()?,
+        })
+    }
+
     /// Read the two environment names. A value other than `require` is an
     /// error with the fix in the message; a pin that does not decode is an
     /// error rather than a guard that would have accepted anything.

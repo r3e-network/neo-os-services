@@ -687,7 +687,7 @@ async fn neox_key_identity_and_complete_signed_transaction_survive_the_http_boun
 
 #[tokio::test]
 async fn structured_eip191_fulfillment_is_vector_locked_policy_bound_and_idempotent() {
-    let api = Api::open().await.expect("vault");
+    let mut api = Api::open().await.expect("vault");
     let chain_id = 12_227_330u64;
     let oracle = "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B";
     let key = api
@@ -791,13 +791,32 @@ async fn structured_eip191_fulfillment_is_vector_locked_policy_bound_and_idempot
         "idempotent replay must not append a second allowed signature row"
     );
 
-    let mut conflict = body;
+    let mut conflict = body.clone();
     conflict["result_bytes_hex"] = json!("0x00");
     let conflict = api
         .post("/sign/eip191-fulfillment", Some(&api.signer), conflict)
         .await;
     assert_eq!(conflict.status, StatusCode::CONFLICT, "{conflict:?}");
     assert_eq!(conflict.code(), audit::REQUEST_ID_CONFLICT);
+    recover_api_with_profile(&mut api, Network::Mainnet).await;
+    let refused = api
+        .post("/sign/eip191-fulfillment", Some(&api.signer), body.clone())
+        .await;
+    assert_eq!(
+        refused.code(),
+        "signer-vault-network-mismatch",
+        "{refused:?}"
+    );
+    let mut fresh = body;
+    fresh["request_id"] = json!("foreign-fresh-fulfillment");
+    let refused = api
+        .post("/sign/eip191-fulfillment", Some(&api.signer), fresh)
+        .await;
+    assert_eq!(
+        refused.code(),
+        "signer-vault-network-mismatch",
+        "{refused:?}"
+    );
 }
 
 #[tokio::test]
@@ -3134,4 +3153,401 @@ async fn metrics_endpoint_returns_prometheus_metrics() {
         reply.text.contains("neo_signer_") || reply.text.contains("# HELP"),
         "metrics endpoint should return prometheus text output"
     );
+}
+
+// These tests also execute on the pre-extraction source: the existing attested
+// recovery seam must enforce its immutable profile, not merely label health.
+async fn recover_api_with_profile(api: &mut Api, network: Network) {
+    let mut document = crate::vault_profile::test_profile([9; 32])
+        .document()
+        .clone();
+    document.environment = network.to_string();
+    for binding in &mut document.networks {
+        binding.chain_id = match binding.chain_family.as_str() {
+            "neo-n3" => u64::from(network::network_magic(network)),
+            "neox" => network::neox_chain_id(network),
+            family => panic!("unexpected profile family {family}"),
+        };
+    }
+    recover_api_with_document(api, document).await;
+}
+
+async fn recover_api_with_document(api: &mut Api, document: crate::vault_profile::VaultProfile) {
+    let profile = Arc::new(document.validate().expect("public profile"));
+    let service = api.service.clone();
+    let state = ApiState::attested_pending_with_components(
+        api.service.repository().db_path().to_path_buf(),
+        api._dir.path().to_path_buf(),
+        profile,
+        Arc::new(|_, _, purpose| {
+            Ok(zeroize::Zeroizing::new(match purpose {
+                provision::EnvelopePurpose::TransportToken => ENCLAVE_TOKEN.as_bytes().to_vec(),
+                provision::EnvelopePurpose::MasterKey => vec![9; 32],
+            }))
+        }),
+        Arc::new(move |_, _, _, _| Ok(service.clone())),
+    )
+    .with_workload_auth(workload_auth());
+    api.router = router(state);
+    let provisioned = send_raw(
+        api.router.clone(),
+        root_request(
+            Method::POST,
+            "/provision",
+            Some(ENCLAVE_TOKEN),
+            Some(enclave_provision_body()),
+        ),
+    )
+    .await;
+    assert_eq!(provisioned.status, StatusCode::OK, "{provisioned:?}");
+}
+
+#[tokio::test]
+async fn attested_profile_rejects_foreign_key_admission() -> Result<()> {
+    let mut api = Api::open().await?;
+    recover_api_with_profile(&mut api, Network::Testnet).await;
+    let reply = api
+        .post(
+            "/keys",
+            Some(&api.admin),
+            json!({"label":"foreign", "network":"mainnet"}),
+        )
+        .await;
+    assert_eq!(
+        reply.json()["code"],
+        "signer-vault-network-mismatch",
+        "{reply:?}"
+    );
+    assert_eq!(api.service.repository().list_signer_keys()?.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn attested_profile_rejects_foreign_transaction_before_signing() -> Result<()> {
+    let mut api = Api::open().await?;
+    recover_api_with_profile(&mut api, Network::Mainnet).await;
+    let reply = api
+        .sign(Some(&api.signer), &api.key_id, &api.transfer(1, 9911))
+        .await;
+    assert_eq!(
+        reply.json()["code"],
+        "signer-vault-network-mismatch",
+        "{reply:?}"
+    );
+    assert!(reply.json().get("invocation_script").is_none());
+    let rows = api.service.repository().list_signer_audit(None, 500)?;
+    assert!(!rows
+        .iter()
+        .any(|row| row.action == SignerAuditAction::TransactionSigned
+            && row.outcome == crate::model::SignerAuditOutcome::Allowed));
+    Ok(())
+}
+
+#[tokio::test]
+async fn attested_profile_rejects_foreign_cached_completion() -> Result<()> {
+    let mut api = Api::open().await?;
+    let body = json!({"key_id":api.key_id, "unsigned_hex":api.transfer(1,9912), "request_id":"before-profile-binding"});
+    let first = api
+        .post("/sign/transaction", Some(&api.signer), body.clone())
+        .await;
+    assert_eq!(first.status, StatusCode::OK, "{first:?}");
+    recover_api_with_profile(&mut api, Network::Mainnet).await;
+    let reply = api.post("/sign/transaction", Some(&api.signer), body).await;
+    assert_eq!(
+        reply.json()["code"],
+        "signer-vault-network-mismatch",
+        "{reply:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn attested_profile_rejects_foreign_raw_signing() -> Result<()> {
+    let mut api = Api::open().await?;
+    let (key, token) = api.raw_role().await;
+    recover_api_with_profile(&mut api, Network::Mainnet).await;
+    let reply = api
+        .post(
+            "/sign/raw",
+            Some(&token),
+            json!({"key_id":key,"data_hex":"001122"}),
+        )
+        .await;
+    assert_eq!(
+        reply.json()["code"],
+        "signer-vault-network-mismatch",
+        "{reply:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn attested_profile_workload_consumed_once_then_replay_refused() {
+    let mut api = Api::open().await.expect("vault");
+    recover_api_with_profile(&mut api, Network::Testnet).await;
+    let signing_key = SigningKey::from_bytes(&[17u8; 32]);
+    let created = api
+        .post(
+            "/callers/workload",
+            Some(&api.admin.clone()),
+            json!({
+                "label": "neo-nexus",
+                "capabilities": ["sign"],
+                "key_grant": {"mode": "only", "key_ids": [api.key_id.clone()]},
+                "workload_public_key": hex::encode(signing_key.verifying_key().to_bytes()),
+                "workload_subject": "neo-nexus:test",
+            }),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::OK, "{created:?}");
+    assert_eq!(created.keys(), ["allowed", "caller"]);
+    assert!(!created.text.contains("\"token\""));
+    assert_eq!(created.json()["caller"]["auth_mode"], "workload-ed25519");
+
+    let identity = WorkloadClient {
+        caller_id: created.json()["caller"]["id"]
+            .as_str()
+            .expect("caller id")
+            .to_string(),
+        subject: Some("neo-nexus:test".to_string()),
+        signing_key,
+    };
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    let body = json!({
+        "key_id": api.key_id.clone(),
+        "unsigned_hex": api.transfer(1, 91),
+    });
+    let allowed = api
+        .workload_post(
+            "/sign/transaction",
+            &identity,
+            timestamp,
+            "nonce-0000000091",
+            body.clone(),
+        )
+        .await;
+    assert_eq!(allowed.status, StatusCode::OK, "{allowed:?}");
+
+    let replay = api
+        .workload_post(
+            "/sign/transaction",
+            &identity,
+            timestamp,
+            "nonce-0000000091",
+            body,
+        )
+        .await;
+    assert_eq!(replay.status, StatusCode::FORBIDDEN, "{replay:?}");
+    assert_eq!(replay.code(), AccessRejection::WorkloadReplay.code());
+}
+
+#[tokio::test]
+async fn attested_profile_accepts_mainnet_and_testnet_only_in_own_context() -> Result<()> {
+    for network in [Network::Mainnet, Network::Testnet] {
+        let mut api = Api::open().await?;
+        recover_api_with_profile(&mut api, network).await;
+        let key = api
+            .post(
+                "/keys",
+                Some(&api.admin),
+                json!({"label":"admitted", "network":network.to_string()}),
+            )
+            .await;
+        assert_eq!(key.status, StatusCode::OK, "{key:?}");
+        let key = key.field("key_id");
+        let policy = api
+            .post(
+                &format!("/keys/{key}/policy"),
+                Some(&api.admin),
+                json!({"allow_raw":true}),
+            )
+            .await;
+        assert_eq!(policy.status, StatusCode::OK, "{policy:?}");
+        let (_, token) = api.raw_caller_for(&key).await;
+        let signed = api
+            .post(
+                "/sign/raw",
+                Some(&token),
+                json!({"key_id":key,"data_hex":"1234"}),
+            )
+            .await;
+        assert_eq!(signed.status, StatusCode::OK, "{signed:?}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn detached_ready_operation_keeps_process_lease_after_request_cancellation() -> Result<()> {
+    use crate::embedded::VaultProcessLease;
+    let api = Api::open().await?;
+    let lease = Arc::new(VaultProcessLease::acquire(api._dir.path())?);
+    let service = api.service.clone().with_vault_binding(
+        Arc::new(crate::vault_profile::test_profile([9; 32])),
+        Some(lease),
+    );
+    let state = ApiState::new(service);
+    let request_state = state.clone();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+    let request = tokio::spawn(async move {
+        decide(
+            &request_state,
+            SignerAuditAction::KeyViewed,
+            None,
+            move |service| {
+                let _ = started_tx.send(());
+                finish_rx
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("test must release operation");
+                let result = Ok(Outcome::Allowed(
+                    json!({"fingerprint": service.vault_fingerprint()}),
+                ));
+                let _ = done_tx.send(());
+                result
+            },
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), started_rx).await??;
+    request.abort();
+    let _ = request.await;
+    drop(state);
+    assert!(
+        VaultProcessLease::acquire(api._dir.path()).is_err(),
+        "detached operation lost its lease"
+    );
+    finish_tx.send(())?;
+    tokio::time::timeout(Duration::from_secs(5), done_rx).await??;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(lease) = VaultProcessLease::acquire(api._dir.path()) {
+                drop(lease);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn attested_profile_rejects_an_omitted_chain_family() -> Result<()> {
+    let mut api = Api::open().await?;
+    let mut document = crate::vault_profile::test_profile([9; 32])
+        .document()
+        .clone();
+    document
+        .networks
+        .retain(|binding| binding.chain_family == "neox");
+    recover_api_with_document(&mut api, document).await;
+    let refused = api
+        .sign(Some(&api.signer), &api.key_id, &api.transfer(1, 9913))
+        .await;
+    assert_eq!(
+        refused.code(),
+        "signer-vault-network-mismatch",
+        "{refused:?}"
+    );
+    let created = api
+        .post(
+            "/keys",
+            Some(&api.admin),
+            json!({"label":"excluded", "network":"testnet"}),
+        )
+        .await;
+    assert_eq!(
+        created.code(),
+        "signer-vault-network-mismatch",
+        "{created:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn detached_pending_provision_keeps_lease_after_all_handles_are_dropped() -> Result<()> {
+    use crate::embedded::VaultProcessLease;
+    let dir = tempfile::tempdir()?;
+    let repository = Store::open(dir.path().join("signer.db"))?;
+    let lease = Arc::new(VaultProcessLease::acquire(dir.path())?);
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let started_tx = Mutex::new(Some(started_tx));
+    let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+    let finish_rx = Mutex::new(finish_rx);
+    let state = ApiState::attested_pending_with_releaser(
+        repository,
+        dir.path().to_path_buf(),
+        enclave_profile(),
+        Arc::new(move |_, _, _| {
+            if let Some(tx) = started_tx.lock().unwrap().take() {
+                let _ = tx.send(());
+            }
+            finish_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .expect("release blocked provision");
+            Err("synthetic release refusal".into())
+        }),
+    )
+    .with_process_lease(lease);
+    let dispatch = router(state.clone());
+    let request = tokio::spawn(async move {
+        dispatch
+            .oneshot(root_request(
+                Method::POST,
+                "/provision",
+                Some(ENCLAVE_TOKEN),
+                Some(enclave_provision_body()),
+            ))
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), started_rx).await??;
+    request.abort();
+    let _ = request.await;
+    drop(state);
+    assert!(
+        VaultProcessLease::acquire(dir.path()).is_err(),
+        "pending release lost lease"
+    );
+    finish_tx.send(())?;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(lease) = VaultProcessLease::acquire(dir.path()) {
+                drop(lease);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn attested_profile_rejects_inconsistent_stored_chain_identity_before_key_open() -> Result<()>
+{
+    for field in ["chain_id", "network_magic"] {
+        let mut api = Api::open().await?;
+        let db = rusqlite::Connection::open(api.service.repository().db_path())?;
+        db.execute(
+            &format!("UPDATE signer_keys SET {field} = ?1, ciphertext = x'00' WHERE id = ?2"),
+            rusqlite::params![860_833_102u32, api.key_id],
+        )?;
+        drop(db);
+        recover_api_with_profile(&mut api, Network::Testnet).await;
+        let refused = api
+            .sign(Some(&api.signer), &api.key_id, &api.transfer(1, 9914))
+            .await;
+        assert_eq!(
+            refused.code(),
+            "signer-vault-network-mismatch",
+            "{field}: {refused:?}"
+        );
+    }
+    Ok(())
 }

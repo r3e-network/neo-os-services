@@ -15,6 +15,7 @@ pub mod auth;
 pub mod coordinator;
 pub mod crypto;
 pub mod durable;
+pub mod embedded;
 pub mod evm_tx;
 pub mod metrics;
 pub mod model;

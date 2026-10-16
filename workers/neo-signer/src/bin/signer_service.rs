@@ -2,9 +2,9 @@
 //! vault, and serve the HTTP contract of `docs/SIGNER_SERVICE.md` §5 and §5.1.
 //!
 //! Deliberately thin, because every decision about whether to sign lives behind
-//! the guards on [`SignerService`] — which is the whole reason custody is a
-//! separate process rather than a module. What is here is the two things only a
-//! process can do (hold a listener, resolve a data directory) and one thing the
+//! the guards on [`SignerService`]. Attested standalone and embedded runtimes
+//! share their bootstrap and custody boundary. This binary owns its listener
+//! and resolves configuration, including one thing the
 //! HTTP surface must never offer: the first admin credential.
 //!
 //! Three rules this file keeps:
@@ -20,17 +20,19 @@
 
 use std::{
     env,
-    fs::{File, OpenOptions},
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
 };
 
 use anyhow::{bail, Context, Result};
-use fs2::FileExt;
 use neo_signer::{
     api::{self, ApiState, DEFAULT_BODY_LIMIT, DEFAULT_MAX_IN_FLIGHT_REQUESTS},
     attestation::BootGuard,
     auth::WorkloadAuthPolicy,
+    embedded::{
+        EmbeddedCustodyConfig, EmbeddedCustodyRuntime, VaultProcessLease, DATABASE_FILE,
+        PROCESS_LOCK_FILE,
+    },
     model::CallerCapability,
     service::{provision_admin_caller, SignerService},
     signclient::{self, SignClientBridge},
@@ -38,7 +40,6 @@ use neo_signer::{
     vault::{MASTER_KEY_ENV, MASTER_KEY_FILE},
     vault_profile::VaultProfile,
 };
-use nitro_attest::release::NsmAttestation;
 use tokio::{
     net::TcpListener,
     sync::{watch, Semaphore},
@@ -68,12 +69,6 @@ const SIGNCLIENT_HOST_ENV: &str = "SIGNER_SERVICE_SIGNCLIENT_HOST";
 const SIGNCLIENT_PORT_ENV: &str = "SIGNER_SERVICE_SIGNCLIENT_PORT";
 const SIGNCLIENT_KEY_ID_ENV: &str = "SIGNER_SERVICE_SIGNCLIENT_KEY_ID";
 const SIGNCLIENT_CALLER_TOKEN_ENV: &str = "SIGNER_SERVICE_SIGNCLIENT_CALLER_TOKEN";
-/// Name of the one database file inside the data directory. Fixed rather than
-/// configurable: a deployment that points two signer processes at two names in
-/// one directory has two vaults and no error to tell it so.
-const DATABASE_FILE: &str = "signer.db";
-/// Advisory OS lock held for the whole process lifetime.
-const PROCESS_LOCK_FILE: &str = "signer.lock";
 /// Measured, immutable profile embedded in the enclave image. The host may not
 /// supply profile fields through `/provision`.
 const VAULT_PROFILE_FILE_ENV: &str = "SIGNER_SERVICE_VAULT_PROFILE_FILE";
@@ -210,7 +205,6 @@ fn provision_admin(label: &str) -> Result<()> {
 async fn serve() -> Result<()> {
     neo_signer::metrics::init_metrics();
     let config = Config::from_env()?;
-    let _lease = VaultProcessLease::acquire(&config.data_dir)?;
     let guard = BootGuard::from_env().context("invalid attested-boot configuration")?;
     let listener = TcpListener::bind(config.bind)
         .await
@@ -219,80 +213,96 @@ async fn serve() -> Result<()> {
         .local_addr()
         .context("the bound address could not be read back")?;
     let workload_auth = config.workload_auth(bound)?;
-    let (state, repository) = match &guard {
+    let (router, bridge, repository, report_state, _host_lease) = match guard {
         Some(guard) => {
-            refuse_plaintext_master_key_at_boot()?;
+            anyhow::ensure!(
+                !workload_auth.allows_legacy_v1(),
+                "attested custody requires audience-bound v2 workload assertions"
+            );
             let profile_path = config.vault_profile_file.as_deref().with_context(|| {
                 format!("{VAULT_PROFILE_FILE_ENV} is required for attested boot")
             })?;
             let profile_bytes = std::fs::read(profile_path).with_context(|| {
                 format!("failed to read vault profile {}", profile_path.display())
             })?;
-            let profile = std::sync::Arc::new(
-                VaultProfile::from_json(&profile_bytes)
-                    .with_context(|| format!("invalid vault profile {}", profile_path.display()))?,
-            );
-            let measured_pcr0 = guard
-                .verify(&NsmAttestation)
-                .map_err(|error| anyhow::anyhow!("attested boot refused: {error}"))?;
-            eprintln!(
-                "signer service: attested boot verified; measured PCR0 {measured_pcr0} \
-                 — pin this in the KMS key policy and the measurements manifest"
-            );
-            (
-                ApiState::attested_pending(
-                    config.database_path(),
-                    config.data_dir.clone(),
+            let profile = std::sync::Arc::new(VaultProfile::from_json(&profile_bytes)?);
+            let runtime = EmbeddedCustodyRuntime::boot(
+                EmbeddedCustodyConfig {
+                    expected_network: profile.environment(),
                     profile,
+                    data_dir: config.data_dir.clone(),
+                    workload_audience: workload_auth.audience().to_string(),
+                    max_body_bytes: config.max_body_bytes,
+                    max_in_flight_requests: config.max_in_flight_requests,
+                },
+                guard,
+            )?;
+            eprintln!(
+                "signer service: attested boot verified; measured PCR0 {} \
+                 — pin this in the KMS key policy and the measurements manifest",
+                runtime.measured_pcr0()
+            );
+            let bridge = config.signclient.as_ref().map(|signclient| {
+                (
+                    signclient.bind,
+                    runtime.signclient_bridge(
+                        signclient.key_id.clone(),
+                        signclient.caller_token.as_str(),
+                    ),
                 )
-                .with_workload_auth(workload_auth.clone())
-                .with_body_limit(config.max_body_bytes)
-                .with_max_in_flight_requests(config.max_in_flight_requests),
-                None,
-            )
+            });
+            (runtime.router(), bridge, None, None, None)
         }
         None => {
+            let lease = VaultProcessLease::acquire(&config.data_dir)?;
             let repository = Store::open(config.database_path())
                 .with_context(|| "failed to open the signer database")?;
             let service = SignerService::open(repository.clone(), &config.data_dir)
                 .context("failed to open the vault for this data directory")?;
+            let state = ApiState::new(service)
+                .with_workload_auth(workload_auth.clone())
+                .with_body_limit(config.max_body_bytes)
+                .with_max_in_flight_requests(config.max_in_flight_requests);
+            let bridge = config.signclient.as_ref().map(|signclient| {
+                (
+                    signclient.bind,
+                    SignClientBridge::new(
+                        state.clone(),
+                        signclient.key_id.clone(),
+                        signclient.caller_token.as_str(),
+                    ),
+                )
+            });
+            if let Some((_, bridge)) = &bridge {
+                bridge
+                    .preflight()
+                    .await
+                    .map_err(anyhow::Error::msg)
+                    .context("the SignClient caller/key binding failed startup validation")?;
+            }
             (
-                ApiState::new(service)
-                    .with_workload_auth(workload_auth.clone())
-                    .with_body_limit(config.max_body_bytes)
-                    .with_max_in_flight_requests(config.max_in_flight_requests),
+                api::router(state.clone()),
+                bridge,
                 Some(repository),
+                Some(state),
+                Some(lease),
             )
         }
     };
-
-    let bridge = config.signclient.as_ref().map(|signclient| {
-        (
-            signclient.bind,
-            SignClientBridge::new(
-                state.clone(),
-                signclient.key_id.clone(),
-                signclient.caller_token.as_str(),
-            ),
-        )
-    });
-    if state.service_snapshot().is_some() {
-        if let Some((_, bridge)) = &bridge {
-            bridge
-                .preflight()
-                .await
-                .map_err(anyhow::Error::msg)
-                .context("the SignClient caller/key binding failed startup validation")?;
-        }
-    }
-    report(repository.as_ref(), &state, &config, &workload_auth, bound)?;
+    report(
+        repository.as_ref(),
+        report_state.as_ref(),
+        &config,
+        &workload_auth,
+        bound,
+    )?;
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let signal_task = tokio::spawn(async move {
         shutdown_signal().await;
         let _ = shutdown_sender.send(true);
     });
     let http = async {
-        axum::serve(listener, api::router(state))
+        axum::serve(listener, router)
             .with_graceful_shutdown(wait_for_shutdown(shutdown_receiver.clone()))
             .await
             .context("the signer HTTP service stopped serving")
@@ -323,62 +333,6 @@ async fn wait_for_shutdown(mut receiver: watch::Receiver<bool>) {
     }
 }
 
-/// Exclusive operating-system lease for one signer data directory.
-///
-/// SQLite protects individual transactions, but the rolling-window decision
-/// spans policy evaluation, signing and the final transaction. Refusing a
-/// second process is therefore part of the policy boundary, not deployment
-/// advice. The file remains on disk for diagnostics; the OS releases its lock
-/// when the process exits or crashes.
-#[derive(Debug)]
-struct VaultProcessLease {
-    _file: File,
-}
-
-impl VaultProcessLease {
-    fn acquire(data_dir: &Path) -> Result<Self> {
-        std::fs::create_dir_all(data_dir).with_context(|| {
-            format!(
-                "failed to create signer data directory {}",
-                data_dir.display()
-            )
-        })?;
-        let path = data_dir.join(PROCESS_LOCK_FILE);
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&path)
-            .with_context(|| format!("failed to open signer process lock {}", path.display()))?;
-        file.try_lock_exclusive().with_context(|| {
-            format!(
-                "signer data directory {} is already in use by another signer process",
-                data_dir.display()
-            )
-        })?;
-        Ok(Self { _file: file })
-    }
-}
-
-/// RC2 at the process boundary: a plaintext master key that made it into an
-/// attested deployment's environment is a configuration the enclave refuses to
-/// start with. The release path (`/provision`) refuses it too; two locked
-/// doors in front of the one downgrade that would put the whole vault back on
-/// the host.
-fn refuse_plaintext_master_key_at_boot() -> Result<()> {
-    let supplied = env::var(MASTER_KEY_ENV)
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false);
-    if supplied {
-        bail!(
-            "{MASTER_KEY_ENV} is set in an attested deployment; the master key is released \
-             through /provision by the attested KMS path or it does not exist"
-        );
-    }
-    Ok(())
-}
-
 /// What an operator needs to see once, and what stays invisible: the fingerprint
 /// identifies the master key without being derived from anything signable, and
 /// the counts say whether this directory is the vault they meant to open. In
@@ -388,13 +342,15 @@ fn refuse_plaintext_master_key_at_boot() -> Result<()> {
 /// here.
 fn report(
     repository: Option<&Store>,
-    state: &ApiState,
+    state: Option<&ApiState>,
     config: &Config,
     workload_auth: &WorkloadAuthPolicy,
     bound: SocketAddr,
 ) -> Result<()> {
     eprintln!("signer service: listening on {bound}");
-    let admins = if let (Some(service), Some(repository)) = (state.service_snapshot(), repository) {
+    let admins = if let (Some(service), Some(repository)) =
+        (state.and_then(ApiState::service_snapshot), repository)
+    {
         let keys = repository
             .list_signer_keys()
             .context("failed to read the custody keys at startup")?;
