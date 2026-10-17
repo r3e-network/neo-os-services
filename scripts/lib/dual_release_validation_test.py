@@ -1,5 +1,6 @@
 """Unit fixtures only. No fixture is written under the production measurement registry."""
 import copy
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
@@ -242,6 +243,60 @@ class Validation(unittest.TestCase):
             self.assertTrue(v.affected(name),name)
         for name in ['README.md','apps/web/a.ts','workers/other/a','crates-other/x']:
             self.assertFalse(v.affected(name),name)
+
+    def test_source_selector_matches_actual_packaging_inputs(self):
+        spec = importlib.util.spec_from_file_location(
+            'dual_packaging', ROOT / 'deploy/nitro/build-dual-enclave.py')
+        packaging = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(packaging)
+        # Compare the independently maintained selectors against the actual
+        # tracked tree, plus future descendants and near-miss path boundaries.
+        names = subprocess.check_output(
+            ['git', '-C', str(ROOT), 'ls-files', '-z']).decode().split('\0')
+        names.extend(prefix + 'future-input.rs' for prefix in packaging.SOURCE_DIRS)
+        names.extend(['crates-other/input.rs', 'workers/neo-signer-other/input.rs',
+                      'deploy/nitro/Dockerfile.dual-enclave.cross.bak',
+                      'deploy/nitro/cross-inputs.lock.json.bak',
+                      'deploy/nitro/dual_cross.py.bak', 'apps/web/example.ts'])
+        for name in names:
+            if name:
+                with self.subTest(name=name):
+                    self.assertEqual(v.selected(name), packaging.wanted_source(name))
+                    if packaging.wanted_source(name):
+                        self.assertTrue(v.affected(name))
+
+    def test_cross_build_inputs_bind_bytes_modes_and_required_closure(self):
+        names = ('deploy/nitro/Dockerfile.dual-enclave.cross',
+                 'deploy/nitro/cross-inputs.lock.json', 'deploy/nitro/dual_cross.py')
+        class CaptureFixture:
+            pass
+        for name in names:
+            with self.subTest(name=name):
+                data = (ROOT / name).read_bytes()
+                original = {name: ('100644', data)}
+                self.assertTrue(v.affected(name))
+                self.assertEqual(v.inventory(original), [
+                    {'path': name, 'mode': '100644', 'size': len(data),
+                     'sha256': v.sha(data)}])
+                self.assertNotEqual(v.inventory(original), v.inventory({
+                    name: ('100644', data + b'\nchanged\n')}))
+                self.assertNotEqual(v.inventory(original), v.inventory({
+                    name: ('100755', data)}))
+                self.assertNotEqual(v.inventory(original), v.inventory({}))
+                with self.assertRaises(ValueError):
+                    v.inventory({name: ('120000', data)})
+                capture = CaptureFixture()
+                capture.files = {p: ('100644', b'unit-only')
+                                 for p in (*v.SOURCE_FILES, *v.RECIPE_FILES)}
+                capture.files['apps/web/lib/nitro-dual-release-registry.ts'] = (
+                    '100644', b'export const COMMITTED_DUAL_NITRO_MEASUREMENTS: readonly unknown[] = Object.freeze([]);')
+                capture.changes = [{'path': name, 'status': 'M'}]
+                errors, _ = gate.audit(capture)
+                self.assertIn('DUAL_SELECTED_INPUT_MEASUREMENT_ABSENT',
+                              [error['code'] for error in errors])
+                capture.files.pop(name)
+                errors, _ = gate.audit(capture)
+                self.assertIn({'code': 'DUAL_BUILD_INPUT_MISSING', 'message': name}, errors)
 
     def test_inventory_rejects_links_private_paths_and_binds_bytes(self):
         for name in ['crates/.env.local','vendor/keys/a','crates/a.pem']:

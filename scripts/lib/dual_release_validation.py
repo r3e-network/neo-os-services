@@ -14,7 +14,8 @@ BUNDLE = ('public-input.json', 'mainnet.json', 'testnet.json', 'network-profiles
           'context-manifest.json', 'candidate-publication.json', 'candidate-build-evidence.json')
 SOURCE_FILES = ('Cargo.toml', 'Cargo.lock', 'config/networks/mainnet.json',
                 'config/networks/testnet.json', 'deploy/nitro/Dockerfile.dual-enclave',
-                'deploy/nitro/dual-prepare.rs')
+                'deploy/nitro/dual-prepare.rs', 'deploy/nitro/Dockerfile.dual-enclave.cross',
+                'deploy/nitro/cross-inputs.lock.json', 'deploy/nitro/dual_cross.py')
 SOURCE_DIRS = ('vendor/', 'crates/', 'workers/neo-signer/',
                'workers/nitro-enclave-host/', 'workers/neo-os-relayer/')
 RECIPE_FILES = ('deploy/nitro/build-dual-enclave.py',)
