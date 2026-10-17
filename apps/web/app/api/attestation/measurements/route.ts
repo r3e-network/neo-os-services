@@ -22,6 +22,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { normalizeNetworkKey } from '@/lib/networks';
+import { dualNitroMeasurements } from '@/lib/nitro-measurements';
 
 // Resolve `deploy/nitro/measurements` at RUNTIME (never as a bundler module
 // import). The Next.js app runs from the repo's `apps/web` dir, so the manifest
@@ -74,6 +75,8 @@ function normalizePcr(value: unknown): string | null {
 function toManifest(raw: unknown): MeasurementManifest | null {
   if (!raw || typeof raw !== 'object') return null;
   const record = raw as Record<string, unknown>;
+  // Dual/candidate records are never admitted by a directory scan.
+  if (record.schema || record.networks || record.app_ids) return null;
   const pcr0 = normalizePcr(record.pcr0);
   const pcr1 = normalizePcr(record.pcr1);
   const pcr2 = normalizePcr(record.pcr2);
@@ -122,6 +125,11 @@ export async function GET(request: Request) {
   const networkFilter = normalizeNetworkKey(url.searchParams.get('network'));
   const releaseFilter = String(url.searchParams.get('release') ?? '').trim();
 
+  // Select from the complete registry before applying display-only filters.
+  let dualMeasurements = dualNitroMeasurements();
+  if (networkFilter)
+    dualMeasurements = dualMeasurements.filter((m) => m.networks.includes(networkFilter));
+  if (releaseFilter) dualMeasurements = dualMeasurements.filter((m) => m.release === releaseFilter);
   let manifests = loadManifests();
   if (networkFilter) manifests = manifests.filter((m) => m.network === networkFilter);
   if (releaseFilter) manifests = manifests.filter((m) => m.release === releaseFilter);
@@ -145,6 +153,9 @@ export async function GET(request: Request) {
         '641a0321a3e244efe456463195d606317ed7cdcc3c1756e09893f3c68f79bb5b',
       ],
       measurements: manifests,
+      dual_measurements_version: 1,
+      dual_measurements: dualMeasurements,
+      dual_count: dualMeasurements.length,
       note:
         manifests.length === 0
           ? 'No PCR manifest committed yet. Manifests are produced by deploy/nitro/build-enclave-eif.sh on the build box and committed under deploy/nitro/measurements/.'

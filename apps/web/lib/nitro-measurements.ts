@@ -1,3 +1,6 @@
+import { parseDualNitroMeasurement, type DualNitroMeasurement } from './nitro-dual-measurement';
+import { COMMITTED_DUAL_NITRO_MEASUREMENTS } from './nitro-dual-release-registry';
+
 /**
  * Which committed Nitro measurement the server-side verifier accepts, and what
  * it says about every other measurement a document can carry.
@@ -53,13 +56,17 @@ export interface NitroMeasurement {
   pcr2: string;
 }
 
+export type NitroImageMeasurement = NitroMeasurement | DualNitroMeasurement;
+
 export interface NitroMeasurementSet {
+  /** Complete registered dual history, not a current-pin allowlist. */
+  dual_measurements?: readonly unknown[];
   measurements: readonly NitroMeasurement[];
   /** Releases whose `git_commit` a ref reaches. */
   reproducible: readonly string[];
 }
 
-export type NitroPins = Readonly<Record<NitroNetwork, NitroMeasurement | null>>;
+export type NitroPins = Readonly<Record<NitroNetwork, NitroImageMeasurement | null>>;
 
 /**
  * - `reproducible-match`: the PCRs equal the pin, so anybody can rebuild them.
@@ -82,6 +89,9 @@ export interface NitroMeasurementClassification {
   /** The pin for that manifest's network, or null when nothing there is reproducible. */
   pinned_release: string | null;
   detail: string;
+  /** Present only for a shared dual image; membership is not attested network proof. */
+  networks?: readonly NitroNetwork[];
+  eligible_networks?: readonly NitroNetwork[];
 }
 
 export interface NitroPcrs {
@@ -177,7 +187,10 @@ function compareNatural(left: string, right: string): number {
  * decide first, as numbers (`.10` after `.9`), whatever the id's prefix; then
  * the build time; then the id itself, digits compared as numbers.
  */
-export function compareNitroReleases(a: NitroMeasurement, b: NitroMeasurement): number {
+export function compareNitroReleases(
+  a: Pick<NitroMeasurement, 'release' | 'built_at'>,
+  b: Pick<NitroMeasurement, 'release' | 'built_at'>
+): number {
   const left = releaseOrdinal(a.release);
   const right = releaseOrdinal(b.release);
   if (left && right) {
@@ -195,31 +208,126 @@ export function compareNitroReleases(a: NitroMeasurement, b: NitroMeasurement): 
  * Throws on a reproducible entry with no committed manifest, so a pin pointed
  * at a missing manifest fails at import rather than verifying against nothing.
  */
+function imageNetworks(entry: NitroImageMeasurement): readonly NitroNetwork[] {
+  return entry.network === null ? entry.networks : [entry.network];
+}
+
+/**
+ * The inherited comparator chooses dates only when BOTH IDs carry a date.
+ * That relation can be non-transitive across mixed ID formats. Do not change
+ * legacy-only semantics: instead require a strict total order over the complete
+ * registered history whenever a dual image participates, even if unselected.
+ */
+function requireConsistentDualHistoryOrder(entries: readonly NitroImageMeasurement[]): void {
+  const ordered = [...entries].sort(compareNitroReleases);
+  for (let left = 0; left < ordered.length; left += 1) {
+    for (let right = left + 1; right < ordered.length; right += 1) {
+      const forward = compareNitroReleases(ordered[left], ordered[right]);
+      const backward = compareNitroReleases(ordered[right], ordered[left]);
+      // Checking every pair, not just adjacent entries, establishes a total
+      // order for this accepted set. Sorting alone cannot prove transitivity.
+      if (
+        !Number.isFinite(forward) ||
+        !Number.isFinite(backward) ||
+        forward >= 0 ||
+        backward <= 0
+      ) {
+        throw new Error('inconsistent Nitro release ordering in dual history');
+      }
+    }
+  }
+}
+
+/** Validate the entire registered supersedes graph, independently of pin eligibility. */
+function requireAcyclicDualHistory(entries: readonly NitroImageMeasurement[]): void {
+  const incoming = new Map(entries.map((entry) => [entry.release, 0]));
+  const edges = new Map(
+    entries.map((entry) => [entry.release, entry.network === null ? entry.supersedes : []])
+  );
+  for (const [release, targets] of edges) {
+    for (const target of targets) {
+      if (!incoming.has(target))
+        throw new Error(`invalid Nitro supersession ${release} -> ${target}`);
+      incoming.set(target, incoming.get(target)! + 1);
+    }
+  }
+  const ready = [...incoming].filter(([, count]) => count === 0).map(([release]) => release);
+  for (let index = 0; index < ready.length; index += 1) {
+    for (const target of edges.get(ready[index])!) {
+      const remaining = incoming.get(target)! - 1;
+      incoming.set(target, remaining);
+      if (remaining === 0) ready.push(target);
+    }
+  }
+  if (ready.length !== entries.length) throw new Error('cyclic Nitro supersession');
+}
+
+function registeredHistory(set: NitroMeasurementSet): {
+  entries: NitroImageMeasurement[];
+  retired: Set<string>;
+} {
+  const entries = [
+    ...set.measurements,
+    ...(set.dual_measurements ?? []).map(parseDualNitroMeasurement),
+  ];
+  const byRelease = new Map<string, NitroImageMeasurement>();
+  for (const entry of entries) {
+    if (byRelease.has(entry.release))
+      throw new Error(`duplicate Nitro release ID ${entry.release}`);
+    byRelease.set(entry.release, entry);
+  }
+  if (entries.some((entry) => entry.network === null)) {
+    requireAcyclicDualHistory(entries);
+    requireConsistentDualHistoryOrder(entries);
+  }
+  const retired = new Set<string>();
+  for (const entry of entries) {
+    if (entry.network !== null) {
+      if (entry.superseded_by) retired.add(entry.release);
+      continue;
+    }
+    for (const id of entry.supersedes) {
+      const target = byRelease.get(id);
+      // Ordering and graph acyclicity were validated independently above.
+      if (
+        !target ||
+        compareNitroReleases(target, entry) >= 0 ||
+        !imageNetworks(target).every((network) => entry.networks.includes(network))
+      ) {
+        throw new Error(`invalid Nitro supersession ${entry.release} -> ${id}`);
+      }
+      // Retirement is independent of whether the superseding entry is eligible.
+      retired.add(id);
+    }
+  }
+  return { entries, retired };
+}
+
 export function selectNitroPins(set: NitroMeasurementSet): NitroPins {
-  const byRelease = new Map(set.measurements.map((entry) => [entry.release, entry]));
-  const pins: Record<NitroNetwork, NitroMeasurement | null> = { mainnet: null, testnet: null };
+  const { entries, retired } = registeredHistory(set);
+  const byRelease = new Map(entries.map((entry) => [entry.release, entry]));
+  const pins: Record<NitroNetwork, NitroImageMeasurement | null> = { mainnet: null, testnet: null };
   const seen = new Set<string>();
   for (const release of set.reproducible) {
-    if (seen.has(release)) {
-      throw new Error(`REPRODUCIBLE_NITRO_RELEASES lists ${release} twice`);
-    }
+    if (seen.has(release)) throw new Error(`REPRODUCIBLE_NITRO_RELEASES lists ${release} twice`);
     seen.add(release);
     const entry = byRelease.get(release);
-    if (!entry) {
+    if (!entry)
       throw new Error(
         `REPRODUCIBLE_NITRO_RELEASES names ${release}, which has no committed manifest under deploy/nitro/measurements/`
       );
+    if (retired.has(release)) continue;
+    for (const network of imageNetworks(entry)) {
+      const current = pins[network];
+      if (!current || compareNitroReleases(entry, current) > 0) pins[network] = entry;
     }
-    // A verifier must not pin a superseded release (manifest.schema.json).
-    if (entry.superseded_by) continue;
-    const current = pins[entry.network];
-    if (!current || compareNitroReleases(entry, current) > 0) pins[entry.network] = entry;
   }
   return Object.freeze(pins);
 }
 
 const COMMITTED_SET: NitroMeasurementSet = Object.freeze({
   measurements: COMMITTED_NITRO_MEASUREMENTS,
+  dual_measurements: COMMITTED_DUAL_NITRO_MEASUREMENTS,
   reproducible: REPRODUCIBLE_NITRO_RELEASES,
 });
 // Validate at import: a broken pin must stop the verifier, not weaken it.
@@ -260,13 +368,23 @@ export function classifyNitroMeasurement(
   const pins = selectNitroPins(set);
   const reproducible = new Set(set.reproducible);
   const [pcr0, pcr1, pcr2] = [pcrs.pcr0, pcrs.pcr1, pcrs.pcr2].map(normalizePcr);
-  const matches = set.measurements.filter(
+  const history = registeredHistory(set).entries;
+  const matches = history.filter(
     (entry) => entry.pcr0 === pcr0 && entry.pcr1 === pcr1 && entry.pcr2 === pcr2
   );
-  const pinOf = (entry: NitroMeasurement) => pins[entry.network]?.release ?? null;
+  // Preserve legacy-only behavior; mixed/dual history uses deterministic newest display.
+  if (set.dual_measurements?.length) matches.sort((a, b) => compareNitroReleases(b, a));
+  const eligible = (entry: NitroImageMeasurement) =>
+    imageNetworks(entry).filter((network) => pins[network]?.release === entry.release);
+  const pinOf = (entry: NitroImageMeasurement) =>
+    entry.network === null
+      ? eligible(entry).length
+        ? entry.release
+        : null
+      : (pins[entry.network]?.release ?? null);
   const report = (
     verdict: NitroMeasurementVerdict,
-    entry: NitroMeasurement | null,
+    entry: NitroImageMeasurement | null,
     detail: string
   ): NitroMeasurementClassification => ({
     verdict,
@@ -275,14 +393,27 @@ export function classifyNitroMeasurement(
     git_commit: entry?.git_commit ?? null,
     pinned_release: entry ? pinOf(entry) : null,
     detail,
+    ...(entry?.network === null
+      ? { networks: entry.networks, eligible_networks: eligible(entry) }
+      : {}),
   });
 
-  const pinned = matches.find((entry) => pinOf(entry) === entry.release);
+  const active = matches.filter((entry) => eligible(entry).length > 0);
+  if (active.length > 1 && active.some((entry) => entry.network === null)) {
+    return report(
+      'mismatch',
+      null,
+      'PCR0/1/2 match distinct active image identities involving a dual release; network and release identity are ambiguous.'
+    );
+  }
+  const pinned = active[0];
   if (pinned) {
     return report(
       'reproducible-match',
       pinned,
-      `PCR0/1/2 equal ${pinned.release} (${pinned.network}), the newest release built from a commit the published history reaches (${shortCommit(pinned.git_commit)}); anybody can rebuild it and re-derive them.`
+      pinned.network === null
+        ? `PCR0/1/2 equal current shared image ${pinned.release}; eligible networks: ${eligible(pinned).join(', ')}. Image membership does not prove a request network or the exact running source commit.`
+        : `PCR0/1/2 equal ${pinned.release} (${pinned.network}), the newest release built from a commit the published history reaches (${shortCommit(pinned.git_commit)}); anybody can rebuild it and re-derive them.`
     );
   }
   const retired = matches.find((entry) => reproducible.has(entry.release));
@@ -290,7 +421,9 @@ export function classifyNitroMeasurement(
     return report(
       'mismatch',
       retired,
-      `PCR0/1/2 equal ${retired.release} (${retired.network}), which can be rebuilt but is not the ${retired.network} pin (${pinOf(retired) ?? 'none'}).`
+      retired.network === null
+        ? `PCR0/1/2 equal historical shared image ${retired.release}, which is reproducible but is not a current pin on either network.`
+        : `PCR0/1/2 equal ${retired.release} (${retired.network}), which can be rebuilt but is not the ${retired.network} pin (${pinOf(retired) ?? 'none'}).`
     );
   }
   const unreproducible = matches[0];
@@ -298,7 +431,9 @@ export function classifyNitroMeasurement(
     return report(
       'measured-but-unreproducible',
       unreproducible,
-      `PCR0/1/2 equal ${unreproducible.release} (${unreproducible.network}), which build-enclave-eif.sh measured from ${shortCommit(unreproducible.git_commit)}, a commit the published history does not reach, so nobody can rebuild the image and re-derive them. The ${unreproducible.network} pin is ${pinOf(unreproducible) ?? 'empty'}.`
+      unreproducible.network === null
+        ? `PCR0/1/2 equal historical shared image ${unreproducible.release}, which is not listed as reproducible; image membership proves no network.`
+        : `PCR0/1/2 equal ${unreproducible.release} (${unreproducible.network}), which build-enclave-eif.sh measured from ${shortCommit(unreproducible.git_commit)}, a commit the published history does not reach, so nobody can rebuild the image and re-derive them. The ${unreproducible.network} pin is ${pinOf(unreproducible) ?? 'empty'}.`
     );
   }
   return report('mismatch', null, 'PCR0/1/2 match no committed measurement manifest.');
@@ -314,3 +449,17 @@ export const UNVERIFIED_NITRO_MEASUREMENT: NitroMeasurementClassification = Obje
   detail:
     'The document did not verify against the pinned AWS Nitro root, so its PCRs prove nothing.',
 });
+
+/** Versioned shared-image history. Query filtering must not change pin selection. */
+export function dualNitroMeasurements(set: NitroMeasurementSet = activeSet) {
+  const pins = selectNitroPins(set);
+  return registeredHistory(set)
+    .entries.filter((entry): entry is DualNitroMeasurement => entry.network === null)
+    .sort((a, b) => compareNitroReleases(b, a))
+    .map((entry) => ({
+      ...entry,
+      eligible_networks: imageNetworks(entry).filter(
+        (network) => pins[network]?.release === entry.release
+      ),
+    }));
+}

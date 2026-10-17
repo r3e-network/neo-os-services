@@ -1,0 +1,176 @@
+# Dual measured image. Generated ENV map comes only from reviewed public input.
+# Build through build-dual-enclave.py; direct builds fail without its map/files.
+# Only enclave_host is a business process; nitro_init and socat are plumbing.
+# No signer_service, listener, keys, snapshots or credentials enter the runtime.
+FROM rust:1.98-bookworm@sha256:82150a52ec202c1b14d7817e14516c392bb7f5cfebd88f1ed531cb37ebd39922 AS rustbuild
+WORKDIR /build
+ENV CARGO_TERM_COLOR=never CARGO_BUILD_JOBS=1 SOURCE_DATE_EPOCH=1749859200
+ENV NODE_ENV=production MORPHEUS_ATTESTED_BOOT=require MORPHEUS_ALLOW_EPHEMERAL_KEY=0
+
+# The workspace graph (root manifest + lockfile + every member manifest) is
+# what `--locked` resolves; copying sources separately keeps this layer cached
+# across source edits.
+COPY Cargo.toml Cargo.lock ./
+# The root manifest carries [patch.crates-io] entries pointing at vendor/
+# (boa_engine/boa_parser/boa_gc with their icu tilde-pins loosened — see the
+# note in Cargo.toml); a patch whose path is missing fails the build, so the
+# vendored manifests must land before fetch, next to the other manifests.
+COPY vendor ./vendor
+COPY crates/neo-os-core/Cargo.toml crates/neo-os-core/Cargo.toml
+COPY crates/nitro-attest/Cargo.toml crates/nitro-attest/Cargo.toml
+COPY crates/nitro-init/Cargo.toml crates/nitro-init/Cargo.toml
+COPY crates/neo-os-compute/Cargo.toml crates/neo-os-compute/Cargo.toml
+COPY crates/neo-os-games/Cargo.toml crates/neo-os-games/Cargo.toml
+COPY crates/neo-os-chain-n3/Cargo.toml crates/neo-os-chain-n3/Cargo.toml
+COPY crates/neo-os-chain-evm/Cargo.toml crates/neo-os-chain-evm/Cargo.toml
+COPY crates/neo-os-relayer-store/Cargo.toml crates/neo-os-relayer-store/Cargo.toml
+COPY crates/neo-os-service-runtime/Cargo.toml crates/neo-os-service-runtime/Cargo.toml
+COPY workers/neo-signer/Cargo.toml workers/neo-signer/Cargo.toml
+COPY workers/nitro-enclave-host/Cargo.toml workers/nitro-enclave-host/Cargo.toml
+COPY workers/neo-os-relayer/Cargo.toml workers/neo-os-relayer/Cargo.toml
+# Stub sources so `cargo build --locked` can resolve the graph before the real
+# sources land (the classic dummy-main pre-compile trick; manifests are the
+# resolution input, the stubs just let the fetch layer cache).
+RUN mkdir -p crates/neo-os-core/src crates/nitro-attest/src crates/nitro-init/src \
+      crates/neo-os-compute/src crates/neo-os-games/src \
+      crates/neo-os-chain-n3/src crates/neo-os-chain-evm/src \
+      crates/neo-os-relayer-store/src crates/neo-os-service-runtime/src \
+      workers/neo-signer/src workers/nitro-enclave-host/src workers/neo-os-relayer/src \
+  && echo "pub fn placeholder() {}" > crates/neo-os-core/src/lib.rs \
+  && echo "pub fn placeholder() {}" > crates/nitro-attest/src/lib.rs \
+  && echo "pub fn placeholder() {}" > crates/nitro-init/src/lib.rs \
+  && echo "pub fn placeholder() {}" > crates/neo-os-compute/src/lib.rs \
+  && echo "pub fn placeholder() {}" > crates/neo-os-games/src/lib.rs \
+  && echo "pub fn placeholder() {}" > crates/neo-os-chain-n3/src/lib.rs \
+  && echo "pub fn placeholder() {}" > crates/neo-os-chain-evm/src/lib.rs \
+  && echo "pub fn placeholder() {}" > crates/neo-os-relayer-store/src/lib.rs \
+  && echo "pub fn placeholder() {}" > crates/neo-os-service-runtime/src/lib.rs \
+  && echo "pub fn placeholder() {}" > workers/neo-signer/src/lib.rs \
+  && echo "pub fn placeholder() {}" > workers/nitro-enclave-host/src/lib.rs \
+  && echo "fn main() {}" > workers/nitro-enclave-host/src/main.rs \
+  && echo "pub fn placeholder() {}" > workers/neo-os-relayer/src/lib.rs \
+  && echo "fn main() {}" > workers/neo-os-relayer/src/main.rs
+RUN cargo fetch --locked
+
+COPY crates/neo-os-core/src crates/neo-os-core/src
+COPY crates/nitro-attest/src crates/nitro-attest/src
+COPY crates/nitro-init/src crates/nitro-init/src
+COPY crates/neo-os-compute/src crates/neo-os-compute/src
+COPY crates/neo-os-games/src crates/neo-os-games/src
+COPY crates/neo-os-chain-evm/src crates/neo-os-chain-evm/src
+COPY crates/neo-os-service-runtime/src crates/neo-os-service-runtime/src
+COPY workers/neo-signer/src workers/neo-signer/src
+COPY workers/neo-signer/build.rs workers/neo-signer/build.rs
+COPY workers/neo-signer/proto workers/neo-signer/proto
+COPY workers/nitro-enclave-host/src workers/nitro-enclave-host/src
+COPY config/networks/mainnet.json config/networks/mainnet.json
+COPY config/networks/testnet.json config/networks/testnet.json
+COPY deploy/nitro/dual-prepare.rs workers/nitro-enclave-host/examples/dual_prepare.rs
+# Release build of the two binaries this image runs: the frontier and its PID 1
+# supervisor. --locked fails if Cargo.lock is out of sync (no implicit lockfile
+# mutation of the pinned graph). The binaries are deterministic for identical
+# inputs + toolchain (edition/workspace settings are committed; no volatile
+# -C metadata inputs).
+RUN cargo build --release --locked \
+      -p nitro-enclave-host --bin enclave_host --example dual_prepare \
+      -p nitro-init --bin nitro_init
+
+# This build-only helper calls the exact host parser and custody_bootstrap::prepare.
+# It does not boot custody, read environment configuration or initialize state.
+COPY public /app/config
+RUN timeout 30 /build/target/release/examples/dual_prepare /app/config/network-profiles.json > /app/config/custody-build-validation.json
+
+# ---------------------------------------------------------------------------
+# Stage 2 — the runtime: debian slim + two Rust binaries (the PID 1 supervisor
+# and the frontier it starts).
+# ---------------------------------------------------------------------------
+# Pinned to the base's resolved digest (sha256:88200866…, resolved 2026-09-02 from
+# the Docker Hub registry API). Dockerfile.signer pins this exact digest too, so
+# the two measured images share one base instead of drifting under a floating tag.
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+
+# ca-certificates: the host performs END-TO-END TLS to the real provider
+# hostnames through the enclave egress (the oracle read lanes + provider
+# fetches; the vsock-proxy forwards only ciphertext and cannot MITM).
+# socat: bridges vsock:8787 -> the internal server and the egress proxy port
+# (nitro_init starts both, and they are the only AF_VSOCK speakers here).
+# iproute2: nitro_init runs `ip link set dev lo up` before anything uses
+# 127.0.0.1 (its own readiness probe + the localhost socat bridges), because
+# whether a Nitro enclave kernel leaves `lo` up has never been observed on a box
+# that could check, and the slim base ships no `ip`. PID 1 here runs as root, so
+# the call needs no capability and costs nothing when `lo` is already up; the
+# custody image is where it matters (USER signer) — see the verify-by-hand note
+# in docs/runbooks/custody-enclave-deployment.md.
+# Pin apt versions for reproducibility of the OS layer (apt drift changes PCR0).
+# REFRESH: these versions track Debian bookworm and roll on security updates;
+# when the build fails because a pinned version was superseded, look up the
+# current bookworm version (https://sources.debian.org/api/src/<pkg>/ or
+# `apt-cache policy <pkg>` inside the base image) and bump. Verified 2026-06-14.
+#
+# Reproducibility: besides pinning versions, we DELETE the apt/dpkg logs and
+# caches in the SAME layer. /var/log/dpkg.log + /var/log/apt/history.log embed
+# wall-clock timestamps IN THEIR CONTENT (not just mtime), so leaving them makes
+# the layer's diff_id — and therefore PCR0/PCR2 — vary on every build. mtimes are
+# normalized globally by the final SOURCE_DATE_EPOCH pass below.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+       ca-certificates=20230311+deb12u1 \
+       socat=1.7.4.4-2 \
+       iproute2=6.1.0-3 \
+  && rm -rf /var/lib/apt/lists/* /var/log/* /var/cache/* /var/lib/dpkg/*-old
+
+WORKDIR /app
+
+COPY --from=rustbuild /build/target/release/enclave_host /app/bin/enclave_host
+COPY --from=rustbuild /build/target/release/nitro_init /app/bin/nitro_init
+COPY --from=rustbuild /app/config /app/config
+RUN chmod +x /app/bin/enclave_host /app/bin/nitro_init
+
+# --- Reproducibility: strip build-time timestamps across the WHOLE rootfs. ---
+# SOURCE_DATE_EPOCH = 2026-06-14T00:00:00Z (1749859200). nitro-cli derives
+# PCR0/PCR2 from the FLATTENED image filesystem, so every file's final mtime must
+# be fixed — not just /app. The apt layer (ca-certificates/socat + dpkg metadata
+# under /usr,/etc,/var) otherwise carries build-time mtimes that flip PCR2 on each
+# rebuild. This final pass normalizes the entire root device (pruning virtual
+# mounts and Docker-managed resolver/hostname files) to the fixed epoch, so
+# flattened mtimes
+# are deterministic regardless of which layer wrote each file. The cost is a
+# whole-rootfs copy-up in this layer (build-host disk only); the EIF is unchanged.
+# --no-dereference touches symlinks themselves (e.g. /etc/ssl/certs/*.0).
+ENV SOURCE_DATE_EPOCH=1749859200
+# -xdev alone still visits mount points themselves. Do not swallow errors on
+# measured files merely because virtual mounts cannot have their mtimes set.
+RUN find / -xdev \
+  \( -path /proc -o -path /sys -o -path /dev \
+     -o -path /etc/hosts -o -path /etc/hostname -o -path /etc/resolv.conf \) -prune \
+  -o -exec touch --no-dereference --date=@1749859200 {} +
+
+# Force the no-MITM posture inside the enclave (see vsock-proxy.allowlist.yaml /
+# design §3): never honor a host-supplied provider base-URL override. The full
+# HTTPS-only network override is applied via runtime env on the box; this default
+# closes the most dangerous override at the image level.
+ENV MORPHEUS_ALLOW_UNSAFE_PROVIDER_BASE_URL_OVERRIDE=
+# Fail-closed production markers the host reads: the runtime env gate on
+# ALLOW_UNPINNED-style overrides and the decrypt gate's production reassert
+# cannot be talked out of their posture by /provision.
+ENV NODE_ENV=production
+ENV MORPHEUS_ATTESTED_BOOT=require
+ENV MORPHEUS_ALLOW_EPHEMERAL_KEY=0
+# DUAL_NETWORK_ENV
+# Public vsock port the host bridges to (nitro_init forwards it to the internal
+# port the frontier binds).
+ENV NITRO_SIGNER_VSOCK_PORT=8787
+ENV ENCLAVE_INTERNAL_PORT=8081
+# Outbound egress (in-enclave HTTPS_PROXY -> parent vsock -> host allow-list
+# proxy). nitro_init derives HTTPS_PROXY from these and hands it to every child;
+# reqwest (the host's oracle/provider client) honors the standard proxy env
+# names. CID 3 is the Nitro parent instance. These are defaults; nitro_init
+# reads the same keys at boot.
+ENV ENCLAVE_HOST_CID=3
+ENV ENCLAVE_EGRESS_VSOCK_PORT=8788
+ENV ENCLAVE_PROXY_PORT=3128
+
+# PID 1 is Rust too: nitro_init brings loopback up, starts the egress bridge,
+# the frontier and (once the frontier listens) the vsock bridge, then fail-stops
+# the enclave when any of them goes away. See crates/nitro-init.
+ENTRYPOINT ["/app/bin/nitro_init", "frontier"]

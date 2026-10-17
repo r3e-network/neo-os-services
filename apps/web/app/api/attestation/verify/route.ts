@@ -15,7 +15,7 @@ import {
   UNVERIFIED_NITRO_MEASUREMENT,
   classifyNitroMeasurement,
   nitroMeasurementPins,
-  type NitroMeasurement,
+  type NitroImageMeasurement,
   type NitroMeasurementClassification,
   type NitroPcrs,
 } from '@/lib/nitro-measurements';
@@ -200,8 +200,17 @@ const handlePost = createRateLimitedHandler(
     // document's claimed PCRs. A document matching no manifest, or a network
     // with nothing pinned, is verified against no PCRs and cannot pass.
     const claimed = attestationDocument ? claimedPcrs(attestationDocument) : null;
-    const claimedNetwork = claimed ? classifyNitroMeasurement(claimed).network : null;
-    const comparedPin: NitroMeasurement | null = claimedNetwork ? pins[claimedNetwork] : null;
+    const claimedMeasurement = claimed ? classifyNitroMeasurement(claimed) : null;
+    const claimedNetwork = claimedMeasurement?.network ?? null;
+    // A shared image never picks a network from caller metadata. Only a unique
+    // selected image identity supplies PCRs; old/ambiguous dual tuples have no fallback.
+    const comparedPin: NitroImageMeasurement | null = claimedMeasurement?.networks
+      ? claimedMeasurement.verdict === 'reproducible-match'
+        ? (Object.values(pins).find((pin) => pin?.release === claimedMeasurement.release) ?? null)
+        : null
+      : claimedNetwork
+        ? pins[claimedNetwork]
+        : null;
     const expectedPcrs = comparedPin
       ? { pcr0: comparedPin.pcr0, pcr1: comparedPin.pcr1, pcr2: comparedPin.pcr2 }
       : {};
@@ -264,7 +273,10 @@ const handlePost = createRateLimitedHandler(
     const nitroChainVerified = Boolean(nitro?.measurement_chain_verified);
     // A verified chain over a document that is not bound to THIS result proves
     // an enclave ran, not that it produced the result being verified.
+    const dualImage = comparedPin?.network === null || Boolean(measurement?.networks);
+    // No dual network/result proof protocol is supported in this release.
     const resultBindingVerified =
+      !dualImage &&
       nitroChainVerified &&
       derivedBindings.bindsResult &&
       (derivedBindings.userDataHex ? Boolean(nitro?.user_data_bound_ok) : true) &&
@@ -303,6 +315,14 @@ const handlePost = createRateLimitedHandler(
 
     const result = {
       ...hashBinding,
+      ...(dualImage
+        ? {
+            network_binding_checked: false,
+            network_binding_verified: false,
+            full_attestation_ok: false,
+            ok: false,
+          }
+        : {}),
       result_binding_source: derivedBindings.source,
       // Named so a consumer can tell "we could not check" from "it failed".
       result_binding_checked: derivedBindings.source !== 'none',
