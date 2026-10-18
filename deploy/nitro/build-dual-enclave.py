@@ -493,7 +493,11 @@ def canonical(repo, commit, env):
 def measurements(data):
     value = parse(data)
     m = value.get('Measurements', {})
-    require(m.get('HashAlgorithm') == 'Sha384 { ... }' or m.get('HashAlgorithm') == 'SHA384', 'unsupported measurement hash')
+    # nitro-cli 1.4 reports `Sha384 { ... }`; 1.5 renamed the same 48-byte
+    # measurement enum to `Sha512_48 { .. }`. The PCR length check below
+    # (96 hex = 48 bytes) keeps the algorithm binding, so the label rename is
+    # accepted without weakening it.
+    require(m.get('HashAlgorithm') in ('Sha384 { ... }', 'SHA384', 'Sha512_48 { .. }', 'SHA512_48'), 'unsupported measurement hash')
     # Normalize the CLI's historical Debug name only; never substitute PCRs.
     return {k: digest(m.get(k), 96) for k in ('PCR0', 'PCR1', 'PCR2')}
 
