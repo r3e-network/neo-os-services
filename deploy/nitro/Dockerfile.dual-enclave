@@ -138,6 +138,13 @@ RUN chmod +x /app/bin/enclave_host /app/bin/nitro_init
 # whole-rootfs copy-up in this layer (build-host disk only); the EIF is unchanged.
 # --no-dereference touches symlinks themselves (e.g. /etc/ssl/certs/*.0).
 ENV SOURCE_DATE_EPOCH=1749859200
+# Docker injects /etc/hosts and /etc/hostname into every build container, so the
+# flattening step that computes PCR0/PCR2 saw different bytes on every rebuild.
+# Copying fixed public files into the image makes the measured filesystem stable;
+# Docker replaces both at container start, so runtime behaviour is unchanged.
+COPY public/etc/hosts /etc/hosts
+COPY public/etc/hostname /etc/hostname
+
 # -xdev alone still visits mount points themselves. Do not swallow errors on
 # measured files merely because virtual mounts cannot have their mtimes set.
 RUN find / -xdev \

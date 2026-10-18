@@ -468,6 +468,12 @@ def stage_into(repo, input_path, input_sha, env, publication, builder_platform="
     files['public/network-profiles.json'] = map_bytes
     for n, data in profiles.items():
         files['public/custody/' + n + '.json'] = data
+    # Docker injects /etc/hosts and /etc/hostname into the container nitro-cli
+    # flattens, so without a byte-identical copy inside the image every rebuild
+    # produces different PCR0/PCR2. These two files are fixed, public and carry
+    # no host identity; the runtime mount still replaces them at container start.
+    files['public/etc/hosts'] = b'127.0.0.1 localhost\n'
+    files['public/etc/hostname'] = b'neoos-enclave\n'
     manifest = {'schema': 'neoos/dual-image-context/v1', 'release': spec['release'], 'git_commit': commit, 'source_archive_sha256': archive_sha, 'reviewed_input_sha256': input_sha, 'map_sha256': sha(map_bytes), 'networks': list(NETWORKS), 'files': {n: sha(b) for n, b in sorted(files.items())}, 'status': 'context-only; authoritative Rust validation and measured builds required'}
     if builder_platform == 'linux/arm64':
         manifest['builder_platform'] = builder_platform
