@@ -1196,6 +1196,127 @@
           "sha256": "741a7cc9e3643286db96b2e300ea76ead3d31f441cdc1c82eb08936771ab892c"
         }
       }
+    },
+    {
+      "consumer": "attestation-measurements-route",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "This route serves reviewed Nitro measurement manifests and attestation metadata; it does not draw VRF output, select an economic winner, award value or authorize settlement. Its exact bytes were independently reviewed in DRA02 R2, including the web test matrix and adversarial mutations. This exact-file classification does not authorize deployment, replace PCR measurement evidence, or exempt identity, custody, transport security or downstream economic consumers.",
+      "inputs": {
+        "apps/web/app/api/attestation/measurements/route.ts": {
+          "sha256": "01d8a7d6b34c6b88974831a7f696d7242c5950cc4cd61bcff7d4c64ff86182eb"
+        },
+        "apps/web/app/api/attestation/verify/route.ts": {
+          "sha256": "3e1ad80663b34ff3849fd3b605d0f311df3373a5357cd1d5becdca074618305d"
+        },
+        "apps/web/lib/nitro-dual-measurement.ts": {
+          "sha256": "a934492fb411ce9ebff7e99c82fafddf6971a30ba752b82f278ae6c08926ee6a"
+        },
+        "apps/web/lib/nitro-dual-measurements.test.ts": {
+          "sha256": "9474785952053077d76ecbba9f128e15c71124c37b5f88ec82017d57cbe9067b"
+        },
+        "apps/web/lib/nitro-dual-release-registry.ts": {
+          "sha256": "e77dc60bc9f04f58875782f43b275c20d76ff790bb7403cc54af4a4c9b3134f1"
+        },
+        "apps/web/lib/nitro-measurements.ts": {
+          "sha256": "77c1eb562635671cb16ae4f3937552faac41e28425f845afeb1035a64f09583a"
+        },
+        "apps/web/lib/dra02-independent-adversarial.test.ts": {
+          "sha256": "d2e33013d568510af05172699e2c4cd9ee83e94cf69222873bc939c916297e2a"
+        },
+        "apps/web/lib/nitro-dual-ordering.test.ts": {
+          "sha256": "9165d2ccd6c263feee3a6e02ee27862d29161fc2c757fcf8c3ad07e63e2e5f7a"
+        }
+      }
+    },
+    {
+      "consumer": "dual-measurement-packaging-79b6-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "These exact packaging inputs are the reviewed 79b6 dual-enclave source bytes used by the integration plan; they prepare and validate the measurement path but do not draw VRF output, select an economic winner, award value or authorize settlement. This exact-file classification does not authorize deployment, replace PCR measurement evidence, or exempt identity, custody, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/nitro/Dockerfile.dual-enclave": {
+          "sha256": "a5438b0a2122009138056b9a33295e97201b1f9bb357dd44ba780f8102e8b3d5"
+        },
+        "deploy/nitro/dual-prepare.rs": {
+          "sha256": "615fd6ce4103a1ea9d7e6ef4fdb391c5df767216dde9062b6bb8c9f2456c6c82"
+        },
+        "deploy/nitro/dual_image_test.py": {
+          "sha256": "5ab7571c3e6a549b332dec7e0ae043556ba7d36b532908c143cf559806800e75"
+        },
+        "deploy/nitro/dual_prepare_test.py": {
+          "sha256": "b1bc40146434f85e0cecc4cb9284fcea7464ba594bd0636f1259be30e65dd60e"
+        },
+        "deploy/nitro/test-dual-preparation.py": {
+          "sha256": "c43b2856a4c9302e914c2fc4e41bce2304a05d3f5cbce10555427e1b19997ee4"
+        }
+      }
+    },
+    {
+      "consumer": "dual-cross-packaging-r12-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "These exact seven cross-packaging inputs are bound to the independent R12 source review at c4718c5; they select and validate the native cross-build path but do not draw VRF output, select an economic winner, award value or authorize settlement. This exact-file classification does not authorize deployment, replace PCR measurement evidence, or exempt identity, custody, transport security or downstream economic consumers.",
+      "inputs": {
+        "deploy/nitro/Dockerfile.dual-enclave.cross": {
+          "sha256": "7fe25e96c23417adc22cf0a1ff341405321fef3dfd11cd41b3d38ac0eaedc2eb"
+        },
+        "deploy/nitro/README.dual-image.md": {
+          "sha256": "f38a94cc6925e987149600fe782c28941bd7a444792bf5cfec38f0c871a07275"
+        },
+        "deploy/nitro/build-dual-enclave.py": {
+          "sha256": "4c7d80463b11ba52a7cf45e684a3700159a9e837d3b8cc13d6e09cbc9fdf1016"
+        },
+        "deploy/nitro/cross-inputs.lock.json": {
+          "sha256": "a5086fffb3db277aa47b3ab475b0da0dc35d16ac070729b2a89a5ac6de3f824e"
+        },
+        "deploy/nitro/dual-image.test.mjs": {
+          "sha256": "f750c8eddd2969e6fb70184daff63181045d2f489e99ffca84716c1420ff8d1b"
+        },
+        "deploy/nitro/dual_cross.py": {
+          "sha256": "02a6fc36f7e7708ca7736aaccbecd5e83b03826fd4c211bee258795b14fedb23"
+        },
+        "deploy/nitro/dual_cross_test.py": {
+          "sha256": "b45cefdb422ebeee7bc8f51ca3acc6ea091cf05dc1fd0c72a790c62275b17305"
+        }
+      }
+    },
+    {
+      "consumer": "dual-release-validator-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "These exact DRA01 R2 validator and provenance files validate dual-release source closure and reject incomplete or inconsistent publication inputs; they do not draw VRF output, select an economic winner, award value or authorize settlement. Their bytes are bound to the independent DRA01 R2 review and source commit cc19e1ad. This exact-file classification does not authorize deployment, replace measured artifacts or public identity evidence, or exempt custody, transport security or downstream economic consumers.",
+      "inputs": {
+        "scripts/check-dual-release.mjs": {
+          "sha256": "f9671d4ec79611a9168f3f158ff5c9430ab8d8f7ae21ff01dcbbbadbcaa2a3d7"
+        },
+        "scripts/dual-release-validation.test.mjs": {
+          "sha256": "08094025b19a46e7b870c6902d594458699c9c3f6a9ce0a8ba0b030c2a140fc1"
+        },
+        "scripts/lib/check_dual_release.py": {
+          "sha256": "994f5f70ebe6f9bbb5ae47db2856d288ddd553a3d9542e5bf61ffdf98510f9b1"
+        },
+        "scripts/lib/dual_release_provenance.py": {
+          "sha256": "19f1a07167f800734f058a447a0ed03fd4ee856f5f1ffbb3b9904f335fdc01cf"
+        },
+        "scripts/lib/dual_release_provenance_test.py": {
+          "sha256": "8afebb7484f2a36e3073b27e459a1f576c667f5ec71d833a0f5a7078c0501e37"
+        }
+      }
+    },
+    {
+      "consumer": "dual-release-validator-351b-input",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "This exact 351b validator input binds the native cross-build source selector and required closure checks; it validates source and measurement prerequisites but does not draw VRF output, select an economic winner, award value or authorize settlement. Its bytes are bound to the exact 351b source review, full affected CI receipt and parent review at commit 351bda5. This exact-file classification does not authorize deployment, replace measured artifacts or public identity evidence, or exempt custody, transport security or downstream economic consumers.",
+      "inputs": {
+        "scripts/lib/dual_release_validation.py": {
+          "sha256": "a8031dce1db955d2788a83f98d101638ce1c75be240e1ec1149634c45cfe1141"
+        },
+        "scripts/lib/dual_release_validation_test.py": {
+          "sha256": "0ec9df8b0dc29d7219ef518e60d46bcfadb2b8120a55262ee622da47c493b1ee"
+        }
+      }
     }
   ]
 }
