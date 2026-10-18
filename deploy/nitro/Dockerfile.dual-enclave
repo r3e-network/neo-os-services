@@ -140,10 +140,15 @@ RUN chmod +x /app/bin/enclave_host /app/bin/nitro_init
 ENV SOURCE_DATE_EPOCH=1749859200
 # -xdev alone still visits mount points themselves. Do not swallow errors on
 # measured files merely because virtual mounts cannot have their mtimes set.
+# Docker injects /etc/hosts, /etc/hostname and /etc/resolv.conf into every
+# build container, so leaving them in the flattened image makes PCR0/PCR2
+# differ on every rebuild. They are removed after the timestamp pass;
+# Docker recreates them at container start.
 RUN find / -xdev \
   \( -path /proc -o -path /sys -o -path /dev \
      -o -path /etc/hosts -o -path /etc/hostname -o -path /etc/resolv.conf \) -prune \
-  -o -exec touch --no-dereference --date=@1749859200 {} +
+  -o -exec touch --no-dereference --date=@1749859200 {} + \
+  && rm -f /etc/hosts /etc/hostname /etc/resolv.conf
 
 # Force the no-MITM posture inside the enclave (see vsock-proxy.allowlist.yaml /
 # design §3): never honor a host-supplied provider base-URL override. The full
