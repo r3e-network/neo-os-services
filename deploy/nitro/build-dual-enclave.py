@@ -583,6 +583,7 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
                     hasher.update(block)
                 eif_digest = hasher.hexdigest()
             evidence.append({'image_id': image_id, 'pcrs': pcrs, 'eif_sha256': eif_digest})
+        print('BUILD-EVIDENCE ' + json.dumps(evidence, sort_keys=True), file=__import__('sys').stderr)
         require(evidence[0]['pcrs'] == evidence[1]['pcrs'], 'independent builds are not reproducible')
         result = {**manifest, 'schema': 'neoos/dual-image-build-evidence/v1', 'status': 'measured-candidate; independent review and release admission required', 'canonical_main': tip, 'hash_algorithm': 'SHA384', 'reproducible_verified': True, 'builds': evidence}
     finally:
