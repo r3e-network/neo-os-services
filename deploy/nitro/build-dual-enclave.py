@@ -49,9 +49,66 @@ SCHEMA = 'neoos/dual-image-input/v1'
 SOURCE_DIRS = ('vendor/', 'crates/', 'workers/neo-signer/', 'workers/nitro-enclave-host/', 'workers/neo-os-relayer/')
 PROFILE_FIELDS = ('profile_version vault_id environment networks custody_kms_key_arn root_key_version root_key_commitment snapshot_format_version signer_schema_version coordinator release_policy_version').split()
 
+DIAGNOSTIC_STAGES = frozenset(('admission', 'staging', 'canonical', 'buildkit-create',
+    'image-build', 'image-inspect', 'image-export', 'image-verify', 'enclave-build',
+    'enclave-describe', 'measurements', 'cleanup', 'publication', 'unknown'))
+DIAGNOSTIC = {}
+
+
+def reset_diagnostics():
+    DIAGNOSTIC.clear()
+    DIAGNOSTIC.update(stage='admission', attempt=0, primary=None, cleanup_failed=False)
+
+
+def diagnostic_stage(stage, attempt=None):
+    # Static call-site labels only, never argument values or exception text.
+    DIAGNOSTIC['stage'] = stage if stage in DIAGNOSTIC_STAGES else 'unknown'
+    if attempt is not None:
+        DIAGNOSTIC['attempt'] = attempt if type(attempt) is int and attempt in (0, 1, 2) else 0
+
+
+def record_failure(kind, exit_code=None, captured=b''):
+    if DIAGNOSTIC.get('primary') is not None:
+        return
+    text = captured[-524288:].decode('utf-8', errors='replace')
+    codes = sorted(set(re.findall(r'\berror\[(E[0-9]{4})\]', text)))[:16]
+    hints = []
+    # Hints describe matching output patterns, not verified root causes. Only
+    # these fixed tokens can leave the process; no captured text is serialized.
+    for name, pattern in (
+        ('rust-compile', r'\berror\[E[0-9]{4}\]'),
+        ('cargo-resolution', r'failed to select a version|failed to resolve patches'),
+        ('disk-full', r'No space left on device'),
+        ('memory-exhaustion', r'out of memory|memory allocation of [0-9]+ bytes failed'),
+        ('network', r'Could not resolve host|Temporary failure in name resolution|failed to download'),
+        ('package-unavailable', r'Unable to locate package|Version [^\r\n]{1,256} for [^\r\n]{1,256} was not found'),
+    ):
+        if re.search(pattern, text):
+            hints.append(name)
+    DIAGNOSTIC['primary'] = {
+        'stage': DIAGNOSTIC.get('stage', 'unknown'), 'attempt': DIAGNOSTIC.get('attempt', 0),
+        'kind': kind if kind in ('validation', 'command_failed', 'timeout', 'os_error', 'interrupted', 'unknown') else 'unknown',
+        'exit_code': exit_code if type(exit_code) is int and -128 <= exit_code <= 255 else None,
+        'error_codes': codes, 'hints': sorted(hints),
+    }
+
+
+def failure_diagnostic(error):
+    kind = ('timeout' if isinstance(error, (subprocess.TimeoutExpired, TimeoutError)) else
+            'interrupted' if isinstance(error, (KeyboardInterrupt, InterruptedError)) else
+            'os_error' if isinstance(error, OSError) else
+            'validation' if isinstance(error, (ValueError, KeyError, TypeError)) else 'unknown')
+    record_failure(kind)
+    return {'schema': 'neoos/dual-build-failure/v1', 'primary': dict(DIAGNOSTIC['primary']),
+            'cleanup_failed': DIAGNOSTIC['cleanup_failed']}
+
+
+reset_diagnostics()
+
 
 def require(condition, message):
     if not condition:
+        record_failure('validation')
         raise ValueError(message)
 
 
@@ -248,6 +305,16 @@ def validate_enrollment(manifest, profile):
 OUTPUT_LIMIT = 256 * 1024 * 1024
 
 
+def diagnostic_tail(stream):
+    # Read only a bounded tail from each disk-backed stream, including when a
+    # child produced hundreds of MiB. Capture errors must not replace its exit.
+    try:
+        stream.seek(max(0, os.fstat(stream.fileno()).st_size - 262144))
+        return stream.read(262144)
+    except (OSError, ValueError):
+        return b''
+
+
 def child_limits():
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     for kind, cap in ((resource.RLIMIT_NOFILE, 512), (resource.RLIMIT_FSIZE, 2 * 1024 ** 3)):
@@ -289,9 +356,15 @@ def run(args, env, cwd=None, timeout=120):
                 if time.monotonic() >= deadline:
                     raise subprocess.TimeoutExpired(str(args[0]), timeout)
                 time.sleep(0.02)
+            if process.returncode != 0:
+                record_failure('command_failed', process.returncode,
+                               diagnostic_tail(stdout) + diagnostic_tail(stderr))
             require(process.returncode == 0, 'command failed: ' + Path(str(args[0])).name)
             stdout.seek(0)
             return stdout.read(OUTPUT_LIMIT + 1)
+        except BaseException as error:
+            failure_diagnostic(error)
+            raise
         finally:
             stop_group(process)
 
@@ -570,6 +643,7 @@ def owned_container(docker_args, env, reservation):
 
 
 def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
+    diagnostic_stage('canonical')
     tip = canonical(repo, manifest['git_commit'], env)
     env = {**env, 'NITRO_CLI_BLOBS': str(blobs), 'NITRO_CLI_ARTIFACTS': str(context.parent / 'nitro-artifacts')}
     Path(env['NITRO_CLI_ARTIFACTS']).mkdir()
@@ -579,14 +653,17 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
     config = context.parent / 'buildkit.toml'
     config.write_text('[worker.oci]\n  max-parallelism = 1\n')
     try:
+        diagnostic_stage('buildkit-create')
         run([*docker_args, 'buildx', 'create', '--name', builder, '--driver', 'docker-container',
              '--driver-opt', 'memory=4g', '--driver-opt', 'cpu-period=100000', '--driver-opt', 'cpu-quota=100000',
              '--buildkitd-config', config], env)
         for attempt in (1, 2):
+            diagnostic_stage('image-build', attempt)
             image = 'neoos-dual-local:' + sha(str(context.parent).encode())[:16] + '-' + str(attempt)
             # Unique tag; no build args, secrets, SSH agent, cache mounts or env passthrough.
             images.append(image)
             run([*docker_args, 'buildx', 'build', '--builder', builder, '--load', '--platform=linux/amd64', '--no-cache', '--network=default', '-t', image, '-f', context / 'Dockerfile', context], env, timeout=3600)
+            diagnostic_stage('image-inspect')
             image_id = run([*docker_args, 'image', 'inspect', '--format', '{{.Id}}', image], env).decode().strip()
             require(re.fullmatch(r'sha256:[0-9a-f]{64}', image_id), 'invalid image ID')
             # Reserve identity before the daemon can create anything. A lost
@@ -595,12 +672,14 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
             reservation = (builder + '-export-' + str(attempt), uuid.uuid4().hex, image_id)
             containers.append(reservation)
             name, owner, _ = reservation
+            diagnostic_stage('image-export')
             cid = run([*docker_args, 'create', '--name', name,
                        '--label', CONTAINER_OWNER_LABEL + '=' + owner, image_id], env).decode().strip()
             require(re.fullmatch('[0-9a-f]{64}', cid), 'invalid container ID')
             require(owned_container(docker_args, env, reservation) == cid, 'create reply does not identify owned container')
             exported = context.parent / ('image-config-' + str(attempt))
             run([*docker_args, 'cp', cid + ':/app/config', exported], env)
+            diagnostic_stage('image-verify')
             for n in NETWORKS:
                 require(sha(regular(exported / 'custody' / (n + '.json'))) == manifest['files']['public/custody/' + n + '.json'], 'image profile digest mismatch')
             enrollment_file = 'public/custody/testnet-enrollment.json'
@@ -615,8 +694,10 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
             receipt = parse(regular(exported / 'custody-build-validation.json'))
             require(receipt == {'schema': 'neoos/dual-custody-build/v1', 'networks': list(NETWORKS), 'map_sha256': manifest['map_sha256']}, 'authoritative Rust preparation receipt mismatch')
             eif = context.parent / ('build-' + str(attempt) + '.eif')
+            diagnostic_stage('enclave-build')
             pcrs = measurements(run([nitro, 'build-enclave', '--docker-uri', image, '--output-file', eif], env, timeout=1800))
             require(eif.is_file() and eif.stat().st_size > 0, 'EIF output missing')
+            diagnostic_stage('enclave-describe')
             observed = measurements(run([nitro, 'describe-eif', '--eif-path', eif], env))
             require(observed == pcrs, 'EIF readback disagrees with build measurements')
             with eif.open('rb') as stream:
@@ -626,9 +707,14 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
                 eif_digest = hasher.hexdigest()
             evidence.append({'image_id': image_id, 'pcrs': pcrs, 'eif_sha256': eif_digest})
         print('BUILD-EVIDENCE ' + json.dumps(evidence, sort_keys=True), file=__import__('sys').stderr)
+        diagnostic_stage('measurements')
         require(evidence[0]['pcrs'] == evidence[1]['pcrs'], 'independent builds are not reproducible')
         result = {**manifest, 'schema': 'neoos/dual-image-build-evidence/v1', 'status': 'measured-candidate; independent review and release admission required', 'canonical_main': tip, 'hash_algorithm': 'SHA384', 'reproducible_verified': True, 'builds': evidence}
+    except BaseException as error:
+        failure_diagnostic(error)
+        raise
     finally:
+        diagnostic_stage('cleanup')
         # Stopping the owned daemon cancels work that outlives its Docker client.
         # Attempt every cleanup even if one fails; never prune shared resources.
         failed = False
@@ -652,8 +738,10 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
                 run([*docker_args, 'image', 'rm', image], env, timeout=30)
             except (ValueError, OSError, subprocess.SubprocessError):
                 failed = True
+        DIAGNOSTIC['cleanup_failed'] = failed
         require(not failed, 'owned build cleanup failed; operator cleanup required')
     # Publish the first measured artifact only after cancellation/cleanup succeeds.
+    diagnostic_stage('publication')
     with (context.parent / 'build-1.eif').open('rb') as stream:
         copied = publication.write('enclave.eif', iter(lambda: stream.read(1024 * 1024), b''))
     require(copied == evidence[0]['eif_sha256'], 'EIF changed during publication')
@@ -667,6 +755,7 @@ def interrupted(_signal, _frame):
 
 
 def main():
+    reset_diagnostics()
     signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('mode', choices=('prepare', 'build'))
@@ -692,6 +781,7 @@ def main():
         output = args.output.absolute()
         require(repo not in output.parents and repo != output, 'output must be outside source tree')
         destination = output if args.mode == 'prepare' else tmp / 'context'
+        diagnostic_stage('staging')
         manifest = stage(repo, args.input, args.input_sha256, destination, env, args.builder_platform, args.cross_cache)
         if args.mode == 'build':
             blobs = args.nitro_blobs
@@ -704,10 +794,15 @@ def main():
         print(json.dumps({'ok': True, 'mode': args.mode, 'source_commit': manifest['git_commit'], 'output': str(output)}))
 
 
-if __name__ == '__main__':
+def cli():
     try:
         main()
     except (ValueError, OSError, subprocess.SubprocessError, KeyError, TypeError) as error:
         # Configuration values/child stderr can contain accidental secrets.
         print('dual-image: refused (' + type(error).__name__ + ')', file=__import__('sys').stderr)
+        print('DUAL-BUILD-FAILURE ' + json.dumps(failure_diagnostic(error), sort_keys=True), file=__import__('sys').stderr)
         raise SystemExit(1)
+
+
+if __name__ == '__main__':
+    cli()
