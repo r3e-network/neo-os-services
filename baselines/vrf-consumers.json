@@ -1256,7 +1256,7 @@
       "consumer": "dual-cross-packaging-r12-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These exact seven cross-packaging inputs are bound to the independent R12 source review at c4718c5; they select and validate the native cross-build path but do not draw VRF output, select an economic winner, award value or authorize settlement. This exact-file classification does not authorize deployment, replace PCR measurement evidence, or exempt identity, custody, transport security or downstream economic consumers. Genesis source update: Only build-dual-enclave.py and dual_cross_test.py bindings are refreshed here. They stage and verify exact manifest/profile/opt-in bytes across both image paths. This is a security-sensitive measured input chain, not a VRF economic consumer. Other members retain their prior exact bindings and scope. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval.",
+      "justification": "These exact seven cross-packaging inputs are bound to the independent R12 source review at c4718c5; they select and validate the native cross-build path but do not draw VRF output, select an economic winner, award value or authorize settlement. This exact-file classification does not authorize deployment, replace PCR measurement evidence, or exempt identity, custody, transport security or downstream economic consumers. Genesis source update: Only build-dual-enclave.py and dual_cross_test.py bindings are refreshed here. They stage and verify exact manifest/profile/opt-in bytes across both image paths. This is a security-sensitive measured input chain, not a VRF economic consumer. Other members retain their prior exact bindings and scope. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval. Diagnostic-only update: the builder and its two regression-test inputs are bound to independent cumulative source review of 67ce0867900b7844231cffef6324b69992220115, verdict SHA256 1ea38c91eeac185ccd77088873a1fbc3076e65d61eb7f691a6cc00bb27cc48b8. These fixed-schema failure receipts do not change execution, custody, image admission or economic selection; all release and runtime gates remain required.",
       "inputs": {
         "deploy/nitro/Dockerfile.dual-enclave.cross": {
           "sha256": "66ddc376fd689f9ade48ce511c7c60385b6fd9efef1b36517c76bd05a4ac9374"
@@ -1265,7 +1265,7 @@
           "sha256": "f38a94cc6925e987149600fe782c28941bd7a444792bf5cfec38f0c871a07275"
         },
         "deploy/nitro/build-dual-enclave.py": {
-          "sha256": "184795bbcc33cfaf72f495c06379fa296450f33534d446f77c8a9cc11a0fca4c"
+          "sha256": "afc2a5c9908b888132de940e8f45214c4df7a5994e347370a18cc382358e0961"
         },
         "deploy/nitro/cross-inputs.lock.json": {
           "sha256": "a5086fffb3db277aa47b3ab475b0da0dc35d16ac070729b2a89a5ac6de3f824e"
@@ -1278,6 +1278,12 @@
         },
         "deploy/nitro/dual_cross_test.py": {
           "sha256": "8376dcbbc03e976ac7f62fb84994f14af0f4e18ec4abfd89a21b55a65b92228b"
+        },
+        "scripts/dual-build-diagnostics.test.mjs": {
+          "sha256": "afcf42aec4f06d8b5e41abf946f9f3ea4f31e20f09f76c08f668d4378586e33e"
+        },
+        "scripts/lib/dual_build_diagnostics_test.py": {
+          "sha256": "d62f61e8a2be6db8f8c0036563bb241733ec1cc30dc072bb553621fd4764140b"
         }
       }
     },
@@ -1422,7 +1428,7 @@
       "consumer": "reviewed-hosted-measured-candidate-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These exact inputs orchestrate a manually dispatched public hosted measured-candidate build, constrain its runner and tools, validate public source/input bindings and final artifact/daemon state, or test those controls. They do not consume VRF draws, select economic winners, award value or authorize settlement. The artifact gate admits only a measured candidate for independent review; this non-value classification is not runtime/release/KMS admission, deployment authorization, proof of native tool closure or disk fit, or approval of dispatch inputs. Existing economic debt and all gate control paths remain unchanged.",
+      "justification": "These exact inputs orchestrate a manually dispatched public hosted measured-candidate build, constrain its runner and tools, validate public source/input bindings and final artifact/daemon state, or test those controls. They do not consume VRF draws, select economic winners, award value or authorize settlement. The artifact gate admits only a measured candidate for independent review; this non-value classification is not runtime/release/KMS admission, deployment authorization, proof of native tool closure or disk fit, or approval of dispatch inputs. Existing economic debt and all gate control paths remain unchanged. Diagnostic-only update: the driver and its regression test are bound to independent cumulative source review of 4f482925f2baec9ecb3c830ce80fffd20f4ab620, verdict SHA256 85ef52359aca386ff6a8cb2e11ab92cc01c402168be6b5c1c21470377effe2e3. Validated inner failure detail and distinct outer cleanup exception status retain failure and deny artifact admission. This classification grants no combined CI, dispatch, native execution or operational approval.",
       "inputs": {
         ".github/workflows/measured-candidate.yml": {
           "sha256": "cccbb0df7473d96bab7660bfa409b734f1ba84ca1d6e113dd1a594745ba85537"
@@ -1434,10 +1440,10 @@
           "sha256": "97ded8b2b1fc18f93b8fcbbabda9f51c6447881fc8d07aba48376802779cd89e"
         },
         "scripts/hosted_native_candidate.py": {
-          "sha256": "f8e401cbaa2e8582ac5f142eaeb6789ae5823583e146330bc09c7797f49575f0"
+          "sha256": "619117e77a9ef78257c2c1a666952c5febd584e33f42b239d5311f54e47c9017"
         },
         "scripts/hosted_native_candidate_test.py": {
-          "sha256": "800354aa5334281e1ea1fcefb59eff3c5d1d6930208bd6f72ae195b55d030128"
+          "sha256": "fadbcc87077abcb7bcc01c4350baffa780f0ec7d46aa6f36ead8894909e8692a"
         },
         "scripts/measured-candidate-workflow.test.mjs": {
           "sha256": "ea8d61efb5c5513fc7fca5f7092d8186ed47307df871414cbf67ba88a36e0ab5"
