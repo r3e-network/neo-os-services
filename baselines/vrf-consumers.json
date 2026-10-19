@@ -882,10 +882,10 @@
       "consumer": "vendor/neo-os-did.pin.json",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Pins17 explicit source-to-destination mappings to9c with SHA256 digests, including current resolver/common/host/docs and unchanged contract artifacts. Provenance metadata identifies trusted identity implementation bytes; it does not implement reward allocation. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "justification": "Pins17 explicit source-to-destination mappings to canonical DID1eca5b49113fcbc659c5b983c9a98eed0723a167 with SHA256 digests, including current resolver/common/host/docs and unchanged contract artifacts. Provenance metadata identifies trusted identity implementation bytes; it does not implement reward allocation. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "vendor/neo-os-did.pin.json": {
-          "sha256": "7602383de174e21879c466a40aa068888e99f7cf2cb655de145a02910b638fa8"
+          "sha256": "82460de750837074e9fee96da977b51435905cc00ca53435ee4fe4863c5ba0be"
         }
       }
     },
@@ -1160,7 +1160,7 @@
       "justification": "Adds selected-context tests for shadowed foreign/malformed aliases, both-network positives, omitted labels, encrypted payloads, production key refusal and provider-before-validation ordering across all four ticket routes. Existing synthetic JWT/signature/cache assertions remain. Synthetic identity tokens, locally generated JWT keys and asserted signature-call counts test identity authority; they award no value from random results. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "workers/nitro-enclave-host/tests/unit/neodid.rs": {
-          "sha256": "419666938e35fe29d42b7a5741a7dff347b7407cf91b93b07400e08bc854d6f0"
+          "sha256": "95f60abd344e1f7bd424c8614fed92a334dec66e8c0541744c7a71cb639462b1"
         }
       }
     },
@@ -1394,7 +1394,7 @@
           "sha256": "4c983f258f740c9b9568040e4c037b6fecf8c217e6ee752803c835b5cf6ccc8e"
         },
         "workers/neo-signer/tests/unit/enrollment_recovery.rs": {
-          "sha256": "cef534f8f939432dd346c4c43c0e8b8afb9750cfbfb5cdb8099c5ea9b72c19b6"
+          "sha256": "bffae5ef38f13d9f683342a6d7921fe895acc893435bc0096def31a62790596a"
         },
         "workers/neo-signer/tests/unit/provision.rs": {
           "sha256": "34e1786b9e1e6afba65c5828ece6618869fe0f95a0682506ff4f5ce5a791d4b6"
