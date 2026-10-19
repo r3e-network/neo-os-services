@@ -373,7 +373,7 @@
       "justification": "Architecture enforcement parses actual TOML dependency forms and bounds the host to the canonical native signer and reviewed bootstrap interfaces. It refuses private-key implementations and alternate dependency paths. This policy checker defines no random-output payout; its non-value classification does not exempt the signing authority that it checks.",
       "inputs": {
         "scripts/check-rust-migration.mjs": {
-          "sha256": "0cb2f4013a40be0723f6aeb009e75a8eebd264d673d3e5f5665f52c7edff612d"
+          "sha256": "d420bf978fa90287e7ebaad0bd64d98f668c3a9969a5554f8fa7e71358586c39"
         }
       }
     },
@@ -863,7 +863,7 @@
       "justification": "Exercises valid quoted/dotted/table forms and bypass attempts using renamed/target/build/workspace/optional/duplicate/malformed dependencies plus host crypto/bootstrap guard cases. Temporary policy fixtures and assertions are non-value tests. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "scripts/check-rust-migration.test.mjs": {
-          "sha256": "1eff7123b22f2d8bcd8d86948d2d065c99706664ff181de667213cc28080fb7c"
+          "sha256": "039cf3e033d2a23bd960affdf0ca1f39026a17b83a897f236ba49889e69fba08"
         }
       }
     },
