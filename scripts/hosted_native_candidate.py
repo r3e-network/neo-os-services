@@ -40,6 +40,15 @@ TOOLS = {'none', 'git', 'docker', 'python', 'loader', 'nitro', 'download'}
 STATUS = {'phase': 'admission', 'tool': 'none', 'exit_code': None}
 
 
+BUSINESS_PREFIX = b'DUAL-BUILD-FAILURE '
+BUSINESS_STAGES = {'admission', 'staging', 'canonical', 'buildkit-create', 'image-build',
+                   'image-inspect', 'image-export', 'image-verify', 'enclave-build',
+                   'enclave-describe', 'measurements', 'cleanup', 'publication', 'unknown'}
+BUSINESS_KINDS = {'validation', 'command_failed', 'timeout', 'os_error', 'interrupted', 'unknown'}
+BUSINESS_HINTS = {'rust-compile', 'cargo-resolution', 'disk-full', 'memory-exhaustion',
+                  'network', 'package-unavailable'}
+
+
 class Refused(ValueError):
     """Only a static reason enum, never child output or input data."""
 
@@ -154,6 +163,44 @@ def resource_check(paths):
     return {'free_bytes': free, 'free_inodes': inodes}
 
 
+def business_failure_detail(stderr):
+    """Optional bounded enum-only detail; invalid frames never replace failure."""
+    try:
+        require(len(stderr) <= CAPTURE_LIMIT and stderr.count(BUSINESS_PREFIX) == 1)
+        lines = [line for line in stderr.splitlines() if line.strip()]
+        require(bool(lines) and lines[-1].startswith(BUSINESS_PREFIX))
+        frame = lines[-1][len(BUSINESS_PREFIX):]
+        require(len(frame) <= 4096)
+        value = parse(frame)
+        require(type(value) is dict and set(value) == {'schema', 'primary', 'cleanup_failed'})
+        require(value['schema'] == 'neoos/dual-build-failure/v1' and type(value['cleanup_failed']) is bool)
+        primary = value['primary']
+        require(type(primary) is dict and set(primary) == {'stage', 'attempt', 'kind', 'exit_code', 'error_codes', 'hints'})
+        require(type(primary['stage']) is str and primary['stage'] in BUSINESS_STAGES)
+        require(type(primary['kind']) is str and primary['kind'] in BUSINESS_KINDS)
+        require(type(primary['attempt']) is int and primary['attempt'] in (0, 1, 2))
+        code = primary['exit_code']
+        require(code is None or (type(code) is int and -128 <= code <= 255))
+        codes, hints = primary['error_codes'], primary['hints']
+        require(type(codes) is list and len(codes) <= 16)
+        require(all(type(item) is str and re.fullmatch(r'E[0-9]{4}', item) for item in codes))
+        require(codes == sorted(set(codes)))
+        require(type(hints) is list and len(hints) <= len(BUSINESS_HINTS))
+        require(all(type(item) is str and item in BUSINESS_HINTS for item in hints))
+        require(hints == sorted(set(hints)))
+        return value
+    except (ValueError, TypeError, RecursionError):
+        return None
+
+
+class BusinessCommandFailure(CommandFailure):
+    def __init__(self, code, stderr):
+        super().__init__('command_failed')
+        self.code = code
+        # No raw stderr is retained on the exception or in the public receipt.
+        self.detail = business_failure_detail(stderr)
+
+
 def failure_receipt(error, env):
     reason = str(error) if type(error) is Refused else 'validation'
     if isinstance(error, CommandFailure):
@@ -170,6 +217,11 @@ def failure_receipt(error, env):
               'tool': STATUS['tool'] if STATUS['tool'] in TOOLS else 'none',
               'reason': reason if reason in allowed else 'validation',
               'exit_code': STATUS['exit_code'] if type(STATUS['exit_code']) is int and -128 <= STATUS['exit_code'] <= 255 else None}
+    if type(error) is BusinessCommandFailure:
+        result.update(phase='business-build', tool='python',
+                      exit_code=error.code if type(error.code) is int and -128 <= error.code <= 255 else None)
+        if error.detail is not None:
+            result['business_failure'] = error.detail
     for key, pattern in (('CANDIDATE_SOURCE_SHA', HEX40), ('GITHUB_WORKFLOW_SHA', HEX40),
                          ('GITHUB_RUN_ID', re.compile(r'[1-9][0-9]{0,19}')),
                          ('GITHUB_RUN_ATTEMPT', re.compile(r'[1-9][0-9]{0,19}'))):
@@ -218,8 +270,9 @@ class Runner:
                 size += info.st_size
             require(size <= CAPTURE_LIMIT, 'log_limit')
 
-    def run(self, args, timeout=120, tool='docker', observe=False):
+    def run(self, args, timeout=120, tool='docker', observe=False, business_diagnostic=False):
         require(tool in TOOLS)
+        require(not business_diagnostic or (tool == 'python' and STATUS['phase'] == 'business-build'))
         STATUS.update(tool=tool, exit_code=None)
         self.resources()
         deadline = time.monotonic() + timeout
@@ -228,6 +281,7 @@ class Runner:
             process = subprocess.Popen([str(arg) for arg in args], env=self.env,
                                        stdin=subprocess.DEVNULL, stdout=out, stderr=err,
                                        start_new_session=True)
+            business_error = None
             try:
                 while True:
                     self.resources()
@@ -240,13 +294,26 @@ class Runner:
                     time.sleep(0.2)
                 STATUS.update(tool=tool, exit_code=process.returncode)
                 if process.returncode != 0:
+                    if business_diagnostic:
+                        try:
+                            err.seek(0)
+                            stderr = err.read(CAPTURE_LIMIT + 1)
+                        except OSError:
+                            stderr = b''
+                        business_error = BusinessCommandFailure(process.returncode, stderr)
+                        raise business_error
                     raise CommandFailure('command_failed')
                 out.seek(0)
                 return out.read(CAPTURE_LIMIT + 1)
             finally:
                 # Nested observer commands must not replace the failing tool.
                 STATUS.update(tool=tool, exit_code=process.poll())
-                stop_process(process)
+                try:
+                    stop_process(process)
+                finally:
+                    # Observer/cleanup status cannot overwrite this child failure.
+                    if business_error is not None:
+                        raise business_error from None
 
     def container_ids(self):
         ids = self.run([*self.docker, 'container', 'ls', '--all', '--no-trunc', '--format', '{{.ID}}'], timeout=15).decode().splitlines()
@@ -637,7 +704,7 @@ def execute(root, env):
     runner.run([sys.executable, '-B', ROOT / 'deploy/nitro/build-dual-enclave.py', 'build',
                 '--repo', ROOT, '--input', input_path, '--input-sha256', file_sha(input_path),
                 '--output', output, '--docker', '/usr/bin/docker', '--nitro-cli', launcher,
-                '--nitro-blobs', blobs], timeout=11500, tool='python', observe=True)
+                '--nitro-blobs', blobs], timeout=11500, tool='python', observe=True, business_diagnostic=True)
     evidence = validate_candidate(output, source, file_sha(input_path), builder)
     phase('final-readback')
     final = final_daemon_check(runner, baseline, evidence['builds'])

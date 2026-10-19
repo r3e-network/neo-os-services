@@ -55,6 +55,21 @@ def tool_item(cid, name, image, identity, inputs, work, network):
             'State': {'Running': False, 'OOMKilled': False, 'ExitCode': 0}}
 
 
+def business_frame():
+    return {'schema': 'neoos/dual-build-failure/v1',
+            'primary': {'stage': 'image-build', 'attempt': 1, 'kind': 'command_failed',
+                        'exit_code': 23, 'error_codes': ['E0001', 'E0100'],
+                        'hints': ['disk-full', 'rust-compile']}, 'cleanup_failed': True}
+
+
+def frame_line(value):
+    return b'DUAL-BUILD-FAILURE ' + json.dumps(value).encode() + b'\n'
+
+
+def child_program(stderr, code=7):
+    return 'import sys;sys.stderr.buffer.write(' + repr(stderr) + ');sys.stderr.flush();sys.exit(' + str(code) + ')'
+
+
 class Controls(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='hosted-fixture-')
@@ -403,7 +418,7 @@ class Controls(unittest.TestCase):
                     with self.assertRaises(c.Refused): c.execute(root, env)
                     self.assertFalse((root/'candidate/hosted-evidence.json').exists())
 
-    def diagnostic_execute(self, fault):
+    def diagnostic_execute(self, fault, child=None):
         env = environment()
         root = self.root / fault; root.mkdir()
         source_input = root / 'input.json'; source_input.write_text('{}')
@@ -411,6 +426,7 @@ class Controls(unittest.TestCase):
         class BusinessReached(Exception): pass
         class External(c.Runner):
             def resources(self): pass
+            def observe(self): pass
             def run(self, args, **kwargs):
                 c.STATUS.update(tool=kwargs.get('tool', 'docker'), exit_code=0)
                 args = [str(arg) for arg in args]
@@ -445,7 +461,10 @@ class Controls(unittest.TestCase):
                         c.STATUS.update(exit_code=7); raise c.CommandFailure('CANARY')
                     return b'github.com/docker/buildx v0.38.0 abc123'
                 if 'build' in args:
-                    state['business'] = True; raise BusinessReached()
+                    state['business'] = True
+                    if child is not None:
+                        return super().run([sys.executable, '-B', '-c', child], **kwargs)
+                    raise BusinessReached()
                 raise AssertionError('unexpected synthetic operation')
         def boot(*_):
             state['bootstrapped'] = True; c.phase('native-validation')
@@ -455,6 +474,170 @@ class Controls(unittest.TestCase):
             except BusinessReached: return None, state
             except Exception as error: return c.failure_receipt(error, env), state
         self.fail('synthetic execute unexpectedly published')
+
+    def test_business_child_frame_through_execute(self):
+        frame = business_frame()
+        receipt, state = self.diagnostic_execute('business-child', child_program(frame_line(frame)))
+        self.assertTrue(state['business'])
+        self.assertEqual(receipt.get('business_failure'), frame)
+        self.assertEqual((receipt['phase'], receipt['tool'], receipt['exit_code'], receipt['reason']),
+                         ('business-build', 'python', 7, 'command_failed'))
+        self.assertFalse(receipt['artifact_admitted'])
+        self.assertFalse((self.root/'business-child/candidate/hosted-evidence.json').exists())
+        self.assertNotIn('CANARY', json.dumps(receipt))
+
+    def test_business_frame_exact_schema_types_enums_and_bounds(self):
+        frame = business_frame()
+        for stage in ('admission', 'staging', 'canonical', 'buildkit-create', 'image-build',
+                      'image-inspect', 'image-export', 'image-verify', 'enclave-build',
+                      'enclave-describe', 'measurements', 'cleanup', 'publication', 'unknown'):
+            changed = copy.deepcopy(frame); changed['primary']['stage'] = stage
+            self.assertEqual(c.business_failure_detail(frame_line(changed)), changed)
+        for kind in ('validation', 'command_failed', 'timeout', 'os_error', 'interrupted', 'unknown'):
+            changed = copy.deepcopy(frame); changed['primary']['kind'] = kind
+            self.assertEqual(c.business_failure_detail(frame_line(changed)), changed)
+        for attempt in (0, 1, 2):
+            for code in (None, -128, 0, 255):
+                changed = copy.deepcopy(frame); changed['primary'].update(attempt=attempt, exit_code=code)
+                changed['cleanup_failed'] = False
+                changed['primary']['error_codes'] = ['E%04d' % i for i in range(16)]
+                changed['primary']['hints'] = ['cargo-resolution', 'disk-full', 'memory-exhaustion',
+                                                'network', 'package-unavailable', 'rust-compile']
+                self.assertEqual(c.business_failure_detail(frame_line(changed)), changed)
+        empty = copy.deepcopy(frame); empty['primary'].update(error_codes=[], hints=[])
+        self.assertEqual(c.business_failure_detail(frame_line(empty)), empty)
+        invalid = []
+        for container in (None, 'primary'):
+            original = frame if container is None else frame['primary']
+            for key in original:
+                changed = copy.deepcopy(frame)
+                target = changed if container is None else changed['primary']
+                del target[key]; invalid.append(changed)
+            changed = copy.deepcopy(frame)
+            (changed if container is None else changed['primary'])['message'] = 'CANARY'
+            invalid.append(changed)
+        for key, values in {
+                'stage': ['CANARY', '', 'IMAGE-BUILD', [], None],
+                'kind': ['CANARY', [], None], 'attempt': [True, False, -1, 3, 1.0, '1', None],
+                'exit_code': [True, False, -129, 256, 0.0, '0', []],
+                'error_codes': [None, 'E0001', [1], [['E0001']], ['E123'], ['E１２３４'],
+                                ['E1234\n'], ['E0001', 'E0001'], ['E0002', 'E0001'],
+                                ['E%04d' % i for i in range(17)]],
+                'hints': [None, 'network', ['CANARY'], [False], [['network']],
+                          ['network', 'network'], ['rust-compile', 'disk-full']]}.items():
+            for value in values:
+                changed = copy.deepcopy(frame); changed['primary'][key] = value; invalid.append(changed)
+        for key, values in {'schema': ['CANARY', None, []], 'primary': [None, [], 'CANARY'],
+                            'cleanup_failed': [0, 1, None, 'true', []]}.items():
+            for value in values:
+                changed = copy.deepcopy(frame); changed[key] = value; invalid.append(changed)
+        for index, changed in enumerate(invalid):
+            with self.subTest(index=index): self.assertIsNone(c.business_failure_detail(frame_line(changed)))
+        for value in ([], None, 'CANARY', 1):
+            self.assertIsNone(c.business_failure_detail(frame_line(value)))
+
+    def test_business_frame_framing_duplicates_size_and_no_raw_leak(self):
+        frame = business_frame(); line = frame_line(frame)
+        self.assertEqual(c.business_failure_detail(b'CANARY\xff\n' + line + b' \r\n\n'), frame)
+        malformed = [b'', b'CANARY', line+b'CANARY\n', line+line, b'noise '+line,
+                     b' '+line, b'DUAL-BUILD-FAILURE CANARY\n'+line,
+                     line.replace(b'"schema":', b'"schema":"neoos/dual-build-failure/v1","schema":'),
+                     line.replace(b'"attempt":', b'"attempt":1,"attempt":'),
+                     line.replace(b'"attempt": 1', b'"attempt": NaN'),
+                     line.replace(b'"attempt": 1', b'"attempt": Infinity'),
+                     line.replace(b'image-build', b'\xff'), line.rstrip()+b'{}\n',
+                     b'DUAL-BUILD-FAILURE '+b'['*1500+b']'*1500,
+                     b'DUAL-BUILD-FAILURE '+b' '*4097+line[len(b'DUAL-BUILD-FAILURE '):]]
+        for index, stderr in enumerate(malformed):
+            with self.subTest(index=index): self.assertIsNone(c.business_failure_detail(stderr))
+        with patch.object(c, 'CAPTURE_LIMIT', len(line)):
+            self.assertEqual(c.business_failure_detail(line), frame)
+            self.assertIsNone(c.business_failure_detail(b'\n'+line))
+
+    def test_business_child_invalid_frames_preserve_actual_failure(self):
+        frame = business_frame(); line = frame_line(frame)
+        invalid_type = copy.deepcopy(frame); invalid_type['primary']['attempt'] = True
+        for index, stderr in enumerate((b'CANARY', line+b'CANARY', line+line, frame_line(invalid_type),
+                                        line.replace(b'"stage":', b'"stage":"unknown","stage":'))):
+            with self.subTest(index=index):
+                receipt, state = self.diagnostic_execute('bad-child-'+str(index), child_program(stderr))
+                self.assertTrue(state['business'])
+                self.assertNotIn('business_failure', receipt)
+                self.assertEqual((receipt['tool'], receipt['exit_code'], receipt['reason']), ('python', 7, 'command_failed'))
+                self.assertFalse(receipt['artifact_admitted']); self.assertNotIn('CANARY', json.dumps(receipt))
+
+    def test_business_capture_read_error_retains_nonzero_child(self):
+        r = self.runner(); r.resources = Mock(); c.phase('business-build')
+        real_file = c.tempfile.TemporaryFile
+        files = []
+        def capture(**kwargs):
+            stream = real_file(**kwargs); files.append(stream)
+            if len(files) == 2:
+                stream.read = Mock(side_effect=OSError('CANARY'))
+            return stream
+        with patch.object(c.tempfile, 'TemporaryFile', side_effect=capture):
+            try:
+                r.run([sys.executable, '-B', '-c', child_program(frame_line(business_frame()))],
+                      tool='python', business_diagnostic=True)
+            except Exception as error:
+                self.assertIsInstance(error, c.CommandFailure)
+                receipt = c.failure_receipt(error, environment())
+            else:
+                self.fail('nonzero child admitted')
+        self.assertEqual((receipt['tool'], receipt['exit_code'], receipt['reason']), ('python', 7, 'command_failed'))
+        self.assertNotIn('business_failure', receipt)
+        self.assertNotIn('CANARY', json.dumps(receipt)); self.assertFalse(receipt['artifact_admitted'])
+
+    def test_business_child_scope_success_observer_timeout_and_main(self):
+        line = frame_line(business_frame())
+        r = self.runner(); r.resources = Mock(); c.phase('business-build')
+        # Same phase/tool/frame without the exact call site's opt-in is unrelated.
+        with self.assertRaises(c.CommandFailure) as raised:
+            r.run([sys.executable, '-B', '-c', child_program(line)], tool='python')
+        self.assertNotIn('business_failure', c.failure_receipt(raised.exception, environment()))
+        for phase_name, tool in (('native-validation', 'python'), ('business-build', 'docker')):
+            c.phase(phase_name)
+            with patch.object(c.subprocess, 'Popen') as spawn, self.assertRaises(c.Refused):
+                r.run(['never'], tool=tool, business_diagnostic=True)
+            spawn.assert_not_called()
+        c.phase('business-build')
+        with patch.object(c, 'business_failure_detail', side_effect=AssertionError('success must not parse')):
+            self.assertEqual(r.run([sys.executable, '-B', '-c', child_program(line, 0)],
+                                  tool='python', business_diagnostic=True), b'')
+        r.observe = Mock(side_effect=c.CommandFailure('CANARY'))
+        with self.assertRaises(c.CommandFailure) as raised:
+            r.run([sys.executable, '-B', '-c', child_program(line)],
+                  tool='python', observe=True, business_diagnostic=True)
+        self.assertNotIn('business_failure', c.failure_receipt(raised.exception, environment()))
+        with self.assertRaises(c.Refused) as raised:
+            r.run([sys.executable, '-B', '-c', 'import time;time.sleep(5)'],
+                  tool='python', timeout=0, business_diagnostic=True)
+        self.assertNotIn('business_failure', c.failure_receipt(raised.exception, environment()))
+        with patch.object(c, 'CAPTURE_LIMIT', 16), self.assertRaises(c.Refused) as raised:
+            r.run([sys.executable, '-B', '-c', child_program(line)], tool='python', business_diagnostic=True)
+        self.assertNotIn('business_failure', c.failure_receipt(raised.exception, environment()))
+        # Real nonzero child, then an observer/cleanup status overwrite/error.
+        real_stop = c.stop_process
+        def cleanup(process):
+            real_stop(process); c.STATUS.update(tool='docker', exit_code=99)
+            raise c.CommandFailure('CANARY')
+        with patch.object(c, 'stop_process', side_effect=cleanup), self.assertRaises(c.CommandFailure) as raised:
+            r.run([sys.executable, '-B', '-c', child_program(b'CANARY\n'+line)],
+                  tool='python', business_diagnostic=True)
+        error = raised.exception
+        receipt = c.failure_receipt(error, environment())
+        self.assertEqual((receipt['tool'], receipt['exit_code']), ('python', 7))
+        self.assertEqual(receipt.get('business_failure'), business_frame())
+        env = environment(); env.update(RUNNER_TEMP=str(self.root), GITHUB_OUTPUT=str(self.root/'job-output'))
+        old_handler = c.signal.getsignal(c.signal.SIGTERM)
+        self.addCleanup(c.signal.signal, c.signal.SIGTERM, old_handler)
+        with patch.dict(os.environ, env, clear=True), patch.object(c, 'execute', side_effect=error), patch('sys.stderr', new=io.StringIO()) as captured:
+            with self.assertRaises(SystemExit) as exit_error: c.main()
+            self.assertEqual(exit_error.exception.code, 1)
+            self.assertEqual(json.loads(captured.getvalue()).get('business_failure'), business_frame())
+            self.assertNotIn('CANARY', captured.getvalue()); self.assertFalse((self.root/'job-output').exists())
+        # No ambient detail survives a subsequent unrelated failure.
+        self.assertNotIn('business_failure', c.failure_receipt(c.Refused('validation'), env))
 
     def test_execute_diagnostics_distinguish_post_bootstrap_rejections(self):
         cases = {'containers': ('post-bootstrap-inventory', 'baseline_containers'),
