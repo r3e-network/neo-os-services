@@ -178,6 +178,29 @@ export function embeddedCustodyBypassesApi(source) {
   if (/\b(?:SignerService|ApiState|Store|MasterKey|SigningKey|SecretKey)\b/.test(source)) {
     return true;
   }
+  if (/\benrollment\b/.test(source)) {
+    // Conservative enrollment syntax only: standalone line comments and
+    // single-line ordinary strings. HOLD block comments (including nested),
+    // inline comments, raw literals and multiline strings rather than guessing
+    // Rust lexical boundaries. Even markers inside literals may cause a HOLD.
+    if (/\/\*|\*\/|\b(?:r|br|cr)#*"/.test(source)) return true;
+    const lines = [];
+    for (const line of source.split('\n')) {
+      if (/^\s*\/\//.test(line)) {
+        lines.push('');
+        continue;
+      }
+      if (line.includes('//')) return true;
+      let quoted = false;
+      for (let i = 0; i < line.length; i++) {
+        if (quoted && line[i] === '\\') i++;
+        else if (line[i] === '"') quoted = !quoted;
+      }
+      if (quoted) return true;
+      lines.push(line);
+    }
+    source = lines.join('\n');
+  }
   const enrollmentImportsRemoved = source.replace(
     /(^|[;{}])(\s*)use\s+neo_signer\s*::\s*enrollment\s*::\s*\{\s*ValidatedGenesisEnrollment\s*,\s*MAX_MANIFEST_BYTES\s*,?\s*\}\s*;/g,
     '$1$2'

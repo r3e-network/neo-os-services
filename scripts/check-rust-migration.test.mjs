@@ -19,6 +19,12 @@ import {
 } from './check-rust-migration.mjs';
 
 const ENROLLMENT_BYPASSES = [
+  'pub // visibility;\nuse neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES};',
+  'pub use /* public constant */ neo_signer::enrollment::ENROLLMENT_MODE;',
+  'use /* public constant */ neo_signer::enrollment::ENROLLMENT_MODE as Other;',
+  'pub\n// visibility; { }\nuse neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES};',
+  'use /* outer /* nested */ still comment */ neo_signer::enrollment::ENROLLMENT_MODE as Other;',
+  'pub /* ; { } */ use neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES};',
   'use neo_signer::enrollment;',
   'use neo_signer::enrollment as enrollment_api;',
   'use neo_signer::enrollment::*;',
@@ -49,6 +55,34 @@ const ENROLLMENT_BYPASSES = [
   'use k256::SecretKey;',
   'pub type PrivateState = ApiState;',
 ];
+
+test('enrollment comment handling holds unsupported lexical forms conservatively', () => {
+  const source = readFileSync('workers/nitro-enclave-host/src/custody_bootstrap.rs', 'utf8');
+  for (const addition of [
+    '// standalone comment with delimiters ; { }\n',
+    'const NOTE: &str = "single-line ordinary text";',
+    String.raw`const NOTE: &str = "escaped quote: \" and backslash: \\";`,
+    "fn lifetime<'a>(value: &'a str) {}",
+  ]) {
+    assert.equal(embeddedCustodyBypassesApi(`${source}\n${addition}\n`), false, addition);
+  }
+  for (const addition of [
+    '/* ordinary block comment */',
+    '/* outer /* nested */ comment */',
+    'const NOTE: &str = "https://example.invalid";',
+    'const NOTE: &str = "/* not a comment */";',
+    'const NOTE: &str = r"raw text";',
+    'const NOTE: &str = r##"raw text"##;',
+    'const NOTE: &[u8] = br#"raw bytes"#;',
+    'const NOTE: &CStr = cr#"raw C string"#;',
+    'const NOTE: &str = "multiline\n// not a Rust comment here\ntext";',
+    'const NOTE: &str = "continued\\\ntext";',
+    '/* unterminated block',
+    'const NOTE: &str = "unterminated',
+  ]) {
+    assert.equal(embeddedCustodyBypassesApi(`${source}\n${addition}\n`), true, addition);
+  }
+});
 
 test('measured enrollment admits only its exact public configuration surface', () => {
   const source = readFileSync('workers/nitro-enclave-host/src/custody_bootstrap.rs', 'utf8');
