@@ -588,6 +588,86 @@ class Controls(unittest.TestCase):
         self.assertNotIn('business_failure', receipt)
         self.assertNotIn('CANARY', json.dumps(receipt)); self.assertFalse(receipt['artifact_admitted'])
 
+    def test_business_outer_cleanup_failure_is_independent(self):
+        for inner_cleanup in (False, True, None, 'malformed'):
+            for cleanup_fails in (False, True):
+                with self.subTest(inner=inner_cleanup, cleanup_fails=cleanup_fails):
+                    frame = business_frame()
+                    if type(inner_cleanup) is bool:
+                        frame['cleanup_failed'] = inner_cleanup
+                        stderr = frame_line(frame)
+                    else:
+                        stderr = b'' if inner_cleanup is None else b'DUAL-BUILD-FAILURE CANARY\n'
+                    r = self.runner(); r.resources = Mock(); c.phase('business-build')
+                    processes = []; real_spawn = c.subprocess.Popen; real_killpg = c.os.killpg
+                    def spawn(*args, **kwargs):
+                        process = real_spawn(*args, **kwargs); processes.append(process); return process
+                    def killpg(*args):
+                        if cleanup_fails: raise PermissionError('CANARY')
+                        return real_killpg(*args)
+                    try:
+                        with patch.object(c.subprocess, 'Popen', side_effect=spawn), patch.object(c.os, 'killpg', side_effect=killpg):
+                            try:
+                                r.run([sys.executable, '-B', '-c', child_program(stderr)],
+                                      tool='python', business_diagnostic=True)
+                            except BaseException as error:
+                                self.assertIsInstance(error, c.CommandFailure)
+                                receipt = c.failure_receipt(error, environment())
+                            else:
+                                self.fail('nonzero child admitted')
+                        self.assertIs(receipt.get('outer_cleanup_failed'), cleanup_fails)
+                        self.assertEqual((receipt['tool'], receipt['exit_code'], receipt['reason']), ('python', 7, 'command_failed'))
+                        self.assertFalse(receipt['artifact_admitted']); self.assertNotIn('CANARY', json.dumps(receipt))
+                        if type(inner_cleanup) is bool:
+                            self.assertEqual(receipt.get('business_failure'), frame)
+                        else:
+                            self.assertNotIn('business_failure', receipt)
+                    finally:
+                        # The injected permission refusal must not leave test processes.
+                        for process in processes:
+                            c.stop_process(process)
+                            self.assertEqual(process.wait(timeout=5), 7)
+        for error in (c.CommandFailure('CANARY'), c.Refused('validation')):
+            self.assertNotIn('outer_cleanup_failed', c.failure_receipt(error, environment()))
+        # A successful child whose cleanup fails still fails through the
+        # existing generic path, never as a fabricated business command failure.
+        r = self.runner(); r.resources = Mock(); c.phase('business-build')
+        real_stop = c.stop_process
+        def failed_cleanup(process):
+            real_stop(process)
+            raise PermissionError('CANARY')
+        with patch.object(c, 'stop_process', side_effect=failed_cleanup):
+            try:
+                r.run([sys.executable, '-B', '-c', child_program(b'', 0)], tool='python', business_diagnostic=True)
+            except BaseException as error:
+                self.assertIsInstance(error, PermissionError)
+                receipt = c.failure_receipt(error, environment())
+            else:
+                self.fail('successful child admitted despite cleanup failure')
+        self.assertNotIn('outer_cleanup_failed', receipt)
+        self.assertNotIn('business_failure', receipt)
+        self.assertFalse(receipt['artifact_admitted']); self.assertNotIn('CANARY', json.dumps(receipt))
+
+    def test_business_outer_cleanup_interruptions_preserve_primary(self):
+        real_stop = c.stop_process
+        for failure in (InterruptedError('CANARY'), KeyboardInterrupt('CANARY'), subprocess.TimeoutExpired('CANARY', 5)):
+            r = self.runner(); r.resources = Mock(); c.phase('business-build')
+            def cleanup(process):
+                real_stop(process)
+                raise failure
+            with patch.object(c, 'stop_process', side_effect=cleanup):
+                try:
+                    r.run([sys.executable, '-B', '-c', child_program(b'')], tool='python', business_diagnostic=True)
+                except BaseException as error:
+                    self.assertIsInstance(error, c.CommandFailure)
+                    receipt = c.failure_receipt(error, environment())
+                else:
+                    self.fail('nonzero child admitted')
+            self.assertIs(receipt.get('outer_cleanup_failed'), True)
+            self.assertEqual((receipt['tool'], receipt['exit_code']), ('python', 7))
+            self.assertFalse(receipt['artifact_admitted']); self.assertNotIn('business_failure', receipt)
+            self.assertNotIn('CANARY', json.dumps(receipt))
+
     def test_business_child_scope_success_observer_timeout_and_main(self):
         line = frame_line(business_frame())
         r = self.runner(); r.resources = Mock(); c.phase('business-build')
@@ -635,6 +715,7 @@ class Controls(unittest.TestCase):
             with self.assertRaises(SystemExit) as exit_error: c.main()
             self.assertEqual(exit_error.exception.code, 1)
             self.assertEqual(json.loads(captured.getvalue()).get('business_failure'), business_frame())
+            self.assertIs(json.loads(captured.getvalue()).get('outer_cleanup_failed'), True)
             self.assertNotIn('CANARY', captured.getvalue()); self.assertFalse((self.root/'job-output').exists())
         # No ambient detail survives a subsequent unrelated failure.
         self.assertNotIn('business_failure', c.failure_receipt(c.Refused('validation'), env))

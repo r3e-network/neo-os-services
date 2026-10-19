@@ -197,6 +197,7 @@ class BusinessCommandFailure(CommandFailure):
     def __init__(self, code, stderr):
         super().__init__('command_failed')
         self.code = code
+        self.outer_cleanup_failed = False
         # No raw stderr is retained on the exception or in the public receipt.
         self.detail = business_failure_detail(stderr)
 
@@ -220,6 +221,7 @@ def failure_receipt(error, env):
     if type(error) is BusinessCommandFailure:
         result.update(phase='business-build', tool='python',
                       exit_code=error.code if type(error.code) is int and -128 <= error.code <= 255 else None)
+        result['outer_cleanup_failed'] = error.outer_cleanup_failed
         if error.detail is not None:
             result['business_failure'] = error.detail
     for key, pattern in (('CANDIDATE_SOURCE_SHA', HEX40), ('GITHUB_WORKFLOW_SHA', HEX40),
@@ -310,6 +312,10 @@ class Runner:
                 STATUS.update(tool=tool, exit_code=process.poll())
                 try:
                     stop_process(process)
+                except BaseException:
+                    if business_error is None:
+                        raise
+                    business_error.outer_cleanup_failed = True
                 finally:
                     # Observer/cleanup status cannot overwrite this child failure.
                     if business_error is not None:
