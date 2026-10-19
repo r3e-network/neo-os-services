@@ -1400,6 +1400,23 @@
           "sha256": "34e1786b9e1e6afba65c5828ece6618869fe0f95a0682506ff4f5ce5a791d4b6"
         }
       }
+    },
+    {
+      "consumer": "reviewed-publication-topology-policy-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "These exact topology-audit and release/topology regression-test inputs were independently reviewed at source commit 6bfa1845aba97d6286b7fd4505f343560924de74 and verified unchanged at 7eba165fec3bdd339efec213d4ac63b5f9292067. They inspect repository deployment/publication configuration and test fail-closed gates; they do not draw VRF output, select economic winners, award value or authorize settlement. This classification does not approve the runtime consumers they inspect, renew any topology exception or economic debt, authorize publication/deployment, establish full CI, or replace custody inputs, measured artifacts and release admission.",
+      "inputs": {
+        "scripts/check-rust-production-topology.mjs": {
+          "sha256": "3b108521aa093acc58ea6c3a013d9796716366910a1ff92b89413cd11970cb9e"
+        },
+        "scripts/check-rust-production-topology.test.mjs": {
+          "sha256": "bec18b2f79b63f7115f5c067fa88e9ac1928d86dd7edbfff32cf6b925303843c"
+        },
+        "scripts/release-gating.test.mjs": {
+          "sha256": "f6c1d2221db4d852087bdb4b093cfaa64cfd5184d38c10540c8e12a6841f9878"
+        }
+      }
     }
   ]
 }
