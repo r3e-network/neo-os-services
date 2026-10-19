@@ -74,14 +74,16 @@ fn a_dead_port_exhausts_the_budget_and_says_so() {
         eprintln!("skipping: node is not on PATH");
         return;
     }
-    // Grab a port and release it: nothing listens, so the probe must time out
-    // rather than hang or report success.
-    let listener = TcpListener::bind("127.0.0.1:0").expect("loopback listener");
-    let port = listener.local_addr().expect("addr").port();
-    drop(listener);
+    // Port zero cannot name a listening endpoint: bind(...:0) allocates a
+    // nonzero port. Releasing an ephemeral port instead permits another test
+    // (or a TCP self-connect) to make the negative readiness probe succeed.
+    let port = 0;
+    let competing_listener = TcpListener::bind(("127.0.0.1", port)).expect("loopback listener");
+    assert_ne!(competing_listener.local_addr().expect("addr").port(), port);
 
     let mut server = alive("test server").spawn().expect("child");
-    let error = wait_for_ready(
+    let started = Instant::now();
+    let result = wait_for_ready(
         &Readiness {
             attempts: 3,
             interval: Duration::from_millis(20),
@@ -89,16 +91,22 @@ fn a_dead_port_exhausts_the_budget_and_says_so() {
         },
         &mut server,
         "test server",
-    )
-    .expect_err("nothing is listening");
-    assert!(error.contains("test server"), "{error}");
-    assert!(error.contains(&port.to_string()), "{error}");
-
+    );
+    let elapsed = started.elapsed();
     let mut watch = vec![Watched {
         label: "test server",
         child: server,
     }];
     teardown(&mut watch);
+    let error = result.expect_err("port zero cannot be listening");
+    assert_eq!(
+        error,
+        "test server did not become ready on 127.0.0.1:0 within 3 attempts"
+    );
+    assert!(
+        elapsed >= Duration::from_millis(60),
+        "probe budget was skipped"
+    );
 }
 
 #[test]

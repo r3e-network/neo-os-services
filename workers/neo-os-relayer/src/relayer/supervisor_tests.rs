@@ -246,22 +246,49 @@ fn aggregate_preserves_labeled_failures_for_existing_metrics_readers() {
 
 #[tokio::test]
 async fn shutdown_interrupts_an_inflight_local_heartbeat() {
+    use tokio::io::AsyncReadExt;
+
     let mut cfg = config();
-    cfg.raw["shutdownDrainMs"] = serde_json::json!(100);
+    // Keep the production drain budget: this case proves heartbeat cancellation,
+    // not a 100ms filesystem flush. The outer one-second deadline stays strict;
+    // the separate noncooperative-worker case checks the explicit drain budget.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     cfg.raw["heartbeats"]["failure"] =
         serde_json::json!(format!("http://{}", listener.local_addr().unwrap()));
     let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+    let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
-        let (_stream, _) = listener.accept().await.unwrap();
+        let (mut stream, _) = listener.accept().await.unwrap();
         let _ = accepted_tx.send(());
-        std::future::pending::<()>().await;
+        let mut bytes = [0_u8; 1024];
+        loop {
+            match stream.read(&mut bytes).await {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+                    ) =>
+                {
+                    break
+                }
+                Err(error) => panic!("heartbeat read failed: {error}"),
+            }
+        }
+        let _ = closed_tx.send(());
     });
     let children = prepare_chain_workers(&cfg).unwrap();
     let (stop, mut receiver) = tokio::sync::watch::channel(None);
     let mut tasks = tokio::task::JoinSet::new();
+    let (drained_tx, drained_rx) = tokio::sync::oneshot::channel();
     tasks.spawn(async move {
-        let _ = receiver.changed().await;
+        receiver.changed().await.expect("shutdown notification");
+        assert!(
+            receiver.borrow().is_some(),
+            "shutdown reason must be present"
+        );
+        let _ = drained_tx.send(());
         Ok(())
     });
     let shutdown = async {
@@ -273,11 +300,26 @@ async fn shutdown_interrupts_an_inflight_local_heartbeat() {
         supervise_chain_tasks(&cfg, &children, tasks, stop, shutdown),
     )
     .await;
+    let connection_closed = tokio::time::timeout(Duration::from_secs(1), closed_rx).await;
+    let worker_drained = tokio::time::timeout(Duration::from_secs(1), drained_rx).await;
     server.abort();
+    let _ = server.await;
     cleanup(&cfg, &children);
     assert!(
         result.is_ok(),
         "heartbeat I/O must not hide shutdown beyond the drain budget"
     );
-    assert!(result.unwrap().is_ok());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "supervisor result: {result:?}; connection: {connection_closed:?}; worker: {worker_drained:?}"
+    );
+    assert!(
+        matches!(worker_drained, Ok(Ok(()))),
+        "cooperative worker was not drained: {worker_drained:?}"
+    );
+    assert!(
+        matches!(connection_closed, Ok(Ok(()))),
+        "heartbeat connection remained open after shutdown: {connection_closed:?}"
+    );
 }
