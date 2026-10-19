@@ -1236,13 +1236,13 @@
       "justification": "These exact packaging inputs are the reviewed 79b6 dual-enclave source bytes used by the integration plan; they prepare and validate the measurement path but do not draw VRF output, select an economic winner, award value or authorize settlement. This exact-file classification does not authorize deployment, replace PCR measurement evidence, or exempt identity, custody, transport security or downstream economic consumers.",
       "inputs": {
         "deploy/nitro/Dockerfile.dual-enclave": {
-          "sha256": "a5438b0a2122009138056b9a33295e97201b1f9bb357dd44ba780f8102e8b3d5"
+          "sha256": "86c195567b7a4990ec8b78550689964569950f13b28b2ab839cf117609016c0b"
         },
         "deploy/nitro/dual-prepare.rs": {
           "sha256": "615fd6ce4103a1ea9d7e6ef4fdb391c5df767216dde9062b6bb8c9f2456c6c82"
         },
         "deploy/nitro/dual_image_test.py": {
-          "sha256": "5ab7571c3e6a549b332dec7e0ae043556ba7d36b532908c143cf559806800e75"
+          "sha256": "33fbddd51b4a113f3daa67bdaa6e0056dcd67085ac779262d5f656c039c7858f"
         },
         "deploy/nitro/dual_prepare_test.py": {
           "sha256": "b1bc40146434f85e0cecc4cb9284fcea7464ba594bd0636f1259be30e65dd60e"
@@ -1259,13 +1259,13 @@
       "justification": "These exact seven cross-packaging inputs are bound to the independent R12 source review at c4718c5; they select and validate the native cross-build path but do not draw VRF output, select an economic winner, award value or authorize settlement. This exact-file classification does not authorize deployment, replace PCR measurement evidence, or exempt identity, custody, transport security or downstream economic consumers.",
       "inputs": {
         "deploy/nitro/Dockerfile.dual-enclave.cross": {
-          "sha256": "7fe25e96c23417adc22cf0a1ff341405321fef3dfd11cd41b3d38ac0eaedc2eb"
+          "sha256": "66ddc376fd689f9ade48ce511c7c60385b6fd9efef1b36517c76bd05a4ac9374"
         },
         "deploy/nitro/README.dual-image.md": {
           "sha256": "f38a94cc6925e987149600fe782c28941bd7a444792bf5cfec38f0c871a07275"
         },
         "deploy/nitro/build-dual-enclave.py": {
-          "sha256": "4c7d80463b11ba52a7cf45e684a3700159a9e837d3b8cc13d6e09cbc9fdf1016"
+          "sha256": "f8df349bf1ca6f5a27242bc0adbbd03a66f9523724bbf523a9ffe8c47577d898"
         },
         "deploy/nitro/cross-inputs.lock.json": {
           "sha256": "a5086fffb3db277aa47b3ab475b0da0dc35d16ac070729b2a89a5ac6de3f824e"
