@@ -8,7 +8,13 @@ const require = createRequire(import.meta.url);
 const yaml = require('js-yaml');
 const directory = new URL('../.github/workflows/', import.meta.url);
 const workflows = readdirSync(directory).filter((file) => /\.ya?ml$/.test(file));
-const hostedOnly = new Set(['randomized-inputs.yml/randomized-inputs', 'runner-policy.yml/select']);
+const hostedOnly = new Map([
+  ['randomized-inputs.yml/randomized-inputs', 'ubuntu-latest'],
+  ['runner-policy.yml/select', 'ubuntu-latest'],
+  // The companion measured-candidate-workflow test binds this single manual,
+  // public-main job's complete shape; this is not a general hosted override.
+  ['measured-candidate.yml/measured-candidate', 'ubuntu-24.04'],
+]);
 
 // Narrow Actions-expression interpreter for the syntax used by runner policies.
 // String equality is case-insensitive; mixed primitive types coerce to numbers.
@@ -268,7 +274,7 @@ for (const file of workflows) {
     }
     test(`${name}: only private manual or exact default-branch pushes may use isolated runners`, () => {
       if (hostedOnly.has(name)) {
-        assert.equal(job['runs-on'], 'ubuntu-latest');
+        assert.equal(job['runs-on'], hostedOnly.get(name));
         return;
       }
       const needs = Array.isArray(job.needs) ? job.needs : [job.needs];

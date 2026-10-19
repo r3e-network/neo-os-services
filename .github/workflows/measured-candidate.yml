@@ -1,0 +1,56 @@
+name: measured-candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Reviewed canonical source commit (40 lowercase hex)
+        required: true
+        type: string
+      public_bundle_sha256:
+        description: Independently reviewed SHA256 of the decoded public bundle
+        required: true
+        type: string
+      public_bundle_base64:
+        description: Bounded public JSON bundle; no credentials or private files
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: measured-candidate
+  cancel-in-progress: false
+
+jobs:
+  measured-candidate:
+    if: github.repository == 'r3e-network/neo-os-services' && toJSON(github.event.repository.private) == 'false' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Build and verify measured candidate
+        id: candidate
+        env:
+          CANDIDATE_SOURCE_SHA: ${{ inputs.source_sha }}
+          PUBLIC_BUNDLE_SHA256: ${{ inputs.public_bundle_sha256 }}
+          PUBLIC_BUNDLE_BASE64: ${{ inputs.public_bundle_base64 }}
+          CANDIDATE_REPOSITORY_PRIVATE: ${{ toJSON(github.event.repository.private) }}
+        run: python3 -B scripts/hosted_native_candidate.py
+      - name: Upload verified measured candidate
+        if: success() && steps.candidate.outputs.verified == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: measured-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.candidate.outputs.path }}/enclave.eif
+            ${{ steps.candidate.outputs.path }}/build-evidence.json
+            ${{ steps.candidate.outputs.path }}/hosted-evidence.json
+            ${{ steps.candidate.outputs.path }}/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
