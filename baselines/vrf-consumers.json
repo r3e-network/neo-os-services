@@ -1349,7 +1349,7 @@
           "sha256": "02d856586a67ae822af09e91e9c47ca4dc7f79707214e2d790dc3007846aa56b"
         },
         "scripts/runner-policy.test.mjs": {
-          "sha256": "6eef9abf4a25fa1d1a3c5694c4885dc7c4a24ad5a3c13b9f00bac65c5b2d0468"
+          "sha256": "b54adc667307f2f91b719843866c93c550c8ee92519dea9fde2108a0bdbaf657"
         }
       }
     },
@@ -1415,6 +1415,32 @@
         },
         "scripts/release-gating.test.mjs": {
           "sha256": "f6c1d2221db4d852087bdb4b093cfaa64cfd5184d38c10540c8e12a6841f9878"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-hosted-measured-candidate-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "These exact inputs orchestrate a manually dispatched public hosted measured-candidate build, constrain its runner and tools, validate public source/input bindings and final artifact/daemon state, or test those controls. They do not consume VRF draws, select economic winners, award value or authorize settlement. The artifact gate admits only a measured candidate for independent review; this non-value classification is not runtime/release/KMS admission, deployment authorization, proof of native tool closure or disk fit, or approval of dispatch inputs. Existing economic debt and all gate control paths remain unchanged.",
+      "inputs": {
+        ".github/workflows/measured-candidate.yml": {
+          "sha256": "cccbb0df7473d96bab7660bfa409b734f1ba84ca1d6e113dd1a594745ba85537"
+        },
+        "deploy/nitro/hosted-native-tools.json": {
+          "sha256": "cf88b6a8f4ac797c36365dcd237fb8b10779e7c0722d5c9353aa13d6dea3d824"
+        },
+        "scripts/hosted-native-candidate.test.mjs": {
+          "sha256": "c24470a3f96ab280ce99f69b379c605d6cd400ed4cf0f7f65cd553d58d6d5183"
+        },
+        "scripts/hosted_native_candidate.py": {
+          "sha256": "2c520c1b98b68ebf355583b27219f45b48ff978501fec7ca88d7ea3d3a9e1e01"
+        },
+        "scripts/hosted_native_candidate_test.py": {
+          "sha256": "5f9eb1106919953331f0f6f89a60a6383c7ab36ca26712f7c96dd2573e34426c"
+        },
+        "scripts/measured-candidate-workflow.test.mjs": {
+          "sha256": "478234d04efb285c4a933cea9aeca2e50d1aafbe6d1fe5ccf5201e37963bab6e"
         }
       }
     }
