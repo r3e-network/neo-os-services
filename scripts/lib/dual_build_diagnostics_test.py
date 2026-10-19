@@ -165,6 +165,49 @@ class Diagnostics(unittest.TestCase):
         self.assertEqual(output, b'error[E0432]\n')
         self.assertIsNone(b.DIAGNOSTIC['primary'])
 
+    def test_process_group_cleanup_failure_survives_successful_resource_cleanup(self):
+        self.assertTrue(hasattr(b, 'failure_diagnostic'))
+        real_run, real_stop = b.run, b.stop_group
+        publication = Mock()
+
+        def failed_group_cleanup(process):
+            real_stop(process)
+            raise OSError('PRIVATE_CANARY')
+
+        def command(args, env, **kwargs):
+            if 'build' in args:
+                return real_run([sys.executable, '-c', 'raise SystemExit(7)'], env)
+            return b''
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(b, 'canonical', return_value='a' * 40), patch.object(b, 'run', side_effect=command), patch.object(b, 'stop_group', side_effect=failed_group_cleanup):
+                with self.assertRaises(OSError):
+                    b.build_into(root, root / 'context', {'git_commit': 'a' * 40}, b.safe_env(root), 'synthetic-docker', 'synthetic-nitro', root, publication)
+        receipt = b.failure_diagnostic(ValueError())
+        self.assertTrue(receipt['cleanup_failed'])
+        self.assertEqual(receipt['primary']['stage'], 'image-build')
+        self.assertEqual(receipt['primary']['exit_code'], 7)
+        self.assertEqual(publication.mock_calls, [])
+
+    def test_cleanup_only_failure_has_cleanup_stage(self):
+        self.assertTrue(hasattr(b, 'failure_diagnostic'))
+        real_stop = b.stop_group
+
+        def failed_group_cleanup(process):
+            real_stop(process)
+            raise OSError('PRIVATE_CANARY')
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(b, 'stop_group', side_effect=failed_group_cleanup):
+            with self.assertRaises(OSError):
+                b.run([sys.executable, '-c', 'pass'], b.safe_env(Path(tmp)))
+        receipt = b.failure_diagnostic(ValueError())
+        self.assertTrue(receipt['cleanup_failed'])
+        self.assertEqual(receipt['primary']['stage'], 'cleanup')
+        self.assertEqual(receipt['primary']['kind'], 'os_error')
+        self.assertIsNone(receipt['primary']['exit_code'])
+        self.assertNotIn('PRIVATE_CANARY', json.dumps(receipt))
+
 
 if __name__ == '__main__':
     unittest.main()

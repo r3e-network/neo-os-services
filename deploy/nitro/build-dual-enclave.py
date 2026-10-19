@@ -366,7 +366,13 @@ def run(args, env, cwd=None, timeout=120):
             failure_diagnostic(error)
             raise
         finally:
-            stop_group(process)
+            try:
+                stop_group(process)
+            except BaseException as error:
+                DIAGNOSTIC['cleanup_failed'] = True
+                diagnostic_stage('cleanup')
+                failure_diagnostic(error)
+                raise
 
 
 def safe_env(home):
@@ -738,7 +744,7 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
                 run([*docker_args, 'image', 'rm', image], env, timeout=30)
             except (ValueError, OSError, subprocess.SubprocessError):
                 failed = True
-        DIAGNOSTIC['cleanup_failed'] = failed
+        DIAGNOSTIC['cleanup_failed'] = DIAGNOSTIC['cleanup_failed'] or failed
         require(not failed, 'owned build cleanup failed; operator cleanup required')
     # Publish the first measured artifact only after cancellation/cleanup succeeds.
     diagnostic_stage('publication')
