@@ -169,6 +169,32 @@ export function documentationCoverage(root = process.cwd()) {
   };
 }
 
+// The host may validate public measured enrollment configuration, but must not
+// receive custody state or secret material. Admit only the existing two-name
+// import and the fixed mode constant, never the enrollment module generally.
+// Like the surrounding ownership checks, this is source drift detection, not
+// a Rust parser; behavioral enforcement and exact-source review still apply.
+export function embeddedCustodyBypassesApi(source) {
+  if (/\b(?:SignerService|ApiState|Store|MasterKey|SigningKey|SecretKey)\b/.test(source)) {
+    return true;
+  }
+  const enrollmentImportsRemoved = source.replace(
+    /(^|[;{}])(\s*)use\s+neo_signer\s*::\s*enrollment\s*::\s*\{\s*ValidatedGenesisEnrollment\s*,\s*MAX_MANIFEST_BYTES\s*,?\s*\}\s*;/g,
+    '$1$2'
+  );
+  // Require a declaration boundary before `use`, so a reexport (even with
+  // multiline visibility or comments) cannot become an allowed private import.
+  // Aliased, glob, nested and additional imports remain outside this boundary.
+  if (/\buse\s+neo_signer\s*::\s*enrollment\b/.test(enrollmentImportsRemoved)) return true;
+  const publicModeRemoved = enrollmentImportsRemoved.replace(
+    /\bneo_signer\s*::\s*enrollment\s*::\s*ENROLLMENT_MODE\b(?!\s*::)/g,
+    ''
+  );
+  return /\bneo_signer\s*(?:as\b|;|::\s*\{)|\bneo_signer\s*::\s*(?!(?:attestation|auth|embedded|network|vault_profile)\b)/.test(
+    publicModeRemoved
+  );
+}
+
 export function auditRustMigration(root = process.cwd()) {
   const failures = [];
   const requireFile = (relativePath) => {
@@ -419,12 +445,11 @@ export function auditRustMigration(root = process.cwd()) {
         /BootGuard::required\(/,
         'embedded custody must require attested boot'
       );
-      reject(
-        embeddedBootstrap,
-        bootstrap,
-        /\b(?:SignerService|ApiState|Store|MasterKey|SigningKey|SecretKey)\b|\bneo_signer\s*(?:as\b|;|::\s*\{)|\bneo_signer\s*::\s*(?!(?:attestation|auth|embedded|network|vault_profile)\b)/,
-        'embedded bootstrap must not bypass the custody API or access private keys'
-      );
+      if (embeddedCustodyBypassesApi(bootstrap)) {
+        failures.push(
+          `${embeddedBootstrap}: embedded bootstrap must not bypass the custody API or access private keys`
+        );
+      }
     }
   }
   for (const sourcePath of rustSources(root, 'workers/nitro-enclave-host/src')) {

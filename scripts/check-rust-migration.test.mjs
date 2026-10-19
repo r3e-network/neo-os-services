@@ -12,10 +12,61 @@ import {
   cargoWorkspaceMembers,
   dockerInstructions,
   documentationCoverage,
+  embeddedCustodyBypassesApi,
   retiredManifestIsArchiveStub,
   retiredMarkdownHasActionableCommands,
   RETIRED_ACTIONABLE_COMMAND,
 } from './check-rust-migration.mjs';
+
+const ENROLLMENT_BYPASSES = [
+  'use neo_signer::enrollment;',
+  'use neo_signer::enrollment as enrollment_api;',
+  'use neo_signer::enrollment::*;',
+  'use neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES, OtherApi};',
+  'use neo_signer::enrollment::{ValidatedGenesisEnrollment as Other, MAX_MANIFEST_BYTES};',
+  'use neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES as Other};',
+  'use neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES, nested::{OtherApi}};',
+  'pub use neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES};',
+  'pub(crate) use neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES};',
+  'pub\nuse neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES};',
+  'pub(crate)\nuse neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES};',
+  'pub /* visibility */\nuse neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES};',
+  'pub /* visibility */ (crate)\nuse neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES};',
+  'pub // visibility\nuse neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES};',
+  'use neo_signer::enrollment::ENROLLMENT_MODE as Other;',
+  'pub use neo_signer::enrollment::ENROLLMENT_MODE;',
+  'neo_signer::enrollment::OtherApi::open();',
+  'neo_signer::enrollment::ENROLLMENT_MODE_EXTRA;',
+  'neo_signer::enrollment::ENROLLMENT_MODE::OtherApi;',
+  'use neo_signer::{enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES}};',
+  'use neo_signer as signer_api;',
+  'use neo_signer;',
+  'use neo_signer::service::SignerService;',
+  'use neo_signer::store::Store;',
+  'use neo_signer::vault::MasterKey;',
+  'use neo_signer::crypto;',
+  'use p256::ecdsa::SigningKey;',
+  'use k256::SecretKey;',
+  'pub type PrivateState = ApiState;',
+];
+
+test('measured enrollment admits only its exact public configuration surface', () => {
+  const source = readFileSync('workers/nitro-enclave-host/src/custody_bootstrap.rs', 'utf8');
+  assert.equal(embeddedCustodyBypassesApi(source), false);
+  assert.equal(
+    embeddedCustodyBypassesApi(
+      source.replace(
+        'use neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES};',
+        'use neo_signer :: enrollment :: {\n ValidatedGenesisEnrollment,\n MAX_MANIFEST_BYTES,\n};'
+      )
+    ),
+    false,
+    'whitespace and trailing comma do not broaden the two-symbol import'
+  );
+  for (const bypass of ENROLLMENT_BYPASSES) {
+    assert.equal(embeddedCustodyBypassesApi(`${source}\n${bypass}\n`), true, bypass);
+  }
+});
 
 test('every workspace member is visible to measured Docker build resolution', () => {
   const members = cargoWorkspaceMembers();
@@ -129,6 +180,11 @@ test('embedded custody ownership rejects bypasses through the actual repository 
       [bootstrap, (s) => s + '\nuse neo_signer::service::SignerService;\n', 'must not bypass'],
       [bootstrap, (s) => s + '\nuse neo_signer::crypto;\n', 'must not bypass'],
       [bootstrap, (s) => s + '\nuse neo_signer as private_signer;\n', 'must not bypass'],
+      ...ENROLLMENT_BYPASSES.map((bypass) => [
+        bootstrap,
+        (s) => `${s}\n${bypass}\n`,
+        'must not bypass',
+      ]),
       [
         library,
         (s) => s + '\nuse neo_signer::embedded::EmbeddedCustodyRuntime;\n',
