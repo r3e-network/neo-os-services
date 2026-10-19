@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 
@@ -9,6 +13,70 @@ const workflow = yaml.load(
   readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
 );
 
+for (const [file, jobName] of [
+  ['ci.yml', 'lint-and-format'],
+  ['ci.yml', 'measurements'],
+  ['gitleaks.yml', 'scan'],
+]) {
+  test(`${file}/${jobName} checks out reachable history for its gates`, (t) => {
+    const doc = yaml.load(
+      readFileSync(new URL(`../.github/workflows/${file}`, import.meta.url), 'utf8')
+    );
+    const job = doc.jobs[jobName];
+    const checkout = job.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+    assert.ok(checkout, 'history consumer must check out the repository');
+    assert.equal(checkout.if, undefined);
+    assert.equal(checkout['continue-on-error'], undefined);
+    assert.ok(job.steps.indexOf(checkout) < job.steps.findIndex((step) => step.run));
+
+    const root = mkdtempSync(join(tmpdir(), 'ci-history-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const git = (...args) =>
+      execFileSync('git', args, {
+        cwd: root,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+    git('init', '-q', '-b', 'main', 'source');
+    const commit = (text) => {
+      writeFileSync(join(root, 'source', 'input'), text);
+      git('-C', 'source', 'add', 'input');
+      git(
+        '-C',
+        'source',
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.invalid',
+        'commit',
+        '-qm',
+        text
+      );
+      return git('-C', 'source', 'rev-parse', 'HEAD');
+    };
+    const ancestor = commit('reviewed ancestor');
+    commit('current source');
+    // checkout defaults to one commit; file:// makes Git honor depth locally.
+    const depth = checkout.with?.['fetch-depth'] ?? 1;
+    git(
+      'clone',
+      ...(depth === 0 ? [] : ['--depth', String(depth)]),
+      pathToFileURL(join(root, 'source')).href,
+      'checkout'
+    );
+    assert.equal(
+      git('-C', 'checkout', 'rev-parse', '--is-shallow-repository'),
+      'false',
+      'history gate needs a full checkout'
+    );
+    git('-C', 'checkout', 'merge-base', '--is-ancestor', ancestor, 'HEAD');
+    assert.ok(
+      !job.steps.some((step) => /git fetch[^\n]*--depth(?:[= ]|$)/.test(step.run ?? '')),
+      'later fetches must not reintroduce shallow boundaries'
+    );
+  });
+}
+
 function requiredRun(job, command) {
   const step = job.steps.find((candidate) => candidate.run === command);
   assert.ok(step, `missing CI command: ${command}`);
@@ -16,6 +84,29 @@ function requiredRun(job, command) {
   assert.equal(step['continue-on-error'], undefined, `${command} must block on failure`);
   return job.steps.indexOf(step);
 }
+
+test('ops prepares the shared enclave binary before timed parallel fixtures', () => {
+  const job = workflow.jobs['web-and-worker'];
+  const command =
+    'cargo build --locked --offline --jobs 1 -p nitro-enclave-host --bin enclave_host';
+  const build = job.steps.find((step) => step.run === command);
+  assert.ok(build, 'cold enclave compilation needs a separate bounded preparation step');
+  const fetch = job.steps.find((step) => step.run === 'cargo fetch --locked');
+  const tests = job.steps.find((step) => step.run === 'npm run test:ops');
+  for (const step of [fetch, build, tests]) {
+    assert.equal(step.if, "matrix.suite == 'ops'");
+    assert.equal(step['continue-on-error'], undefined);
+    assert.equal(step['working-directory'], undefined, 'all steps use the same target directory');
+    assert.equal(step.env, undefined, 'preparation and fixtures use the same Cargo profile');
+  }
+  assert.ok(job.steps.indexOf(fetch) < job.steps.indexOf(build));
+  assert.ok(job.steps.indexOf(build) < job.steps.indexOf(tests));
+  assert.ok(
+    Number.isInteger(build['timeout-minutes']) &&
+      build['timeout-minutes'] > 0 &&
+      build['timeout-minutes'] <= 20
+  );
+});
 
 test('lint-and-format runs all scripts regressions before repository gates', () => {
   const lint = workflow.jobs['lint-and-format'];
@@ -44,7 +135,7 @@ test('lint-and-format runs the capability route-parity gate, and compares its ba
   assert.equal(shrink.if, "github.event_name == 'pull_request'");
   assert.equal(shrink['continue-on-error'], undefined, 'the comparison must block on failure');
   assert.equal(shrink.env.BASE_SHA, '${{ github.event.pull_request.base.sha }}');
-  assert.match(shrink.run, /git fetch --no-tags --depth=1 origin "\$BASE_SHA"/);
+  assert.match(shrink.run, /git fetch --no-tags origin "\$BASE_SHA"/);
   assert.match(shrink.run, /npm run check:capability-route-parity -- --base "\$BASE_SHA"/);
   assert.ok(
     shrink.run.indexOf('git fetch') < shrink.run.indexOf('npm run check:capability-route-parity'),

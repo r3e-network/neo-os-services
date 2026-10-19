@@ -16,7 +16,12 @@ test('dual source committed CLI and provenance drift controls', () => {
   const run = spawnSync(
     'python3',
     ['-B', fileURLToPath(new URL('./lib/dual_release_provenance_test.py', import.meta.url))],
-    { encoding: 'utf8', timeout: 120_000 }
+    {
+      encoding: 'utf8',
+      timeout: 120_000,
+      // setup-node's executable may be outside the fixture's restricted PATH.
+      env: { ...process.env, DUAL_RELEASE_TEST_NODE: process.execPath },
+    }
   );
   assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
 });

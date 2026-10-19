@@ -62,6 +62,9 @@ jobs:
     runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          # Root regression tests validate reachable measurement manifests.
+          fetch-depth: 0
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version-file: .nvmrc
@@ -83,7 +86,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ -n "$BASE_SHA" ]; then
-            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+            git fetch --no-tags origin "$BASE_SHA"
             node scripts/check-policy-binding-freshness.mjs --base "$BASE_SHA"
           else
             node scripts/check-policy-binding-freshness.mjs
@@ -138,7 +141,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          git fetch --no-tags origin "$BASE_SHA"
           npm run check:capability-route-parity -- --base "$BASE_SHA"
           node scripts/check-vrf-consumers.mjs --base "$BASE_SHA"
       - run: npm run check:cargo-lock-provenance
@@ -273,6 +276,11 @@ jobs:
       # without this the build hook fails and takes every enclave-host test with it.
       - run: cargo fetch --locked
         if: matrix.suite == 'ops'
+      # Complete the cold build before parallel fixtures enter timed build hooks.
+      - name: Prepare enclave host for ops fixtures
+        run: cargo build --locked --offline --jobs 1 -p nitro-enclave-host --bin enclave_host
+        if: matrix.suite == 'ops'
+        timeout-minutes: 20
       - run: npm run test:ops
         if: matrix.suite == 'ops'
       - run: npm run test:cloudflare

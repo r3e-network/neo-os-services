@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -18,6 +19,10 @@ class CommittedSource(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='dual-source-test-')
         self.root = Path(self.temp.name) / 'repo'
         self.root.mkdir()
+        # Resolve before sanitizing the CLI environment; do not inherit its PATH
+        # or Node startup options just to locate setup-node's selected runtime.
+        self.node_executable = os.environ.get('DUAL_RELEASE_TEST_NODE') or shutil.which('node')
+        self.assertTrue(self.node_executable and Path(self.node_executable).is_absolute())
         self.env = {'PATH': '/opt/homebrew/bin:/usr/bin:/bin', 'HOME': self.temp.name,
                     'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': os.devnull,
                     'GIT_AUTHOR_NAME': 'Jimmy', 'GIT_AUTHOR_EMAIL': 'jimmy@r3e.network',
@@ -59,7 +64,7 @@ class CommittedSource(unittest.TestCase):
         self.git('commit', '-qm', message)
 
     def cli(self, base=None, runner=None, environment=None):
-        args = ['node', str((runner or self.root) / 'scripts/check-dual-release.mjs'),
+        args = [self.node_executable, str((runner or self.root) / 'scripts/check-dual-release.mjs'),
                 '--root', str(self.root), '--base', base or self.base]
         # Gate rejects externally supplied Git behavior overrides. Fixture author
         # metadata is for local commits only, not inherited by gate execution.
@@ -99,6 +104,34 @@ class CommittedSource(unittest.TestCase):
         self.assertEqual(codes.count('DUAL_SELECTED_INPUT_MEASUREMENT_ABSENT'),1)
         self.assertIn('DUAL_BUILD_INPUT_MISSING',codes)
         self.assertEqual(sum(c['status']=='NOT_EVALUABLE_MISSING_MEASUREMENT' for c in report['checks'] if 'status' in c),3)
+
+    def test_cli_uses_explicit_runtime_without_inheriting_environment(self):
+        from unittest.mock import patch
+        runtime = Path(self.temp.name) / 'tool cache' / 'node'
+        runtime.parent.mkdir()
+        runtime.write_text('#!' + sys.executable + '\nimport json, os, sys\n'
+                           'print(json.dumps({"argv": sys.argv[1:], "env": dict(os.environ)}))\n')
+        runtime.chmod(0o755)
+        self.assertNotIn(str(runtime.parent), self.env['PATH'].split(os.pathsep))
+        probe = CommittedSource()
+        with patch.dict(os.environ, {'DUAL_RELEASE_TEST_NODE': str(runtime),
+                                     'NODE_OPTIONS': '--invalid-test-option',
+                                     'UNRELATED_TEST_SECRET': 'must-not-propagate',
+                                     'PATH': self.env['PATH']}):
+            probe.setUp()
+            try:
+                code, report = probe.cli()
+                expected_script = str(probe.root / 'scripts/check-dual-release.mjs')
+                expected_home = probe.temp.name
+            finally:
+                probe.tearDown()
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report['argv'][0], expected_script)
+        self.assertEqual(report['env']['PATH'], self.env['PATH'])
+        self.assertEqual(report['env']['HOME'], expected_home)
+        self.assertNotIn('NODE_OPTIONS', report['env'])
+        self.assertNotIn('UNRELATED_TEST_SECRET', report['env'])
+        self.assertFalse(any(key.startswith('GIT_') for key in report['env']))
 
     def test_alias_base_and_nonancestor_base_reject(self):
         for base in ['HEAD', self.base[:12]]:
