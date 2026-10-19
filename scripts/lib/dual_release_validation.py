@@ -12,6 +12,7 @@ NETWORKS = ['mainnet', 'testnet']
 APPS = ['morpheus-oracle', 'morpheus-custody']
 BUNDLE = ('public-input.json', 'mainnet.json', 'testnet.json', 'network-profiles.json',
           'context-manifest.json', 'candidate-publication.json', 'candidate-build-evidence.json')
+ENROLLMENT_FILE = 'testnet-enrollment.json'
 SOURCE_FILES = ('Cargo.toml', 'Cargo.lock', 'config/networks/mainnet.json',
                 'config/networks/testnet.json', 'deploy/nitro/Dockerfile.dual-enclave',
                 'deploy/nitro/dual-prepare.rs', 'deploy/nitro/Dockerfile.dual-enclave.cross',
@@ -128,8 +129,10 @@ def validate_manifest(m):
     ids = [identifier(x) for x in m['supersedes']]
     require(len(set(ids)) == len(ids) and release not in ids, 'invalid supersession IDs')
     prefix = 'deploy/nitro/releases/' + release + '/'
+    required_bundle = {prefix + x for x in BUNDLE}
     require(type(m['public_bundle_files']) is dict and
-            set(m['public_bundle_files']) == {prefix + x for x in BUNDLE}, 'exact seven-file bundle')
+            set(m['public_bundle_files']) in (required_bundle, required_bundle | {prefix + ENROLLMENT_FILE}),
+            'exact base bundle with optional TestNet enrollment')
     for name, value in m['public_bundle_files'].items():
         path(name); digest(value)
     require(m['build_evidence_path'] == prefix + 'candidate-build-evidence.json', 'evidence path')
@@ -222,6 +225,30 @@ def kms(value, region):
     return value
 
 
+def validate_enrollment(manifest, profile):
+    # Structural parity with the builder; authoritative Rust validation remains required.
+    destination = ('environment', 'vault_id', 'networks', 'custody_kms_key_arn',
+                   'root_key_version', 'root_key_commitment', 'coordinator')
+    public_fields(manifest, ('schema', 'purpose', 'ceremony_id', 'caller') + destination)
+    require(manifest['schema'] == 'neoos/first-admin-enrollment/v1' and
+            manifest['purpose'] == 'first-testnet-admin/v1', 'invalid enrollment contract')
+    require(all(manifest[k] == profile[k] for k in destination) and
+            manifest['environment'] == 'testnet', 'enrollment destination mismatch')
+    role_id(manifest['ceremony_id'])
+    caller = manifest['caller']
+    public_fields(caller, ('id', 'label', 'created_at_unix', 'token_digest', 'auth_mode',
+                          'capabilities', 'key_grant', 'allowed_origins', 'disabled'))
+    role_id(caller['id']); digest(caller['token_digest'])
+    label = caller['label']
+    require(isinstance(label, str) and 0 < len(label.encode()) <= 128 and label.strip() == label and
+            not any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in label), 'invalid enrollment label')
+    require(type(caller['created_at_unix']) is int and 0 < caller['created_at_unix'] <= 2**63-1,
+            'invalid enrollment time')
+    require(caller['auth_mode'] == 'bearer' and caller['capabilities'] == ['admin'] and
+            caller['key_grant'] == 'any' and caller['allowed_origins'] == [] and
+            caller['disabled'] is False, 'enrollment must be enabled bearer Admin only')
+
+
 def validate_public_inputs(docs, source_files):
     value = docs['public-input.json']
     registry = {n: parse(source_files['config/networks/' + n + '.json'][1]) for n in NETWORKS}
@@ -231,11 +258,13 @@ def validate_public_inputs(docs, source_files):
     digest(value['source_commit'], 40)
     public_fields(value['networks'], NETWORKS)
     overlays = {}
+    enrollment_files = {}
     role_ids = set()
     distinct = {k: set() for k in ('vault_id', 'root_key_commitment', 'audience', 'origin', 'snapshot')}
     for network in NETWORKS:
         spec = value['networks'][network]
-        public_fields(spec, ('profile_file', 'profile_sha256', 'workload_audience', 'roles', 'neo_n3_rpc', 'neo_x_rpc', 'frontier_kms_key_arn', 'aws_region'))
+        spec_fields = ('profile_file', 'profile_sha256', 'workload_audience', 'roles', 'neo_n3_rpc', 'neo_x_rpc', 'frontier_kms_key_arn', 'aws_region')
+        public_fields(spec, spec_fields + (('enrollment',) if type(spec) is dict and 'enrollment' in spec else ()))
         require(spec['profile_file'] == network + '.json', 'profile file must be its network basename')
         profile = docs[network + '.json']
         digest(spec['profile_sha256'])
@@ -294,9 +323,26 @@ def validate_public_inputs(docs, source_files):
             'AWS_REGION': region,
             'FRONTIER_KMS_KEY_ARN': spec['frontier_kms_key_arn'],
         }
+        if 'enrollment' in spec:
+            enrollment = spec['enrollment']
+            public_fields(enrollment, ('mode', 'manifest_file', 'manifest_sha256'))
+            require(network == 'testnet' and enrollment['mode'] == 'first-testnet-admin/v1',
+                    'enrollment requires explicit TestNet opt-in')
+            require(enrollment['manifest_file'] == ENROLLMENT_FILE, 'enrollment file must use fixed basename')
+            enrollment_sha = digest(enrollment['manifest_sha256'])
+            require(enrollment_sha == profile['release_policy_version'], 'enrollment profile digest mismatch')
+            require(ENROLLMENT_FILE in docs, 'missing enrollment manifest')
+            validate_enrollment(docs[ENROLLMENT_FILE], profile)
+            enrollment_files[ENROLLMENT_FILE] = enrollment_sha
+            overlay.update({
+                'MORPHEUS_CUSTODY_ENROLLMENT_MODE': enrollment['mode'],
+                'MORPHEUS_CUSTODY_ENROLLMENT_FILE': '/app/config/custody/' + ENROLLMENT_FILE,
+                'MORPHEUS_CUSTODY_ENROLLMENT_SHA256': enrollment_sha,
+            })
         overlay.update({'SIGNER_ROLE_' + role + '_KEY_ID': spec['roles'][role] for role in ROLES})
         overlays[network] = overlay
     require(docs['network-profiles.json'] == overlays, 'exact generated network map')
+    return enrollment_files
 
 
 def validate_bundle(manifest_bytes, files, source_files):
@@ -310,6 +356,15 @@ def validate_bundle(manifest_bytes, files, source_files):
         require(sha(data) == expected, 'public file digest')
         docs[name.rsplit('/', 1)[-1]] = parse(data)
     prefix = 'deploy/nitro/releases/' + m['release'] + '/'
+    require({name for name in files if name.startswith(prefix)} == set(m['public_bundle_files']),
+            'unlisted release bundle file')
+    spec = docs['public-input.json']
+    enrollment_files = validate_public_inputs(docs, source_files)
+    require(set(docs) == set(BUNDLE) | set(enrollment_files), 'bundle enrollment opt-in mismatch')
+    for name, expected_sha in enrollment_files.items():
+        data = files[prefix + name][1]
+        require(len(data) <= 16384, 'enrollment manifest exceeds bound')
+        require(sha(data) == expected_sha, 'enrollment manifest digest mismatch')
     for filename, key in [('public-input.json', 'reviewed_input_sha256'),
                           ('context-manifest.json', 'context_manifest_sha256'),
                           ('candidate-publication.json', 'candidate_publication_sha256')]:
@@ -324,6 +379,9 @@ def validate_bundle(manifest_bytes, files, source_files):
     expected = {name: sha(data) for name, (_, data) in source_files.items() if selected(name)}
     for network in NETWORKS:
         expected['public/custody/' + network + '.json'] = m['contexts'][network]['profile_sha256']
+    expected.update({'public/custody/' + name: value for name, value in enrollment_files.items()})
+    expected['public/etc/hosts'] = sha(b'127.0.0.1 localhost\n')
+    expected['public/etc/hostname'] = sha(b'neoos-enclave\n')
     map_bytes = files[prefix + 'network-profiles.json'][1]
     expected['public/network-profiles.json'] = sha(map_bytes)
     require(context['map_sha256'] == sha(map_bytes), 'map digest')
@@ -333,11 +391,9 @@ def validate_bundle(manifest_bytes, files, source_files):
     env_line = 'ENV MORPHEUS_NETWORK_PROFILES_JSON=' + json.dumps(map_bytes.decode().strip())
     expected['Dockerfile'] = sha(template.replace('# DUAL_NETWORK_ENV', env_line).encode())
     require(context['files'] == expected, 'generated selected context closure')
-    spec = docs['public-input.json']
     fields(spec, 'schema release source_commit networks')
     require(spec['release'] == m['release'] and spec['source_commit'] == m['git_commit'], 'public input identity')
     fields(spec['networks'], 'mainnet testnet')
-    validate_public_inputs(docs, source_files)
     for n in NETWORKS:
         require(spec['networks'][n]['profile_sha256'] == m['contexts'][n]['profile_sha256'], 'public input profile binding')
     validate_build_evidence(docs['candidate-build-evidence.json'], m, context, inventory(source_files))

@@ -52,7 +52,16 @@ def public_fixture(source):
     return profiles, specs, overlays
 
 
-def fixture(mutate_public=None):
+def packaging_module():
+    spec = importlib.util.spec_from_file_location(
+        'dual_packaging', ROOT / 'deploy/nitro/build-dual-enclave.py')
+    packaging = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(packaging)
+    return packaging
+
+
+def fixture(mutate_public=None, enrollment=False, mutate_enrollment=None,
+            enrollment_encoder=v.encoded):
     # Reuse recorded public PCRs, never invent or register production measurements.
     old = v.parse((ROOT / 'deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.10.json').read_bytes())
     source = {p: ('100644', b'unit fixture only\n') for p in (*v.SOURCE_FILES, *v.RECIPE_FILES)}
@@ -61,6 +70,31 @@ def fixture(mutate_public=None):
     prefix = 'deploy/nitro/releases/' + release + '/'
     profiles, specs, overlays = public_fixture(source)
     spec = {'schema': 'neoos/dual-image-input/v1', 'release': release, 'source_commit': 'a'*40, 'networks': specs}
+    enrollment_docs = {}
+    if enrollment:
+        profile = v.parse(profiles['testnet'])
+        manifest = {key: copy.deepcopy(profile[key]) for key in (
+            'environment', 'vault_id', 'networks', 'custody_kms_key_arn',
+            'root_key_version', 'root_key_commitment', 'coordinator')}
+        manifest.update(schema='neoos/first-admin-enrollment/v1',
+            purpose='first-testnet-admin/v1', ceremony_id='unit-only-ceremony',
+            caller={'id': 'unit-admin', 'label': 'Unit fixture only',
+                'created_at_unix': 1, 'token_digest': v.sha(b'not a credential'),
+                'auth_mode': 'bearer', 'capabilities': ['admin'], 'key_grant': 'any',
+                'allowed_origins': [], 'disabled': False})
+        if mutate_enrollment:
+            mutate_enrollment(manifest)
+        enrollment_docs['testnet-enrollment.json'] = enrollment_encoder(manifest)
+        digest = v.sha(enrollment_docs['testnet-enrollment.json'])
+        profile['release_policy_version'] = digest
+        profiles['testnet'] = v.encoded(profile)
+        specs['testnet']['profile_sha256'] = v.sha(profiles['testnet'])
+        specs['testnet']['enrollment'] = {'mode': 'first-testnet-admin/v1',
+            'manifest_file': 'testnet-enrollment.json', 'manifest_sha256': digest}
+        overlays['testnet']['MORPHEUS_CUSTODY_PROFILE_SHA256'] = v.sha(profiles['testnet'])
+        overlays['testnet'].update(MORPHEUS_CUSTODY_ENROLLMENT_MODE='first-testnet-admin/v1',
+            MORPHEUS_CUSTODY_ENROLLMENT_FILE='/app/config/custody/testnet-enrollment.json',
+            MORPHEUS_CUSTODY_ENROLLMENT_SHA256=digest)
     if mutate_public:
         parsed = {n: v.parse(profiles[n]) for n in v.NETWORKS}
         mutate_public(spec, parsed, overlays, source)
@@ -71,21 +105,25 @@ def fixture(mutate_public=None):
     map_bytes = v.encoded(overlays)
     files = {name: v.sha(data) for name, (_, data) in source.items() if v.selected(name)}
     files.update({'public/custody/'+n+'.json':v.sha(profiles[n]) for n in v.NETWORKS})
+    files.update({'public/custody/'+n:v.sha(data) for n,data in enrollment_docs.items()})
     files['public/network-profiles.json'] = v.sha(map_bytes)
+    files['public/etc/hosts'] = v.sha(b'127.0.0.1 localhost\n')
+    files['public/etc/hostname'] = v.sha(b'neoos-enclave\n')
     files['Dockerfile'] = v.sha(source['deploy/nitro/Dockerfile.dual-enclave'][1].decode().replace(
         '# DUAL_NETWORK_ENV', 'ENV MORPHEUS_NETWORK_PROFILES_JSON='+json.dumps(map_bytes.decode().strip())).encode())
     context = {'schema': 'neoos/dual-image-context/v1', 'release': release, 'git_commit':'a'*40,
-        'source_archive_sha256':'b'*64,'reviewed_input_sha256':v.sha(v.encoded(spec)),
+        'source_archive_sha256':v.sha(b'unit-only archive'),'reviewed_input_sha256':v.sha(v.encoded(spec)),
         'map_sha256':v.sha(map_bytes),'networks':v.NETWORKS,'files':files,'status':'fixture only, not admission'}
     docs = {'public-input.json':v.encoded(spec), **{n+'.json':profiles[n] for n in v.NETWORKS},
             'network-profiles.json':map_bytes,'context-manifest.json':v.encoded(context),
-            'candidate-publication.json':v.encoded({'fixture':'not publication evidence'})}
+            'candidate-publication.json':v.encoded({'fixture':'not publication evidence'}),
+            **enrollment_docs}
     m = {'schema':'neoos/dual-enclave-release/v1','release':release,'git_commit':'a'*40,
          'source_tree':'b'*40,'base_main_commit':'c'*40,'candidate_ref':'refs/tags/neoos-dual-candidate/'+'a'*40,
          'candidate_publication_sha256':v.sha(docs['candidate-publication.json']),
          'build_evidence_path':prefix+'candidate-build-evidence.json','build_evidence_sha256':'d'*64,
          'public_bundle_files':{},'reviewed_input_sha256':v.sha(docs['public-input.json']),
-         'source_archive_sha256':'b'*64,'context_manifest_sha256':v.sha(docs['context-manifest.json']),
+         'source_archive_sha256':context['source_archive_sha256'],'context_manifest_sha256':v.sha(docs['context-manifest.json']),
          'hash_algorithm':'SHA384',**{p:old[p] for p in ('pcr0','pcr1','pcr2')},
          'eif_sha256':v.sha(b'fixture bytes, NOT EIF'),'eif_size_bytes':len(b'fixture bytes, NOT EIF'),
          'built_at':'2026-10-17T00:00:00Z','reproducible_verified':True,
@@ -116,7 +154,240 @@ def fixture(mutate_public=None):
     return m, {prefix+n:('100644',b) for n,b in docs.items()}, source, e, context
 
 
+def rebind_context(m, files, evidence, context):
+    """Rehash synthetic outer wrappers so tests reach context semantics."""
+    prefix = 'deploy/nitro/releases/' + m['release'] + '/'
+    raw = v.encoded(context)
+    files[prefix + 'context-manifest.json'] = ('100644', raw)
+    m['context_manifest_sha256'] = v.sha(raw)
+    m['public_bundle_files'][prefix + 'context-manifest.json'] = v.sha(raw)
+    evidence['context_manifest_sha256'] = v.sha(raw)
+    evidence['files'] = copy.deepcopy(context['files'])
+    raw = v.encoded(evidence)
+    files[m['build_evidence_path']] = ('100644', raw)
+    m['build_evidence_sha256'] = v.sha(raw)
+    m['public_bundle_files'][m['build_evidence_path']] = v.sha(raw)
+
+
 class Validation(unittest.TestCase):
+    def test_actual_staging_contexts_with_and_without_enrollment(self):
+        # Real default stage_into/public_inputs; only Git source acquisition is
+        # substituted with a small synthetic snapshot. No build or network.
+        class Publication:
+            def __init__(self): self.files = {}; self.published = False
+            def write(self, name, chunks):
+                assert name not in self.files
+                self.files[name] = b''.join(chunks)
+            def publish(self): self.published = True
+        for enrollment in (False, True):
+            with self.subTest(enrollment=enrollment):
+                m, files, source, evidence, context = fixture(enrollment=enrollment)
+                packaging = packaging_module()
+                publication = Publication()
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory).resolve()
+                    for name, (_, data) in files.items():
+                        (root / name.rsplit('/', 1)[-1]).write_bytes(data)
+                    captured = {name: data for name, (_, data) in source.items() if v.selected(name)}
+                    with patch.object(packaging, 'source', return_value=(captured, m['source_archive_sha256'])) as acquisition:
+                        actual = packaging.stage_into(root, root / 'public-input.json',
+                            m['reviewed_input_sha256'], {}, publication)
+                    acquisition.assert_called_once()
+                self.assertTrue(publication.published)
+                self.assertEqual(actual['files'], context['files'])
+                self.assertEqual(actual['files'], {name: v.sha(data) for name, data in publication.files.items()
+                    if name != 'context-manifest.json'})
+                rebind_context(m, files, evidence, actual)
+                self.assertEqual(v.validate_bundle(v.encoded(m), files, source), m)
+                self.assertEqual(len(m['public_bundle_files']), 8 if enrollment else 7)
+
+    def test_enrollment_bundle_matches_actual_builder_public_outputs(self):
+        m, files, source, _, context = fixture(enrollment=True)
+        docs = {name.rsplit('/', 1)[-1]: data for name, (_, data) in files.items()}
+        packaging = packaging_module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            for name in ('public-input.json', 'mainnet.json', 'testnet.json', 'testnet-enrollment.json'):
+                (root / name).write_bytes(docs[name])
+            registry = {n: v.parse(source['config/networks/' + n + '.json'][1]) for n in v.NETWORKS}
+            _, profiles, overlays = packaging.public_inputs(
+                root / 'public-input.json', m['reviewed_input_sha256'], registry)
+        self.assertEqual(packaging.encoded(overlays), docs['network-profiles.json'])
+        self.assertEqual(set(profiles), {'mainnet', 'testnet', 'testnet-enrollment'})
+        for name, data in profiles.items():
+            self.assertEqual(data, docs[name + '.json'])
+            self.assertEqual(v.sha(data), context['files']['public/custody/' + name + '.json'])
+        self.assertEqual(v.validate_bundle(v.encoded(m), files, source), m)
+        self.assertEqual(m['authority_admission'], 'separate-required')
+
+    def reject_enrollment(self, mutation, message='enrollment'):
+        m, files, source, _, _ = fixture(enrollment=True, mutate_enrollment=mutation)
+        with self.assertRaisesRegex(ValueError, message):
+            v.validate_bundle(v.encoded(m), files, source)
+
+    def test_enrollment_semantics_rehashed_not_merely_stale_digests(self):
+        for key, value in [('schema', 'wrong'), ('purpose', 'transport-token/v1'),
+                           ('ceremony_id', '../wrong'), ('ceremony_id', '')]:
+            with self.subTest(key=key, value=value):
+                self.reject_enrollment(lambda m: m.__setitem__(key, value),
+                    'invalid custody role ID' if key == 'ceremony_id' else 'invalid enrollment contract')
+        profile = v.parse(public_fixture({})[0]['mainnet'])
+        for key in ('environment', 'vault_id', 'networks', 'root_key_commitment', 'coordinator'):
+            with self.subTest(destination=key):
+                self.reject_enrollment(lambda m: m.__setitem__(key, profile[key]), 'enrollment destination mismatch')
+        for key in ('custody_kms_key_arn', 'root_key_version'):
+            self.reject_enrollment(lambda m: m.__setitem__(key, 'wrong'), 'enrollment destination mismatch')
+        for key, value in [('id', '../wrong'), ('token_digest', '0'*64), ('label', ' spaced '),
+                ('label', '\x7f'), ('label', 'x'*129), ('created_at_unix', True),
+                ('created_at_unix', 0), ('created_at_unix', 2**63), ('auth_mode', 'none'),
+                ('capabilities', []), ('capabilities', ['admin', 'sign']), ('key_grant', 'none'),
+                ('allowed_origins', ['https://unit.example.invalid']), ('disabled', True), ('disabled', 0)]:
+            with self.subTest(caller=key, value=value):
+                self.reject_enrollment(lambda m: m['caller'].__setitem__(key, value),
+                    'invalid custody role ID' if key == 'id' else 'invalid digest' if key == 'token_digest' else 'enrollment')
+
+    def test_enrollment_containers_and_exact_field_sets(self):
+        for value in (None, True, 1, 'wrong', []):
+            with self.subTest(value=value):
+                self.reject_enrollment(lambda m: m.__setitem__('caller', value), 'unknown or missing fields')
+                m, files, source, _, _ = fixture(enrollment=True, mutate_public=
+                    lambda s,p,o,src: s['networks']['testnet'].__setitem__('enrollment', value))
+                with self.assertRaisesRegex(ValueError, 'unknown or missing fields'):
+                    v.validate_bundle(v.encoded(m), files, source)
+        for target in ('manifest', 'caller'):
+            _, files, _, _, _ = fixture(enrollment=True)
+            doc = v.parse(next(data for name, (_, data) in files.items() if name.endswith('/testnet-enrollment.json')))
+            keys = doc if target == 'manifest' else doc['caller']
+            for key in (*keys, 'unexpected'):
+                def mutate(m):
+                    node = m if target == 'manifest' else m['caller']
+                    if key == 'unexpected': node[key] = True
+                    else: del node[key]
+                with self.subTest(target=target, key=key):
+                    self.reject_enrollment(mutate, 'unknown or missing fields')
+        for key in ('mode', 'manifest_file', 'manifest_sha256', 'unexpected'):
+            def mutate(s,p,o,src):
+                node = s['networks']['testnet']['enrollment']
+                if key == 'unexpected': node[key] = True
+                else: del node[key]
+            m, files, source, _, _ = fixture(enrollment=True, mutate_public=mutate)
+            with self.subTest(spec=key), self.assertRaisesRegex(ValueError, 'unknown or missing fields'):
+                v.validate_bundle(v.encoded(m), files, source)
+
+    def test_enrollment_opt_in_network_mode_filename_and_profile_digest(self):
+        changes = [
+            (lambda s,p,o,src: s['networks']['mainnet'].__setitem__('enrollment', s['networks']['testnet']['enrollment']), 'explicit TestNet'),
+            (lambda s,p,o,src: (s['networks']['testnet']['enrollment'].__setitem__('mode', 'restore'),
+                o['testnet'].__setitem__('MORPHEUS_CUSTODY_ENROLLMENT_MODE', 'restore')), 'explicit TestNet'),
+            (lambda s,p,o,src: p['testnet'].__setitem__('release_policy_version', 'wrong'), 'enrollment profile digest'),
+            (lambda s,p,o,src: s['networks']['testnet']['enrollment'].__setitem__('manifest_sha256', '0'*64), 'invalid digest')]
+        for filename in ('mainnet-enrollment.json', '../testnet-enrollment.json', '/testnet-enrollment.json',
+                         'sub/testnet-enrollment.json', 'testnet-enrollment.json/..'):
+            changes.append((lambda s,p,o,src, name=filename: s['networks']['testnet']['enrollment'].__setitem__('manifest_file', name), 'fixed basename'))
+        for mutate, message in changes:
+            m, files, source, _, _ = fixture(enrollment=True, mutate_public=mutate)
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                v.validate_bundle(v.encoded(m), files, source)
+        def remove_opt_in(s,p,o,src):
+            del s['networks']['testnet']['enrollment']
+            for k in list(o['testnet']):
+                if k.startswith('MORPHEUS_CUSTODY_ENROLLMENT_'): del o['testnet'][k]
+        m, files, source, _, _ = fixture(enrollment=True, mutate_public=remove_opt_in)
+        with self.assertRaisesRegex(ValueError, 'bundle enrollment opt-in mismatch'):
+            v.validate_bundle(v.encoded(m), files, source)
+
+    def test_enrollment_overlay_is_exact_and_testnet_only(self):
+        for key in ('MORPHEUS_CUSTODY_ENROLLMENT_MODE', 'MORPHEUS_CUSTODY_ENROLLMENT_FILE', 'MORPHEUS_CUSTODY_ENROLLMENT_SHA256'):
+            for action in ('remove', 'wrong', 'mainnet'):
+                def mutate(s,p,o,src):
+                    if action == 'remove': del o['testnet'][key]
+                    elif action == 'wrong': o['testnet'][key] = 'wrong'
+                    else: o['mainnet'][key] = o['testnet'][key]
+                m, files, source, _, _ = fixture(enrollment=True, mutate_public=mutate)
+                with self.subTest(key=key, action=action), self.assertRaisesRegex(ValueError, 'exact generated network map'):
+                    v.validate_bundle(v.encoded(m), files, source)
+
+    def test_enrollment_raw_byte_digest_size_and_json_boundaries(self):
+        for size in (16384, 16385):
+            m, files, source, _, _ = fixture(enrollment=True,
+                enrollment_encoder=lambda value: v.encoded(value).ljust(size, b' '))
+            with self.subTest(size=size):
+                if size == 16384: self.assertEqual(v.validate_bundle(v.encoded(m), files, source), m)
+                else:
+                    with self.assertRaisesRegex(ValueError, 'enrollment manifest exceeds bound'):
+                        v.validate_bundle(v.encoded(m), files, source)
+        m, files, source, _, _ = fixture(enrollment=True)
+        name = next(n for n in files if n.endswith('/testnet-enrollment.json'))
+        files[name] = ('100644', files[name][1] + b' ')
+        # Outer file hash is refreshed, but reviewed input/profile pin the old bytes.
+        m['public_bundle_files'][name] = v.sha(files[name][1])
+        with self.assertRaisesRegex(ValueError, 'enrollment manifest digest mismatch'):
+            v.validate_bundle(v.encoded(m), files, source)
+        for raw in (b'{}', b'null', b'[]', b'{"schema":1,"schema":2}', b'{"x":NaN}'):
+            m, files, source, _, _ = fixture(enrollment=True, enrollment_encoder=lambda _: raw)
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                v.validate_bundle(v.encoded(m), files, source)
+
+    def test_enrollment_missing_extra_traversal_modes_and_unlisted_files(self):
+        for enrollment in (False, True):
+            for extra in ('mainnet-enrollment.json', 'extra.json', '../escape.json', 'sub/testnet-enrollment.json'):
+                for listed in (False, True):
+                    m, files, source, _, _ = fixture(enrollment=enrollment)
+                    name = 'deploy/nitro/releases/' + m['release'] + '/' + extra
+                    files[name] = ('100644', b'{}')
+                    if listed: m['public_bundle_files'][name] = v.sha(b'{}')
+                    with self.subTest(enrollment=enrollment, extra=extra, listed=listed), self.assertRaises(ValueError):
+                        v.validate_bundle(v.encoded(m), files, source)
+        for action in ('physical-missing', 'unlisted', 'undeclared-and-missing', 'symlink', 'executable', 'tamper'):
+            m, files, source, _, _ = fixture(enrollment=True)
+            name = next(n for n in files if n.endswith('/testnet-enrollment.json'))
+            if action in ('physical-missing', 'undeclared-and-missing'): del files[name]
+            if action in ('unlisted', 'undeclared-and-missing'): del m['public_bundle_files'][name]
+            if action in ('symlink', 'executable'): files[name] = ('120000' if action == 'symlink' else '100755', files[name][1])
+            if action == 'tamper': files[name] = ('100644', files[name][1] + b' ')
+            with self.subTest(action=action), self.assertRaises(ValueError):
+                v.validate_bundle(v.encoded(m), files, source)
+
+    def test_context_generated_enrollment_and_fixed_files_are_bound(self):
+        for name in ('public/custody/testnet-enrollment.json', 'public/etc/hosts', 'public/etc/hostname'):
+            for action in ('remove', 'digest', 'rename'):
+                m, files, source, evidence, context = fixture(enrollment=True)
+                if action == 'remove': del context['files'][name]
+                elif action == 'digest': context['files'][name] = 'f'*64
+                else: context['files']['public/custody/../escape.json'] = context['files'].pop(name)
+                rebind_context(m, files, evidence, context)
+                with self.subTest(name=name, action=action), self.assertRaisesRegex(ValueError, 'generated selected context closure'):
+                    v.validate_bundle(v.encoded(m), files, source)
+
+    def test_source_audit_invokes_enrollment_validation_and_stays_held(self):
+        # Synthetic captured bytes only: no production receipt or measurement.
+        for valid in (True, False):
+            m, files, source, _, _ = fixture(enrollment=True, mutate_enrollment=
+                None if valid else lambda manifest: manifest.__setitem__('purpose', 'transport-token/v1'))
+            name = 'deploy/nitro/measurements/' + m['release'] + '.json'
+            class SyntheticCapture:
+                head = m['git_commit']
+                base = m['base_main_commit']
+                changes = [{'path': name, 'status': 'A'}]
+                def snapshot(self, commit):
+                    assert commit == m['git_commit']
+                    return source
+                def git(self, *args):
+                    if args == ('merge-base', '--is-ancestor', m['git_commit'], self.head): return b''
+                    if args == ('rev-parse', m['git_commit'] + '^{tree}'): return m['source_tree'].encode()
+                    if args == ('archive', '--format=tar', m['git_commit']): return b'unit-only archive'
+                    raise AssertionError(args)
+            capture = SyntheticCapture()
+            capture.files = {**source, **files, name: ('100644', v.encoded(m)),
+                'apps/web/lib/nitro-dual-release-registry.ts': ('100644',
+                    b'export const COMMITTED_DUAL_NITRO_MEASUREMENTS: readonly unknown[] = Object.freeze([]);')}
+            errors, checks = gate.audit(capture)
+            codes = [error['code'] for error in errors]
+            with self.subTest(valid=valid):
+                self.assertEqual('DUAL_RELEASE_INVALID' not in codes, valid, errors)
+                self.assertIn('DUAL_ADMISSION_INTEGRATION_REQUIRED', codes)
+                self.assertEqual(sum(check.get('complete') is False for check in checks), 3)
+
     def test_consistent_fixture_only_proves_byte_bindings(self):
         m,files,source,_,_=fixture()
         self.assertEqual(v.validate_bundle(v.encoded(m),files,source),m)
