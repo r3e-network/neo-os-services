@@ -399,6 +399,100 @@ class Controls(unittest.TestCase):
                     with self.assertRaises(c.Refused): c.execute(root, env)
                     self.assertFalse((root/'candidate/hosted-evidence.json').exists())
 
+    def diagnostic_execute(self, fault):
+        env = environment()
+        root = self.root / fault; root.mkdir()
+        source_input = root / 'input.json'; source_input.write_text('{}')
+        state = {'bootstrapped': False, 'business': False}
+        class BusinessReached(Exception): pass
+        class External(c.Runner):
+            def resources(self): pass
+            def run(self, args, **kwargs):
+                c.STATUS.update(tool=kwargs.get('tool', 'docker'), exit_code=0)
+                args = [str(arg) for arg in args]
+                if 'rev-parse' in args: return (env['GITHUB_SHA']+'\n').encode()
+                if 'status' in args: return b''
+                if 'get-url' in args: return (c.ORIGIN+'\n').encode()
+                if 'ls-remote' in args: return (env['GITHUB_SHA']+'\trefs/heads/main\n').encode()
+                if args[3:4] == ['info']: return json.dumps({'DockerRootDir': str(root)}).encode()
+                if args[3:5] == ['container', 'ls']:
+                    if state['bootstrapped'] and fault == 'container-format': return b'CANARY\n'
+                    if state['bootstrapped'] and fault == 'container-duplicate': return ((CID+'\n')*2).encode()
+                    if state['bootstrapped'] and fault == 'inventory-command':
+                        c.STATUS.update(exit_code=7); raise c.CommandFailure('CANARY')
+                    if state['bootstrapped'] and fault == 'inventory-resource': raise c.Refused('resource_reserve')
+                    return (CID+'\n').encode() if state['bootstrapped'] and fault == 'containers' else b''
+                if args[3:5] == ['volume', 'ls']:
+                    if state['bootstrapped'] and fault == 'volume-format': return b'../CANARY'
+                    return b'owned-volume\n' if state['bootstrapped'] and fault == 'volumes' else b''
+                if args[3:5] == ['image', 'ls']:
+                    if state['bootstrapped'] and fault == 'image-decode': return bytes([255])
+                    return (BK+'\n').encode() if state['bootstrapped'] and fault == 'images' else b''
+                if args[3:4] == ['version']:
+                    values = {'api-json': b'{CANARY', 'api-type': b'[]', 'api-duplicate': b'{"ApiVersion":"1.49","ApiVersion":"1.53"}',
+                              'api-field': b'{"MinAPIVersion":null,"ApiVersion":"CANARY"}',
+                              'api-low': b'{"MinAPIVersion":"1.24","ApiVersion":"1.48"}',
+                              'api-high': b'{"MinAPIVersion":"1.50","ApiVersion":"1.53"}'}
+                    return values.get(fault, b'{"MinAPIVersion":"1.44","ApiVersion":"1.53"}')
+                if args[3:5] == ['buildx', 'version']:
+                    if fault == 'buildx-decode': return bytes([255])
+                    if fault == 'buildx-format': return b'CANARY unsupported buildx'
+                    if fault == 'buildx-command':
+                        c.STATUS.update(exit_code=7); raise c.CommandFailure('CANARY')
+                    return b'github.com/docker/buildx v0.38.0 abc123'
+                if 'build' in args:
+                    state['business'] = True; raise BusinessReached()
+                raise AssertionError('unexpected synthetic operation')
+        def boot(*_):
+            state['bootstrapped'] = True; c.phase('native-validation')
+            return root/'nitro', root/'blobs', {'rust_image_id': RUST}
+        with patch.object(c, 'Runner', External), patch.object(c, 'check_host', return_value=16*1024**3), patch.object(c, 'decode_bundle', return_value={}), patch.object(c, 'stage_bundle', return_value=source_input), patch.object(c, 'load_builder', return_value=None), patch.object(c, 'bootstrap', side_effect=boot):
+            try: c.execute(root, env)
+            except BusinessReached: return None, state
+            except Exception as error: return c.failure_receipt(error, env), state
+        self.fail('synthetic execute unexpectedly published')
+
+    def test_execute_diagnostics_distinguish_post_bootstrap_rejections(self):
+        cases = {'containers': ('post-bootstrap-inventory', 'baseline_containers'),
+                 'volumes': ('post-bootstrap-inventory', 'baseline_volumes'),
+                 'images': ('post-bootstrap-inventory', 'baseline_images'),
+                 'container-format': ('post-bootstrap-inventory', 'inventory_response'),
+                 'container-duplicate': ('post-bootstrap-inventory', 'inventory_response'),
+                 'volume-format': ('post-bootstrap-inventory', 'inventory_response'),
+                 'image-decode': ('post-bootstrap-inventory', 'inventory_response'),
+                 'inventory-command': ('post-bootstrap-inventory', 'command_failed'),
+                 'inventory-resource': ('post-bootstrap-inventory', 'resource_reserve'),
+                 'api-json': ('docker-api', 'docker_api_response'),
+                 'api-type': ('docker-api', 'docker_api_response'),
+                 'api-duplicate': ('docker-api', 'docker_api_response'),
+                 'api-field': ('docker-api', 'docker_api_response'),
+                 'api-low': ('docker-api', 'docker_api_range'),
+                 'api-high': ('docker-api', 'docker_api_range'),
+                 'buildx-decode': ('buildx', 'buildx_response'),
+                 'buildx-format': ('buildx', 'buildx_format'),
+                 'buildx-command': ('buildx', 'command_failed')}
+        for fault, expected in cases.items():
+            with self.subTest(fault=fault):
+                receipt, state = self.diagnostic_execute(fault)
+                self.assertIsNotNone(receipt)
+                self.assertEqual((receipt['phase'], receipt['reason']), expected)
+                self.assertEqual(receipt['tool'], 'docker')
+                self.assertEqual(receipt['exit_code'], 7 if fault in ('buildx-command', 'inventory-command') else 0)
+                self.assertFalse(receipt['artifact_admitted']); self.assertFalse(state['business'])
+                self.assertNotIn('CANARY', json.dumps(receipt))
+                self.assertEqual(set(receipt), {'schema', 'artifact_admitted', 'phase', 'tool', 'reason', 'exit_code', 'candidate_source_sha', 'github_workflow_sha', 'github_run_id', 'github_run_attempt'})
+
+    def test_execute_compatibility_refusal_precedes_tool_bootstrap(self):
+        for fault in ('api-low', 'api-type', 'buildx-format'):
+            with self.subTest(fault=fault):
+                receipt, state = self.diagnostic_execute(fault)
+                self.assertIsNotNone(receipt)
+                self.assertFalse(state['bootstrapped'])
+                self.assertFalse(state['business'])
+        receipt, state = self.diagnostic_execute('valid')
+        self.assertIsNone(receipt)
+        self.assertTrue(state['bootstrapped']); self.assertTrue(state['business'])
+
     def test_main_failure_and_cancellation_never_emit_verified(self):
         env = environment(); env.update(RUNNER_TEMP=str(self.root), GITHUB_OUTPUT=str(self.root/'job-output'))
         old_handler = c.signal.getsignal(c.signal.SIGTERM)

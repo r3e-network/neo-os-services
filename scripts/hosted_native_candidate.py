@@ -32,7 +32,8 @@ MIN_INODES = 50000
 CAPTURE_LIMIT = 16 * 1024**2
 OWNER_LABEL = 'com.neoos.hosted-tool-owner'
 PHASES = {'admission', 'source', 'public-tools', 'tool-fetch', 'tool-compile',
-          'native-validation', 'business-build', 'final-readback', 'publication'}
+          'native-validation', 'docker-api', 'buildx', 'post-bootstrap-inventory',
+          'business-build', 'final-readback', 'publication'}
 TOOLS = {'none', 'git', 'docker', 'python', 'loader', 'nitro', 'download'}
 STATUS = {'phase': 'admission', 'tool': 'none', 'exit_code': None}
 
@@ -159,7 +160,9 @@ def failure_receipt(error, env):
         reason = 'cancelled'
     elif isinstance(error, TimeoutError):
         reason = 'timeout'
-    allowed = {'validation', 'command_failed', 'cancelled', 'timeout', 'resource_reserve', 'output_limit', 'log_limit'}
+    allowed = {'validation', 'command_failed', 'cancelled', 'timeout', 'resource_reserve', 'output_limit', 'log_limit',
+               'inventory_response', 'baseline_containers', 'baseline_volumes', 'baseline_images',
+               'docker_api_response', 'docker_api_range', 'buildx_response', 'buildx_format'}
     result = {'schema': 'neoos/hosted-candidate-failure/v1', 'artifact_admitted': False,
               'phase': STATUS['phase'] if STATUS['phase'] in PHASES else 'admission',
               'tool': STATUS['tool'] if STATUS['tool'] in TOOLS else 'none',
@@ -546,6 +549,46 @@ def api_version(value):
     return tuple(int(part) for part in value.split('.'))
 
 
+def docker_compatibility(runner):
+    # Run the unchanged compatibility gates before downloading/compiling tools.
+    # Parse failures expose only fixed enums, never response or exception text.
+    phase('docker-api')
+    raw = runner.run([*runner.docker, 'version', '--format', '{{json .Server}}'])
+    try:
+        version = parse(raw)
+        minimum = api_version(version.get('MinAPIVersion'))
+        maximum = api_version(version.get('ApiVersion'))
+    except (ValueError, TypeError, AttributeError):
+        raise Refused('docker_api_response') from None
+    require(minimum <= (1, 49) <= maximum, 'docker_api_range')
+    phase('buildx')
+    raw = runner.run([*runner.docker, 'buildx', 'version'])
+    try:
+        buildx = raw.decode().strip()
+    except UnicodeError:
+        raise Refused('buildx_response') from None
+    require(re.fullmatch(r'github\.com/docker/buildx v[0-9.]+(?:-[A-Za-z0-9.-]+)? [A-Za-z0-9]+', buildx), 'buildx_format')
+    return version, buildx
+
+
+def post_bootstrap_inventory(runner, initial, native):
+    phase('post-bootstrap-inventory')
+    try:
+        baseline = runner.inventory()
+    except Refused as error:
+        # Preserve command/resource/timeout failures and their primary status.
+        if str(error) != 'validation':
+            raise
+        raise Refused('inventory_response') from None
+    except (ValueError, TypeError):
+        raise Refused('inventory_response') from None
+    require(not baseline['containers'], 'baseline_containers')
+    require(not baseline['volumes'], 'baseline_volumes')
+    # Tool setup may add only its pinned Rust image, never unexplained objects.
+    require(set(baseline['images']) <= set(initial['images']) | {native['rust_image_id']}, 'baseline_images')
+    return baseline
+
+
 def canonical_origin(runner, repo):
     git = ['git', '--no-replace-objects', '-C', repo]
     original = runner.run([*git, 'remote', 'get-url', 'origin'], tool='git').decode().strip()
@@ -581,17 +624,11 @@ def execute(root, env):
     require(runner.run([*git, 'ls-remote', '--exit-code', ORIGIN, 'refs/heads/main'], tool='git').decode() == source + '\trefs/heads/main\n')
     builder = load_builder(ROOT)
     input_path = stage_bundle(files, root / 'public', source, ROOT, builder)
+    version, buildx = docker_compatibility(runner)
     pins_path = ROOT / 'deploy/nitro/hosted-native-tools.json'
     pins = parse(pins_path.read_bytes())
     launcher, blobs, native = bootstrap(runner, pins)
-    baseline = runner.inventory()
-    require(not baseline['containers'] and not baseline['volumes'])
-    # Tool setup may add only its pinned Rust image, never unexplained objects.
-    require(set(baseline['images']) <= set(initial['images']) | {native['rust_image_id']})
-    version = parse(runner.run([*runner.docker, 'version', '--format', '{{json .Server}}']))
-    require(api_version(version.get('MinAPIVersion')) <= (1, 49) <= api_version(version.get('ApiVersion')))
-    buildx = runner.run([*runner.docker, 'buildx', 'version']).decode().strip()
-    require(re.fullmatch(r'github\.com/docker/buildx v[0-9.]+(?:-[A-Za-z0-9.-]+)? [A-Za-z0-9]+', buildx))
+    baseline = post_bootstrap_inventory(runner, initial, native)
     output = root / 'candidate'
     phase('business-build')
     runner.run([sys.executable, '-B', ROOT / 'deploy/nitro/build-dual-enclave.py', 'build',
