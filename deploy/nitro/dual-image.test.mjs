@@ -27,8 +27,13 @@ test('dual public inputs use the exact host Rust preparation boundary', () => {
 
 // Explicit native builder and LinuxKit adapter controls use synthetic inputs.
 test('pinned native-cross inputs and explicit LinuxKit architecture adapter', () => {
-  const result = spawnSync('python3', ['-B', fileURLToPath(new URL('./dual_cross_test.py', import.meta.url))], {
-    encoding: 'utf8', timeout: 120000,
-  });
+  const result = spawnSync(
+    'python3',
+    ['-B', fileURLToPath(new URL('./dual_cross_test.py', import.meta.url))],
+    {
+      encoding: 'utf8',
+      timeout: 120000,
+    }
+  );
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
