@@ -255,12 +255,13 @@ impl ApiState {
         releaser: provision::EnvelopeReleaser,
     ) -> Self {
         let database_path = repository.db_path().to_path_buf();
-        let recoverer: provision::VaultRecoverer =
-            Arc::new(|_profile, _credentials, master_key, database_path| {
+        let recoverer: provision::VaultRecoverer = Arc::new(
+            |_profile, _credentials, master_key, database_path, _enrollment| {
                 let repository =
                     crate::store::Store::open(database_path).map_err(|error| error.to_string())?;
                 Ok(SignerService::new(repository, master_key))
-            });
+            },
+        );
         Self::attested_pending_with_components(
             database_path,
             data_dir,
@@ -285,6 +286,7 @@ impl ApiState {
                     profile,
                     releaser,
                     recoverer,
+                    enrollment: None,
                     mutex: std::sync::Mutex::new(()),
                 }))),
                 attested_boot: true,
@@ -296,6 +298,20 @@ impl ApiState {
             request_slots: Arc::new(Semaphore::new(DEFAULT_MAX_IN_FLIGHT_REQUESTS)),
             blocking_slots: Arc::new(Semaphore::new(DEFAULT_MAX_IN_FLIGHT_REQUESTS)),
         }
+    }
+
+    pub(crate) fn with_enrollment(
+        mut self,
+        enrollment: Option<Arc<crate::enrollment::ValidatedGenesisEnrollment>>,
+    ) -> Self {
+        let inner = Arc::get_mut(&mut self.inner).expect("configure before publishing state");
+        let vault = inner.vault.get_mut().expect("unpublished vault lock");
+        if let Vault::Pending(gate) = vault {
+            Arc::get_mut(gate)
+                .expect("unpublished provision gate")
+                .enrollment = enrollment;
+        }
+        self
     }
 
     pub(crate) fn with_process_lease(
@@ -392,7 +408,7 @@ impl ApiState {
                 }
             }
         };
-        let result = provision::run(&gate, env, presented).map(|service| {
+        let mut result = provision::run(&gate, env, presented).map(|service| {
             service.with_vault_binding(Arc::clone(&gate.profile), self.inner.process_lease.clone())
         });
         let mut vault = self
@@ -400,8 +416,23 @@ impl ApiState {
             .vault
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Local-only freshness check under the publication lock: a live
+        // recovery can expire between return and this final Ready transition.
+        if gate.enrollment.is_some() {
+            result = result.and_then(|service| {
+                service
+                    .ensure_durable_ready()
+                    .map_err(|error| provision::ProvisionError::Release(error.to_string()))?;
+                Ok(service)
+            });
+        }
         *vault = match &result {
             Ok(service) => Vault::Ready(service.clone()),
+            // Preserve abandoned local state as evidence. Never run another
+            // initializer into a DB left by a failed or ambiguous attempt.
+            Err(_) if gate.enrollment.is_some() && gate.database_path.exists() => {
+                Vault::Provisioning
+            }
             Err(_) => Vault::Pending(gate),
         };
         result

@@ -421,6 +421,15 @@ impl SignerService {
         self
     }
 
+    /// Publication guard for measured enrollment. It does not renew or revive
+    /// a lease, and rejects a recovery result without a durable authority.
+    pub(crate) fn ensure_durable_ready(&self) -> Result<()> {
+        self.durable
+            .as_ref()
+            .context("enrollment requires durable recovery")?
+            .ensure_ready()
+    }
+
     pub fn durable_status(&self) -> Option<DurableStatus> {
         self.durable.as_ref().map(|durable| durable.status())
     }

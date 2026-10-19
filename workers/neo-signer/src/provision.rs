@@ -51,6 +51,9 @@ pub const TOKEN_CIPHERTEXT_ENV: &str = "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BA
 /// never falls back to a host-supplied or enclave-local master key.
 pub const MASTER_KEY_CIPHERTEXT_ENV: &str = "SIGNER_SERVICE_MASTER_KEY_KMS_CIPHERTEXT";
 
+/// Separate envelope used only by measured TestNet genesis enrollment.
+pub const ADMIN_CIPHERTEXT_ENV: &str = "SIGNER_SERVICE_FIRST_ADMIN_KMS_CIPHERTEXT";
+
 /// Region override, falling back through the standard AWS names.
 pub const REGION_ENV: &str = "SIGNER_SERVICE_KMS_REGION";
 
@@ -58,6 +61,7 @@ pub const REGION_ENV: &str = "SIGNER_SERVICE_KMS_REGION";
 const ALLOWED_ENV_KEYS: &[&str] = &[
     TOKEN_CIPHERTEXT_ENV,
     MASTER_KEY_CIPHERTEXT_ENV,
+    ADMIN_CIPHERTEXT_ENV,
     REGION_ENV,
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
@@ -70,7 +74,34 @@ const ALLOWED_ENV_KEYS: &[&str] = &[
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProvisionBody {
+    #[serde(deserialize_with = "unique_env")]
     pub env: serde_json::Map<String, serde_json::Value>,
+}
+
+// Reject duplicate keys while streaming, before Map would replace a value.
+fn unique_env<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<serde_json::Map<String, serde_json::Value>, D::Error> {
+    struct Visitor;
+    impl<'de> serde::de::Visitor<'de> for Visitor {
+        type Value = serde_json::Map<String, serde_json::Value>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("unique provision fields")
+        }
+        fn visit_map<M: serde::de::MapAccess<'de>>(
+            self,
+            mut map: M,
+        ) -> Result<Self::Value, M::Error> {
+            let mut fields = serde_json::Map::new();
+            while let Some((key, value)) = map.next_entry::<String, serde_json::Value>()? {
+                if fields.insert(key, value).is_some() {
+                    return Err(serde::de::Error::custom("duplicate provision field"));
+                }
+            }
+            Ok(fields)
+        }
+    }
+    deserializer.deserialize_map(Visitor)
 }
 
 /// The provisioned environment as an ordered string map — the whitelist's
@@ -249,16 +280,25 @@ pub type VaultRecoverer = Arc<
             AwsCredentials,
             MasterKey,
             &Path,
+            Option<&EnrollmentAttempt<'_>>,
         ) -> Result<SignerService, String>
         + Send
         + Sync,
 >;
+
+/// Borrowed authorization deferred until authenticated recovery selects genesis.
+/// Restore never calls this closure or requires the original Admin ciphertext.
+pub struct EnrollmentAttempt<'a> {
+    pub(crate) manifest: &'a crate::enrollment::ValidatedGenesisEnrollment,
+    pub(crate) authorize: &'a (dyn Fn() -> Result<(), String> + Sync),
+}
 
 /// Selected only by enclave code. The host cannot choose the KMS purpose.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnvelopePurpose {
     TransportToken,
     MasterKey,
+    FirstAdmin,
 }
 
 impl EnvelopePurpose {
@@ -270,6 +310,7 @@ impl EnvelopePurpose {
                 match self {
                     Self::TransportToken => "transport-token/v1",
                     Self::MasterKey => "master-key/v1",
+                    Self::FirstAdmin => "first-admin/v1",
                 },
             ),
         ]
@@ -290,6 +331,7 @@ pub struct ProvisionGate {
     pub profile: Arc<ValidatedVaultProfile>,
     pub releaser: EnvelopeReleaser,
     pub recoverer: VaultRecoverer,
+    pub enrollment: Option<Arc<crate::enrollment::ValidatedGenesisEnrollment>>,
     /// Serializes direct release calls. The API's Provisioning state owns the
     /// wider lifecycle, including publication after this lock is released.
     pub mutex: Mutex<()>,
@@ -369,16 +411,19 @@ pub fn profile_bound_releaser(profile: Arc<ValidatedVaultProfile>) -> EnvelopeRe
 }
 
 pub fn coordinator_recoverer() -> VaultRecoverer {
-    Arc::new(|profile, credentials, master_key, database_path| {
-        coordinator::recover(
-            profile,
-            credentials,
-            master_key,
-            database_path,
-            Arc::new(nitro_attest::release::NsmAttestation),
-        )
-        .map_err(|error| error.to_string())
-    })
+    Arc::new(
+        |profile, credentials, master_key, database_path, enrollment| {
+            coordinator::recover_with_enrollment(
+                profile,
+                credentials,
+                master_key,
+                database_path,
+                Arc::new(nitro_attest::release::NsmAttestation),
+                enrollment,
+            )
+            .map_err(|error| error.to_string())
+        },
+    )
 }
 
 /// The whole provision transaction: validate, check the transport token,
@@ -393,6 +438,9 @@ pub fn run(
     let _guard = gate.mutex.lock().map_err(|_| {
         ProvisionError::Release("the provision lock is poisoned; restart the service".to_string())
     })?;
+    if gate.enrollment.is_none() && env.get(ADMIN_CIPHERTEXT_ENV).is_some() {
+        return Err(ProvisionError::UnknownKey(ADMIN_CIPHERTEXT_ENV.to_string()));
+    }
     let token_ciphertext = env.required(TOKEN_CIPHERTEXT_ENV)?;
     let master_ciphertext = env.required(MASTER_KEY_CIPHERTEXT_ENV)?;
     if token_ciphertext == master_ciphertext {
@@ -412,6 +460,7 @@ pub fn run(
         return Err(ProvisionError::TokenMismatch);
     }
 
+    let transport_digest = crate::auth::token_digest(expected);
     drop(released);
     let released = (gate.releaser)(env, master_ciphertext, EnvelopePurpose::MasterKey)
         .map_err(ProvisionError::Release)?;
@@ -428,11 +477,40 @@ pub fn run(
         .verify_master(&master_key)
         .map_err(|error| ProvisionError::Release(error.to_string()))?;
     let credentials = env.coordinator_credentials()?;
+    let authorize = || -> Result<(), String> {
+        let manifest = gate.enrollment.as_ref().ok_or("enrollment is disabled")?;
+        let ciphertext = env
+            .get(ADMIN_CIPHERTEXT_ENV)
+            .ok_or("missing enrollment ciphertext")?;
+        // Compare decoded bytes too: base64 spelling is not purpose separation.
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let decode = |text: &str| {
+            STANDARD
+                .decode(text)
+                .map_err(|_| "invalid enrollment ciphertext")
+        };
+        let admin = decode(ciphertext)?;
+        if admin.is_empty()
+            || admin == decode(token_ciphertext)?
+            || admin == decode(master_ciphertext)?
+        {
+            return Err("enrollment requires a distinct purpose-bound ciphertext".into());
+        }
+        let released = (gate.releaser)(env, ciphertext, EnvelopePurpose::FirstAdmin)?;
+        manifest
+            .verify_token(&released, &transport_digest)
+            .map_err(|error| error.to_string())
+    };
+    let enrollment = gate.enrollment.as_ref().map(|manifest| EnrollmentAttempt {
+        manifest,
+        authorize: &authorize,
+    });
     (gate.recoverer)(
         Arc::clone(&gate.profile),
         credentials,
         master_key,
         &gate.database_path,
+        enrollment.as_ref(),
     )
     .map_err(ProvisionError::Release)
 }

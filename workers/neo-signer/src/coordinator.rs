@@ -661,6 +661,24 @@ pub fn recover(
     database_path: &Path,
     attestation: Arc<dyn AttestationSource>,
 ) -> Result<SignerService> {
+    recover_with_enrollment(
+        profile,
+        credentials,
+        master_key,
+        database_path,
+        attestation,
+        None,
+    )
+}
+
+pub(crate) fn recover_with_enrollment(
+    profile: Arc<ValidatedVaultProfile>,
+    credentials: AwsCredentials,
+    master_key: MasterKey,
+    database_path: &Path,
+    attestation: Arc<dyn AttestationSource>,
+    enrollment: Option<&crate::provision::EnrollmentAttempt<'_>>,
+) -> Result<SignerService> {
     // Refuse stale local state before taking ownership remotely. This is a
     // path-only existence check, never a SQLite open or source of truth.
     ensure_fresh_database_target(database_path)?;
@@ -671,9 +689,17 @@ pub fn recover(
         credentials,
         attestation,
     )?);
-    recover_with_authority(profile, master_key, database_path, client, cipher)
+    recover_enrolled_with_authority(
+        profile,
+        master_key,
+        database_path,
+        client,
+        cipher,
+        enrollment,
+    )
 }
 
+#[cfg(test)]
 fn recover_with_authority<A>(
     profile: Arc<ValidatedVaultProfile>,
     master_key: MasterKey,
@@ -684,22 +710,96 @@ fn recover_with_authority<A>(
 where
     A: RecoveryAuthority + DurableCoordinator + 'static,
 {
+    recover_enrolled_with_authority(profile, master_key, database_path, authority, cipher, None)
+}
+
+fn recover_enrolled_with_authority<A>(
+    profile: Arc<ValidatedVaultProfile>,
+    master_key: MasterKey,
+    database_path: &Path,
+    authority: Arc<A>,
+    cipher: SnapshotCipher,
+    enrollment: Option<&crate::provision::EnrollmentAttempt<'_>>,
+) -> Result<SignerService>
+where
+    A: RecoveryAuthority + DurableCoordinator + 'static,
+{
     ensure_fresh_database_target(database_path)?;
+    if let Some(attempt) = enrollment {
+        attempt.manifest.validate_profile(&profile)?;
+    }
     let observed = authority.head()?;
+    if enrollment.is_some() {
+        if let Some(previous) = &observed {
+            previous.validate()?;
+            anyhow::ensure!(
+                &previous.binding == cipher.binding(),
+                "observed HEAD binding mismatch"
+            );
+        }
+    }
     let leased = authority.takeover(observed.as_ref())?;
+    if enrollment.is_some() {
+        leased.validate()?;
+        anyhow::ensure!(
+            &leased.binding == cipher.binding(),
+            "leased HEAD binding mismatch"
+        );
+        // A takeover may change ownership, never turn committed state into genesis.
+        if let Some(previous) = &observed {
+            anyhow::ensure!(
+                leased.same_snapshot(previous),
+                "takeover changed committed state"
+            );
+        } else {
+            anyhow::ensure!(leased.is_genesis(), "absent HEAD takeover must be genesis");
+        }
+        leased.ensure_live(now_millis()?)?;
+    }
     let repository = if leased.is_genesis() {
         anyhow::ensure!(
-            observed.is_none(),
+            observed.is_none() || enrollment.is_some(),
             "genesis is valid only when HEAD was absent"
         );
-        Store::open(database_path).context("failed to create the verified genesis store")?
+        if let Some(attempt) = enrollment {
+            // No original credential is inspected on the committed branch.
+            (attempt.authorize)().map_err(anyhow::Error::msg)?;
+        }
+        let repository =
+            Store::open(database_path).context("failed to create the verified genesis store")?;
+        if let Some(attempt) = enrollment {
+            repository.enroll_genesis(attempt.manifest)?;
+        }
+        repository
     } else {
         let envelope = authority.download_snapshot(&leased)?;
         let expected = leased.snapshot_head()?;
-        Store::install_snapshot(database_path, &cipher, &envelope, &expected)
-            .context("failed to install the exact authoritative snapshot")?
+        let repository = Store::install_snapshot(database_path, &cipher, &envelope, &expected)
+            .context("failed to install the exact authoritative snapshot")?;
+        if let Some(attempt) = enrollment {
+            repository.validate_enrollment(attempt.manifest, leased.generation)?;
+        }
+        repository
     };
+    let genesis = leased.is_genesis();
     let durable = DurableState::from_verified_lease(profile, cipher, authority, leased)?;
+    if let Some(attempt) = enrollment.filter(|_| genesis) {
+        // Exactly one durable attempt. CoordinatorClient retries its immutable
+        // candidate/id; any exhausted ambiguity fences this boot, never re-mints.
+        durable.verify_remote_lease()?;
+        durable.ensure_ready()?;
+        let committed = durable.commit(&repository, attempt.manifest.operation_digest())?;
+        anyhow::ensure!(
+            committed.generation == 1,
+            "initial enrollment must commit generation one"
+        );
+        repository.validate_enrollment(attempt.manifest, 1)?;
+    }
+    // A valid signed commit/restore can arrive after its lease expires. It is
+    // durable history, but not permission to publish this boot as Ready.
+    if enrollment.is_some() {
+        durable.ensure_ready()?;
+    }
     Ok(SignerService::new(repository, master_key).with_durable_state(Arc::new(durable)))
 }
 
@@ -1813,3 +1913,7 @@ fn head_fingerprint(head: &WireHead) -> Result<[u8; 32]> {
 #[cfg(test)]
 #[path = "../tests/unit/coordinator.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/enrollment_recovery.rs"]
+pub(crate) mod enrollment_fixture;

@@ -61,3 +61,74 @@ impl Store {
         Ok(())
     }
 }
+
+impl Store {
+    /// No preseeded application state is permissible, including non-Admin rows.
+    pub(crate) fn enroll_genesis(
+        &self,
+        enrollment: &crate::enrollment::ValidatedGenesisEnrollment,
+    ) -> Result<()> {
+        let mut connection = self.connection()?;
+        let transaction =
+            connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        Self::check_enrollment_tables(&transaction, false)?;
+        Self::create_signer_caller_on(&transaction, enrollment.caller())?;
+        let id = super::audit::insert_signer_audit(&transaction, enrollment.audit())?;
+        anyhow::ensure!(id == 1, "enrollment audit sequence is not virgin");
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Historical evidence is mandatory on every restore. Only generation one
+    /// pins the current caller: later authorized rotation must remain intact.
+    pub(crate) fn validate_enrollment(
+        &self,
+        enrollment: &crate::enrollment::ValidatedGenesisEnrollment,
+        generation: u64,
+    ) -> Result<()> {
+        let connection = self.connection()?;
+        let audit = connection.query_row(
+            "SELECT id, recorded_at_unix, action, outcome, caller_id, key_id, tx_id, reason, detail, origin FROM signer_audit WHERE id = 1",
+            [], signer_audit_from_row)?;
+        anyhow::ensure!(
+            &audit == enrollment.audit(),
+            "historical enrollment receipt mismatch"
+        );
+        let callers = Self::list_signer_callers_on(&connection)?;
+        if generation == 1 {
+            Self::check_enrollment_tables(&connection, true)?;
+            anyhow::ensure!(
+                callers == [enrollment.caller().clone()],
+                "initial enrollment caller mismatch"
+            );
+        }
+        anyhow::ensure!(
+            callers.iter().any(|c| !c.disabled
+                && c.has_capability(CallerCapability::Admin)
+                && matches!(c.key_grant, KeyGrant::Any)),
+            "committed enrollment has no usable Admin"
+        );
+        Ok(())
+    }
+
+    fn check_enrollment_tables(connection: &Connection, initialized: bool) -> Result<()> {
+        let mut statement = connection.prepare(
+            "SELECT name FROM sqlite_schema WHERE type = 'table' AND substr(name, 1, 7) != 'sqlite_'",
+        )?;
+        let tables = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for table in tables {
+            let expected = i64::from(
+                initialized && matches!(table.as_str(), "signer_callers" | "signer_audit"),
+            );
+            let query = format!("SELECT COUNT(*) FROM \"{}\"", table.replace('"', "\"\""));
+            let count: i64 = connection.query_row(&query, [], |row| row.get(0))?;
+            anyhow::ensure!(
+                count == expected,
+                "enrollment requires exact initial application state"
+            );
+        }
+        Ok(())
+    }
+}

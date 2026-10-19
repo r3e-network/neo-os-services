@@ -142,6 +142,68 @@ class Packaging(unittest.TestCase):
     def stage(self, name='context'):
         return dual.stage(self.repo, self.input_path, self.hash, self.root / name, self.env)
 
+    def enable_enrollment(self):
+        profile = self.profiles['testnet']
+        destination = ('environment', 'vault_id', 'networks', 'custody_kms_key_arn', 'root_key_version', 'root_key_commitment', 'coordinator')
+        manifest = {k: copy.deepcopy(profile[k]) for k in destination}
+        manifest.update(schema='neoos/first-admin-enrollment/v1', purpose='first-testnet-admin/v1', ceremony_id='synthetic-first-admin', caller={
+            'id':'first-admin', 'label':'Test operator', 'created_at_unix':1780000000, 'token_digest':'12'*32,
+            'auth_mode':'bearer', 'capabilities':['admin'], 'key_grant':'any', 'allowed_origins':[], 'disabled':False})
+        raw = dual.encoded(manifest)
+        (self.root/'testnet-enrollment.json').write_bytes(raw)
+        self.input['networks']['testnet']['enrollment'] = {'mode':'first-testnet-admin/v1', 'manifest_file':'testnet-enrollment.json', 'manifest_sha256':dual.sha(raw)}
+        profile['release_policy_version'] = dual.sha(raw)
+        self.write()
+        return manifest, raw
+
+    def test_measured_enrollment_stages_exact_bytes_optin_and_profile_binding(self):
+        mainnet = dual.encoded(self.profiles['mainnet'])
+        _, raw = self.enable_enrollment()
+        result = self.stage()
+        context = self.root/'context'
+        map_data = json.loads((context/'public/network-profiles.json').read_bytes())
+        self.assertEqual((context/'public/custody/testnet-enrollment.json').read_bytes(), raw)
+        self.assertEqual((context/'public/custody/mainnet.json').read_bytes(), mainnet)
+        self.assertEqual(result['files']['public/custody/testnet-enrollment.json'], dual.sha(raw))
+        self.assertEqual(map_data['testnet']['MORPHEUS_CUSTODY_ENROLLMENT_MODE'], 'first-testnet-admin/v1')
+        self.assertEqual(map_data['testnet']['MORPHEUS_CUSTODY_ENROLLMENT_SHA256'], dual.sha(raw))
+        self.assertEqual(map_data['testnet']['MORPHEUS_CUSTODY_ENROLLMENT_FILE'], '/app/config/custody/testnet-enrollment.json')
+        self.assertFalse(any('ENROLLMENT' in k for k in map_data['mainnet']))
+
+    def test_enrollment_file_and_claimed_digest_substitution_still_refuses(self):
+        manifest, _ = self.enable_enrollment()
+        manifest['caller']['id'] = 'substituted-admin'
+        raw = dual.encoded(manifest)
+        (self.root/'testnet-enrollment.json').write_bytes(raw)
+        self.input['networks']['testnet']['enrollment']['manifest_sha256'] = dual.sha(raw)
+        self.write()
+        with self.assertRaisesRegex(ValueError, 'manifest/profile digest mismatch'):
+            self.stage()
+        self.assertFalse((self.root/'context').exists())
+
+    def test_enrollment_negative_contract_and_mainnet_refuse(self):
+        manifest, _ = self.enable_enrollment()
+        for change in ('mainnet', 'sign', 'unknown', 'duplicate', 'oversize', 'bad-mode'):
+            with self.subTest(change=change):
+                value = copy.deepcopy(manifest)
+                if change == 'mainnet': value['environment'] = 'mainnet'
+                if change == 'sign': value['caller']['capabilities'] = ['admin','sign']
+                if change == 'unknown': value['caller']['private_token'] = 'synthetic-disallowed'
+                raw = dual.encoded(value)
+                if change == 'duplicate': raw = raw.replace(b'"caller":{', b'"caller":{"id":"duplicate",', 1)
+                if change == 'oversize': raw += b' ' * 16384
+                (self.root/'testnet-enrollment.json').write_bytes(raw)
+                self.profiles['testnet']['release_policy_version'] = dual.sha(raw)
+                descriptor = self.input['networks']['testnet']['enrollment']
+                descriptor['manifest_sha256'] = dual.sha(raw)
+                descriptor['mode'] = 'disabled' if change == 'bad-mode' else 'first-testnet-admin/v1'
+                self.write()
+                with self.assertRaises(ValueError): self.validate()
+        self.enable_enrollment()
+        self.input['networks']['mainnet']['enrollment'] = copy.deepcopy(self.input['networks']['testnet']['enrollment'])
+        self.write()
+        with self.assertRaisesRegex(ValueError, 'TestNet opt-in'): self.validate()
+
     def test_two_exact_profiles_runtime_map_and_single_business_process(self):
         result = self.stage()
         context = self.root/'context'
@@ -665,6 +727,7 @@ m.build(root / 'source', root / 'context', manifest, root / 'result', m.safe_env
                 if fault=='receipt':receipt['map_sha256']='99'*32
                 (out/'custody-build-validation.json').write_bytes(dual.encoded(receipt))
                 if fault=='payload':(out/'custody/testnet.json').write_text('{}')
+                if fault=='enrollment':(out/'custody/testnet-enrollment.json').write_text('{}')
                 return b''
             if '{{json .Config.Env}}' in a:
                 m=(context/'public/network-profiles.json').read_text().strip()
@@ -681,6 +744,17 @@ m.build(root / 'source', root / 'context', manifest, root / 'result', m.safe_env
         with patch.object(dual,'canonical',return_value=self.commit),patch.object(dual,'run',fake):
             result=dual.build(self.repo,context,manifest,self.root/'result',self.env,Path('/fake/docker'),Path('/fake/nitro-cli'),Path('/fake/blobs'))
         return result,calls
+
+    def test_enrollment_exported_bytes_are_verified_before_publication(self):
+        self.enable_enrollment()
+        result, _ = self.simulate()
+        self.assertIn('public/custody/testnet-enrollment.json', result['files'])
+
+    def test_enrollment_export_substitution_refuses_publication(self):
+        self.enable_enrollment()
+        with self.assertRaisesRegex(ValueError, 'image enrollment digest mismatch'):
+            self.simulate('enrollment')
+        self.assertFalse((self.root/'result').exists())
 
     def test_two_uncached_builds_measure_readback_and_publish_first(self):
         result,calls=self.simulate()

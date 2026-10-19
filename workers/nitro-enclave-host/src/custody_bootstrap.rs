@@ -24,6 +24,10 @@ pub const PROFILE_HASH: &str = "MORPHEUS_CUSTODY_PROFILE_SHA256";
 pub const DATA_DIR: &str = "MORPHEUS_CUSTODY_DATA_DIR";
 pub const AUDIENCE: &str = "MORPHEUS_CUSTODY_WORKLOAD_AUDIENCE";
 const CONFIG_KEYS: [&str; 4] = [PROFILE_FILE, PROFILE_HASH, DATA_DIR, AUDIENCE];
+pub const ENROLLMENT_MODE: &str = "MORPHEUS_CUSTODY_ENROLLMENT_MODE";
+pub const ENROLLMENT_FILE: &str = "MORPHEUS_CUSTODY_ENROLLMENT_FILE";
+pub const ENROLLMENT_HASH: &str = "MORPHEUS_CUSTODY_ENROLLMENT_SHA256";
+const ENROLLMENT_KEYS: [&str; 3] = [ENROLLMENT_MODE, ENROLLMENT_FILE, ENROLLMENT_HASH];
 const MAX_PROFILE_BYTES: u64 = 64 * 1024;
 
 fn absolute_path(value: &str) -> Result<PathBuf, &'static str> {
@@ -86,8 +90,39 @@ fn plan(network: &str, overlay: &EnvOverlay) -> Result<EmbeddedCustodyConfig, &'
     let audience = value(AUDIENCE)?;
     let policy = WorkloadAuthPolicy::new(audience, false)
         .map_err(|_| "invalid embedded custody workload audience")?;
+    let enrollment = if ENROLLMENT_KEYS.iter().any(|key| overlay.get(key).is_some()) {
+        use neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES};
+        if expected_network != Network::Testnet
+            || value(ENROLLMENT_MODE)? != neo_signer::enrollment::ENROLLMENT_MODE
+        {
+            return Err("enrollment requires explicit measured TestNet opt-in");
+        }
+        let file = absolute_path(value(ENROLLMENT_FILE)?)?;
+        let expected = value(ENROLLMENT_HASH)?;
+        let metadata =
+            std::fs::symlink_metadata(&file).map_err(|_| "enrollment manifest unavailable")?;
+        if !metadata.is_file() || metadata.len() > MAX_MANIFEST_BYTES as u64 {
+            return Err("enrollment manifest must be a bounded regular file");
+        }
+        let mut bytes = Vec::new();
+        std::fs::File::open(file)
+            .map_err(|_| "enrollment manifest unavailable")?
+            .take(MAX_MANIFEST_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "enrollment manifest unreadable")?;
+        if bytes.len() > MAX_MANIFEST_BYTES || hex::encode(Sha256::digest(&bytes)) != expected {
+            return Err("enrollment manifest digest mismatch");
+        }
+        Some(Arc::new(
+            ValidatedGenesisEnrollment::from_json(&bytes, &profile)
+                .map_err(|_| "enrollment manifest/profile binding invalid")?,
+        ))
+    } else {
+        None
+    };
     Ok(EmbeddedCustodyConfig {
         profile: Arc::new(profile),
+        enrollment,
         expected_network,
         data_dir,
         workload_audience: policy.audience().to_string(),
@@ -101,10 +136,12 @@ fn plan(network: &str, overlay: &EnvOverlay) -> Result<EmbeddedCustodyConfig, &'
 pub fn prepare(
     profiles: &NetworkProfiles,
 ) -> Result<BTreeMap<String, EmbeddedCustodyConfig>, &'static str> {
-    let any_config = profiles
-        .overlays
-        .values()
-        .any(|o| CONFIG_KEYS.iter().any(|k| o.get(k).is_some()));
+    let any_config = profiles.overlays.values().any(|o| {
+        CONFIG_KEYS
+            .iter()
+            .chain(ENROLLMENT_KEYS.iter())
+            .any(|k| o.get(k).is_some())
+    });
     let production_dual = profiles.explicit
         && profiles.overlays.values().any(|o| {
             o.get_trimmed("NODE_ENV")

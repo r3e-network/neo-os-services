@@ -147,7 +147,8 @@ def public_inputs(path, expected_sha, registry):
     distinct = {k: set() for k in ('vault_id', 'root_key_commitment', 'audience', 'origin', 'snapshot')}
     for network in NETWORKS:
         spec = value['networks'][network]
-        fields(spec, ('profile_file', 'profile_sha256', 'workload_audience', 'roles', 'neo_n3_rpc', 'neo_x_rpc', 'frontier_kms_key_arn', 'aws_region'))
+        spec_fields = ('profile_file', 'profile_sha256', 'workload_audience', 'roles', 'neo_n3_rpc', 'neo_x_rpc', 'frontier_kms_key_arn', 'aws_region')
+        fields(spec, spec_fields + (('enrollment',) if 'enrollment' in spec else ()))
         require(spec['profile_file'] == network + '.json', 'profile file must be its network basename')
         data = regular(Path(path).parent / spec['profile_file'])
         require(sha(data) == digest(spec['profile_sha256']), 'profile file SHA mismatch')
@@ -207,9 +208,41 @@ def public_inputs(path, expected_sha, registry):
             'AWS_REGION': region,
             'FRONTIER_KMS_KEY_ARN': spec['frontier_kms_key_arn'],
         }
+        if 'enrollment' in spec:
+            enrollment = spec['enrollment']
+            fields(enrollment, ('mode', 'manifest_file', 'manifest_sha256'))
+            require(network == 'testnet' and enrollment['mode'] == 'first-testnet-admin/v1', 'enrollment requires explicit TestNet opt-in')
+            require(enrollment['manifest_file'] == 'testnet-enrollment.json', 'enrollment file must use fixed basename')
+            manifest = regular(Path(path).parent / enrollment['manifest_file'])
+            require(len(manifest) <= 16384, 'enrollment manifest exceeds bound')
+            require(sha(manifest) == digest(enrollment['manifest_sha256']) == profile['release_policy_version'], 'enrollment manifest/profile digest mismatch')
+            # Authoritative semantic validation is also performed by dual_prepare
+            # against these exact staged bytes in both image recipes.
+            validate_enrollment(parse(manifest), profile)
+            profiles['testnet-enrollment'] = manifest
+            overlay.update({
+                'MORPHEUS_CUSTODY_ENROLLMENT_MODE': enrollment['mode'],
+                'MORPHEUS_CUSTODY_ENROLLMENT_FILE': '/app/config/custody/testnet-enrollment.json',
+                'MORPHEUS_CUSTODY_ENROLLMENT_SHA256': sha(manifest),
+            })
         overlay.update({'SIGNER_ROLE_' + role + '_KEY_ID': spec['roles'][role] for role in ROLES})
         profiles[network], overlays[network] = data, overlay
     return value, profiles, overlays
+
+
+def validate_enrollment(manifest, profile):
+    destination = ('environment', 'vault_id', 'networks', 'custody_kms_key_arn', 'root_key_version', 'root_key_commitment', 'coordinator')
+    fields(manifest, ('schema', 'purpose', 'ceremony_id', 'caller') + destination)
+    require(manifest['schema'] == 'neoos/first-admin-enrollment/v1' and manifest['purpose'] == 'first-testnet-admin/v1', 'invalid enrollment contract')
+    require(all(manifest[k] == profile[k] for k in destination) and manifest['environment'] == 'testnet', 'enrollment destination mismatch')
+    role_id(manifest['ceremony_id'])
+    caller = manifest['caller']
+    fields(caller, ('id', 'label', 'created_at_unix', 'token_digest', 'auth_mode', 'capabilities', 'key_grant', 'allowed_origins', 'disabled'))
+    role_id(caller['id']); digest(caller['token_digest'])
+    label = caller['label']
+    require(isinstance(label, str) and 0 < len(label.encode()) <= 128 and label.strip() == label and not any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in label), 'invalid enrollment label')
+    require(type(caller['created_at_unix']) is int and 0 < caller['created_at_unix'] <= 2**63-1, 'invalid enrollment time')
+    require(caller['auth_mode'] == 'bearer' and caller['capabilities'] == ['admin'] and caller['key_grant'] == 'any' and caller['allowed_origins'] == [] and caller['disabled'] is False, 'enrollment must be enabled bearer Admin only')
 
 
 OUTPUT_LIMIT = 256 * 1024 * 1024
@@ -570,6 +603,9 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
             run([*docker_args, 'cp', cid + ':/app/config', exported], env)
             for n in NETWORKS:
                 require(sha(regular(exported / 'custody' / (n + '.json'))) == manifest['files']['public/custody/' + n + '.json'], 'image profile digest mismatch')
+            enrollment_file = 'public/custody/testnet-enrollment.json'
+            if enrollment_file in manifest['files']:
+                require(sha(regular(exported / 'custody/testnet-enrollment.json')) == manifest['files'][enrollment_file], 'image enrollment digest mismatch')
             require(sha(regular(exported / 'network-profiles.json')) == manifest['map_sha256'], 'image map digest mismatch')
             image_env = parse(run([*docker_args, 'image', 'inspect', '--format', '{{json .Config.Env}}', image_id], env))
             require(isinstance(image_env, list) and all(isinstance(v, str) and '=' in v for v in image_env), 'invalid image environment')

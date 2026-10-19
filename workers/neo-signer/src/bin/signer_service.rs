@@ -228,6 +228,7 @@ async fn serve() -> Result<()> {
             let profile = std::sync::Arc::new(VaultProfile::from_json(&profile_bytes)?);
             let runtime = EmbeddedCustodyRuntime::boot(
                 EmbeddedCustodyConfig {
+                    enrollment: None,
                     expected_network: profile.environment(),
                     profile,
                     data_dir: config.data_dir.clone(),

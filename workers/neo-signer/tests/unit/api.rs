@@ -3183,9 +3183,10 @@ async fn recover_api_with_document(api: &mut Api, document: crate::vault_profile
             Ok(zeroize::Zeroizing::new(match purpose {
                 provision::EnvelopePurpose::TransportToken => ENCLAVE_TOKEN.as_bytes().to_vec(),
                 provision::EnvelopePurpose::MasterKey => vec![9; 32],
+                provision::EnvelopePurpose::FirstAdmin => panic!("legacy fixture must not enroll"),
             }))
         }),
-        Arc::new(move |_, _, _, _| Ok(service.clone())),
+        Arc::new(move |_, _, _, _, _| Ok(service.clone())),
     )
     .with_workload_auth(workload_auth());
     api.router = router(state);
@@ -3550,4 +3551,872 @@ async fn attested_profile_rejects_inconsistent_stored_chain_identity_before_key_
         );
     }
     Ok(())
+}
+
+const GENESIS_TRANSPORT: &str = "synthetic-genesis-transport";
+
+fn genesis_body() -> Value {
+    json!({"env": {
+        provision::TOKEN_CIPHERTEXT_ENV: "dHJhbnNwb3J0",
+        provision::MASTER_KEY_CIPHERTEXT_ENV: "cm9vdA==",
+        provision::ADMIN_CIPHERTEXT_ENV: "YWRtaW4=",
+        provision::REGION_ENV:"us-east-1", "AWS_ACCESS_KEY_ID":"synthetic-id",
+        "AWS_SECRET_ACCESS_KEY":"synthetic-secret"
+    }})
+}
+
+fn genesis_state(
+    dir: &std::path::Path,
+    authority: Arc<crate::coordinator::enrollment_fixture::Authority>,
+    manifest: Arc<crate::enrollment::ValidatedGenesisEnrollment>,
+    admin: &str,
+    released: Arc<Mutex<Vec<provision::EnvelopePurpose>>>,
+) -> ApiState {
+    let recoverer = authority.recoverer();
+    genesis_state_with_recoverer(dir, authority, manifest, admin, released, recoverer)
+}
+
+fn genesis_state_with_recoverer(
+    dir: &std::path::Path,
+    authority: Arc<crate::coordinator::enrollment_fixture::Authority>,
+    manifest: Arc<crate::enrollment::ValidatedGenesisEnrollment>,
+    admin: &str,
+    released: Arc<Mutex<Vec<provision::EnvelopePurpose>>>,
+    recoverer: provision::VaultRecoverer,
+) -> ApiState {
+    let admin = admin.as_bytes().to_vec();
+    ApiState::attested_pending_with_components(
+        dir.join("signer.db"),
+        dir.to_path_buf(),
+        authority.profile.clone(),
+        Arc::new(move |_, ciphertext, purpose| {
+            released.lock().unwrap().push(purpose);
+            let value = match (ciphertext, purpose) {
+                ("dHJhbnNwb3J0", provision::EnvelopePurpose::TransportToken) => {
+                    GENESIS_TRANSPORT.as_bytes().to_vec()
+                }
+                ("cm9vdA==", provision::EnvelopePurpose::MasterKey) => {
+                    crate::enrollment::tests::ROOT.to_vec()
+                }
+                ("YWRtaW4=", provision::EnvelopePurpose::FirstAdmin) => admin.clone(),
+                _ => return Err("synthetic KMS purpose mismatch".into()),
+            };
+            Ok(zeroize::Zeroizing::new(value))
+        }),
+        recoverer,
+    )
+    .with_enrollment(Some(manifest))
+}
+
+#[tokio::test]
+async fn measured_genesis_provision_publishes_usable_admin_only_after_commit() {
+    use crate::enrollment::tests::{fixture, ADMIN};
+    let (profile, manifest) = fixture();
+    let authority = crate::coordinator::enrollment_fixture::Authority::new(profile);
+    let dir = tempfile::tempdir().unwrap();
+    let state = genesis_state(
+        dir.path(),
+        authority.clone(),
+        manifest.clone(),
+        ADMIN,
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let app = router(state.clone());
+    assert!(!dir.path().join("signer.db").exists());
+    *authority.hold.0.lock().unwrap() = true;
+    let pending = tokio::spawn(send_raw(
+        app.clone(),
+        root_request(
+            Method::POST,
+            "/provision",
+            Some(GENESIS_TRANSPORT),
+            Some(genesis_body()),
+        ),
+    ));
+    tokio::time::timeout(Duration::from_secs(5), authority.entered.notified())
+        .await
+        .unwrap();
+    assert!(
+        state.service_snapshot().is_none(),
+        "Ready was published before signed commit"
+    );
+    assert_eq!(
+        authority.head.lock().unwrap().as_ref().unwrap().generation,
+        0
+    );
+    let sealed = send_raw(
+        app.clone(),
+        root_request(Method::GET, "/signer/api/v1/callers", Some(ADMIN), None),
+    )
+    .await;
+    assert_eq!(sealed.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        authority.candidates.lock().unwrap().is_empty(),
+        "sealed calls must not commit adminless state"
+    );
+    authority.release_hold();
+    let reply = pending.await.unwrap();
+    assert_eq!(reply.status, StatusCode::OK, "{reply:?}");
+    assert!(!reply.text.contains(ADMIN));
+    let service = state.service_snapshot().unwrap();
+    assert!(
+        matches!(service.durable_status(), Some(crate::durable::DurableStatus::Ready(head)) if head.generation == 1)
+    );
+    service
+        .repository()
+        .validate_enrollment(&manifest, 1)
+        .unwrap();
+    let listed = send_raw(
+        app.clone(),
+        root_request(Method::GET, "/signer/api/v1/callers", Some(ADMIN), None),
+    )
+    .await;
+    assert_eq!(listed.status, StatusCode::OK, "{listed:?}");
+    assert_eq!(listed.json()["callers"].as_array().unwrap().len(), 1);
+    let transport = send_raw(
+        app,
+        root_request(
+            Method::GET,
+            "/signer/api/v1/callers",
+            Some(GENESIS_TRANSPORT),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(
+        transport.status,
+        StatusCode::FORBIDDEN,
+        "transport must not become Admin: {transport:?}"
+    );
+    assert_eq!(transport.json()["code"], "unknown-token");
+}
+
+#[tokio::test]
+async fn measured_genesis_cancellation_stays_sealed_until_commit_and_keeps_winner() {
+    use crate::enrollment::tests::{fixture, ADMIN};
+    let (profile, manifest) = fixture();
+    let authority = crate::coordinator::enrollment_fixture::Authority::new(profile);
+    let dir = tempfile::tempdir().unwrap();
+    let state = genesis_state(
+        dir.path(),
+        authority.clone(),
+        manifest,
+        ADMIN,
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let app = router(state.clone());
+    *authority.hold.0.lock().unwrap() = true;
+    let pending = tokio::spawn(send_raw(
+        app.clone(),
+        root_request(
+            Method::POST,
+            "/provision",
+            Some(GENESIS_TRANSPORT),
+            Some(genesis_body()),
+        ),
+    ));
+    tokio::time::timeout(Duration::from_secs(5), authority.entered.notified())
+        .await
+        .unwrap();
+    pending.abort();
+    assert!(pending.await.unwrap_err().is_cancelled());
+    assert!(state.service_snapshot().is_none());
+    let competing = send_raw(
+        app,
+        root_request(
+            Method::POST,
+            "/provision",
+            Some(GENESIS_TRANSPORT),
+            Some(genesis_body()),
+        ),
+    )
+    .await;
+    assert_eq!(competing.status, StatusCode::SERVICE_UNAVAILABLE);
+    authority.release_hold();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while state.service_snapshot().is_none() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(authority.candidates.lock().unwrap().len(), 1);
+    assert_eq!(
+        authority.head.lock().unwrap().as_ref().unwrap().generation,
+        1
+    );
+}
+
+#[tokio::test]
+async fn measured_genesis_failed_commit_cannot_retry_local_initializer() {
+    use crate::{
+        coordinator::enrollment_fixture::{Authority, Fault},
+        enrollment::tests::{fixture, ADMIN},
+    };
+    for fault in [Fault::Upload, Fault::BadReceipt, Fault::LostReply] {
+        let (profile, manifest) = fixture();
+        let authority = Authority::new(profile);
+        *authority.fault.lock().unwrap() = fault;
+        let dir = tempfile::tempdir().unwrap();
+        let releases = Arc::new(Mutex::new(Vec::new()));
+        let state = genesis_state(
+            dir.path(),
+            authority.clone(),
+            manifest,
+            ADMIN,
+            releases.clone(),
+        );
+        let app = router(state.clone());
+        let reply = send_raw(
+            app.clone(),
+            root_request(
+                Method::POST,
+                "/provision",
+                Some(GENESIS_TRANSPORT),
+                Some(genesis_body()),
+            ),
+        )
+        .await;
+        assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE, "{reply:?}");
+        assert!(state.service_snapshot().is_none());
+        assert!(
+            dir.path().join("signer.db").exists(),
+            "preserve abandoned DB"
+        );
+        let count = releases.lock().unwrap().len();
+        *authority.fault.lock().unwrap() = Fault::None;
+        let retry = send_raw(
+            app,
+            root_request(
+                Method::POST,
+                "/provision",
+                Some(GENESIS_TRANSPORT),
+                Some(genesis_body()),
+            ),
+        )
+        .await;
+        assert_eq!(retry.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            releases.lock().unwrap().len(),
+            count,
+            "failed local initializer ran twice"
+        );
+    }
+}
+
+#[tokio::test]
+async fn measured_genesis_committed_restore_omits_original_ciphertext_and_preserves_rotation() {
+    use crate::{
+        coordinator::enrollment_fixture::Authority,
+        enrollment::tests::{fixture, ADMIN},
+    };
+    let (profile, manifest) = fixture();
+    let authority = Authority::new(profile);
+    let dir = tempfile::tempdir().unwrap();
+    let state = genesis_state(
+        dir.path(),
+        authority.clone(),
+        manifest.clone(),
+        ADMIN,
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let app = router(state);
+    assert_eq!(
+        send_raw(
+            app.clone(),
+            root_request(
+                Method::POST,
+                "/provision",
+                Some(GENESIS_TRANSPORT),
+                Some(genesis_body())
+            )
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    let rotated = send_raw(
+        app,
+        root_request(
+            Method::POST,
+            "/signer/api/v1/callers/first-admin/rotate",
+            Some(ADMIN),
+            Some(json!({})),
+        ),
+    )
+    .await;
+    assert_eq!(rotated.status, StatusCode::OK, "{rotated:?}");
+    let token = rotated.field("token");
+    authority.expire();
+    let fresh = tempfile::tempdir().unwrap();
+    let releases = Arc::new(Mutex::new(Vec::new()));
+    let restored = genesis_state(
+        fresh.path(),
+        authority.clone(),
+        manifest,
+        "unavailable-original-credential",
+        releases.clone(),
+    );
+    let mut body = genesis_body();
+    body["env"]
+        .as_object_mut()
+        .unwrap()
+        .remove(provision::ADMIN_CIPHERTEXT_ENV);
+    let app = router(restored.clone());
+    let reply = send_raw(
+        app.clone(),
+        root_request(
+            Method::POST,
+            "/provision",
+            Some(GENESIS_TRANSPORT),
+            Some(body),
+        ),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::OK, "{reply:?}");
+    assert!(!releases
+        .lock()
+        .unwrap()
+        .contains(&provision::EnvelopePurpose::FirstAdmin));
+    assert_eq!(
+        restored
+            .service_snapshot()
+            .unwrap()
+            .repository()
+            .list_signer_callers()
+            .unwrap()[0]
+            .token_digest,
+        crate::auth::token_digest(&token)
+    );
+    let listed = send_raw(
+        app,
+        root_request(Method::GET, "/signer/api/v1/callers", Some(&token), None),
+    )
+    .await;
+    assert_eq!(listed.status, StatusCode::OK, "{listed:?}");
+}
+
+#[tokio::test]
+async fn measured_genesis_refuses_bad_ciphertext_and_credential_before_local_write() {
+    use crate::{
+        coordinator::enrollment_fixture::Authority,
+        enrollment::tests::{fixture, ADMIN},
+    };
+    for case in [
+        "missing",
+        "root-reuse",
+        "transport-reuse",
+        "bad-base64",
+        "bad-token",
+    ] {
+        let (profile, manifest) = fixture();
+        let authority = Authority::new(profile);
+        let dir = tempfile::tempdir().unwrap();
+        let state = genesis_state(
+            dir.path(),
+            authority,
+            manifest,
+            if case == "bad-token" {
+                "wrong-token"
+            } else {
+                ADMIN
+            },
+            Arc::new(Mutex::new(Vec::new())),
+        );
+        let mut body = genesis_body();
+        match case {
+            "missing" => {
+                body["env"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(provision::ADMIN_CIPHERTEXT_ENV);
+            }
+            "root-reuse" => body["env"][provision::ADMIN_CIPHERTEXT_ENV] = json!("cm9vdA=="),
+            "transport-reuse" => {
+                body["env"][provision::ADMIN_CIPHERTEXT_ENV] = json!("dHJhbnNwb3J0")
+            }
+            "bad-base64" => body["env"][provision::ADMIN_CIPHERTEXT_ENV] = json!("!"),
+            _ => {}
+        }
+        let reply = send_raw(
+            router(state.clone()),
+            root_request(
+                Method::POST,
+                "/provision",
+                Some(GENESIS_TRANSPORT),
+                Some(body),
+            ),
+        )
+        .await;
+        assert_eq!(
+            reply.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{case}: {reply:?}"
+        );
+        assert!(!dir.path().join("signer.db").exists());
+        assert!(state.service_snapshot().is_none());
+    }
+}
+
+#[tokio::test]
+async fn measured_genesis_authentic_expired_commit_cannot_publish_ready() {
+    use crate::{
+        coordinator::enrollment_fixture::{Authority, Fault},
+        enrollment::tests::{fixture, ADMIN},
+    };
+    let (profile, manifest) = fixture();
+    let authority = Authority::new(profile);
+    *authority.fault.lock().unwrap() = Fault::ExpiredReceipt;
+    let dir = tempfile::tempdir().unwrap();
+    let state = genesis_state(
+        dir.path(),
+        authority.clone(),
+        manifest,
+        ADMIN,
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let app = router(state.clone());
+    let reply = send_raw(
+        app.clone(),
+        root_request(
+            Method::POST,
+            "/provision",
+            Some(GENESIS_TRANSPORT),
+            Some(genesis_body()),
+        ),
+    )
+    .await;
+    assert_eq!(
+        reply.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "authentic but expired initial commit must not publish Ready: {reply:?}"
+    );
+    assert!(state.service_snapshot().is_none());
+    assert_eq!(
+        authority.head.lock().unwrap().as_ref().unwrap().generation,
+        1,
+        "this is a committed lost-readiness case, not a rejected signature or upload"
+    );
+    assert!(dir.path().join("signer.db").exists());
+    let health = send_raw(app, root_request(Method::GET, "/health", None, None)).await;
+    assert_eq!(health.json()["status"], "unprovisioned");
+    // Exact committed restore under a new live owner does not need old Admin.
+    *authority.fault.lock().unwrap() = Fault::None;
+    let fresh = tempfile::tempdir().unwrap();
+    let releases = Arc::new(Mutex::new(Vec::new()));
+    let (_, manifest) = fixture();
+    let restored = genesis_state(
+        fresh.path(),
+        authority.clone(),
+        manifest,
+        "unavailable",
+        releases.clone(),
+    );
+    let mut body = genesis_body();
+    body["env"]
+        .as_object_mut()
+        .unwrap()
+        .remove(provision::ADMIN_CIPHERTEXT_ENV);
+    let reply = send_raw(
+        router(restored.clone()),
+        root_request(
+            Method::POST,
+            "/provision",
+            Some(GENESIS_TRANSPORT),
+            Some(body),
+        ),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::OK, "{reply:?}");
+    assert!(restored.service_snapshot().is_some());
+    assert!(!releases
+        .lock()
+        .unwrap()
+        .contains(&provision::EnvelopePurpose::FirstAdmin));
+    assert_eq!(authority.candidates.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn measured_genesis_simultaneous_two_owners_have_one_cas_winner() {
+    use crate::{
+        coordinator::enrollment_fixture::Authority,
+        enrollment::tests::{fixture, ADMIN},
+    };
+    let (profile, manifest) = fixture();
+    let authority = Authority::new(profile);
+    *authority.head_race.lock().unwrap() = Some(Arc::new((Mutex::new(0), Condvar::new())));
+    let one = tempfile::tempdir().unwrap();
+    let two = tempfile::tempdir().unwrap();
+    let releases_one = Arc::new(Mutex::new(Vec::new()));
+    let releases_two = Arc::new(Mutex::new(Vec::new()));
+    let state_one = genesis_state_with_recoverer(
+        one.path(),
+        authority.clone(),
+        manifest.clone(),
+        ADMIN,
+        releases_one.clone(),
+        authority.recoverer_for_owner("boot-one"),
+    );
+    let state_two = genesis_state_with_recoverer(
+        two.path(),
+        authority.clone(),
+        manifest.clone(),
+        ADMIN,
+        releases_two.clone(),
+        authority.recoverer_for_owner("boot-two"),
+    );
+    let (reply_one, reply_two) = tokio::join!(
+        send_raw(
+            router(state_one.clone()),
+            root_request(
+                Method::POST,
+                "/provision",
+                Some(GENESIS_TRANSPORT),
+                Some(genesis_body())
+            )
+        ),
+        send_raw(
+            router(state_two.clone()),
+            root_request(
+                Method::POST,
+                "/provision",
+                Some(GENESIS_TRANSPORT),
+                Some(genesis_body())
+            )
+        )
+    );
+    let statuses = [reply_one.status, reply_two.status];
+    assert_eq!(
+        statuses.iter().filter(|s| **s == StatusCode::OK).count(),
+        1,
+        "{reply_one:?} {reply_two:?}"
+    );
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|s| **s == StatusCode::SERVICE_UNAVAILABLE)
+            .count(),
+        1
+    );
+    let winners = [state_one.service_snapshot(), state_two.service_snapshot()];
+    assert_eq!(winners.iter().flatten().count(), 1);
+    let head = authority.head.lock().unwrap().clone().unwrap();
+    assert_eq!(head.generation, 1);
+    assert_eq!(head.epoch, 1);
+    assert_eq!(
+        head.owner_id,
+        if winners[0].is_some() {
+            "boot-one"
+        } else {
+            "boot-two"
+        }
+    );
+    assert_eq!(authority.candidates.lock().unwrap().len(), 1);
+    let releases = [releases_one, releases_two]
+        .iter()
+        .map(|list| {
+            list.lock()
+                .unwrap()
+                .iter()
+                .filter(|purpose| **purpose == provision::EnvelopePurpose::FirstAdmin)
+                .count()
+        })
+        .sum::<usize>();
+    assert_eq!(
+        releases, 1,
+        "losing owner must not release Admin or open Store"
+    );
+    assert_eq!(
+        usize::from(one.path().join("signer.db").exists())
+            + usize::from(two.path().join("signer.db").exists()),
+        1
+    );
+    winners
+        .into_iter()
+        .flatten()
+        .next()
+        .unwrap()
+        .repository()
+        .validate_enrollment(&manifest, 1)
+        .unwrap();
+}
+
+#[tokio::test]
+async fn measured_genesis_restore_refuses_tampered_historical_audit() {
+    use crate::{
+        coordinator::enrollment_fixture::Authority,
+        enrollment::tests::{fixture, ADMIN},
+    };
+    let (profile, manifest) = fixture();
+    let authority = Authority::new(profile);
+    let dir = tempfile::tempdir().unwrap();
+    let state = genesis_state(
+        dir.path(),
+        authority.clone(),
+        manifest.clone(),
+        ADMIN,
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let app = router(state.clone());
+    assert_eq!(
+        send_raw(
+            app.clone(),
+            root_request(
+                Method::POST,
+                "/provision",
+                Some(GENESIS_TRANSPORT),
+                Some(genesis_body())
+            )
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    // Model a faulty/incompatible producer with a trusted root; changing bytes
+    // after encryption would test AEAD instead of historical enrollment semantics.
+    rusqlite::Connection::open(state.service_snapshot().unwrap().repository().db_path())
+        .unwrap()
+        .execute(
+            "UPDATE signer_audit SET detail = 'tampered historical evidence' WHERE id = 1",
+            [],
+        )
+        .unwrap();
+    let committed = send_raw(
+        app,
+        root_request(Method::GET, "/signer/api/v1/callers", Some(ADMIN), None),
+    )
+    .await;
+    assert_eq!(committed.status, StatusCode::OK, "{committed:?}");
+    assert_eq!(
+        authority.head.lock().unwrap().as_ref().unwrap().generation,
+        2
+    );
+    authority.expire();
+    let fresh = tempfile::tempdir().unwrap();
+    let releases = Arc::new(Mutex::new(Vec::new()));
+    let restored = genesis_state(
+        fresh.path(),
+        authority.clone(),
+        manifest,
+        "unavailable",
+        releases.clone(),
+    );
+    let mut body = genesis_body();
+    body["env"]
+        .as_object_mut()
+        .unwrap()
+        .remove(provision::ADMIN_CIPHERTEXT_ENV);
+    let reply = send_raw(
+        router(restored.clone()),
+        root_request(
+            Method::POST,
+            "/provision",
+            Some(GENESIS_TRANSPORT),
+            Some(body),
+        ),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE, "{reply:?}");
+    assert!(restored.service_snapshot().is_none());
+    assert!(!releases
+        .lock()
+        .unwrap()
+        .contains(&provision::EnvelopePurpose::FirstAdmin));
+    assert_eq!(
+        authority.candidates.lock().unwrap().len(),
+        2,
+        "tampering must not trigger reenrollment"
+    );
+}
+
+#[tokio::test]
+async fn measured_genesis_direct_mainnet_recovery_refuses_before_head_or_admin_release() {
+    use crate::{
+        coordinator::enrollment_fixture::Authority,
+        enrollment::tests::{fixture, mainnet_profile, ADMIN},
+    };
+    let (_, manifest) = fixture();
+    let authority = Authority::new(Arc::new(mainnet_profile()));
+    let dir = tempfile::tempdir().unwrap();
+    let releases = Arc::new(Mutex::new(Vec::new()));
+    // Deliberately bypass host planning to exercise signer recovery's own guard.
+    let state = genesis_state(
+        dir.path(),
+        authority.clone(),
+        manifest,
+        ADMIN,
+        releases.clone(),
+    );
+    let reply = send_raw(
+        router(state.clone()),
+        root_request(
+            Method::POST,
+            "/provision",
+            Some(GENESIS_TRANSPORT),
+            Some(genesis_body()),
+        ),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE, "{reply:?}");
+    assert!(state.service_snapshot().is_none());
+    assert!(authority.head.lock().unwrap().is_none());
+    assert!(!dir.path().join("signer.db").exists());
+    assert!(!releases
+        .lock()
+        .unwrap()
+        .contains(&provision::EnvelopePurpose::FirstAdmin));
+}
+
+#[tokio::test]
+async fn measured_genesis_expired_snapshot_download_cannot_publish_ready() {
+    use crate::{
+        coordinator::enrollment_fixture::{Authority, Fault},
+        enrollment::tests::{fixture, ADMIN},
+    };
+    let (profile, manifest) = fixture();
+    let authority = Authority::new(profile);
+    let dir = tempfile::tempdir().unwrap();
+    let initial = genesis_state(
+        dir.path(),
+        authority.clone(),
+        manifest.clone(),
+        ADMIN,
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    assert_eq!(
+        send_raw(
+            router(initial),
+            root_request(
+                Method::POST,
+                "/provision",
+                Some(GENESIS_TRANSPORT),
+                Some(genesis_body())
+            )
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    authority.expire();
+    *authority.fault.lock().unwrap() = Fault::SlowDownload;
+    let fresh = tempfile::tempdir().unwrap();
+    let releases = Arc::new(Mutex::new(Vec::new()));
+    let restore = genesis_state(
+        fresh.path(),
+        authority.clone(),
+        manifest.clone(),
+        "unavailable",
+        releases.clone(),
+    );
+    let mut body = genesis_body();
+    body["env"]
+        .as_object_mut()
+        .unwrap()
+        .remove(provision::ADMIN_CIPHERTEXT_ENV);
+    let reply = send_raw(
+        router(restore.clone()),
+        root_request(
+            Method::POST,
+            "/provision",
+            Some(GENESIS_TRANSPORT),
+            Some(body.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(
+        reply.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "expired download must not publish Ready: {reply:?}"
+    );
+    assert!(restore.service_snapshot().is_none());
+    assert_eq!(
+        authority.downloads.load(Ordering::SeqCst),
+        1,
+        "must reach delayed download with a live takeover"
+    );
+    assert!(
+        fresh.path().join("signer.db").exists(),
+        "keep installed but unpublished snapshot"
+    );
+    assert!(!releases
+        .lock()
+        .unwrap()
+        .contains(&provision::EnvelopePurpose::FirstAdmin));
+    *authority.fault.lock().unwrap() = Fault::None;
+    let next = tempfile::tempdir().unwrap();
+    let recovered = genesis_state(
+        next.path(),
+        authority.clone(),
+        manifest,
+        "unavailable",
+        releases.clone(),
+    );
+    let reply = send_raw(
+        router(recovered.clone()),
+        root_request(
+            Method::POST,
+            "/provision",
+            Some(GENESIS_TRANSPORT),
+            Some(body),
+        ),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::OK, "{reply:?}");
+    assert_eq!(
+        authority.candidates.lock().unwrap().len(),
+        1,
+        "restore must not enroll or commit again"
+    );
+    assert!(recovered.service_snapshot().is_some());
+}
+
+#[tokio::test]
+async fn measured_genesis_expiry_between_recovery_and_publication_stays_sealed() {
+    use crate::{
+        coordinator::enrollment_fixture::{wait_until_expired, Authority, Fault},
+        enrollment::tests::{fixture, ADMIN},
+    };
+    let (profile, manifest) = fixture();
+    let authority = Authority::new(profile);
+    *authority.fault.lock().unwrap() = Fault::FiniteReceipt;
+    let real_recovery = authority.recoverer();
+    let recoverer: provision::VaultRecoverer =
+        Arc::new(move |profile, credentials, master, path, enrollment| {
+            let service = real_recovery(profile, credentials, master, path, enrollment)?;
+            let Some(crate::durable::DurableStatus::Ready(head)) = service.durable_status() else {
+                panic!("real recovery must succeed while live")
+            };
+            wait_until_expired(head.lease_expires_at_ms).map_err(|e| e.to_string())?;
+            Ok(service)
+        });
+    let dir = tempfile::tempdir().unwrap();
+    let state = genesis_state_with_recoverer(
+        dir.path(),
+        authority.clone(),
+        manifest,
+        ADMIN,
+        Arc::new(Mutex::new(Vec::new())),
+        recoverer,
+    );
+    let reply = send_raw(
+        router(state.clone()),
+        root_request(
+            Method::POST,
+            "/provision",
+            Some(GENESIS_TRANSPORT),
+            Some(genesis_body()),
+        ),
+    )
+    .await;
+    assert_eq!(
+        reply.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "final publication must recheck liveness: {reply:?}"
+    );
+    assert!(state.service_snapshot().is_none());
+    assert_eq!(
+        authority.head.lock().unwrap().as_ref().unwrap().generation,
+        1
+    );
+    assert_eq!(authority.candidates.lock().unwrap().len(), 1);
 }

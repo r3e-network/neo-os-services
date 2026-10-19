@@ -156,8 +156,18 @@ class CrossStaging(Packaging):
         self.assertEqual(m['builder_platform'],'linux/arm64')
         self.assertEqual(m['files']['cross-inputs/SHA256SUMS'],hashlib.sha256(b'SYNTHETIC ONLY\n').hexdigest())
 
+    def test_enrollment_bytes_identical_in_both_recipes(self):
+        _, raw = self.enable_enrollment()
+        default = self.stage()
+        with patch.object(dual, 'cross_inputs', return_value={'cross-inputs/SHA256SUMS':b'SYNTHETIC ONLY\n'}):
+            cross = dual.stage(self.repo,self.input_path,self.hash,self.root/'cross',self.env,builder_platform='linux/arm64',cross_cache=self.root/'synthetic-cache')
+        for name in ('public/network-profiles.json', 'public/custody/mainnet.json', 'public/custody/testnet.json', 'public/custody/testnet-enrollment.json'):
+            self.assertEqual(default['files'][name], cross['files'][name])
+            self.assertEqual((self.root/'context'/name).read_bytes(), (self.root/'cross'/name).read_bytes())
+        self.assertEqual((self.root/'cross/public/custody/testnet-enrollment.json').read_bytes(), raw)
+
 
 if __name__=='__main__':
     suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(CrossControls))
-    suite.addTests(CrossStaging(n) for n in ('test_cross_mode_is_opt_in_and_requires_cache','test_cross_context_selects_recipe_and_binds_inputs'))
+    suite.addTests(CrossStaging(n) for n in ('test_cross_mode_is_opt_in_and_requires_cache','test_cross_context_selects_recipe_and_binds_inputs','test_enrollment_bytes_identical_in_both_recipes'))
     raise SystemExit(not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful())

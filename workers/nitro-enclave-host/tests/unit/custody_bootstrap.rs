@@ -309,3 +309,87 @@ fn a_failed_second_attestation_rolls_back_boot_without_any_router() {
         assert!(!dir.path().join(network).join("signer.db").exists());
     }
 }
+
+fn enrollment_fixture(dir: &Path, map: &mut Value) -> (Value, std::path::PathBuf) {
+    let profile_file = std::path::PathBuf::from(map["testnet"][PROFILE_FILE].as_str().unwrap());
+    let mut document: Value =
+        serde_json::from_slice(&std::fs::read(&profile_file).unwrap()).unwrap();
+    let mut manifest = json!({
+        "schema":"neoos/first-admin-enrollment/v1", "purpose":neo_signer::enrollment::ENROLLMENT_MODE,
+        "ceremony_id":"test-ceremony", "caller":{
+            "id":"first-admin", "label":"Test operator", "created_at_unix":1780000000,
+            "token_digest":"12".repeat(32), "auth_mode":"bearer", "capabilities":["admin"],
+            "key_grant":"any", "allowed_origins":[], "disabled":false
+        }
+    });
+    for key in [
+        "environment",
+        "vault_id",
+        "networks",
+        "custody_kms_key_arn",
+        "root_key_version",
+        "root_key_commitment",
+        "coordinator",
+    ] {
+        manifest[key] = document[key].clone();
+    }
+    let bytes = serde_json::to_vec(&manifest).unwrap();
+    let digest = hex::encode(Sha256::digest(&bytes));
+    let path = dir.join("testnet-enrollment.json");
+    std::fs::write(&path, bytes).unwrap();
+    document["release_policy_version"] = json!(digest);
+    let bytes = serde_json::to_vec(&document).unwrap();
+    std::fs::write(profile_file, &bytes).unwrap();
+    map["testnet"][PROFILE_HASH] = json!(hex::encode(Sha256::digest(&bytes)));
+    map["testnet"][ENROLLMENT_MODE] = json!(neo_signer::enrollment::ENROLLMENT_MODE);
+    map["testnet"][ENROLLMENT_FILE] = json!(path.to_str().unwrap());
+    map["testnet"][ENROLLMENT_HASH] = json!(digest);
+    (manifest, path)
+}
+
+#[test]
+fn measured_enrollment_requires_all_bindings_and_keeps_mainnet_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut map = fixture(dir.path());
+    let prior = prepare(&profiles(&map)).unwrap()["mainnet"]
+        .profile
+        .profile_hash()
+        .to_owned();
+    let (mut manifest, path) = enrollment_fixture(dir.path(), &mut map);
+    let plans = prepare(&profiles(&map)).unwrap();
+    assert!(plans["testnet"].enrollment.is_some());
+    assert!(plans["mainnet"].enrollment.is_none());
+    assert_eq!(*plans["mainnet"].profile.profile_hash(), prior);
+    assert!(!dir.path().join("testnet").exists());
+    for key in ENROLLMENT_KEYS {
+        let mut missing = map.clone();
+        missing["testnet"].as_object_mut().unwrap().remove(key);
+        assert!(prepare(&profiles(&missing)).is_err(), "missing {key}");
+        assert!(
+            !crate::overlay::is_provisionable_name(key),
+            "runtime requests must not change measured enrollment"
+        );
+    }
+    let mut disabled = map.clone();
+    for key in ENROLLMENT_KEYS {
+        disabled["testnet"].as_object_mut().unwrap().remove(key);
+    }
+    assert!(
+        prepare(&profiles(&disabled)).unwrap()["testnet"]
+            .enrollment
+            .is_none(),
+        "digest alone is not opt-in"
+    );
+    let mut mainnet = map.clone();
+    for key in ENROLLMENT_KEYS {
+        mainnet["mainnet"][key] = map["testnet"][key].clone();
+    }
+    assert!(prepare(&profiles(&mainnet)).is_err());
+    // Replace both bytes and advertised digest: the measured profile still pins
+    // the old manifest. A self-consistent pair is not authority to enroll.
+    manifest["caller"]["id"] = json!("substituted-admin");
+    let bytes = serde_json::to_vec(&manifest).unwrap();
+    std::fs::write(path, &bytes).unwrap();
+    map["testnet"][ENROLLMENT_HASH] = json!(hex::encode(Sha256::digest(&bytes)));
+    assert!(prepare(&profiles(&map)).is_err());
+}

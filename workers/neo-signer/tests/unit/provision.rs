@@ -65,18 +65,20 @@ fn canned_releaser() -> EnvelopeReleaser {
 
 fn gate(dir: &Path, releaser: EnvelopeReleaser) -> ProvisionGate {
     let repository = crate::store::Store::open(dir.join("signer.db")).expect("store opens");
-    let recoverer: VaultRecoverer =
-        Arc::new(|_profile, _credentials, master_key, database_path| {
+    let recoverer: VaultRecoverer = Arc::new(
+        |_profile, _credentials, master_key, database_path, _enrollment| {
             let repository =
                 crate::store::Store::open(database_path).map_err(|error| error.to_string())?;
             Ok(SignerService::new(repository, master_key))
-        });
+        },
+    );
     ProvisionGate {
         database_path: repository.db_path().to_path_buf(),
         data_dir: dir.to_path_buf(),
         profile: Arc::new(crate::vault_profile::test_profile(RELEASED_MASTER_KEY)),
         releaser,
         recoverer,
+        enrollment: None,
         mutex: Mutex::new(()),
     }
 }
@@ -391,6 +393,7 @@ fn production_release_sends_fixed_context_for_each_purpose_without_legacy_fallba
     for (purpose, expected) in [
         (EnvelopePurpose::TransportToken, "transport-token/v1"),
         (EnvelopePurpose::MasterKey, "master-key/v1"),
+        (EnvelopePurpose::FirstAdmin, "first-admin/v1"),
     ] {
         let transport = Kms(Mutex::new(Vec::new()));
         let result = release_envelope_with(
@@ -454,4 +457,15 @@ fn a_missing_required_field_names_itself() -> Result<()> {
     );
     assert_eq!(error, ProvisionError::MissingField(TOKEN_CIPHERTEXT_ENV));
     Ok(())
+}
+
+#[test]
+fn duplicate_provision_fields_are_rejected_before_map_conversion() {
+    for raw in [
+        r#"{"env":{"AWS_REGION":"us-east-1","AWS_REGION":"us-east-1"}}"#,
+        r#"{"env":{},"env":{}}"#,
+        r#"{"env":{"SIGNER_SERVICE_FIRST_ADMIN_KMS_CIPHERTEXT":"one","SIGNER_SERVICE_FIRST_ADMIN_KMS_CIPHERTEXT":"two"}}"#,
+    ] {
+        assert!(serde_json::from_str::<ProvisionBody>(raw).is_err());
+    }
 }

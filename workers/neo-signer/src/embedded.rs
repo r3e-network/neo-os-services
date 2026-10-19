@@ -28,6 +28,7 @@ pub const PROCESS_LOCK_FILE: &str = "signer.lock";
 /// no runtime environment setting can rewrite its profile or network binding.
 pub struct EmbeddedCustodyConfig {
     pub profile: Arc<ValidatedVaultProfile>,
+    pub enrollment: Option<Arc<crate::enrollment::ValidatedGenesisEnrollment>>,
     pub expected_network: Network,
     pub data_dir: PathBuf,
     pub workload_audience: String,
@@ -86,6 +87,9 @@ impl EmbeddedCustodyRuntime {
                 .is_some_and(|bytes| bytes <= isize::MAX as usize),
             "custody aggregate body budget exceeds addressable memory"
         );
+        if let Some(enrollment) = &config.enrollment {
+            enrollment.validate_profile(&config.profile)?;
+        }
         let workload_auth = WorkloadAuthPolicy::new(&config.workload_audience, false)
             .map_err(anyhow::Error::msg)?;
         refuse_plaintext_master_key(&config.data_dir)?;
@@ -98,6 +102,7 @@ impl EmbeddedCustodyRuntime {
             config.data_dir,
             config.profile,
         )
+        .with_enrollment(config.enrollment)
         .with_process_lease(lease)
         .with_workload_auth(workload_auth)
         .with_body_limit(config.max_body_bytes)
