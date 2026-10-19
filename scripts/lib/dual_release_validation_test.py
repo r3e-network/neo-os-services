@@ -61,11 +61,21 @@ def packaging_module():
 
 
 def fixture(mutate_public=None, enrollment=False, mutate_enrollment=None,
-            enrollment_encoder=v.encoded):
+            enrollment_encoder=v.encoded, cross=False):
     # Reuse recorded public PCRs, never invent or register production measurements.
     old = v.parse((ROOT / 'deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.10.json').read_bytes())
     source = {p: ('100644', b'unit fixture only\n') for p in (*v.SOURCE_FILES, *v.RECIPE_FILES)}
     source['deploy/nitro/Dockerfile.dual-enclave'] = ('100644', b'FROM fixture\n# DUAL_NETWORK_ENV\n')
+    cross_objects = {'cross-inputs/debs/unit_1%3a1_arm64.deb': b'unit-only deb',
+                     'cross-inputs/rustlib/unit.rlib': b'unit-only rustlib'}
+    if cross:
+        source['deploy/nitro/Dockerfile.dual-enclave.cross'] = (
+            '100644', b'FROM cross-fixture\n# DUAL_NETWORK_ENV\n')
+        source['deploy/nitro/cross-inputs.lock.json'] = ('100644', v.encoded({
+            'schema': 'neoos/dual-cross-inputs/v1', 'target': 'x86_64-unknown-linux-gnu',
+            'rust_version': 'unit-only', 'builder_image': 'unit-only',
+            'objects': [{'path': name, 'sha256': v.sha(data), 'size': len(data)}
+                        for name, data in cross_objects.items()]}))
     release = 'unit-fixture-not-admitted'
     prefix = 'deploy/nitro/releases/' + release + '/'
     profiles, specs, overlays = public_fixture(source)
@@ -109,11 +119,21 @@ def fixture(mutate_public=None, enrollment=False, mutate_enrollment=None,
     files['public/network-profiles.json'] = v.sha(map_bytes)
     files['public/etc/hosts'] = v.sha(b'127.0.0.1 localhost\n')
     files['public/etc/hostname'] = v.sha(b'neoos-enclave\n')
-    files['Dockerfile'] = v.sha(source['deploy/nitro/Dockerfile.dual-enclave'][1].decode().replace(
+    recipe = 'deploy/nitro/Dockerfile.dual-enclave'
+    if cross:
+        recipe += '.cross'
+        files.update({name: v.sha(data) for name, data in cross_objects.items()})
+        sums = ''.join(v.sha(data) + '  ' + name.split('/', 1)[1] + '\n'
+                       for name, data in cross_objects.items()).encode()
+        files['cross-inputs/SHA256SUMS'] = v.sha(sums)
+    files['Dockerfile'] = v.sha(source[recipe][1].decode().replace(
         '# DUAL_NETWORK_ENV', 'ENV MORPHEUS_NETWORK_PROFILES_JSON='+json.dumps(map_bytes.decode().strip())).encode())
     context = {'schema': 'neoos/dual-image-context/v1', 'release': release, 'git_commit':'a'*40,
         'source_archive_sha256':v.sha(b'unit-only archive'),'reviewed_input_sha256':v.sha(v.encoded(spec)),
         'map_sha256':v.sha(map_bytes),'networks':v.NETWORKS,'files':files,'status':'fixture only, not admission'}
+    if cross:
+        context.update(builder_platform='linux/arm64',
+            cross_lock_sha256=v.sha(source['deploy/nitro/cross-inputs.lock.json'][1]))
     docs = {'public-input.json':v.encoded(spec), **{n+'.json':profiles[n] for n in v.NETWORKS},
             'network-profiles.json':map_bytes,'context-manifest.json':v.encoded(context),
             'candidate-publication.json':v.encoded({'fixture':'not publication evidence'}),
@@ -171,35 +191,43 @@ def rebind_context(m, files, evidence, context):
 
 class Validation(unittest.TestCase):
     def test_actual_staging_contexts_with_and_without_enrollment(self):
-        # Real default stage_into/public_inputs; only Git source acquisition is
-        # substituted with a small synthetic snapshot. No build or network.
+        # Real stage_into/public_inputs/cross_inputs; only Git source acquisition
+        # is substituted with a small synthetic snapshot. No build or network.
         class Publication:
             def __init__(self): self.files = {}; self.published = False
             def write(self, name, chunks):
                 assert name not in self.files
                 self.files[name] = b''.join(chunks)
             def publish(self): self.published = True
-        for enrollment in (False, True):
-            with self.subTest(enrollment=enrollment):
-                m, files, source, evidence, context = fixture(enrollment=enrollment)
-                packaging = packaging_module()
-                publication = Publication()
-                with tempfile.TemporaryDirectory() as directory:
-                    root = Path(directory).resolve()
-                    for name, (_, data) in files.items():
-                        (root / name.rsplit('/', 1)[-1]).write_bytes(data)
-                    captured = {name: data for name, (_, data) in source.items() if v.selected(name)}
-                    with patch.object(packaging, 'source', return_value=(captured, m['source_archive_sha256'])) as acquisition:
-                        actual = packaging.stage_into(root, root / 'public-input.json',
-                            m['reviewed_input_sha256'], {}, publication)
-                    acquisition.assert_called_once()
-                self.assertTrue(publication.published)
-                self.assertEqual(actual['files'], context['files'])
-                self.assertEqual(actual['files'], {name: v.sha(data) for name, data in publication.files.items()
-                    if name != 'context-manifest.json'})
-                rebind_context(m, files, evidence, actual)
-                self.assertEqual(v.validate_bundle(v.encoded(m), files, source), m)
-                self.assertEqual(len(m['public_bundle_files']), 8 if enrollment else 7)
+        for cross in (False, True):
+            for enrollment in (False, True):
+                with self.subTest(cross=cross, enrollment=enrollment):
+                    m, files, source, evidence, context = fixture(enrollment=enrollment, cross=cross)
+                    packaging = packaging_module()
+                    publication = Publication()
+                    with tempfile.TemporaryDirectory() as directory:
+                        root = Path(directory).resolve()
+                        for name, (_, data) in files.items():
+                            (root / name.rsplit('/', 1)[-1]).write_bytes(data)
+                        if cross:
+                            objects = root / 'objects/sha256'
+                            objects.mkdir(parents=True)
+                            for data in (b'unit-only deb', b'unit-only rustlib'):
+                                (objects / v.sha(data)).write_bytes(data)
+                        captured = {name: data for name, (_, data) in source.items() if v.selected(name)}
+                        with patch.object(packaging, 'source', return_value=(captured, m['source_archive_sha256'])) as acquisition:
+                            actual = packaging.stage_into(root, root / 'public-input.json',
+                                m['reviewed_input_sha256'], {}, publication,
+                                builder_platform='linux/arm64' if cross else 'linux/amd64',
+                                cross_cache=root if cross else None)
+                        acquisition.assert_called_once()
+                    self.assertTrue(publication.published)
+                    self.assertEqual(actual['files'], context['files'])
+                    self.assertEqual(actual['files'], {name: v.sha(data) for name, data in publication.files.items()
+                        if name != 'context-manifest.json'})
+                    rebind_context(m, files, evidence, actual)
+                    self.assertEqual(v.validate_bundle(v.encoded(m), files, source), m)
+                    self.assertEqual(len(m['public_bundle_files']), 8 if enrollment else 7)
 
     def test_enrollment_bundle_matches_actual_builder_public_outputs(self):
         m, files, source, _, context = fixture(enrollment=True)
@@ -358,6 +386,91 @@ class Validation(unittest.TestCase):
                 rebind_context(m, files, evidence, context)
                 with self.subTest(name=name, action=action), self.assertRaisesRegex(ValueError, 'generated selected context closure'):
                     v.validate_bundle(v.encoded(m), files, source)
+
+    def test_cross_context_requires_exact_lock_objects_checksums_and_recipe(self):
+        for key, value in [('builder_platform', 'linux/amd64'), ('builder_platform', 'linux/ARM64'),
+                           ('builder_platform', None), ('cross_lock_sha256', 'f'*64), ('extra', True)]:
+            m, files, source, evidence, context = fixture(enrollment=True, cross=True)
+            context[key] = value
+            rebind_context(m, files, evidence, context)
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                v.validate_bundle(v.encoded(m), files, source)
+        for name in ('cross-inputs/debs/unit_1%3a1_arm64.deb', 'cross-inputs/rustlib/unit.rlib', 'cross-inputs/SHA256SUMS', 'Dockerfile'):
+            for action in ('remove', 'digest', 'extra'):
+                m, files, source, evidence, context = fixture(enrollment=True, cross=True)
+                if action == 'remove': del context['files'][name]
+                elif action == 'digest': context['files'][name] = 'f'*64
+                else: context['files']['cross-inputs/debs/extra.deb'] = 'f'*64
+                rebind_context(m, files, evidence, context)
+                with self.subTest(name=name, action=action), self.assertRaisesRegex(ValueError, 'generated selected context closure'):
+                    v.validate_bundle(v.encoded(m), files, source)
+        for missing in ('builder_platform', 'cross_lock_sha256'):
+            m, files, source, evidence, context = fixture(enrollment=True, cross=True)
+            del context[missing]
+            rebind_context(m, files, evidence, context)
+            with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, 'unknown or missing fields'):
+                v.validate_bundle(v.encoded(m), files, source)
+        # A fully rehashed default recipe cannot masquerade as cross staging.
+        m, files, source, evidence, context = fixture(enrollment=True, cross=True)
+        map_bytes = v.encoded(v.parse(files[next(n for n in files if n.endswith('/network-profiles.json'))][1]))
+        context['files']['Dockerfile'] = v.sha(source['deploy/nitro/Dockerfile.dual-enclave'][1].decode().replace(
+            '# DUAL_NETWORK_ENV', 'ENV MORPHEUS_NETWORK_PROFILES_JSON=' + json.dumps(map_bytes.decode().strip())).encode())
+        rebind_context(m, files, evidence, context)
+        with self.assertRaisesRegex(ValueError, 'generated selected context closure'):
+            v.validate_bundle(v.encoded(m), files, source)
+
+    def test_cross_lock_rejects_malformed_paths_duplicates_and_pins(self):
+        _, _, source, _, context = fixture(cross=True)
+        lock_path = 'deploy/nitro/cross-inputs.lock.json'
+        lock = v.parse(source[lock_path][1])
+        mutations = [lambda p: p.__setitem__('objects', []),
+                     lambda p: p.__setitem__('objects', {}),
+                     lambda p: p.__setitem__('extra', True),
+                     lambda p: p.__setitem__('schema', 'wrong'),
+                     lambda p: p.__setitem__('target', 'aarch64-unknown-linux-gnu'),
+                     lambda p: p.__setitem__('rust_version', None),
+                     lambda p: p.__setitem__('builder_image', ''),
+                     lambda p: p['objects'][0].__setitem__('extra', True),
+                     lambda p: p['objects'][0].__setitem__('package', 'partial'),
+                     lambda p: p['objects'].append(copy.deepcopy(p['objects'][0]))]
+        for name in ('../x', '/cross-inputs/debs/x', 'cross-inputs/debs/../x',
+                     'cross-inputs/debs//x', 'cross-inputs/debs/./x', 'cross-inputs/other/x',
+                     'cross-inputs/debs', 'public/custody/testnet-enrollment.json'):
+            mutations.append(lambda p, name=name: p['objects'][0].__setitem__('path', name))
+        for key, value in [('sha256', '0'*64), ('size', True), ('size', 0), ('path', None)]:
+            mutations.append(lambda p, key=key, value=value: p['objects'][0].__setitem__(key, value))
+        for index, mutate in enumerate(mutations):
+            changed = copy.deepcopy(lock); mutate(changed)
+            data = v.encoded(changed)
+            with self.subTest(index=index), self.assertRaises(ValueError):
+                v.cross_context_files({**context, 'cross_lock_sha256': v.sha(data)},
+                    {**source, lock_path: ('100644', data)})
+
+    def test_current_public_cross_lock_matches_actual_inventory_and_checksum_order(self):
+        # Read public pin metadata only. Substitute object acquisition; no real
+        # cache bytes, native toolchains, downloads or builds are accessed.
+        packaging = packaging_module()
+        cross = packaging.cross_support()
+        path = 'deploy/nitro/cross-inputs.lock.json'
+        raw = (ROOT / path).read_bytes()
+        pins = v.parse(raw)
+        source = {path: ('100644', raw)}
+        expected = v.cross_context_files({'builder_platform': 'linux/arm64',
+            'cross_lock_sha256': v.sha(raw)}, source)
+        with patch.object(cross, 'read_object', return_value=b'synthetic acquisition only') as acquire:
+            actual = cross.cross_inputs({path: raw}, 'not-a-cache')
+        self.assertEqual(acquire.call_count, len(pins['objects']))
+        self.assertEqual(set(actual), set(expected))
+        self.assertEqual(expected['cross-inputs/SHA256SUMS'], v.sha(actual['cross-inputs/SHA256SUMS']))
+        for entry in pins['objects']:
+            self.assertEqual(expected[entry['path']], entry['sha256'])
+        pins['objects'].reverse()
+        reversed_raw = v.encoded(pins)
+        reversed_expected = v.cross_context_files({'builder_platform': 'linux/arm64',
+            'cross_lock_sha256': v.sha(reversed_raw)}, {path: ('100644', reversed_raw)})
+        self.assertNotEqual(expected['cross-inputs/SHA256SUMS'], reversed_expected['cross-inputs/SHA256SUMS'])
+        self.assertEqual({k: val for k, val in expected.items() if k != 'cross-inputs/SHA256SUMS'},
+                         {k: val for k, val in reversed_expected.items() if k != 'cross-inputs/SHA256SUMS'})
 
     def test_source_audit_invokes_enrollment_validation_and_stays_held(self):
         # Synthetic captured bytes only: no production receipt or measurement.

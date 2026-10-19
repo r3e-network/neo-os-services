@@ -6,6 +6,7 @@ builder ran, authorize publication, or satisfy independent KMS/policy gates.
 import hashlib
 import json
 import re
+from pathlib import PurePosixPath
 from urllib.parse import urlsplit
 
 NETWORKS = ['mainnet', 'testnet']
@@ -345,6 +346,44 @@ def validate_public_inputs(docs, source_files):
     return enrollment_files
 
 
+def cross_context_files(context, source_files):
+    """Reconstruct digests from the captured source lock, never from a host cache."""
+    require(context['builder_platform'] == 'linux/arm64', 'unsupported context builder platform')
+    data = source_files['deploy/nitro/cross-inputs.lock.json'][1]
+    require(context['cross_lock_sha256'] == sha(data), 'cross lock digest')
+    pins = parse(data)
+    fields(pins, 'schema rust_version target builder_image objects')
+    require(pins['schema'] == 'neoos/dual-cross-inputs/v1' and
+            pins['target'] == 'x86_64-unknown-linux-gnu', 'cross lock identity')
+    require(type(pins['rust_version']) is str and 0 < len(pins['rust_version']) <= 128 and
+            type(pins['builder_image']) is str and 0 < len(pins['builder_image']) <= 256,
+            'cross lock tool identity')
+    require(type(pins['objects']) is list and 0 < len(pins['objects']) <= 4096, 'cross lock objects')
+    output, sums = {}, []
+    for entry in pins['objects']:
+        required_fields = {'path', 'sha256', 'size'}
+        package_fields = {'package', 'version', 'architecture'}
+        require(type(entry) is dict and set(entry) in (required_fields, required_fields | package_fields),
+                'cross object fields')
+        if 'package' in entry:
+            require(all(type(entry[k]) is str and 0 < len(entry[k]) <= 256 and
+                        not any(ord(c) < 32 or ord(c) == 127 for c in entry[k]) for k in package_fields),
+                    'cross package metadata')
+        name = entry['path']
+        require(type(name) is str and len(name) <= 512 and
+                re.fullmatch(r'[A-Za-z0-9_+./%:=-]+', name), 'invalid cross input path')
+        parts = PurePosixPath(name).parts
+        require(name not in output and not name.startswith('/') and '..' not in parts and
+                str(PurePosixPath(name)) == name and len(parts) >= 3 and
+                parts[0] == 'cross-inputs' and parts[1] in ('debs', 'rustlib'),
+                'invalid or duplicate cross input path')
+        require(type(entry['size']) is int and entry['size'] > 0, 'cross object size')
+        output[name] = digest(entry['sha256'])
+        sums.append(entry['sha256'] + '  ' + '/'.join(parts[1:]))
+    output['cross-inputs/SHA256SUMS'] = sha(('\n'.join(sums) + '\n').encode())
+    return output
+
+
 def validate_bundle(manifest_bytes, files, source_files):
     """Validate exact captured bytes. No filesystem/network discovery or acceptance flag."""
     m = validate_manifest(parse(manifest_bytes))
@@ -370,7 +409,9 @@ def validate_bundle(manifest_bytes, files, source_files):
                           ('candidate-publication.json', 'candidate_publication_sha256')]:
         require(m['public_bundle_files'][prefix + filename] == m[key], 'bundle digest alias')
     context = docs['context-manifest.json']
-    fields(context, 'schema release git_commit source_archive_sha256 reviewed_input_sha256 map_sha256 networks files status')
+    cross = type(context) is dict and 'builder_platform' in context
+    fields(context, 'schema release git_commit source_archive_sha256 reviewed_input_sha256 map_sha256 networks files status' +
+           (' builder_platform cross_lock_sha256' if cross else ''))
     require(context['schema'] == 'neoos/dual-image-context/v1', 'context schema')
     for key in ('release', 'git_commit', 'source_archive_sha256', 'reviewed_input_sha256', 'networks'):
         require(context[key] == m[key], 'context identity')
@@ -385,7 +426,11 @@ def validate_bundle(manifest_bytes, files, source_files):
     map_bytes = files[prefix + 'network-profiles.json'][1]
     expected['public/network-profiles.json'] = sha(map_bytes)
     require(context['map_sha256'] == sha(map_bytes), 'map digest')
-    template = source_files['deploy/nitro/Dockerfile.dual-enclave'][1].decode()
+    recipe = 'deploy/nitro/Dockerfile.dual-enclave'
+    if cross:
+        expected.update(cross_context_files(context, source_files))
+        recipe += '.cross'
+    template = source_files[recipe][1].decode()
     require(template.count('# DUAL_NETWORK_ENV') == 1, 'Docker marker')
     # Exact encoding used by the reviewed Python builder, including JSON escaping.
     env_line = 'ENV MORPHEUS_NETWORK_PROFILES_JSON=' + json.dumps(map_bytes.decode().strip())
