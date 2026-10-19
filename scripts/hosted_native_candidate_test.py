@@ -70,6 +70,28 @@ def child_program(stderr, code=7):
     return 'import sys;sys.stderr.buffer.write(' + repr(stderr) + ');sys.stderr.flush();sys.exit(' + str(code) + ')'
 
 
+def measurement_failure():
+    value = business_frame()
+    value['primary'].update(stage='measurements', attempt=2, kind='validation',
+                            exit_code=None, error_codes=[], hints=[])
+    value['cleanup_failed'] = False
+    return value
+
+
+def build_vectors():
+    first = {'image_id': 'sha256:' + 'a' * 64,
+             'pcrs': {'PCR0': '1' * 96, 'PCR1': '2' * 96, 'PCR2': '3' * 96},
+             'eif_sha256': 'b' * 64}
+    second = copy.deepcopy(first)
+    second['pcrs']['PCR0'] = '4' * 96
+    second['eif_sha256'] = 'c' * 64
+    return [first, second]
+
+
+def build_line(value):
+    return b'BUILD-EVIDENCE ' + json.dumps(value).encode() + b'\n'
+
+
 class Controls(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='hosted-fixture-')
@@ -474,6 +496,157 @@ class Controls(unittest.TestCase):
             except BusinessReached: return None, state
             except Exception as error: return c.failure_receipt(error, env), state
         self.fail('synthetic execute unexpectedly published')
+
+    def test_measurement_comparison_actual_execute_failure(self):
+        values = build_vectors(); frame = measurement_failure()
+        receipt, state = self.diagnostic_execute('comparison-child', child_program(
+            b'CANARY\n' + build_line(values) + frame_line(frame)))
+        self.assertTrue(state['business'])
+        self.assertEqual(receipt.get('business_comparison'), {
+            'builds': values,
+            'equal': {'image_id': True, 'eif_sha256': False,
+                      'pcrs': {'PCR0': False, 'PCR1': True, 'PCR2': True}}})
+        self.assertEqual(receipt['business_failure'], frame)
+        self.assertEqual((receipt['tool'], receipt['exit_code'], receipt['reason']), ('python', 7, 'command_failed'))
+        self.assertIs(receipt['outer_cleanup_failed'], False)
+        self.assertFalse(receipt['artifact_admitted']); self.assertNotIn('CANARY', json.dumps(receipt))
+        self.assertFalse((self.root/'comparison-child/candidate/hosted-evidence.json').exists())
+
+    def test_comparison_shape_digest_and_context_negatives(self):
+        frame = measurement_failure(); values = build_vectors()
+        invalid = [None, {}, 'CANARY', True, [], values[:1], values+[values[0]], [None, values[1]], [True, values[1]]]
+        for index in (0, 1):
+            for key in values[index]:
+                changed = copy.deepcopy(values); del changed[index][key]; invalid.append(changed)
+            changed = copy.deepcopy(values); changed[index]['message'] = 'CANARY'; invalid.append(changed)
+            for key, bad_values in {
+                    'image_id': [None, True, [], 'a'*64, 'sha256:'+'a'*63, 'sha256:'+'A'*64, 'sha256:'+'a'*65, 'sha256:'+'a'*64+'\n'],
+                    'eif_sha256': [None, 0, [], 'b'*63, 'B'*64, 'b'*65, 'b'*64+'\n'],
+                    'pcrs': [None, [], True, {'PCR0':'1'*96}, {**values[index]['pcrs'], 'PCR3':'4'*96}]}.items():
+                for value in bad_values:
+                    changed = copy.deepcopy(values); changed[index][key] = value; invalid.append(changed)
+            for key in ('PCR0', 'PCR1', 'PCR2'):
+                for value in (None, False, [], 1, '0'*96, 'a'*95, 'a'*97, 'A'*96, 'a'*96+'\n', '１'*96):
+                    changed = copy.deepcopy(values); changed[index]['pcrs'][key] = value; invalid.append(changed)
+        for index, value in enumerate(invalid):
+            with self.subTest(index=index):
+                error = c.BusinessCommandFailure(7, build_line(value)+frame_line(frame))
+                receipt = c.failure_receipt(error, environment())
+                self.assertNotIn('business_comparison', receipt)
+                self.assertEqual(receipt['business_failure'], frame)
+                self.assertEqual(receipt['exit_code'], 7); self.assertIs(receipt['outer_cleanup_failed'], False)
+                self.assertFalse(receipt['artifact_admitted']); self.assertNotIn('CANARY', json.dumps(receipt))
+        for field, value in (('stage', 'image-build'), ('stage', 'cleanup'), ('attempt', 0), ('attempt', 1),
+                             ('attempt', 2.0), ('kind', 'command_failed'), ('kind', 'timeout'), ('kind', 'os_error')):
+            changed = copy.deepcopy(frame); changed['primary'][field] = value
+            error = c.BusinessCommandFailure(7, build_line(values)+frame_line(changed))
+            self.assertNotIn('business_comparison', c.failure_receipt(error, environment()))
+
+    def test_comparison_framing_duplicates_limits_and_order(self):
+        values = build_vectors(); line = build_line(values); final = frame_line(measurement_failure())
+        for prefix in (b'CANARY\xff\n', b''):
+            error = c.BusinessCommandFailure(7, prefix+line+b'cleanup noise\n'+final+b' \n')
+            self.assertIsInstance(error.comparison, dict)
+            self.assertEqual(error.comparison['builds'], values)
+        bad = [b'', b'BUILD-EVIDENCE CANARY\n', line+line, b' '+line, b'CANARY '+line,
+               line.replace(b'"image_id":', b'"image_id":"sha256:'+b'a'*64+b'","image_id":', 1),
+               line.replace(b'"PCR0":', b'"PCR0":"'+b'1'*96+b'","PCR0":', 1),
+               line.replace(b'"eif_sha256": "'+b'b'*64+b'"', b'"eif_sha256": NaN'),
+               line.replace(b'"eif_sha256": "'+b'b'*64+b'"', b'"eif_sha256": Infinity'),
+               line.replace(b'"eif_sha256": "'+b'b'*64+b'"', b'"eif_sha256": -Infinity'),
+               line.replace(b'sha256:', b'sha256:\xff', 1), line.rstrip()+b'{}\n',
+               b'BUILD-EVIDENCE '+b'['*1500+b']'*1500+b'\n']
+        for index, prefix in enumerate(bad):
+            with self.subTest(index=index):
+                receipt = c.failure_receipt(c.BusinessCommandFailure(7, prefix+final), environment())
+                self.assertNotIn('business_comparison', receipt)
+                self.assertEqual(receipt['business_failure'], measurement_failure())
+        for stderr in (final+line, line+final+final, line+b'DUAL-BUILD-FAILURE CANARY\n', line):
+            receipt = c.failure_receipt(c.BusinessCommandFailure(7, stderr), environment())
+            self.assertNotIn('business_comparison', receipt)
+            self.assertEqual(receipt['exit_code'], 7); self.assertIs(receipt['outer_cleanup_failed'], False)
+        payload = json.dumps(values).encode()
+        at_limit = b'BUILD-EVIDENCE '+b' '*(4096-len(payload))+payload+b'\n'
+        self.assertIsNotNone(c.BusinessCommandFailure(7, at_limit+final).comparison)
+        receipt = c.failure_receipt(c.BusinessCommandFailure(7, at_limit.replace(b'BUILD-EVIDENCE ', b'BUILD-EVIDENCE  ')+final), environment())
+        self.assertNotIn('business_comparison', receipt); self.assertEqual(receipt['business_failure'], measurement_failure())
+        data = line+final
+        with patch.object(c, 'CAPTURE_LIMIT', len(data)):
+            self.assertIsNotNone(c.BusinessCommandFailure(7, data).comparison)
+            self.assertIsNone(c.BusinessCommandFailure(7, b'\n'+data).comparison)
+        # Preserve actual attempt order, including equal image IDs. No root-cause
+        # or inequality is inferred from the refusal; all fields are comparisons.
+        for field in ('image_id', 'eif_sha256', 'PCR0', 'PCR1', 'PCR2', 'all-equal'):
+            changed = copy.deepcopy(values)
+            if field in ('image_id', 'eif_sha256'):
+                changed[1][field] = ('sha256:' if field == 'image_id' else '')+'d'*64
+            elif field != 'all-equal': changed[1]['pcrs'][field] = 'e'*96
+            else: changed[1] = copy.deepcopy(changed[0])
+            for ordered in (changed, list(reversed(changed))):
+                comparison = c.BusinessCommandFailure(7, build_line(ordered)+final).comparison
+                self.assertIsInstance(comparison, dict)
+                self.assertEqual(set(comparison), {'builds', 'equal'})
+                self.assertEqual(comparison['builds'], ordered)
+                self.assertEqual(comparison['equal'], {
+                    'image_id': ordered[0]['image_id']==ordered[1]['image_id'],
+                    'eif_sha256': ordered[0]['eif_sha256']==ordered[1]['eif_sha256'],
+                    'pcrs': {key:ordered[0]['pcrs'][key]==ordered[1]['pcrs'][key] for key in ('PCR0','PCR1','PCR2')}})
+
+    def test_comparison_actual_child_cleanup_scope_and_stale_isolation(self):
+        r = self.runner(); r.resources = Mock(); real_stop = c.stop_process
+        for inner_cleanup in (False, True):
+            for evidence_case in ('missing', 'malformed', 'valid'):
+                evidence_valid = evidence_case == 'valid'
+                frame = measurement_failure(); frame['cleanup_failed'] = inner_cleanup
+                prefix = build_line(build_vectors()) if evidence_valid else (b'' if evidence_case == 'missing' else b'BUILD-EVIDENCE CANARY\n')
+                def cleanup(process):
+                    real_stop(process); c.STATUS.update(tool='docker', exit_code=99)
+                    raise PermissionError('CANARY')
+                c.phase('business-build')
+                with patch.object(c, 'stop_process', side_effect=cleanup):
+                    try:
+                        r.run([sys.executable, '-B', '-c', child_program(prefix+frame_line(frame))],
+                              tool='python', business_diagnostic=True)
+                    except Exception as error:
+                        self.assertIsInstance(error, c.BusinessCommandFailure)
+                        receipt = c.failure_receipt(error, environment())
+                        if evidence_valid: last_error = error
+                    else: self.fail('nonzero business child admitted')
+                self.assertEqual(receipt['business_failure'], frame)
+                self.assertEqual('business_comparison' in receipt, evidence_valid)
+                self.assertIs(receipt['outer_cleanup_failed'], True)
+                self.assertEqual((receipt['tool'], receipt['exit_code']), ('python', 7))
+                self.assertFalse(receipt['artifact_admitted']); self.assertNotIn('CANARY', json.dumps(receipt))
+        env = environment(); env.update(RUNNER_TEMP=str(self.root), GITHUB_OUTPUT=str(self.root/'comparison-output'))
+        old_handler = c.signal.getsignal(c.signal.SIGTERM)
+        self.addCleanup(c.signal.signal, c.signal.SIGTERM, old_handler)
+        with patch.dict(os.environ, env, clear=True), patch.object(c, 'execute', side_effect=last_error), patch('sys.stderr', new=io.StringIO()) as captured:
+            with self.assertRaises(SystemExit) as raised: c.main()
+            self.assertEqual(raised.exception.code, 1)
+            emitted = json.loads(captured.getvalue())
+            self.assertIn('business_comparison', emitted)
+            self.assertEqual(emitted['business_comparison']['builds'], build_vectors())
+            self.assertIs(emitted['business_failure']['cleanup_failed'], True)
+            self.assertIs(emitted['outer_cleanup_failed'], True)
+            self.assertEqual(emitted['exit_code'], 7); self.assertFalse(emitted['artifact_admitted'])
+            self.assertFalse((self.root/'comparison-output').exists()); self.assertNotIn('CANARY', captured.getvalue())
+        stderr = build_line(build_vectors())+frame_line(measurement_failure())
+        c.phase('business-build')
+        with self.assertRaises(c.CommandFailure) as raised:
+            r.run([sys.executable, '-B', '-c', child_program(stderr)], tool='python')
+        self.assertNotIn('business_comparison', c.failure_receipt(raised.exception, environment()))
+        with patch.object(c, 'business_build_comparison', side_effect=AssertionError('success must not parse')):
+            self.assertEqual(r.run([sys.executable, '-B', '-c', child_program(stderr, 0)],
+                                  tool='python', business_diagnostic=True), b'')
+        r.observe = Mock(side_effect=c.CommandFailure('CANARY'))
+        with self.assertRaises(c.CommandFailure) as raised:
+            r.run([sys.executable, '-B', '-c', child_program(stderr)], tool='python', observe=True, business_diagnostic=True)
+        self.assertNotIn('business_comparison', c.failure_receipt(raised.exception, environment()))
+        c.phase('business-build')
+        with self.assertRaises(c.CommandFailure) as raised:
+            r.run([sys.executable, '-B', '-c', child_program(b'CANARY')], tool='python', business_diagnostic=True)
+        self.assertNotIn('business_comparison', c.failure_receipt(raised.exception, environment()))
+        self.assertNotIn('business_comparison', c.failure_receipt(c.Refused('validation'), environment()))
 
     def test_business_child_frame_through_execute(self):
         frame = business_frame()

@@ -41,6 +41,7 @@ STATUS = {'phase': 'admission', 'tool': 'none', 'exit_code': None}
 
 
 BUSINESS_PREFIX = b'DUAL-BUILD-FAILURE '
+BUILD_EVIDENCE_PREFIX = b'BUILD-EVIDENCE '
 BUSINESS_STAGES = {'admission', 'staging', 'canonical', 'buildkit-create', 'image-build',
                    'image-inspect', 'image-export', 'image-verify', 'enclave-build',
                    'enclave-describe', 'measurements', 'cleanup', 'publication', 'unknown'}
@@ -193,6 +194,41 @@ def business_failure_detail(stderr):
         return None
 
 
+def business_build_comparison(stderr, detail):
+    """Existing public digest vectors only; equality is not a root-cause label."""
+    if detail is None:
+        return None
+    primary = detail['primary']
+    if (primary['stage'], primary['attempt'], primary['kind']) != ('measurements', 2, 'validation'):
+        return None
+    try:
+        require(len(stderr) <= CAPTURE_LIMIT and stderr.count(BUILD_EVIDENCE_PREFIX) == 1)
+        # detail came from the same capture's validated final failure frame.
+        # The comparison must be its own earlier line, never later or embedded.
+        lines = [line for line in stderr.splitlines() if line.strip()]
+        frames = [line[len(BUILD_EVIDENCE_PREFIX):] for line in lines[:-1]
+                  if line.startswith(BUILD_EVIDENCE_PREFIX)]
+        require(len(frames) == 1 and len(frames[0]) <= 4096)
+        builds = parse(frames[0])
+        require(type(builds) is list and len(builds) == 2)
+        for item in builds:
+            require(type(item) is dict and set(item) == {'image_id', 'pcrs', 'eif_sha256'})
+            require(type(item['image_id']) is str and re.fullmatch(r'sha256:[0-9a-f]{64}', item['image_id']))
+            require(type(item['eif_sha256']) is str and re.fullmatch(r'[0-9a-f]{64}', item['eif_sha256']))
+            pcrs = item['pcrs']
+            require(type(pcrs) is dict and set(pcrs) == {'PCR0', 'PCR1', 'PCR2'})
+            require(all(type(value) is str and re.fullmatch(r'[0-9a-f]{96}', value)
+                        and set(value) != {'0'} for value in pcrs.values()))
+        first, second = builds
+        return {'builds': builds, 'equal': {
+            'image_id': first['image_id'] == second['image_id'],
+            'eif_sha256': first['eif_sha256'] == second['eif_sha256'],
+            'pcrs': {key: first['pcrs'][key] == second['pcrs'][key] for key in ('PCR0', 'PCR1', 'PCR2')},
+        }}
+    except (ValueError, TypeError, RecursionError):
+        return None
+
+
 class BusinessCommandFailure(CommandFailure):
     def __init__(self, code, stderr):
         super().__init__('command_failed')
@@ -200,6 +236,7 @@ class BusinessCommandFailure(CommandFailure):
         self.outer_cleanup_failed = False
         # No raw stderr is retained on the exception or in the public receipt.
         self.detail = business_failure_detail(stderr)
+        self.comparison = business_build_comparison(stderr, self.detail)
 
 
 def failure_receipt(error, env):
@@ -224,6 +261,8 @@ def failure_receipt(error, env):
         result['outer_cleanup_failed'] = error.outer_cleanup_failed
         if error.detail is not None:
             result['business_failure'] = error.detail
+        if error.comparison is not None:
+            result['business_comparison'] = error.comparison
     for key, pattern in (('CANDIDATE_SOURCE_SHA', HEX40), ('GITHUB_WORKFLOW_SHA', HEX40),
                          ('GITHUB_RUN_ID', re.compile(r'[1-9][0-9]{0,19}')),
                          ('GITHUB_RUN_ATTEMPT', re.compile(r'[1-9][0-9]{0,19}'))):
