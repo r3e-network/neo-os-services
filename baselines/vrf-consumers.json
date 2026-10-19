@@ -1311,10 +1311,10 @@
       "justification": "This exact 351b validator input binds the native cross-build source selector and required closure checks; it validates source and measurement prerequisites but does not draw VRF output, select an economic winner, award value or authorize settlement. Its bytes are bound to the exact 351b source review, full affected CI receipt and parent review at commit 351bda5. This exact-file classification does not authorize deployment, replace measured artifacts or public identity evidence, or exempt custody, transport security or downstream economic consumers.",
       "inputs": {
         "scripts/lib/dual_release_validation.py": {
-          "sha256": "a8031dce1db955d2788a83f98d101638ce1c75be240e1ec1149634c45cfe1141"
+          "sha256": "893dd6cca301e05163f67be7e633b660c64a9afe7cd9045cedaf3492f1fe621a"
         },
         "scripts/lib/dual_release_validation_test.py": {
-          "sha256": "0ec9df8b0dc29d7219ef518e60d46bcfadb2b8120a55262ee622da47c493b1ee"
+          "sha256": "238a509d5eac4b392d06b1d4e2bc95f021e3451a3b745828022c420d0d5dd4f3"
         }
       }
     },
