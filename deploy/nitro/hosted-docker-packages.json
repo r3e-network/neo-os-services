@@ -1,0 +1,56 @@
+{
+  "schema": "neoos/hosted-docker-packages/v1",
+  "engine_version": "29.9.1",
+  "packages": [
+    {
+      "Package": "containerd.io",
+      "Version": "2.4.2-2~ubuntu.24.04~noble",
+      "Architecture": "amd64",
+      "Depends": "libc6 (>= 2.38), libseccomp2 (>= 2.5.0)",
+      "Pre-Depends": null,
+      "Conflicts": "containerd, runc",
+      "Breaks": null,
+      "Replaces": "containerd, runc",
+      "Recommends": null,
+      "url": "https://download.docker.com/linux/ubuntu/dists/noble/pool/stable/amd64/containerd.io_2.4.2-2~ubuntu.24.04~noble_amd64.deb",
+      "filename": "containerd.io_2.4.2-2~ubuntu.24.04~noble_amd64.deb",
+      "size": 23270672,
+      "sha256": "7327ab23182425e94b46a91567e9ddf0183f9b3a5ed53d5e2489f000dbf9cfe2"
+    },
+    {
+      "Package": "docker-ce-cli",
+      "Version": "5:29.9.1-1~ubuntu.24.04~noble",
+      "Architecture": "amd64",
+      "Depends": "libc6 (>= 2.34)",
+      "Pre-Depends": null,
+      "Conflicts": "docker-cli, docker.io",
+      "Breaks": "docker-ce (<< 5:0)",
+      "Replaces": "docker-ce (<< 5:0)",
+      "Recommends": "docker-buildx-plugin, docker-compose-plugin",
+      "url": "https://download.docker.com/linux/ubuntu/dists/noble/pool/stable/amd64/docker-ce-cli_29.9.1-1~ubuntu.24.04~noble_amd64.deb",
+      "filename": "docker-ce-cli_29.9.1-1~ubuntu.24.04~noble_amd64.deb",
+      "size": 17593952,
+      "sha256": "961968342af4738eb5fb5fc03f9834106c1e454bd010d574cf1a6feae9905efc"
+    },
+    {
+      "Package": "docker-ce",
+      "Version": "5:29.9.1-1~ubuntu.24.04~noble",
+      "Architecture": "amd64",
+      "Depends": "containerd.io (>= 2.1.5), docker-ce-cli, iptables, nftables, libc6 (>= 2.34), libsystemd0",
+      "Pre-Depends": "init-system-helpers (>= 1.54~)",
+      "Conflicts": "docker.io",
+      "Breaks": null,
+      "Replaces": "docker-ce-cli (<< 5:28.0.0)",
+      "Recommends": "apparmor, ca-certificates, docker-ce-rootless-extras, git, pigz, procps, xz-utils",
+      "url": "https://download.docker.com/linux/ubuntu/dists/noble/pool/stable/amd64/docker-ce_29.9.1-1~ubuntu.24.04~noble_amd64.deb",
+      "filename": "docker-ce_29.9.1-1~ubuntu.24.04~noble_amd64.deb",
+      "size": 24548040,
+      "sha256": "463a666215797c9f9ea7d0ad1751de5b2b3806a1b539a3550e16822ef34ccbfd"
+    }
+  ],
+  "unit_sha256": {
+    "containerd.service": "bd1effcf6d9cd564c232b631b353b2758f174160e3d8c078a792363b59f113d0",
+    "docker.socket": "96cd0d89474816ddfb03893b44c36e7d744254aed1bf6d30eca65ff396114656",
+    "docker.service": "a12d90fd03761bf79659a185c4a2c40e08934d7ada9e05130e64bd5eb4d634aa"
+  }
+}

@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+import hosted_docker_install
 
 ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY = 'r3e-network/neo-os-services'
@@ -33,7 +34,8 @@ CAPTURE_LIMIT = 16 * 1024**2
 OWNER_LABEL = 'com.neoos.hosted-tool-owner'
 PHASES = {'admission', 'source', 'public-tools', 'tool-fetch', 'tool-compile',
           'native-validation', 'docker-api', 'buildx', 'post-bootstrap-inventory',
-          'business-build', 'final-readback', 'publication'}
+          'business-build', 'final-readback', 'publication',
+          'docker-install-check', 'docker-install', 'docker-install-readback'}
 TOOLS = {'none', 'git', 'docker', 'python', 'loader', 'nitro', 'download'}
 STATUS = {'phase': 'admission', 'tool': 'none', 'exit_code': None}
 
@@ -162,7 +164,7 @@ def failure_receipt(error, env):
         reason = 'timeout'
     allowed = {'validation', 'command_failed', 'cancelled', 'timeout', 'resource_reserve', 'output_limit', 'log_limit',
                'inventory_response', 'baseline_containers', 'baseline_volumes', 'baseline_images',
-               'docker_api_response', 'docker_api_range', 'buildx_response', 'buildx_format'}
+               'docker_api_response', 'docker_api_range', 'buildx_response', 'buildx_format', 'docker_install_validation'}
     result = {'schema': 'neoos/hosted-candidate-failure/v1', 'artifact_admitted': False,
               'phase': STATUS['phase'] if STATUS['phase'] in PHASES else 'admission',
               'tool': STATUS['tool'] if STATUS['tool'] in TOOLS else 'none',
@@ -624,6 +626,7 @@ def execute(root, env):
     require(runner.run([*git, 'ls-remote', '--exit-code', ORIGIN, 'refs/heads/main'], tool='git').decode() == source + '\trefs/heads/main\n')
     builder = load_builder(ROOT)
     input_path = stage_bundle(files, root / 'public', source, ROOT, builder)
+    docker_install = hosted_docker_install.install(sys.modules[__name__], runner)
     version, buildx = docker_compatibility(runner)
     pins_path = ROOT / 'deploy/nitro/hosted-native-tools.json'
     pins = parse(pins_path.read_bytes())
@@ -659,7 +662,7 @@ def execute(root, env):
         'public_bundle_sha256': env['PUBLIC_BUNDLE_SHA256'], 'reviewed_input_sha256': file_sha(input_path),
         'driver_sha256': file_sha(Path(__file__)), 'workflow_sha256': file_sha(ROOT / '.github/workflows/measured-candidate.yml'),
         'tools_manifest_sha256': file_sha(pins_path), 'native': native,
-        'docker_sha256': file_sha(Path('/usr/bin/docker')), 'docker_api': {'minimum': version['MinAPIVersion'], 'maximum': version['ApiVersion']},
+        'docker_install': docker_install, 'docker_sha256': file_sha(Path('/usr/bin/docker')), 'docker_api': {'minimum': version['MinAPIVersion'], 'maximum': version['ApiVersion']},
         'buildx_version': buildx, 'memory_bytes': memory, 'minimum_resources': runner.minimum,
         'initial': initial, 'baseline': baseline, 'containers': list(runner.observed.values()),
         'observed_image_ids': sorted(runner.observed_images), 'final': final,

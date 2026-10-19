@@ -18,4 +18,22 @@ test('hosted native candidate offline behavioral controls', () => {
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stderr, /Ran [1-9][0-9]* tests/);
   assert.match(result.stderr, /\nOK\n/);
+  // Imported unittest classes are discovered by the Python entry point. Keep
+  // installer flow/negative controls mandatory in the actual root CI bridge.
+  for (const name of [
+    'test_execute_repairs_declared_old_api_before_bootstrap',
+    'test_execute_refusals_block_bootstrap_and_publication',
+    'test_failures_never_reach_later_mutations',
+  ]) {
+    assert.ok(
+      result.stderr
+        .split('\n')
+        .some(
+          (line) =>
+            line.startsWith(`${name} (hosted_docker_install_test.DockerUpgrade`) &&
+            line.endsWith(') ... ok')
+        ),
+      `installer CI regression did not execute: ${name}`
+    );
+  }
 });

@@ -60,6 +60,10 @@ class Controls(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='hosted-fixture-')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
+        # Existing controls isolate their original orchestration boundaries;
+        # DockerUpgrade below exercises the real installer with external tools mocked.
+        installer = patch.object(c.hosted_docker_install, 'install', return_value={})
+        installer.start(); self.addCleanup(installer.stop)
         # Any accidental real HTTP/network operation fails the offline suite.
         self.network = patch.object(socket, 'create_connection', side_effect=AssertionError('network forbidden'))
         self.network.start(); self.addCleanup(self.network.stop)
@@ -504,6 +508,9 @@ class Controls(unittest.TestCase):
                 result = json.loads(captured.getvalue())
                 self.assertFalse(result['artifact_admitted']); self.assertNotIn('CANARY', captured.getvalue())
                 self.assertFalse((self.root/'job-output').exists())
+
+
+from hosted_docker_install_test import DockerUpgrade
 
 
 if __name__ == '__main__':

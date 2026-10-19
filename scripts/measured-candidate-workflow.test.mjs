@@ -107,10 +107,13 @@ test('privacy environment preserves the JSON type for the process-level gate', (
 });
 
 test('hosted job reserves time beyond the declared build stage budgets', () => {
-  // Reviewed stage caps: downloads, Rust pull, Cargo fetch, native compile,
+  // Reviewed stage caps: Docker upgrade, downloads, Rust pull, Cargo fetch, native compile,
   // and two business builds. Reserve another 30 minutes for setup, readback
   // and upload; actual hosted capacity and duration still need measurement.
-  const stageSeconds = 900 + 600 + 1200 + 3600 + 11500;
+  const installer = readFileSync(new URL('./hosted_docker_install.py', import.meta.url), 'utf8');
+  const budget = installer.match(/^BUDGET_SECONDS = ([0-9]+)$/m);
+  assert.ok(budget, 'installer must declare one bounded budget');
+  const stageSeconds = Number(budget[1]) + 900 + 600 + 1200 + 3600 + 11500;
   const reserveSeconds = 1800;
   assert.ok(
     load().jobs['measured-candidate']['timeout-minutes'] * 60 >= stageSeconds + reserveSeconds
