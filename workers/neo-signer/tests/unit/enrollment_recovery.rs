@@ -20,6 +20,8 @@ pub(crate) enum Fault {
     SlowDownload,
 }
 
+pub(crate) type HeadRace = Arc<(Mutex<usize>, Condvar)>;
+
 pub(crate) struct Authority {
     pub profile: Arc<ValidatedVaultProfile>,
     pub head: Mutex<Option<AuthorityHead>>,
@@ -30,7 +32,7 @@ pub(crate) struct Authority {
     pub downloads: AtomicUsize,
     pub hold: Arc<(Mutex<bool>, Condvar)>,
     pub entered: tokio::sync::Notify,
-    pub head_race: Mutex<Option<Arc<(Mutex<usize>, Condvar)>>>,
+    pub head_race: Mutex<Option<HeadRace>>,
 }
 
 impl Authority {
