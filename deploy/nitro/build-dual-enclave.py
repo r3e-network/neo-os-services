@@ -500,9 +500,9 @@ def measurements(data):
     value = parse(data)
     m = value.get('Measurements', {})
     # nitro-cli 1.4 reports `Sha384 { ... }`; 1.5 renamed the same 48-byte
-    # measurement enum to `Sha512_48 { .. }`. The PCR length check below
-    # (96 hex = 48 bytes) keeps the algorithm binding, so the label rename is
-    # accepted without weakening it.
+    # measurement enum to `Sha512_48 { .. }`. These exact labels are accepted
+    # from the trusted CLI; validating 96 hex characters checks PCR shape,
+    # not cryptographic algorithm identity.
     require(m.get('HashAlgorithm') in ('Sha384 { ... }', 'SHA384', 'Sha512_48 { .. }', 'SHA512_48'), 'unsupported measurement hash')
     # Normalize the CLI's historical Debug name only; never substitute PCRs.
     return {k: digest(m.get(k), 96) for k in ('PCR0', 'PCR1', 'PCR2')}
@@ -542,16 +542,13 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
     Path(env['NITRO_CLI_ARTIFACTS']).mkdir()
     docker_args = [docker, '--host', 'unix:///var/run/docker.sock']
     images, containers, evidence = [], [], []
-    # The docker-container buildx driver produced different layer bytes on every
-    # run on the measured host (two no-cache builds of one context disagreed on
-    # PCR0/PCR2 while the default driver agreed), so the isolated container
-    # builder is not usable as a measurement environment. The daemon's own
-    # builder is used instead; reproducibility is still proven by comparing two
-    # independent no-cache builds below.
-    builder = 'default'
+    builder = 'neoos-dual-' + uuid.uuid4().hex
     config = context.parent / 'buildkit.toml'
     config.write_text('[worker.oci]\n  max-parallelism = 1\n')
     try:
+        run([*docker_args, 'buildx', 'create', '--name', builder, '--driver', 'docker-container',
+             '--driver-opt', 'memory=4g', '--driver-opt', 'cpu-period=100000', '--driver-opt', 'cpu-quota=100000',
+             '--buildkitd-config', config], env)
         for attempt in (1, 2):
             image = 'neoos-dual-local:' + sha(str(context.parent).encode())[:16] + '-' + str(attempt)
             # Unique tag; no build args, secrets, SSH agent, cache mounts or env passthrough.
@@ -599,7 +596,7 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
         # Stopping the owned daemon cancels work that outlives its Docker client.
         # Attempt every cleanup even if one fails; never prune shared resources.
         failed = False
-        commands = []
+        commands = [[*docker_args, 'buildx', 'stop', builder], [*docker_args, 'buildx', 'rm', '--force', builder]]
         for command in commands:
             try:
                 run(command, env, timeout=30)

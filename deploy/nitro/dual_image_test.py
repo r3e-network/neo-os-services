@@ -366,10 +366,96 @@ class Packaging(unittest.TestCase):
         creates = [a for a in self.calls if 'buildx' in a and 'create' in a]
         self.assertEqual(len(creates), 1)
         builder = creates[0][creates[0].index('--name') + 1]
-        self.assertIn('memory=4g', creates[0])
+        self.assertRegex(builder, r'^neoos-dual-[0-9a-f]{32}$')
+        self.assertEqual(creates[0][creates[0].index('--driver') + 1], 'docker-container')
+        for bound in ('memory=4g', 'cpu-period=100000', 'cpu-quota=100000'):
+            self.assertIn(bound, creates[0])
+        config = Path(creates[0][creates[0].index('--buildkitd-config') + 1])
+        self.assertEqual(config.read_text(), '[worker.oci]\n  max-parallelism = 1\n')
+        builds = [a for a in self.calls if a[3:5] == ['buildx', 'build']]
+        self.assertEqual(len(builds), 1)
+        self.assertEqual(builds[0][builds[0].index('--builder') + 1], builder)
         self.assertTrue(any(a[-3:] == ['buildx', 'stop', builder] for a in self.calls))
         self.assertTrue(any(a[-4:] == ['buildx', 'rm', '--force', builder] for a in self.calls))
         self.assertFalse((self.root / 'result').exists())
+
+    def test_competing_invocations_use_distinct_owned_names(self):
+        # Two independent processes rendezvous before their first export create.
+        # Exclusive directory creation models daemon-wide name reservations;
+        # retaining them also exercises retries beside leftover containers.
+        shared = self.root / 'competing'; shared.mkdir()
+        driver = r"""import json, sys, time
+from pathlib import Path
+from dual_image_test import Packaging
+shared, worker = Path(sys.argv[1]), sys.argv[2]
+test = Packaging('test_two_uncached_builds_measure_readback_and_publish_first')
+test.setUp()
+def observe(args):
+    if args[3:4] != ['create']: return
+    name = args[args.index('--name') + 1]
+    if name.endswith('-export-1'):
+        (shared / ('ready-' + worker)).touch()
+        deadline = time.monotonic() + 5
+        while len(list(shared.glob('ready-*'))) != 2:
+            if time.monotonic() > deadline: raise TimeoutError('competing invocation never arrived')
+            time.sleep(0.01)
+    (shared / name).mkdir()  # Collisions must fail even between independent processes.
+try:
+    _, calls = test.simulate(observe=observe)
+    print(json.dumps(calls))
+finally:
+    test.doCleanups()
+"""
+        processes = []
+        try:
+            for worker in ('one', 'two'):
+                processes.append(subprocess.Popen(
+                    ['python3', '-B', '-c', driver, str(shared), worker],
+                    cwd=HERE, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+            calls = []
+            for process in processes:
+                stdout, stderr = process.communicate(timeout=20)
+                self.assertEqual(process.returncode, 0, stderr.decode())
+                calls.append(json.loads(stdout))
+        finally:
+            for process in processes:
+                if process.poll() is None:
+                    process.kill(); process.communicate(timeout=5)
+        builders, exports = [], []
+        for invocation in calls:
+            creates = [a for a in invocation if a[3:5] == ['buildx', 'create']]
+            self.assertEqual(len(creates), 1)
+            builder = creates[0][creates[0].index('--name') + 1]
+            builders.append(builder)
+            names = [a[a.index('--name') + 1] for a in invocation if a[3:4] == ['create']]
+            self.assertEqual(names, [builder + '-export-1', builder + '-export-2'])
+            exports.extend(names)
+        self.assertEqual(len(set(builders)), 2)
+        self.assertEqual(len(set(exports)), 4)
+
+    def test_measurement_labels_and_malformed_pcrs(self):
+        pcrs = {key: str(i) * 96 for i, key in enumerate(('PCR0', 'PCR1', 'PCR2'), 1)}
+        for label in ('Sha384 { ... }', 'SHA384', 'Sha512_48 { .. }', 'SHA512_48'):
+            with self.subTest(label=label):
+                self.assertEqual(dual.measurements(dual.encoded({'Measurements': {'HashAlgorithm': label, **pcrs}})), pcrs)
+        for label in ('SHA256', 'SHA512', 'sha384', '', None):
+            with self.subTest(bad_label=label), self.assertRaises(ValueError):
+                dual.measurements(dual.encoded({'Measurements': {'HashAlgorithm': label, **pcrs}}))
+        for key in pcrs:
+            for value in ('g' * 96, 'A' * 96, '0' * 96, '1' * 95, '1' * 97, None):
+                with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                    dual.measurements(dual.encoded({'Measurements': {'HashAlgorithm': 'SHA384', **pcrs, key: value}}))
+            missing = {'HashAlgorithm': 'SHA384', **pcrs}; del missing[key]
+            with self.subTest(missing=key), self.assertRaises(ValueError):
+                dual.measurements(dual.encoded({'Measurements': missing}))
+        with self.assertRaises(ValueError):
+            dual.measurements(dual.encoded({'Measurements': pcrs}))
+        payload = dual.encoded({'Measurements': {'HashAlgorithm': 'SHA384', **pcrs}})
+        for key, value in (('HashAlgorithm', 'SHA384'), *pcrs.items()):
+            needle = json.dumps(key).encode() + b':' + json.dumps(value).encode()
+            self.assertIn(needle, payload)
+            with self.subTest(duplicate=key), self.assertRaises(ValueError):
+                dual.measurements(payload.replace(needle, needle + b',' + needle))
 
     def create_case(self, mode):
         manifest = self.stage()
@@ -550,12 +636,13 @@ m.build(root / 'source', root / 'context', manifest, root / 'result', m.safe_env
         with patch.object(dual,'git',side_effect=[(dual.ORIGIN+'\n').encode(),b'11 refs/heads/else\n']),self.assertRaises(ValueError):dual.canonical(self.repo,self.commit,self.env)
         with patch.object(dual,'git',side_effect=[(dual.ORIGIN+'\n').encode(), ('11'*20+'\trefs/heads/main\n').encode(),ValueError('not ancestor')]),self.assertRaises(ValueError):dual.canonical(self.repo,self.commit,self.env)
 
-    def simulate(self, fault=None):
+    def simulate(self, fault=None, observe=None):
         manifest=self.stage();context=self.root/'context';calls=[];counter=0;self.calls=calls;containers={}
         def fake(args,env,cwd=None,timeout=120):
             nonlocal counter
             calls.append([str(a) for a in args]);a=[str(x) for x in args]
             self.assertNotIn('AWS_SECRET_ACCESS_KEY',env)
+            if observe is not None: observe(a)
             if 'build' in a and 'docker' in a[0]:
                 self.assertIn('--no-cache',a);self.assertIn('--platform=linux/amd64',a)
                 self.assertNotIn('--build-arg',a);counter+=1
