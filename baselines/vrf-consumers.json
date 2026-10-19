@@ -1431,16 +1431,25 @@
           "sha256": "cf88b6a8f4ac797c36365dcd237fb8b10779e7c0722d5c9353aa13d6dea3d824"
         },
         "scripts/hosted-native-candidate.test.mjs": {
-          "sha256": "c24470a3f96ab280ce99f69b379c605d6cd400ed4cf0f7f65cd553d58d6d5183"
+          "sha256": "97ded8b2b1fc18f93b8fcbbabda9f51c6447881fc8d07aba48376802779cd89e"
         },
         "scripts/hosted_native_candidate.py": {
-          "sha256": "2c520c1b98b68ebf355583b27219f45b48ff978501fec7ca88d7ea3d3a9e1e01"
+          "sha256": "f8e401cbaa2e8582ac5f142eaeb6789ae5823583e146330bc09c7797f49575f0"
         },
         "scripts/hosted_native_candidate_test.py": {
-          "sha256": "5f9eb1106919953331f0f6f89a60a6383c7ab36ca26712f7c96dd2573e34426c"
+          "sha256": "800354aa5334281e1ea1fcefb59eff3c5d1d6930208bd6f72ae195b55d030128"
         },
         "scripts/measured-candidate-workflow.test.mjs": {
-          "sha256": "478234d04efb285c4a933cea9aeca2e50d1aafbe6d1fe5ccf5201e37963bab6e"
+          "sha256": "ea8d61efb5c5513fc7fca5f7092d8186ed47307df871414cbf67ba88a36e0ab5"
+        },
+        "deploy/nitro/hosted-docker-packages.json": {
+          "sha256": "c6b29aa4ee2a77f0493b31a6ead93c9ad3d5b9efc2d2669af3ae60205b12d11f"
+        },
+        "scripts/hosted_docker_install.py": {
+          "sha256": "85e91777c452f8b91a8871fbc4ee93f7ec2ed034cb1db53d1273a222f5a20314"
+        },
+        "scripts/hosted_docker_install_test.py": {
+          "sha256": "48069ba8e4f847f936a61d1235b44313b56e0ff0be919ba8906f7565533649e1"
         }
       }
     }
