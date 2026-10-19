@@ -1291,7 +1291,7 @@
           "sha256": "f9671d4ec79611a9168f3f158ff5c9430ab8d8f7ae21ff01dcbbbadbcaa2a3d7"
         },
         "scripts/dual-release-validation.test.mjs": {
-          "sha256": "08094025b19a46e7b870c6902d594458699c9c3f6a9ce0a8ba0b030c2a140fc1"
+          "sha256": "fc0d9cc825bca595aa0ff2aaa23809e3e3d2f3845db76f79aaad769f0ddab52f"
         },
         "scripts/lib/check_dual_release.py": {
           "sha256": "994f5f70ebe6f9bbb5ae47db2856d288ddd553a3d9542e5bf61ffdf98510f9b1"
@@ -1300,7 +1300,7 @@
           "sha256": "19f1a07167f800734f058a447a0ed03fd4ee856f5f1ffbb3b9904f335fdc01cf"
         },
         "scripts/lib/dual_release_provenance_test.py": {
-          "sha256": "8afebb7484f2a36e3073b27e459a1f576c667f5ec71d833a0f5a7078c0501e37"
+          "sha256": "5a66b47805b92ff0d3fa8965065481d4d039525be02911fc7bcb8514a0975093"
         }
       }
     },
@@ -1343,7 +1343,7 @@
           "sha256": "e806782cbb933586363dc90c3f6917b13dc46fbf4d085e591db5921bc3deec5d"
         },
         "scripts/ci-test-coverage.test.mjs": {
-          "sha256": "309f22c6303b36bc80dc96fc672e75d8a7727de613bc08de9c2dfdbffce268cb"
+          "sha256": "8b5161298f23d2f24c822a5dab0d56bc8eab8db3c869dc51011a998b83cb54cf"
         },
         "scripts/env-check-workflow.test.mjs": {
           "sha256": "02d856586a67ae822af09e91e9c47ca4dc7f79707214e2d790dc3007846aa56b"
