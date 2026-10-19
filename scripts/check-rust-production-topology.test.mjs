@@ -56,6 +56,33 @@ test('publish policy rejects the retired relayer preview alias', () => {
   assert.ok(problems.some((problem) => problem.includes('retired relayer preview')));
 });
 
+test('generic publish rejects custody images without dropping its dedicated recipe or Rust gate', async () => {
+  const source = await fs.readFile(
+    new URL('../.github/workflows/publish-images.yml', import.meta.url),
+    'utf8'
+  );
+  assert.deepEqual(checkPublishWorkflow(source), []);
+  const row = `          - name: signer
+            dockerfile: deploy/nitro/Dockerfile.signer
+            image: ghcr.io/\${{ github.repository_owner }}/neo-os-services-signer
+`;
+  for (const mutant of [
+    source.replace('          - name: relayer', row + '          - name: relayer'),
+    source.replace(
+      'dockerfile: deploy/nitro/Dockerfile.relayer',
+      'dockerfile: deploy/nitro/Dockerfile.signer'
+    ),
+    source.replace(
+      'dockerfile: deploy/nitro/Dockerfile.relayer',
+      'dockerfile: deploy/nitro/Dockerfile.signer-legacy'
+    ),
+    source.replaceAll('-p neo-signer', '-p another-package'),
+  ]) {
+    assert.notEqual(mutant, source);
+    assert.notDeepEqual(checkPublishWorkflow(mutant), []);
+  }
+});
+
 test('authority units cannot launch npm behind a production-looking name', () => {
   const problems = checkAuthorityUnit(
     'bad.service',

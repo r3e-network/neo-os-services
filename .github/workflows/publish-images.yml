@@ -35,8 +35,9 @@ jobs:
     permissions: {}
     uses: ./.github/workflows/runner-policy.yml
 
-  # These are the exact Rust packages baked below. Compatibility Node worker
-  # suites remain in CI, but cannot authorize a Rust production artifact.
+  # Keep all three Rust service gates, including custody. Generic publication
+  # excludes signer: its dedicated measured build requires a reviewed vault profile.
+  # Compatibility Node suites cannot authorize these Rust artifacts.
   test:
     needs: runner
     runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
@@ -71,9 +72,6 @@ jobs:
           - name: nitro-host
             dockerfile: deploy/nitro/Dockerfile.enclave
             image: ghcr.io/${{ github.repository_owner }}/neo-os-services-nitro-host
-          - name: signer
-            dockerfile: deploy/nitro/Dockerfile.signer
-            image: ghcr.io/${{ github.repository_owner }}/neo-os-services-signer
           - name: relayer
             dockerfile: deploy/nitro/Dockerfile.relayer
             image: ghcr.io/${{ github.repository_owner }}/neo-os-services-relayer

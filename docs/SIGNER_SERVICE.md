@@ -625,6 +625,13 @@ published on a LAN or internet socket.
   `build-nitro-signer-eif.sh` only so the historical path keeps building while deployments
   move — the two pipelines must not be mixed, since a verifier that pins one manifest
   expects the matching enclave.
+- Generic `publish-images.yml` publication ships only the Nitro host and relayer.
+  It still tests and lints all three Rust packages, including `neo-signer`. Custody
+  uses the dedicated `Dockerfile.signer` / `build-custody-eif.sh` path above, which
+  requires the reviewed public TestNet vault profile and exact file hash. Do not
+  supply a fixture profile to generic publication or substitute the legacy signer.
+  This separation grants no custody admission and does not change the combined
+  `build-dual-enclave.py` public-input checks or the one-enclave deployment goal.
 - What it is _not_ is a lane of `nitro-worker`. That worker keeps its own key handling
   until §7 step 3 retires it, and once it is a caller its `sign` lane becomes an HTTP
   client of this service. Keeping custody in a separate process is what makes the

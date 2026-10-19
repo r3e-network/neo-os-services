@@ -111,8 +111,8 @@ test('the ghcr image publish is gated on the Rust service suites it ships', asyn
   const gate = jobs.find((job) => publish.needs.includes(job.name) && runsTests(job));
   assert.ok(gate, `build-and-push needs [${publish.needs.join(', ')}], none of which runs tests`);
 
-  // The matrix ships these three Rust services. Compatibility Node suites run
-  // in CI, but cannot authorize a Rust production artifact.
+  // Keep the dedicated custody package gated alongside both published services.
+  // Compatibility Node suites cannot authorize a Rust production artifact.
   for (const packageName of ['neo-signer', 'nitro-enclave-host', 'neo-os-relayer']) {
     assert.ok(
       gate.body.includes(`-p ${packageName}`),
@@ -137,6 +137,62 @@ test('the ghcr image publish is gated on the Rust service suites it ships', asyn
   // The gate job must never hold the permission that can publish packages.
   assert.ok(!gate.body.includes('packages: write'), 'the test gate holds packages: write');
   assert.ok(publish.body.includes('packages: write'), 'build-and-push lost its packages: write');
+});
+
+test('generic publish excludes custody admission while retaining its dedicated build and Rust gate', async () => {
+  const source = await fs.readFile(path.join(workflowDir, 'publish-images.yml'), 'utf8');
+  const jobs = parseWorkflowJobs(source);
+  const publish = jobs.find((job) => job.name === 'build-and-push');
+  assert.ok(publish);
+  const matrix = publish.body.match(/        include:\n([\s\S]*?)(?=    steps:)/)?.[1];
+  assert.ok(matrix, 'generic publication must have its explicit image matrix');
+  const missing = [];
+  for (const [, dockerfile] of matrix.matchAll(/dockerfile: (\S+)/g)) {
+    const recipe = await fs.readFile(path.join(repoRoot, dockerfile), 'utf8');
+    for (const [, input] of recipe.matchAll(
+      /^COPY (deploy\/nitro\/custody-vault-profile\.json) /gm
+    )) {
+      try {
+        await fs.access(path.join(repoRoot, input));
+      } catch {
+        missing.push(`${dockerfile}: ${input}`);
+      }
+    }
+  }
+  assert.deepEqual(
+    missing,
+    [],
+    'generic publication selects an absent deployment-only build input'
+  );
+  assert.doesNotMatch(
+    matrix,
+    /signer|custody/,
+    'generic publication cannot satisfy the environment-specific custody profile admission'
+  );
+  assert.deepEqual(
+    [...matrix.matchAll(/- name: (\S+)/g)].map((match) => match[1]),
+    ['nitro-host', 'relayer']
+  );
+  const recipe = await fs.readFile(path.join(repoRoot, 'deploy/nitro/Dockerfile.signer'), 'utf8');
+  assert.match(
+    recipe,
+    /COPY deploy\/nitro\/custody-vault-profile\.json \/build\/custody-vault-profile\.json/
+  );
+  assert.match(recipe, /sha256sum -c -/);
+  assert.match(
+    recipe,
+    /signer_service validate-vault-profile \/build\/custody-vault-profile\.json testnet/
+  );
+  assert.match(recipe, /^ENV SIGNER_SERVICE_ATTESTED_BOOT=require$/m);
+  const build = await fs.readFile(path.join(repoRoot, 'deploy/nitro/build-custody-eif.sh'), 'utf8');
+  assert.match(build, /^dockerfile="\$repo_root\/deploy\/nitro\/Dockerfile\.signer"$/m);
+  assert.match(build, /CUSTODY_PROFILE_FILE_SHA256/);
+  const gate = jobs.find((job) => publish.needs.includes(job.name) && runsTests(job));
+  assert.ok(gate);
+  for (const packageName of ['neo-signer', 'nitro-enclave-host', 'neo-os-relayer']) {
+    assert.match(gate.body, new RegExp(`cargo test[^\\n]*-p ${packageName}`));
+    assert.match(gate.body, new RegExp(`cargo clippy[^\\n]*-p ${packageName}`));
+  }
 });
 
 test('a single job that tests before it publishes counts as gated', () => {

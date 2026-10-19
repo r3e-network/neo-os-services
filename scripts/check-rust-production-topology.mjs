@@ -404,11 +404,7 @@ export function checkWriterEnablePostureInDocs(name, source, writerStems) {
 
 export function checkPublishWorkflow(source) {
   const problems = [];
-  for (const dockerfile of [
-    'deploy/nitro/Dockerfile.enclave',
-    'deploy/nitro/Dockerfile.signer',
-    'deploy/nitro/Dockerfile.relayer',
-  ]) {
+  for (const dockerfile of ['deploy/nitro/Dockerfile.enclave', 'deploy/nitro/Dockerfile.relayer']) {
     requirePattern(
       problems,
       source,
@@ -416,11 +412,7 @@ export function checkPublishWorkflow(source) {
       `publish workflow does not build ${dockerfile}`
     );
   }
-  for (const image of [
-    'neo-os-services-nitro-host',
-    'neo-os-services-signer',
-    'neo-os-services-relayer',
-  ]) {
+  for (const image of ['neo-os-services-nitro-host', 'neo-os-services-relayer']) {
     requirePattern(
       problems,
       source,
@@ -470,6 +462,22 @@ export function checkPublishWorkflow(source) {
       source,
       new RegExp(`-p ${packageName}`),
       `publish gate does not test ${packageName}`
+    );
+  }
+  // Generic publishing has no environment custody inputs. Keep the dedicated
+  // signer recipe in the topology audit and all three Rust suites above.
+  const matrix = source.match(/        include:\n([\s\S]*?)(?=    steps:)/)?.[1] || '';
+  const expectedMatrix = [
+    '          - name: nitro-host',
+    '            dockerfile: deploy/nitro/Dockerfile.enclave',
+    '            image: ghcr.io/${{ github.repository_owner }}/neo-os-services-nitro-host',
+    '          - name: relayer',
+    '            dockerfile: deploy/nitro/Dockerfile.relayer',
+    '            image: ghcr.io/${{ github.repository_owner }}/neo-os-services-relayer',
+  ].join('\n');
+  if (matrix.trimEnd() !== expectedMatrix) {
+    problems.push(
+      'Generic publish matrix must contain only nitro-host and relayer; custody requires its dedicated measured build'
     );
   }
   return problems;
