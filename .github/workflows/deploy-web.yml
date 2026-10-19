@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   preflight:
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
     outputs:
       ready: ${{ steps.check.outputs.ready }}
     steps:
@@ -41,7 +41,7 @@ jobs:
   # No timeout-minutes, matching ci.yml: a tighter budget here would be a way
   # for the gate to fail that CI itself cannot reproduce.
   test:
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -66,7 +66,7 @@ jobs:
   deploy:
     needs: [preflight, test]
     if: ${{ needs.preflight.outputs.ready == 'true' }}
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
