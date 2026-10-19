@@ -1352,6 +1352,20 @@
           "sha256": "6eef9abf4a25fa1d1a3c5694c4885dc7c4a24ad5a3c13b9f00bac65c5b2d0468"
         }
       }
+    },
+    {
+      "consumer": "reviewed-process-lifecycle-tests",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "These exact process-test inputs were independently reviewed at 6e348e55803730cbd31cc6dc7313db3d91dd939e. They exercise readiness refusal, shutdown completion and heartbeat connection termination with local synthetic fixtures; they do not consume VRF output for economic decisions, award value or authorize settlement. The production implementations and timeout policies are unchanged. This classification does not establish hosted CI, artifact measurements or deployment readiness.",
+      "inputs": {
+        "crates/nitro-init/tests/supervisor.rs": {
+          "sha256": "0f03cb954fb9b4acb586f0f6e4afb27e2426b1e2891181d1a58745ce3eb04cfc"
+        },
+        "workers/neo-os-relayer/src/relayer/supervisor_tests.rs": {
+          "sha256": "ea6a844dfec21caf4b9831242fea435875dc5d7755767f5d2e542f62e1b785cd"
+        }
+      }
     }
   ]
 }
