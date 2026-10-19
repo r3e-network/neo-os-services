@@ -23,13 +23,17 @@ and rollback evidence, not an executable fallback inside a Rust service.
 `.github/workflows/publish-images.yml` builds only these service Dockerfiles:
 
 - `deploy/nitro/Dockerfile.enclave`
-- `deploy/nitro/Dockerfile.signer`
 - `deploy/nitro/Dockerfile.relayer`
 
 The workflow emits immutable `sha-<full-commit>` tags only. It emits no branch
 tag, `latest`, legacy alias, Node worker image, or Node relayer image. Nitro
 operators still rebuild and re-measure the host and signer EIFs with the exact
-network/custody trust anchors; a registry rootfs tag is not a PCR approval.
+network/custody trust anchors; a registry rootfs tag is not a PCR approval. The custody
+signer stays on its dedicated `Dockerfile.signer` / `build-custody-eif.sh` path,
+which requires reviewed public profile inputs; it is not a generic published
+image. All three Rust packages, including `neo-signer`, retain test and clippy
+gates. This publication distinction does not reinterpret the historical
+standalone topology below as the approved one-enclave, one-process deployment.
 
 The frontier measurement binds all six custody identities:
 

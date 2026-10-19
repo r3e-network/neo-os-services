@@ -83,6 +83,76 @@ test('generic publish rejects custody images without dropping its dedicated reci
   }
 });
 
+for (const recipe of ['Dockerfile.signer', 'Dockerfile.signer-legacy']) {
+  test(`publish action rejects direct ${recipe} override despite a valid matrix`, async () => {
+    const source = await fs.readFile(
+      new URL('../.github/workflows/publish-images.yml', import.meta.url),
+      'utf8'
+    );
+    const mutant = source.replace('file: ${{ matrix.dockerfile }}', `file: deploy/nitro/${recipe}`);
+    assert.notEqual(mutant, source);
+    assert.ok(checkPublishWorkflow(mutant).some((problem) => problem.includes('build action')));
+  });
+}
+
+test('publish action refuses context, target, decoy and additional publication shapes', async () => {
+  const source = await fs.readFile(
+    new URL('../.github/workflows/publish-images.yml', import.meta.url),
+    'utf8'
+  );
+  assert.deepEqual(checkPublishWorkflow(source), []);
+  assert.deepEqual(
+    checkPublishWorkflow(
+      source.replace('    steps:', '    # file: deploy/nitro/Dockerfile.signer\n    steps:')
+    ),
+    []
+  );
+  const file = '          file: ${{ matrix.dockerfile }}';
+  const build = source.slice(source.indexOf('      - uses: docker/build-push-action'));
+  const cases = [
+    ['alternate context', source.replace('context: .', 'context: ./deploy/nitro')],
+    ['implicit context', source.replace('          context: .\n', '')],
+    ['implicit file', source.replace(file, '')],
+    ['unreviewed target', source.replace(file, file + '\n          target: builder')],
+    [
+      'named contexts',
+      source.replace(file, file + '\n          build-contexts: source=./deploy/nitro'),
+    ],
+    [
+      'duplicate file',
+      source.replace(file, file + '\n          file: deploy/nitro/Dockerfile.signer'),
+    ],
+    [
+      'comment decoy',
+      source.replace(
+        file,
+        '          # file: ${{ matrix.dockerfile }}\n          file: deploy/nitro/Dockerfile.signer'
+      ),
+    ],
+    ['quoted selector', source.replace(file, "          file: '${{ matrix.dockerfile }}'")],
+    [
+      'other-step decoy',
+      source
+        .replace('          registry: ghcr.io', '          registry: ghcr.io\n' + file)
+        .replace(
+          file + '\n          platforms:',
+          '          file: deploy/nitro/Dockerfile.signer\n          platforms:'
+        ),
+    ],
+    ['extra build action', source + build],
+    ['extra run step', source + '      - run: docker build -f deploy/nitro/Dockerfile.signer .\n'],
+    ['extra publication job', source + '  extra-publish:\n    needs: test\n    steps:\n' + build],
+    ['duplicate steps mapping', source + '    steps:\n' + build],
+  ];
+  for (const [name, mutant] of cases) {
+    assert.notEqual(mutant, source, name);
+    assert.ok(
+      checkPublishWorkflow(mutant).some((problem) => problem.includes('build action')),
+      name
+    );
+  }
+});
+
 test('authority units cannot launch npm behind a production-looking name', () => {
   const problems = checkAuthorityUnit(
     'bad.service',

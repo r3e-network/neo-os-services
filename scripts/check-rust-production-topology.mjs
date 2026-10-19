@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { auditCargoLockProvenance } from './check-cargo-lock-provenance.mjs';
 import { checkFormatWorkflows } from './lib-rust-format.mjs';
+import { parseWorkflowJobs } from './lib-workflow-graph.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -466,7 +467,30 @@ export function checkPublishWorkflow(source) {
   }
   // Generic publishing has no environment custody inputs. Keep the dedicated
   // signer recipe in the topology audit and all three Rust suites above.
-  const matrix = source.match(/        include:\n([\s\S]*?)(?=    steps:)/)?.[1] || '';
+  let publishBody = '';
+  try {
+    const jobs = parseWorkflowJobs(source);
+    if (
+      jobs
+        .map((job) => job.name)
+        .sort()
+        .join(',') !== 'build-and-push,runner,test'
+    ) {
+      problems.push('Publish build action contract refuses extra or unsupported jobs');
+    }
+    publishBody = jobs.find((job) => job.name === 'build-and-push')?.body || '';
+  } catch {
+    problems.push('Publish build action contract requires a parsed workflow job');
+  }
+  // A small, fail-closed contract for this workflow, not a general YAML parser.
+  // Scope selectors to the actual job and action. Comments cannot supply inputs.
+  const body = publishBody
+    .split('\n')
+    .filter((line) => line.trim() && !line.trimStart().startsWith('#'))
+    .map((line) => line.replace(/^(      - uses: \S+)\s+#.*$/, '$1'))
+    .join('\n');
+  const sections = body.split(/^    steps:$/m);
+  const matrix = sections[0].match(/^        include:\n([\s\S]*)$/m)?.[1] || '';
   const expectedMatrix = [
     '          - name: nitro-host',
     '            dockerfile: deploy/nitro/Dockerfile.enclave',
@@ -478,6 +502,75 @@ export function checkPublishWorkflow(source) {
   if (matrix.trimEnd() !== expectedMatrix) {
     problems.push(
       'Generic publish matrix must contain only nitro-host and relayer; custody requires its dedicated measured build'
+    );
+  }
+  const expectedHeader = [
+    '    needs: [runner, test]',
+    "    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}",
+    '    permissions:',
+    '      contents: read',
+    '      packages: write',
+    '    strategy:',
+    '      fail-fast: false',
+    '      matrix:',
+    '        include:',
+    expectedMatrix,
+  ].join('\n');
+  if (sections.length !== 2 || sections[0].trimEnd() !== expectedHeader) {
+    problems.push('Publish build action requires the reviewed matrix job shape');
+  }
+  // All publication steps are explicit. Additional actions/run steps, duplicate
+  // mappings, aliases, targets and build-context overrides require fresh review.
+  const expectedSteps = [
+    ['actions/checkout', []],
+    ['docker/setup-buildx-action', []],
+    [
+      'docker/login-action',
+      [
+        '        with:',
+        '          registry: ghcr.io',
+        '          username: ${{ github.actor }}',
+        '          password: ${{ secrets.GITHUB_TOKEN }}',
+      ],
+    ],
+    [
+      'docker/metadata-action',
+      [
+        '        id: meta',
+        '        with:',
+        '          images: ${{ matrix.image }}',
+        '          flavor: latest=false',
+        '          tags: type=sha,format=long,prefix=sha-',
+      ],
+    ],
+    [
+      'docker/build-push-action',
+      [
+        '        with:',
+        '          context: .',
+        '          file: ${{ matrix.dockerfile }}',
+        '          platforms: linux/amd64',
+        '          push: true',
+        '          tags: ${{ steps.meta.outputs.tags }}',
+        '          labels: ${{ steps.meta.outputs.labels }}',
+      ],
+    ],
+  ];
+  const steps = (sections[1] || '').split(/^      - /m);
+  const validSteps =
+    steps.shift()?.trim() === '' &&
+    steps.length === expectedSteps.length &&
+    steps.every((step, index) => {
+      const [header, ...inputs] = step.trimEnd().split('\n');
+      const uses = header.match(/^uses: ([a-z/-]+)@[0-9a-f]{40}$/);
+      return (
+        uses?.[1] === expectedSteps[index][0] &&
+        inputs.join('\n') === expectedSteps[index][1].join('\n')
+      );
+    });
+  if (!validSteps) {
+    problems.push(
+      'Publish build action must bind context/file to the validated matrix with only reviewed publication steps and inputs'
     );
   }
   return problems;
