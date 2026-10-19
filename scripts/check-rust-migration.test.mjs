@@ -19,6 +19,31 @@ import {
 } from './check-rust-migration.mjs';
 
 const ENROLLMENT_BYPASSES = [
+  'pub use ::neo_signer::enrollment::ENROLLMENT_MODE;',
+  'use ::neo_signer::enrollment::ENROLLMENT_MODE as Other;',
+  'use ::neo_signer::enrollment::ENROLLMENT_MODE;',
+  'pub use { neo_signer::enrollment::ENROLLMENT_MODE };',
+  'use { neo_signer::enrollment::ENROLLMENT_MODE as Other };',
+  'use r#neo_signer::enrollment::ENROLLMENT_MODE as Other;',
+  'pub use r#neo_signer::enrollment::ENROLLMENT_MODE;',
+  'pub use ::r#neo_signer::enrollment::ENROLLMENT_MODE;',
+  'use {r#neo_signer::enrollment::ENROLLMENT_MODE as Other};',
+  'pub use {{neo_signer::enrollment::ENROLLMENT_MODE}};',
+  'use {neo_signer::enrollment::ENROLLMENT_MODE};',
+  'use neo_signer::r#enrollment::ENROLLMENT_MODE as Other;',
+  'use neo_signer::enrollment::r#ENROLLMENT_MODE as Other;',
+  // These qualified paths are lexical controls; resolution depends on scope.
+  'use crate::neo_signer::enrollment::ENROLLMENT_MODE as Other;',
+  'use self::neo_signer::enrollment::ENROLLMENT_MODE as Other;',
+  'use super::neo_signer::enrollment::ENROLLMENT_MODE as Other;',
+  'use ::neo_signer::crypto;',
+  'use r#neo_signer::crypto;',
+  'use p256::ecdsa::r#SigningKey;',
+  'neo_signer::enrollment::ENROLLMENT_MODE::<OtherApi>;',
+  'const MODE: &str = neo_signer::enrollment::ENROLLMENT_MODE;',
+  'let mode = &neo_signer::enrollment::ENROLLMENT_MODE;',
+  'value(ENROLLMENT_MODE)? != ::neo_signer::enrollment::ENROLLMENT_MODE;',
+  'value(ENROLLMENT_MODE)? != r#neo_signer::enrollment::ENROLLMENT_MODE;',
   'pub // visibility;\nuse neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES};',
   'pub use /* public constant */ neo_signer::enrollment::ENROLLMENT_MODE;',
   'use /* public constant */ neo_signer::enrollment::ENROLLMENT_MODE as Other;',
@@ -87,6 +112,16 @@ test('enrollment comment handling holds unsupported lexical forms conservatively
 test('measured enrollment admits only its exact public configuration surface', () => {
   const source = readFileSync('workers/nitro-enclave-host/src/custody_bootstrap.rs', 'utf8');
   assert.equal(embeddedCustodyBypassesApi(source), false);
+  assert.equal(
+    embeddedCustodyBypassesApi(
+      source.replace(
+        'value(ENROLLMENT_MODE)? != neo_signer::enrollment::ENROLLMENT_MODE',
+        'value ( ENROLLMENT_MODE ) ? !=\n neo_signer :: enrollment :: ENROLLMENT_MODE'
+      )
+    ),
+    false,
+    'whitespace preserves the exact reviewed mode comparison'
+  );
   assert.equal(
     embeddedCustodyBypassesApi(
       source.replace(

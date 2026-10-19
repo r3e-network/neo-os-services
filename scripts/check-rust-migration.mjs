@@ -207,11 +207,15 @@ export function embeddedCustodyBypassesApi(source) {
   );
   // Require a declaration boundary before `use`, so a reexport (even with
   // multiline visibility or comments) cannot become an allowed private import.
-  // Aliased, glob, nested and additional imports remain outside this boundary.
-  if (/\buse\s+neo_signer\s*::\s*enrollment\b/.test(enrollmentImportsRemoved)) return true;
+  // Any remaining enrollment-bearing use declaration is unsupported, regardless
+  // of absolute/raw/qualified paths or nested use groups. Comments were either
+  // removed or held above; a use tree cannot contain a semicolon before its end.
+  if (/\buse\b[^;]*\benrollment\b/.test(enrollmentImportsRemoved)) return true;
+  // Admit the fixed mode only as the RHS of the reviewed opt-in comparison.
+  // Never erase a mode path globally: it could be inside a use tree or alias.
   const publicModeRemoved = enrollmentImportsRemoved.replace(
-    /\bneo_signer\s*::\s*enrollment\s*::\s*ENROLLMENT_MODE\b(?!\s*::)/g,
-    ''
+    /\bvalue\s*\(\s*ENROLLMENT_MODE\s*\)\s*\?\s*!=\s*neo_signer\s*::\s*enrollment\s*::\s*ENROLLMENT_MODE\b(?!\s*::)/g,
+    'value(ENROLLMENT_MODE)? != measured_enrollment_mode'
   );
   return /\bneo_signer\s*(?:as\b|;|::\s*\{)|\bneo_signer\s*::\s*(?!(?:attestation|auth|embedded|network|vault_profile)\b)/.test(
     publicModeRemoved
