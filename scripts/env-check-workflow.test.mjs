@@ -45,6 +45,7 @@ test('env-check.yml keeps its intended jobs and summary gate', () => {
     assert.ok(Array.isArray(jobs[jobId].steps) && jobs[jobId].steps.length > 0);
   }
   assert.deepEqual(jobs.summary.needs, [
+    'runner',
     'validate-network-env',
     'validate-web-app-env',
     'validate-signers',

@@ -13,11 +13,16 @@ permissions:
   contents: read
 
 jobs:
+  runner:
+    permissions: {}
+    uses: ./.github/workflows/runner-policy.yml
+
   # Detect which areas changed so the heavy downstream jobs can skip on docs-only PRs.
   # Always reports 'yes' on main pushes (full coverage is preserved there) and on PRs that
   # touch workflow/config code (a ci.yml change could affect any job). Round-2 R2-4.1.
   changes:
-    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    needs: runner
+    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     outputs:
       code: ${{ steps.filter.outputs.code }}
       evm: ${{ steps.filter.outputs.evm }}
@@ -53,7 +58,8 @@ jobs:
               - '.github/workflows/**'
 
   lint-and-format:
-    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    needs: runner
+    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -165,9 +171,9 @@ jobs:
   # drift is a review finding, not a side effect (same posture as the npm
   # lockfile guard in lint-and-format).
   rust:
-    needs: changes
+    needs: [runner, changes]
     if: ${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     steps:
       # This job builds and tests the whole workspace and then builds neo-nexus
       # for the cross-repository signer contract; together they exhausted the
@@ -233,9 +239,9 @@ jobs:
   # next suites with per-test fixtures, not a shared DB). Wall-clock becomes ~max(suite)
   # instead of the sum. (Round-2 R2-4.3.)
   web-and-worker:
-    needs: changes
+    needs: [runner, changes]
     if: ${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -288,9 +294,9 @@ jobs:
   # Run its verifier-side request-proof tests explicitly so changes there are
   # covered even though the root scripts suite cannot install this package.
   custody-state-authority:
-    needs: changes
+    needs: [runner, changes]
     if: ${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -312,9 +318,9 @@ jobs:
   # GitHub runner has no nitro-cli and no Nitro hypervisor. What it can do is
   # refuse a tree whose committed measurements have stopped describing it.
   measurements:
-    needs: changes
+    needs: [runner, changes]
     if: ${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -342,9 +348,9 @@ jobs:
       - run: node --test scripts/check-nitro-measurements.test.mjs scripts/check-nitro-prereqs.test.mjs
 
   contracts:
-    needs: changes
+    needs: [runner, changes]
     if: ${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
@@ -379,9 +385,9 @@ jobs:
       - run: dotnet test contracts/__tests__/NeoContracts.Tests.csproj
 
   host-private-chain:
-    needs: changes
+    needs: [runner, changes]
     if: ${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
@@ -408,9 +414,9 @@ jobs:
   # verifies that signature and stores the result. Composes the local-chain
   # seam and the host acceptance above, which each stand in for the other legs.
   e2e-private-chain:
-    needs: changes
+    needs: [runner, changes]
     if: ${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
@@ -436,9 +442,9 @@ jobs:
   # contracts-evm/foundry.toml, and the harness is offline (local Vm interface in
   # test/TestBase.sol, libs = []), so no forge-std submodule fetch is required.
   contracts-evm:
-    needs: changes
+    needs: [runner, changes]
     if: ${{ github.event_name == 'push' || needs.changes.outputs.evm == 'true' }}
-    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Install Foundry

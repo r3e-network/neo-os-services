@@ -27,8 +27,13 @@ permissions:
   contents: read
 
 jobs:
+  runner:
+    permissions: {}
+    uses: ./.github/workflows/runner-policy.yml
+
   validate-network-env:
-    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    needs: runner
+    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     name: Validate Network Configuration
 
     steps:
@@ -86,7 +91,8 @@ jobs:
         run: node --test scripts/check-root-env.test.mjs
 
   validate-web-app-env:
-    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    needs: runner
+    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     name: Validate Web App Environment
 
     steps:
@@ -110,7 +116,8 @@ jobs:
             echo "::notice::check:web-cron-env reported missing variables (expected without deployment secrets)"
 
   validate-signers:
-    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    needs: runner
+    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     name: Validate Signer Configuration
 
     steps:
@@ -132,8 +139,8 @@ jobs:
             echo "::notice::check:signers could not validate signers (expected without deployment configuration)"
 
   summary:
-    needs: [validate-network-env, validate-web-app-env, validate-signers]
-    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    needs: [runner, validate-network-env, validate-web-app-env, validate-signers]
+    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     if: always()
 
     steps:

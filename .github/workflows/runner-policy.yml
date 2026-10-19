@@ -1,0 +1,38 @@
+name: Select runner
+
+on:
+  workflow_call:
+    outputs:
+      runner:
+        description: Runner selected from the caller's repository and event
+        value: ${{ jobs.select.outputs.runner }}
+
+permissions: {}
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 1
+    outputs:
+      runner: ${{ steps.select.outputs.runner }}
+    steps:
+      - id: select
+        name: Compare trusted event values exactly
+        shell: python
+        env:
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          import os
+
+          private = os.environ['REPOSITORY_PRIVATE'] == 'true'
+          event = os.environ['EVENT_NAME']
+          branch = os.environ['DEFAULT_BRANCH']
+          default_push = event == 'push' and bool(branch) and os.environ['EVENT_REF'] == 'refs/heads/' + branch
+          eligible = private and (event == 'workflow_dispatch' or default_push)
+          runner = 'neoos-isolated-linux' if eligible else 'ubuntu-latest'
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write('runner=' + runner + '\n')

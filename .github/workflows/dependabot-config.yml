@@ -34,8 +34,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  runner:
+    permissions: {}
+    uses: ./.github/workflows/runner-policy.yml
+
   check:
-    runs-on: ${{ github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && 'neoos-isolated-linux' || 'ubuntu-latest' }}
+    needs: runner
+    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

@@ -57,7 +57,7 @@ test('CI installs and tests the independent custody authority package', () => {
   const custody = workflow.jobs['custody-state-authority'];
   assert.ok(custody, 'ci.yml must define a custody-state-authority test job');
   assert.equal(custody['continue-on-error'], undefined);
-  assert.equal(custody.needs, 'changes');
+  assert.deepEqual(custody.needs, ['runner', 'changes']);
   assert.equal(
     custody.if,
     "${{ github.event_name == 'push' || needs.changes.outputs.code == 'true' }}"
