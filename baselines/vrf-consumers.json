@@ -1271,7 +1271,7 @@
           "sha256": "a5086fffb3db277aa47b3ab475b0da0dc35d16ac070729b2a89a5ac6de3f824e"
         },
         "deploy/nitro/dual-image.test.mjs": {
-          "sha256": "f750c8eddd2969e6fb70184daff63181045d2f489e99ffca84716c1420ff8d1b"
+          "sha256": "b2f3b60847736bc53e6c821f54e7a01138961f1c09825cefe0b98f24366029ed"
         },
         "deploy/nitro/dual_cross.py": {
           "sha256": "02a6fc36f7e7708ca7736aaccbecd5e83b03826fd4c211bee258795b14fedb23"
@@ -1315,6 +1315,41 @@
         },
         "scripts/lib/dual_release_validation_test.py": {
           "sha256": "0ec9df8b0dc29d7219ef518e60d46bcfadb2b8120a55262ee622da47c493b1ee"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-ci-runner-policy-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "These exact CI workflow and regression-test inputs were independently source-reviewed in R2 at c6247624ef4dd6bebbc49c8f27d843c062243caf. They govern runner selection, workflow validation and existing deployment or publication orchestration; they do not draw VRF output, select economic winners, award value or authorize settlement. This exact-source classification does not establish full CI or runtime readiness, authorize deployment or publication, replace artifact measurements, or approve downstream economic consumers.",
+      "inputs": {
+        ".github/workflows/dependabot-config.yml": {
+          "sha256": "7afa71929f74df54d1bbd887dbe4fe912e487cf26241cd6f1946ae1924f085d2"
+        },
+        ".github/workflows/deploy-web.yml": {
+          "sha256": "e239f7b8ccee744b891a616646d3d78743ce832912deceb7cc4a0d0837e635eb"
+        },
+        ".github/workflows/env-check.yml": {
+          "sha256": "d978ded761012594184b523d637cf717ef3a6728d912c75ff35d6c9a6d0dc6fe"
+        },
+        ".github/workflows/gitleaks.yml": {
+          "sha256": "192e46308e749c428bcf261ab50faf9f2e1855b4d9ea789d839c70b1a7be5f8c"
+        },
+        ".github/workflows/publish-images.yml": {
+          "sha256": "2ac5b62e9fd1361658013ba5cdb80fc262517777f232c48a3c42b2ba712acfb2"
+        },
+        ".github/workflows/runner-policy.yml": {
+          "sha256": "e806782cbb933586363dc90c3f6917b13dc46fbf4d085e591db5921bc3deec5d"
+        },
+        "scripts/ci-test-coverage.test.mjs": {
+          "sha256": "309f22c6303b36bc80dc96fc672e75d8a7727de613bc08de9c2dfdbffce268cb"
+        },
+        "scripts/env-check-workflow.test.mjs": {
+          "sha256": "02d856586a67ae822af09e91e9c47ca4dc7f79707214e2d790dc3007846aa56b"
+        },
+        "scripts/runner-policy.test.mjs": {
+          "sha256": "6eef9abf4a25fa1d1a3c5694c4885dc7c4a24ad5a3c13b9f00bac65c5b2d0468"
         }
       }
     }
