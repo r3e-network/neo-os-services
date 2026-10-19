@@ -1431,6 +1431,10 @@ impl JwksFetcher for AdmissionProbeJwks {
 
 #[test]
 fn selected_context_rejects_before_provider_verification_on_every_ticket_route() {
+    check_provider_admission("selected-context");
+}
+
+fn check_provider_admission(namespace: &str) {
     type Handler = fn(&AppState, &serde_json::Value) -> Result<serde_json::Value, RuntimeError>;
     let (_, token) = build_token(&base_claims(), Some("admission-probe"));
     for (mode, handler) in [
@@ -1439,7 +1443,7 @@ fn selected_context_rejects_before_provider_verification_on_every_ticket_route()
         ("recovery-ticket", handle_neo_did_recovery_ticket as Handler),
         ("zklogin-ticket", handle_neo_did_zklogin_ticket as Handler),
     ] {
-        let url = format!("https://admission.example.test/{mode}");
+        let url = format!("https://admission.example.test/{namespace}/{mode}");
         let mut overlay = salted_overlay();
         overlay.extend([
             ("WEB3AUTH_CLIENT_ID", "client-id"),
@@ -1481,9 +1485,13 @@ fn selected_context_rejects_before_provider_verification_on_every_ticket_route()
             "positive control must reach provider"
         );
         for family in ["neo_n3", "neox", " NEO_N3 "] {
-            // Failed JWKS fetches are cached; each admission control needs a
-            // fresh probe so a cache hit cannot masquerade as a denied call.
-            reset_jwks_cache_for_tests();
+            // Reset only this probe's failed fetch; other tests may be using
+            // cached keys or sharing an in-flight refresh for another URL.
+            jwks_cache()
+                .entries
+                .lock()
+                .expect("JWKS cache lock")
+                .remove(&url);
             payload["network"] = json!(family);
             let before = calls.load(Ordering::SeqCst);
             let error = handler(&harness.state, &payload).unwrap_err();
@@ -1498,4 +1506,28 @@ fn selected_context_rejects_before_provider_verification_on_every_ticket_route()
             assert!(harness.signer.sign_calls().is_empty());
         }
     }
+}
+
+#[test]
+fn admission_controls_preserve_another_urls_rotated_jwks() {
+    let current = signed_token(&base_claims(), "isolated-rotation-kid");
+    let stale = signed_token(&base_claims(), "isolated-stale-kid");
+    let fetcher = ScriptedJwksFetcher::new(vec![Ok(stale.jwks), Ok(current.jwks)]);
+    let url = "https://jwks.example.test/admission-isolation-rotation";
+    fetch_jwks(&fetcher, url).expect("prime stale cache");
+    age_cached_jwks(url);
+    verify_web3auth_fixture(&fetcher, url, &current.token).expect("rotate key");
+    assert_eq!(fetcher.call_count(), 2);
+
+    // Force the admission fixture's resets between two verifications instead
+    // of depending on the test runner to schedule unrelated tests together.
+    check_provider_admission("cache-isolation");
+
+    verify_web3auth_fixture(&fetcher, url, &current.token)
+        .expect("admission probes must preserve another URL's rotated key");
+    assert_eq!(
+        fetcher.call_count(),
+        2,
+        "the rotated set must remain cached"
+    );
 }
