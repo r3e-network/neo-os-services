@@ -323,7 +323,7 @@ dependencies = [
  "boa_macros",
  "boa_string",
  "indexmap 2.14.1",
- "num-bigint",
+ "num-bigint 0.4.8",
  "rustc-hash",
 ]
 
@@ -355,7 +355,7 @@ dependencies = [
  "indexmap 2.14.1",
  "intrusive-collections",
  "itertools",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-integer",
  "num-traits",
  "num_enum",
@@ -427,7 +427,7 @@ dependencies = [
  "boa_macros",
  "fast-float2",
  "icu_properties",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "regress",
  "rustc-hash",
@@ -1785,7 +1785,7 @@ dependencies = [
  "k256",
  "neo-os-core",
  "neo-os-games",
- "num-bigint",
+ "num-bigint 0.5.1",
  "num-traits",
  "rand 0.8.7",
  "regex",
@@ -1804,7 +1804,7 @@ dependencies = [
  "hex",
  "icu_collator",
  "icu_locale_core",
- "num-bigint",
+ "num-bigint 0.5.1",
  "num-traits",
  "regex",
  "ripemd",
@@ -1821,7 +1821,7 @@ dependencies = [
  "base64",
  "hmac",
  "neo-os-core",
- "num-bigint",
+ "num-bigint 0.5.1",
  "p256",
  "serde_json",
  "sha2 0.10.9",
@@ -2014,6 +2014,16 @@ dependencies = [
  "num-integer",
  "num-traits",
  "serde",
+]
+
+[[package]]
+name = "num-bigint"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93e7820bc0a80a0238e650327316f929ba18d5be054b647490a3a6a339f3e7c0"
+dependencies = [
+ "num-integer",
+ "num-traits",
 ]
 
 [[package]]
