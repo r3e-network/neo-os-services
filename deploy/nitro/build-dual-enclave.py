@@ -686,7 +686,9 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
             image = 'neoos-dual-local:' + sha(str(context.parent).encode())[:16] + '-' + str(attempt)
             # Unique tag; no build args, secrets, SSH agent, cache mounts or env passthrough.
             images.append(image)
-            run([*docker_args, 'buildx', 'build', '--builder', builder, '--load', '--platform=linux/amd64', '--no-cache', '--network=default', '-t', image, '-f', context / 'Dockerfile', context], env, timeout=3600)
+            # The fixed SOURCE_DATE_EPOCH in safe_env also bounds exported layer
+            # timestamps. Dockerfile touch alone does not normalize layer export.
+            run([*docker_args, 'buildx', 'build', '--builder', builder, '--output', 'type=docker,rewrite-timestamp=true', '--platform=linux/amd64', '--no-cache', '--network=default', '-t', image, '-f', context / 'Dockerfile', context], env, timeout=3600)
             diagnostic_stage('image-inspect')
             image_id = run([*docker_args, 'image', 'inspect', '--format', '{{.Id}}', image], env).decode().strip()
             require(re.fullmatch(r'sha256:[0-9a-f]{64}', image_id), 'invalid image ID')

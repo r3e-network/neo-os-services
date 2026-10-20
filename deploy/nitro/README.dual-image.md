@@ -103,6 +103,12 @@ not ambient Docker contexts, registry credentials, proxy settings or build args.
 It requires Docker Buildx and builds twice without cache for Linux amd64 using
 one uniquely named docker-container builder (4 GiB memory, one CPU quota, one
 BuildKit worker task). It never changes the default builder. The owned builder
+uses the Docker exporter with `rewrite-timestamp=true` and the fixed
+`SOURCE_DATE_EPOCH=1749859200` from its private child environment. This normalizes
+exported layer timestamps in addition to the Dockerfile's filesystem pass;
+it does not normalize or rewrite the resulting EIF. Both measured builds must
+still agree on every PCR. No registry push or caller-supplied build argument is
+enabled by this exporter selection. The owned builder
 is stopped and removed on success or failure before output publication, including
 when a client times out. Container/image cleanup is attempted for every owned ID;
 a cleanup failure refuses publication and requires operator inspection. No shared

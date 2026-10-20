@@ -423,6 +423,26 @@ class Packaging(unittest.TestCase):
         good = subprocess.run(command + ['--input-sha256', self.hash, '--output', str(self.root / 'good-role')], env=self.env, capture_output=True, timeout=20)
         self.assertEqual(good.returncode, 0, good.stderr)
 
+    def test_each_build_rewrites_layer_timestamps_at_the_fixed_epoch(self):
+        self.simulate()
+        builds = [a for a in self.calls if a[3:5] == ['buildx', 'build']]
+        self.assertEqual(len(builds), 2)
+        for command in builds:
+            with self.subTest(command=command):
+                self.assertEqual(command.count('--output'), 1)
+                self.assertEqual(command[command.index('--output') + 1],
+                                 'type=docker,rewrite-timestamp=true')
+                self.assertNotIn('--load', command)
+                self.assertNotIn('--push', command)
+                self.assertNotIn('--build-arg', command)
+                self.assertIn('--no-cache', command)
+                self.assertIn('--platform=linux/amd64', command)
+
+    def test_timestamp_epoch_does_not_inherit_the_callers_environment(self):
+        with patch.dict(os.environ, {'SOURCE_DATE_EPOCH': '1999999999'}):
+            env = dual.safe_env(self.root / 'epoch-home')
+        self.assertEqual(env['SOURCE_DATE_EPOCH'], '1749859200')
+
     def test_build_timeout_cancels_owned_daemon_work(self):
         with self.assertRaises(subprocess.TimeoutExpired): self.simulate('timeout')
         creates = [a for a in self.calls if 'buildx' in a and 'create' in a]
