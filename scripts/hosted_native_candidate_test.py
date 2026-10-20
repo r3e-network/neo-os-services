@@ -954,6 +954,146 @@ class Controls(unittest.TestCase):
             self.assertFalse(receipt['artifact_admitted']); self.assertNotIn('business_failure', receipt)
             self.assertNotIn('CANARY', json.dumps(receipt))
 
+    def abort_receipt(self, observer, cleanup_failure=None):
+        r = self.runner(); r.resources = Mock(); c.phase('business-build')
+        processes = []; real_spawn = c.subprocess.Popen; real_stop = c.stop_process
+        real_clock = time.monotonic
+        ready = [self.root / 'business-ready', self.root / 'observer-ready']
+        def spawn(*args, **kwargs):
+            child = real_spawn(*args, **kwargs); processes.append(child)
+            deadline = real_clock() + 3
+            while not ready[len(processes)-1].exists() and real_clock() < deadline:
+                time.sleep(0.005)
+            self.assertTrue(ready[len(processes)-1].exists(), 'real child must run before injected deadline')
+            return child
+        def clock():
+            # The nested observer keeps its real15s budget. Advance only after
+            # both real synthetic children exist; the11500s parent is not due.
+            return real_clock() + (16 if observer and len(processes) >= 2 else 0)
+        def cleanup(child):
+            real_stop(child)
+            target = processes[-1] if cleanup_failure == 'observer' else processes[0]
+            if cleanup_failure and child is target: raise PermissionError('CLEANUP_CANARY')
+        def sleeping_child(marker):
+            return ('import sys,time;from pathlib import Path;sys.stderr.write("RAW_CANARY\\n");'
+                    'sys.stderr.flush();Path(' + repr(str(marker)) + ').write_text("ready");time.sleep(30)')
+        r.docker = [sys.executable, '-B', '-c', sleeping_child(ready[1])]
+        if observer: r.observe = r.container_ids
+        try:
+            with patch.object(c.subprocess, 'Popen', side_effect=spawn), patch.object(c.time, 'monotonic', side_effect=clock), patch.object(c, 'stop_process', side_effect=cleanup):
+                try:
+                    r.run([sys.executable, '-B', '-c', sleeping_child(ready[0])],
+                          timeout=11500 if observer else 0, tool='python', observe=observer, business_diagnostic=True)
+                except BaseException as error:
+                    receipt = c.failure_receipt(error, environment())
+                else: self.fail('aborted child admitted')
+        finally:
+            for child in processes: real_stop(child)
+            for marker in ready:
+                marker.unlink(missing_ok=True)
+        self.assertEqual(len(processes), 2 if observer else 1)
+        self.assertTrue(all(child.poll() is not None for child in processes))
+        return receipt
+
+    def test_nested_observer_timeout_retains_command_context(self):
+        receipt = self.abort_receipt(True)
+        self.assertEqual((receipt['phase'], receipt['tool'], receipt['reason'], receipt['exit_code']),
+                         ('business-build', 'docker', 'timeout', None))
+        self.assertEqual(receipt.get('command_failure'), {'schema':'neoos/hosted-command-failure/v1',
+                         'scope':'observer', 'operation':'container-list'})
+        self.assertIs(receipt.get('outer_cleanup_failed'), False)
+        self.assertIs(receipt['artifact_admitted'], False)
+        self.assertNotIn('business_failure', receipt)
+        self.assertNotIn('CANARY', json.dumps(receipt))
+
+    def test_abort_cleanup_preserves_primary_and_independent_flag(self):
+        for observer, cleanup in ((True,'observer'), (True,'outer'), (False,'outer'), (False,None)):
+            with self.subTest(observer=observer, cleanup=cleanup):
+                receipt = self.abort_receipt(observer, cleanup)
+                self.assertEqual((receipt['reason'], receipt['tool'], receipt['exit_code']),
+                                 ('timeout', 'docker' if observer else 'python', None))
+                self.assertEqual(receipt.get('command_failure'), {'schema':'neoos/hosted-command-failure/v1',
+                                 'scope':'observer' if observer else 'business-child',
+                                 'operation':'container-list' if observer else 'business-build'})
+                self.assertIs(receipt.get('outer_cleanup_failed'), cleanup is not None)
+                self.assertIs(receipt['artifact_admitted'], False)
+                self.assertNotIn('business_failure', receipt)
+                self.assertNotIn('CANARY', json.dumps(receipt))
+
+    def test_command_context_static_operations_and_unrelated_isolation(self):
+        r = self.runner()
+        with patch.object(r, 'run', side_effect=[b'', b'', b'']) as command:
+            self.assertEqual(r.inventory(), EMPTY)
+            self.assertEqual([x.kwargs['operation'] for x in command.call_args_list],
+                             ['container-list', 'image-list', 'volume-list'])
+            self.assertTrue(all(x.kwargs['timeout'] == 15 for x in command.call_args_list))
+        with patch.object(r, 'run', return_value=json.dumps([{'Id': CID}]).encode()) as command:
+            r.inspect_container(CID)
+            self.assertEqual(command.call_args.kwargs, {'timeout':15, 'operation':'container-inspect'})
+        r.resources = Mock(); c.phase('business-build')
+        with patch.object(c.subprocess, 'Popen') as spawn, self.assertRaises(c.Refused):
+            r.run(['CANARY'], operation='CANARY')
+        spawn.assert_not_called()
+        self.assertEqual(r._observer_depth, 0)
+        r.observe = Mock(side_effect=c.Refused('timeout'))
+        with self.assertRaises(c.Refused) as observer_failure:
+            r.run([sys.executable, '-B', '-c', 'import time;time.sleep(2)'],
+                  tool='python', observe=True, business_diagnostic=True)
+        observed = c.failure_receipt(observer_failure.exception, environment())
+        self.assertEqual((observed['tool'], observed['reason']), ('none', 'timeout'))
+        self.assertEqual(observed['command_failure']['scope'], 'observer')
+        self.assertEqual(observed['command_failure']['operation'], 'command')
+        self.assertEqual(r._observer_depth, 0)
+        # Subsequent unrelated and successful calls inherit no failure detail.
+        with self.assertRaises(c.CommandFailure) as failed:
+            r.run([sys.executable, '-B', '-c', child_program(b'CANARY')], tool='python')
+        receipt = c.failure_receipt(failed.exception, environment())
+        self.assertNotIn('command_failure', receipt)
+        self.assertNotIn('outer_cleanup_failed', receipt)
+        self.assertNotIn('CANARY', json.dumps(receipt))
+        self.assertEqual(r.run([sys.executable, '-B', '-c', 'print("ok")'], tool='python'), b'ok\n')
+
+    def test_command_context_is_immutable_and_public_enums_only(self):
+        error = c.Refused('timeout')
+        valid = c.CommandDiagnostic('business-build', 'docker', 'timeout', None, 'observer', 'container-list')
+        with self.assertRaises(AttributeError): valid.tool = 'CANARY'
+        for field, value in [('phase','CANARY'), ('tool','CANARY'), ('reason','CANARY'),
+                             ('scope','CANARY'), ('operation','CANARY'), ('code',True), ('code',256),
+                             ('phase',[]), ('tool',{}), ('operation',None)]:
+            error._hosted_command = valid._replace(**{field:value})
+            receipt = c.failure_receipt(error, environment())
+            self.assertNotIn('command_failure', receipt)
+            self.assertNotIn('CANARY', json.dumps(receipt))
+        for operation in c.COMMAND_OPERATIONS:
+            error._hosted_command = valid._replace(operation=operation)
+            receipt = c.failure_receipt(error, environment())
+            self.assertEqual(set(receipt['command_failure']), {'schema','scope','operation'})
+            self.assertEqual(receipt['command_failure']['operation'], operation)
+            self.assertLess(len(json.dumps(receipt)), 2048)
+        self.assertNotIn('command_failure', c.failure_receipt(c.Refused('timeout'), environment()))
+
+    def test_observer_nonzero_context_and_main_keep_failure_closed(self):
+        r = self.runner(); r.resources = Mock(); c.phase('business-build')
+        r.docker = [sys.executable, '-B', '-c', child_program(b'RAW_CANARY', 23)]
+        r.observe = r.container_ids
+        with self.assertRaises(c.CommandFailure) as failed:
+            r.run([sys.executable, '-B', '-c', 'import time;time.sleep(3)'],
+                  tool='python', observe=True, business_diagnostic=True)
+        error = failed.exception
+        receipt = c.failure_receipt(error, environment())
+        self.assertEqual((receipt['tool'], receipt['exit_code'], receipt['reason']), ('docker',23,'command_failed'))
+        self.assertEqual(receipt['command_failure']['scope'], 'observer')
+        self.assertNotIn('business_failure', receipt)
+        self.assertNotIn('CANARY', json.dumps(receipt))
+        env = environment(); env.update(RUNNER_TEMP=str(self.root), GITHUB_OUTPUT=str(self.root/'no-output'))
+        old_handler = c.signal.getsignal(c.signal.SIGTERM)
+        self.addCleanup(c.signal.signal, c.signal.SIGTERM, old_handler)
+        with patch.dict(os.environ, env, clear=True), patch.object(c, 'execute', side_effect=error), patch('sys.stderr', new=io.StringIO()) as captured:
+            with self.assertRaises(SystemExit) as terminal: c.main()
+        self.assertEqual(terminal.exception.code, 1)
+        self.assertEqual(json.loads(captured.getvalue()), receipt)
+        self.assertFalse((self.root/'no-output').exists())
+
     def test_business_child_scope_success_observer_timeout_and_main(self):
         line = frame_line(business_frame())
         r = self.runner(); r.resources = Mock(); c.phase('business-build')

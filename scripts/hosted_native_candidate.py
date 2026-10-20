@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from typing import NamedTuple
 import urllib.request
 import hosted_docker_install
 
@@ -263,7 +264,20 @@ class BusinessCommandFailure(CommandFailure):
         self.payload_comparison = business_payload_comparison(stderr, self.comparison)
 
 
-def failure_receipt(error, env):
+COMMAND_OPERATIONS = frozenset(('command', 'business-build', 'container-list',
+                                'image-list', 'volume-list', 'container-inspect'))
+
+
+class CommandDiagnostic(NamedTuple):
+    phase: str
+    tool: str
+    reason: str
+    code: object
+    scope: str
+    operation: str
+
+
+def failure_reason(error):
     reason = str(error) if type(error) is Refused else 'validation'
     if isinstance(error, CommandFailure):
         reason = 'command_failed'
@@ -274,11 +288,33 @@ def failure_receipt(error, env):
     allowed = {'validation', 'command_failed', 'cancelled', 'timeout', 'resource_reserve', 'output_limit', 'log_limit',
                'inventory_response', 'baseline_containers', 'baseline_volumes', 'baseline_images',
                'docker_api_response', 'docker_api_range', 'buildx_response', 'buildx_format', 'docker_install_validation'}
+    return reason if reason in allowed else 'validation'
+
+
+def command_diagnostic(error):
+    value = getattr(error, '_hosted_command', None)
+    if (type(value) is CommandDiagnostic
+            and all(type(item) is str for item in (value.phase, value.tool, value.reason, value.scope, value.operation))
+            and value.phase in PHASES and value.tool in TOOLS
+            and value.reason == failure_reason(error)
+            and (value.code is None or type(value.code) is int and -128 <= value.code <= 255)
+            and value.scope in ('observer', 'business-child') and value.operation in COMMAND_OPERATIONS):
+        return value
+    return None
+
+
+def failure_receipt(error, env):
     result = {'schema': 'neoos/hosted-candidate-failure/v1', 'artifact_admitted': False,
               'phase': STATUS['phase'] if STATUS['phase'] in PHASES else 'admission',
               'tool': STATUS['tool'] if STATUS['tool'] in TOOLS else 'none',
-              'reason': reason if reason in allowed else 'validation',
+              'reason': failure_reason(error),
               'exit_code': STATUS['exit_code'] if type(STATUS['exit_code']) is int and -128 <= STATUS['exit_code'] <= 255 else None}
+    context = command_diagnostic(error)
+    if context is not None:
+        result.update(phase=context.phase, tool=context.tool, reason=context.reason, exit_code=context.code)
+        result['command_failure'] = {'schema': 'neoos/hosted-command-failure/v1',
+                                     'scope': context.scope, 'operation': context.operation}
+        result['outer_cleanup_failed'] = getattr(error, '_hosted_cleanup_failed', False) is True
     if type(error) is BusinessCommandFailure:
         result.update(phase='business-build', tool='python',
                       exit_code=error.code if type(error.code) is int and -128 <= error.code <= 255 else None)
@@ -325,6 +361,7 @@ class Runner:
         self.minimum = {'free_bytes': 2**63, 'free_inodes': 2**63}
         self.observed = {}
         self.observed_images = set()
+        self._observer_depth = 0
         self.docker = ['/usr/bin/docker', '--host', 'unix:///var/run/docker.sock']
 
     def resources(self):
@@ -340,9 +377,13 @@ class Runner:
                 size += info.st_size
             require(size <= CAPTURE_LIMIT, 'log_limit')
 
-    def run(self, args, timeout=120, tool='docker', observe=False, business_diagnostic=False):
+    def run(self, args, timeout=120, tool='docker', observe=False, business_diagnostic=False, operation='command'):
         require(tool in TOOLS)
+        require(operation in COMMAND_OPERATIONS)
         require(not business_diagnostic or (tool == 'python' and STATUS['phase'] == 'business-build'))
+        scope = 'observer' if self._observer_depth else 'business-child' if business_diagnostic else None
+        operation = 'business-build' if business_diagnostic else operation
+        command_phase = STATUS['phase']
         STATUS.update(tool=tool, exit_code=None)
         self.resources()
         deadline = time.monotonic() + timeout
@@ -352,12 +393,24 @@ class Runner:
                                        stdin=subprocess.DEVNULL, stdout=out, stderr=err,
                                        start_new_session=True)
             business_error = None
+            preserved_error = None
             try:
                 while True:
                     self.resources()
                     require(max(os.fstat(out.fileno()).st_size, os.fstat(err.fileno()).st_size) <= CAPTURE_LIMIT, 'output_limit')
                     if observe:
-                        self.observe()
+                        self._observer_depth += 1
+                        try:
+                            self.observe()
+                        except BaseException as error:
+                            # Validation between observer commands has no
+                            # failing command identity; do not guess one.
+                            if command_diagnostic(error) is None:
+                                error._hosted_command = CommandDiagnostic(
+                                    command_phase, 'none', failure_reason(error), None, 'observer', 'command')
+                            raise
+                        finally:
+                            self._observer_depth -= 1
                     if process.poll() is not None:
                         break
                     require(time.monotonic() < deadline, 'timeout')
@@ -375,36 +428,51 @@ class Runner:
                     raise CommandFailure('command_failed')
                 out.seek(0)
                 return out.read(CAPTURE_LIMIT + 1)
+            except BaseException as error:
+                if business_error is not None:
+                    preserved_error = business_error
+                elif scope is not None:
+                    # The innermost failing command owns its context. Outer
+                    # observation/cleanup must neither relabel it nor read a
+                    # possibly interrupted business child's stderr as its cause.
+                    if command_diagnostic(error) is None:
+                        error._hosted_command = CommandDiagnostic(
+                            command_phase, tool, failure_reason(error), process.poll(), scope, operation)
+                    preserved_error = error
+                raise
             finally:
                 # Nested observer commands must not replace the failing tool.
                 STATUS.update(tool=tool, exit_code=process.poll())
                 try:
                     stop_process(process)
                 except BaseException:
-                    if business_error is None:
+                    if preserved_error is None:
                         raise
-                    business_error.outer_cleanup_failed = True
+                    if business_error is not None:
+                        business_error.outer_cleanup_failed = True
+                    else:
+                        preserved_error._hosted_cleanup_failed = True
                 finally:
                     # Observer/cleanup status cannot overwrite this child failure.
-                    if business_error is not None:
-                        raise business_error from None
+                    if preserved_error is not None:
+                        raise preserved_error from None
 
     def container_ids(self):
-        ids = self.run([*self.docker, 'container', 'ls', '--all', '--no-trunc', '--format', '{{.ID}}'], timeout=15).decode().splitlines()
+        ids = self.run([*self.docker, 'container', 'ls', '--all', '--no-trunc', '--format', '{{.ID}}'], timeout=15, operation='container-list').decode().splitlines()
         require(len(ids) <= 64 and len(ids) == len(set(ids)) and all(HEX64.fullmatch(item) for item in ids))
         return ids
 
     def inventory(self):
         containers = self.container_ids()
-        images = self.run([*self.docker, 'image', 'ls', '--all', '--no-trunc', '--quiet'], timeout=15).decode().splitlines()
-        volumes = self.run([*self.docker, 'volume', 'ls', '--quiet'], timeout=15).decode().splitlines()
+        images = self.run([*self.docker, 'image', 'ls', '--all', '--no-trunc', '--quiet'], timeout=15, operation='image-list').decode().splitlines()
+        volumes = self.run([*self.docker, 'volume', 'ls', '--quiet'], timeout=15, operation='volume-list').decode().splitlines()
         require(len(images) <= 1024 and all(IMAGE.fullmatch(item) for item in images))
         require(len(volumes) <= 64 and all(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', item) for item in volumes))
         return {'containers': sorted(containers), 'images': sorted(set(images)), 'volumes': sorted(volumes)}
 
     def inspect_container(self, cid):
         require(HEX64.fullmatch(cid) is not None)
-        details = parse(self.run([*self.docker, 'container', 'inspect', cid], timeout=15))
+        details = parse(self.run([*self.docker, 'container', 'inspect', cid], timeout=15, operation='container-inspect'))
         require(isinstance(details, list) and len(details) == 1 and details[0].get('Id') == cid)
         return details[0]
 
