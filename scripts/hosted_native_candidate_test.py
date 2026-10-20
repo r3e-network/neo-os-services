@@ -497,6 +497,119 @@ class Controls(unittest.TestCase):
             except Exception as error: return c.failure_receipt(error, env), state
         self.fail('synthetic execute unexpectedly published')
 
+    def payload_case(self):
+        spec = importlib.util.spec_from_file_location('payload_fixture', c.ROOT/'scripts/lib/dual_build_payload_diagnostics_test.py')
+        fixtures = importlib.util.module_from_spec(spec); spec.loader.exec_module(fixtures)
+        helper = fixtures.module(c.ROOT/'scripts/lib/dual_build_payload_diagnostics.py', 'payload_helper')
+        captures = []; builds = []
+        for i, data in enumerate((b'one', b'two')):
+            raw, pcrs = fixtures.eif_fixture([{'name':b'PRIVATE_PATH_CANARY','data':data}])
+            path = self.root/('fixture-'+str(i)+'.eif');path.write_bytes(raw)
+            digest = c.sha(raw); captures.append(helper.capture(path,pcrs,digest))
+            builds.append({'image_id':'sha256:'+'a'*64,'pcrs':pcrs,'eif_sha256':digest})
+        return builds, helper.frame(captures).encode()+b'\n'
+
+    def test_payload_comparison_actual_child_receipt(self):
+        builds, payload = self.payload_case()
+        receipt,state = self.diagnostic_execute('payload-child', child_program(build_line(builds)+payload+frame_line(measurement_failure())))
+        self.assertTrue(state['business'])
+        self.assertIn('business_payload_comparison',receipt)
+        detail = receipt['business_payload_comparison']
+        self.assertEqual(detail['status'],'complete')
+        self.assertEqual(detail['comparison']['counts']['content'],1)
+        self.assertEqual([x['eif_sha256'] for x in detail['attempts']],[x['eif_sha256'] for x in builds])
+        self.assertEqual(receipt['exit_code'],7);self.assertFalse(receipt['artifact_admitted'])
+        self.assertEqual(receipt['business_failure'],measurement_failure())
+        self.assertIs(receipt['outer_cleanup_failed'],False)
+        self.assertNotIn('PRIVATE_PATH_CANARY',json.dumps(receipt))
+        self.assertLessEqual(len(json.dumps(receipt).encode()),16384)
+        error=c.BusinessCommandFailure(7,build_line(builds)+payload+frame_line(measurement_failure()))
+        # Even an internal optional-detail regression cannot expand the public envelope.
+        error.payload_comparison={'internal':'x'*16384}
+        bounded=c.failure_receipt(error,environment())
+        self.assertNotIn('business_payload_comparison',bounded)
+        self.assertEqual(bounded['business_failure'],measurement_failure())
+        self.assertEqual(bounded['exit_code'],7)
+
+    def test_payload_optional_negative_frames_preserve_primary_and_cleanup(self):
+        builds,line=self.payload_case();value=json.loads(line.split(b' ',1)[1])
+        bad_values=[None,{},[],True,{**value,'extra':'PRIVATE_CANARY'},{**value,'schema':'unknown'},
+                    {**value,'status':'unknown'},{'schema':value['schema'],'status':'unavailable','extra':1}]
+        def changed(path, item):
+            bad=copy.deepcopy(value);target=bad
+            for part in path[:-1]:target=target[part]
+            target[path[-1]]=item;bad_values.append(bad)
+        for path,items in [
+            (('attempts',),[[],value['attempts'][:1],value['attempts']*2]),
+            (('attempts',0,'eif_sha256'),['0'*64,None,True]),
+            (('attempts',0,'sections'),[{},None]),
+            (('attempts',0,'sections','customer'),[{}, {'bytes':1,'sha256':'A'*64}]),
+            (('attempts',0,'sections','customer','bytes'),[True,-1,2**64]),
+            (('attempts',0,'cpio','entries'),[True,-1,65537]),
+            (('attempts',0,'cpio','payload_sha256'),['CANARY','A'*64]),
+            (('comparison','counts','content'),[True,-1,65537]),
+            (('comparison','counts','added'),[1]),
+            (('comparison','samples'),[value['comparison']['samples']*9]),
+            (('comparison','samples',0,'label'),['PRIVATE_CANARY','cmd']),
+            (('comparison','samples',0,'path_sha256'),['A'*64,'canary']),
+            (('comparison','samples',0,'occurrence'),[True,-1,65536]),
+            (('comparison','samples',0,'changes'),[[],['CANARY'],['added','content'],['content','content']]),
+            (('comparison','unclassified_customer_bytes'),[True,0,None]),
+        ]:
+            for item in items:changed(path,item)
+        invalid=[b'',b'BUILD-PAYLOAD-DIAGNOSTIC CANARY\n',line+line,b' '+line,b'CANARY '+line,
+                 line.replace(b'"schema":',b'"schema":"bad","schema":',1),
+                 line.replace(b'"entries":1',b'"entries":NaN',1),
+                 b'BUILD-PAYLOAD-DIAGNOSTIC '+b' '*8193+b'{}\n',
+                 b'BUILD-PAYLOAD-DIAGNOSTIC '+b'['*1500+b']'*1500+b'\n']
+        invalid += [b'BUILD-PAYLOAD-DIAGNOSTIC '+json.dumps(x).encode()+b'\n' for x in bad_values]
+        for inner in (False,True):
+            frame=measurement_failure();frame['cleanup_failed']=inner
+            for outer in (False,True):
+                for index,data in enumerate(invalid):
+                    with self.subTest(inner=inner,outer=outer,index=index):
+                        error=c.BusinessCommandFailure(7,build_line(builds)+data+frame_line(frame))
+                        error.outer_cleanup_failed=outer
+                        receipt=c.failure_receipt(error,environment())
+                        self.assertNotIn('business_payload_comparison',receipt)
+                        self.assertEqual(receipt['business_failure'],frame)
+                        self.assertIs(receipt['outer_cleanup_failed'],outer)
+                        self.assertEqual(receipt['exit_code'],7);self.assertFalse(receipt['artifact_admitted'])
+                        self.assertNotIn('CANARY',json.dumps(receipt))
+        for key,item in [('stage','image-build'),('attempt',1),('kind','timeout')]:
+            frame=measurement_failure();frame['primary'][key]=item
+            receipt=c.failure_receipt(c.BusinessCommandFailure(7,build_line(builds)+line+frame_line(frame)),environment())
+            self.assertNotIn('business_payload_comparison',receipt)
+        for stderr in (line+frame_line(measurement_failure()),line+build_line(builds)+frame_line(measurement_failure()),build_line(builds)+frame_line(measurement_failure())+line):
+            self.assertNotIn('business_payload_comparison',c.failure_receipt(c.BusinessCommandFailure(7,stderr),environment()))
+        unavailable=b'BUILD-PAYLOAD-DIAGNOSTIC '+json.dumps({'schema':value['schema'],'status':'unavailable'}).encode()+b'\n'
+        receipt=c.failure_receipt(c.BusinessCommandFailure(7,build_line(builds)+unavailable+frame_line(measurement_failure())),environment())
+        self.assertNotIn('business_payload_comparison',receipt)
+        self.assertFalse(receipt['artifact_admitted'])
+
+    def test_payload_actual_child_cleanup_and_unrelated_success_never_admit(self):
+        builds,line=self.payload_case();frame=measurement_failure();frame['cleanup_failed']=True
+        stderr=build_line(builds)+line+frame_line(frame)
+        r=self.runner();r.resources=Mock();real_stop=c.stop_process
+        def cleanup(process):
+            real_stop(process);raise PermissionError('PRIVATE_CANARY')
+        c.phase('business-build')
+        with patch.object(c,'stop_process',side_effect=cleanup):
+            with self.assertRaises(c.BusinessCommandFailure) as failed:
+                r.run([sys.executable,'-B','-c',child_program(stderr)],tool='python',business_diagnostic=True)
+        receipt=c.failure_receipt(failed.exception,environment())
+        self.assertIn('business_payload_comparison',receipt)
+        self.assertEqual(receipt['business_failure'],frame);self.assertIs(receipt['outer_cleanup_failed'],True)
+        self.assertEqual(receipt['exit_code'],7);self.assertFalse(receipt['artifact_admitted'])
+        self.assertNotIn('PRIVATE_CANARY',json.dumps(receipt))
+        with self.assertRaises(c.CommandFailure) as unrelated:
+            r.run([sys.executable,'-B','-c',child_program(stderr)],tool='python')
+        self.assertNotIn('business_payload_comparison',c.failure_receipt(unrelated.exception,environment()))
+        with patch.object(c,'business_payload_comparison',side_effect=AssertionError('must not parse success')):
+            self.assertEqual(r.run([sys.executable,'-B','-c',child_program(stderr,0)],tool='python',business_diagnostic=True),b'')
+        next_error=c.BusinessCommandFailure(7,frame_line(frame))
+        self.assertNotIn('business_payload_comparison',c.failure_receipt(next_error,environment()))
+
     def test_measurement_comparison_actual_execute_failure(self):
         values = build_vectors(); frame = measurement_failure()
         receipt, state = self.diagnostic_execute('comparison-child', child_program(

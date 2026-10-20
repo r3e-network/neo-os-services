@@ -648,6 +648,17 @@ def owned_container(docker_args, env, reservation):
     return ids[0]
 
 
+def payload_diagnostics():
+    # Optional data-only diagnostics; load lazily so prepare/public-input validation
+    # remains independent of the EIF reader and never launches additional tools.
+    import importlib.util
+    path = Path(__file__).resolve().parents[2] / 'scripts/lib/dual_build_payload_diagnostics.py'
+    spec = importlib.util.spec_from_file_location('dual_payload_diagnostics', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
     diagnostic_stage('canonical')
     tip = canonical(repo, manifest['git_commit'], env)
@@ -655,6 +666,13 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
     Path(env['NITRO_CLI_ARTIFACTS']).mkdir()
     docker_args = [docker, '--host', 'unix:///var/run/docker.sock']
     images, containers, evidence = [], [], []
+    payloads = []
+    try:
+        payload = payload_diagnostics()
+    except InterruptedError:
+        raise
+    except Exception:
+        payload = None
     builder = 'neoos-dual-' + uuid.uuid4().hex
     config = context.parent / 'buildkit.toml'
     config.write_text('[worker.oci]\n  max-parallelism = 1\n')
@@ -712,7 +730,11 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
                     hasher.update(block)
                 eif_digest = hasher.hexdigest()
             evidence.append({'image_id': image_id, 'pcrs': pcrs, 'eif_sha256': eif_digest})
+            # Capture before the next Nitro call; only public hashes leave this process.
+            payloads.append(payload.capture(eif, pcrs, eif_digest) if payload is not None else None)
         print('BUILD-EVIDENCE ' + json.dumps(evidence, sort_keys=True), file=__import__('sys').stderr)
+        if payload is not None:
+            print(payload.frame(payloads), file=__import__('sys').stderr)
         diagnostic_stage('measurements')
         require(evidence[0]['pcrs'] == evidence[1]['pcrs'], 'independent builds are not reproducible')
         result = {**manifest, 'schema': 'neoos/dual-image-build-evidence/v1', 'status': 'measured-candidate; independent review and release admission required', 'canonical_main': tip, 'hash_algorithm': 'SHA384', 'reproducible_verified': True, 'builds': evidence}

@@ -229,6 +229,29 @@ def business_build_comparison(stderr, detail):
         return None
 
 
+def business_payload_comparison(stderr, comparison):
+    # A validated existing comparison supplies the ordered EIF bindings and the
+    # measurements/attempt2/validation context. Invalid optional data is dropped.
+    if comparison is None:
+        return None
+    prefix = b'BUILD-PAYLOAD-DIAGNOSTIC '
+    try:
+        require(len(stderr) <= CAPTURE_LIMIT and stderr.count(prefix) == 1)
+        lines = [line for line in stderr.splitlines() if line.strip()]
+        frames = [line[len(prefix):] for line in lines[:-1] if line.startswith(prefix)]
+        require(len(frames) == 1 and len(frames[0]) <= 8192)
+        require(next(i for i,line in enumerate(lines) if line.startswith(BUILD_EVIDENCE_PREFIX))
+                < next(i for i,line in enumerate(lines) if line.startswith(prefix)))
+        # Keep public-input and prepare-only imports independent of this helper.
+        spec = importlib.util.spec_from_file_location('hosted_payload_diagnostics', ROOT/'scripts/lib/dual_build_payload_diagnostics.py')
+        helper = importlib.util.module_from_spec(spec); spec.loader.exec_module(helper)
+        return helper.validate(parse(frames[0]), comparison['builds'])
+    except InterruptedError:
+        raise
+    except Exception:
+        return None
+
+
 class BusinessCommandFailure(CommandFailure):
     def __init__(self, code, stderr):
         super().__init__('command_failed')
@@ -237,6 +260,7 @@ class BusinessCommandFailure(CommandFailure):
         # No raw stderr is retained on the exception or in the public receipt.
         self.detail = business_failure_detail(stderr)
         self.comparison = business_build_comparison(stderr, self.detail)
+        self.payload_comparison = business_payload_comparison(stderr, self.comparison)
 
 
 def failure_receipt(error, env):
@@ -263,11 +287,16 @@ def failure_receipt(error, env):
             result['business_failure'] = error.detail
         if error.comparison is not None:
             result['business_comparison'] = error.comparison
+        if error.payload_comparison is not None:
+            result['business_payload_comparison'] = error.payload_comparison
     for key, pattern in (('CANDIDATE_SOURCE_SHA', HEX40), ('GITHUB_WORKFLOW_SHA', HEX40),
                          ('GITHUB_RUN_ID', re.compile(r'[1-9][0-9]{0,19}')),
                          ('GITHUB_RUN_ATTEMPT', re.compile(r'[1-9][0-9]{0,19}'))):
         if pattern.fullmatch(env.get(key, '')):
             result[key.lower()] = env[key]
+    # The complete public receipt stays bounded; only optional detail is dropped.
+    if 'business_payload_comparison' in result and len(json.dumps(result).encode()) > 16384:
+        del result['business_payload_comparison']
     return result
 
 
