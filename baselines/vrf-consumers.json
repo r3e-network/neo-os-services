@@ -1440,10 +1440,10 @@
           "sha256": "97ded8b2b1fc18f93b8fcbbabda9f51c6447881fc8d07aba48376802779cd89e"
         },
         "scripts/hosted_native_candidate.py": {
-          "sha256": "b1370a49b8b6fe80cc1b74518c57d7792f36ea9675622377f7992b6a80bedce1"
+          "sha256": "a0613178078383fd0beeaa8166e2667ed6607d9e7e64d53dc7a14b4d120884a5"
         },
         "scripts/hosted_native_candidate_test.py": {
-          "sha256": "9017b7eedbbb46afd177617762ed32bd7f7f046d3a5ea54d0bc72c446955c474"
+          "sha256": "acb9e95399a3bb3f80772eadad32acb4bb85d6966610a1e34684571d08763a30"
         },
         "scripts/measured-candidate-workflow.test.mjs": {
           "sha256": "ea8d61efb5c5513fc7fca5f7092d8186ed47307df871414cbf67ba88a36e0ab5"
