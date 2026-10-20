@@ -49,7 +49,7 @@ neo-os-chain-evm = { path = "../../crates/neo-os-chain-evm" }
 neo-os-service-runtime = { path = "../../crates/neo-os-service-runtime" }
 nitro-attest = { path = "../../crates/nitro-attest" }
 p256 = { version = "0.13", features = ["ecdsa"] }
-prost = "0.13"
+prost = "0.14"
 rlp = "0.5"
 ripemd = "0.1"
 rusqlite = { version = "0.37", features = ["bundled", "backup", "serialize"] }
