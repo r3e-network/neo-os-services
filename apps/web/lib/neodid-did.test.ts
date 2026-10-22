@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
@@ -52,7 +53,15 @@ describe('NeoDID resolution metadata', () => {
     expect(first.body.didDocumentMetadata).toEqual(second.body.didDocumentMetadata);
     expect(first.body.didDocumentMetadata).not.toHaveProperty('deactivated');
     expect(first.body.didDocumentMetadata).not.toHaveProperty('updated');
-    expect(first.body.didDocument.service[0].serviceEndpoint).not.toContain('attacker.example');
-    expect(first.body.didDocument.service[0].serviceEndpoint).toContain('/api/neodid/resolve?did=');
+    const didDocument = first.body.didDocument;
+    assert(didDocument && typeof didDocument === 'object' && 'service' in didDocument);
+    assert(Array.isArray(didDocument.service));
+    const resolverService: unknown = didDocument.service[0];
+    assert(
+      resolverService && typeof resolverService === 'object' && 'serviceEndpoint' in resolverService
+    );
+    assert(typeof resolverService.serviceEndpoint === 'string');
+    expect(resolverService.serviceEndpoint).not.toContain('attacker.example');
+    expect(resolverService.serviceEndpoint).toContain('/api/neodid/resolve?did=');
   });
 });

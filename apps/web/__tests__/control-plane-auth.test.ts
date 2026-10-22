@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   isAuthorizedControlPlaneRequest,
   isAuthorizedWorkflowRequest,
@@ -43,6 +43,7 @@ describe('isAuthorizedControlPlaneRequest scope separation', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     for (const key of ENV_KEYS) {
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];
@@ -114,14 +115,14 @@ describe('isAuthorizedControlPlaneRequest scope separation', () => {
   });
 
   it('allows explicit legacy runtime compatibility only outside production', () => {
-    process.env.NODE_ENV = 'development';
+    vi.stubEnv('NODE_ENV', 'development');
     process.env.MORPHEUS_RUNTIME_TOKEN = 'runtime-token-secret';
     process.env.MORPHEUS_ALLOW_LEGACY_RUNTIME_CONTROL_PLANE = 'true';
     expect(
       isAuthorizedWorkflowRequest(makeRequest({ authorization: 'Bearer runtime-token-secret' }))
     ).toBe(true);
 
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
     expect(
       isAuthorizedWorkflowRequest(makeRequest({ authorization: 'Bearer runtime-token-secret' }))
     ).toBe(false);
