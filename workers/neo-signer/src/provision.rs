@@ -317,6 +317,34 @@ impl EnvelopePurpose {
     }
 }
 
+/// The complete measured custody binding shared by offline preparation and
+/// Recipient-bound Decrypt. Purpose is typed; callers cannot append overrides.
+pub fn custody_encryption_context(
+    profile: &ValidatedVaultProfile,
+    purpose: EnvelopePurpose,
+) -> [(String, String); 6] {
+    [
+        ("neoos:component".into(), "custody".into()),
+        (
+            "neoos:purpose".into(),
+            purpose.encryption_context()[1].1.into(),
+        ),
+        ("neoos:vault-id".into(), profile.document().vault_id.clone()),
+        (
+            "neoos:profile-sha256".into(),
+            hex::encode(profile.profile_hash()),
+        ),
+        (
+            "neoos:network-set-sha256".into(),
+            hex::encode(profile.network_set_hash()),
+        ),
+        (
+            "neoos:root-key-version".into(),
+            profile.document().root_key_version.clone(),
+        ),
+    ]
+}
+
 /// The enclave side of the route: the still-sealed vault plus the one gate it
 /// opens through. Held in `Arc` so the handler can clone it out of the router
 /// state and run the (blocking) release off the async workers.
@@ -379,24 +407,16 @@ fn release_envelope_with(
         ciphertext_b64,
         amz_date: &nitro_attest::kms::utc_amz_date_now(),
     };
-    let profile_hash = hex::encode(profile.profile_hash());
-    let network_set_hash = hex::encode(profile.network_set_hash());
-    let context = [
-        ("neoos:component", "custody"),
-        ("neoos:purpose", purpose.encryption_context()[1].1),
-        ("neoos:vault-id", profile.document().vault_id.as_str()),
-        ("neoos:profile-sha256", profile_hash.as_str()),
-        ("neoos:network-set-sha256", network_set_hash.as_str()),
-        (
-            "neoos:root-key-version",
-            profile.document().root_key_version.as_str(),
-        ),
-    ];
+    let context = custody_encryption_context(profile, purpose);
+    let context_refs: Vec<_> = context
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
     nitro_attest::release::release_bytes_with_context_and_key(
         source,
         transport,
         &params,
-        &context,
+        &context_refs,
         Some(profile.document().custody_kms_key_arn.as_str()),
     )
 }

@@ -1377,13 +1377,13 @@
       "consumer": "measured-testnet-genesis-authorization-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These production inputs are security-critical and authorize custody operations that can control value. Enrollment validates a fixed measured TestNet Admin manifest, exact profile/purpose and credential digest; provisioning defers purpose-separated attested credential release until authenticated genesis; store management atomically applies caller, key and policy changes with audit, checks full virgin state and validates historical enrollment on restore. They do not consume a VRF/random result to select an economic winner, payout recipient or amount. Credential generation, ciphertext nonces and commit identifiers are cryptographic security material, not economic-outcome randomness. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval.",
+      "justification": "These production inputs are security-critical and authorize custody operations that can control value. Enrollment validates a fixed measured TestNet Admin manifest, exact profile/purpose and credential digest; provisioning defers purpose-separated attested credential release until authenticated genesis; store management atomically applies caller, key and policy changes with audit, checks full virgin state and validates historical enrollment on restore. They do not consume a VRF/random result to select an economic winner, payout recipient or amount. Credential generation, ciphertext nonces and commit identifiers are cryptographic security material, not economic-outcome randomness. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval. The exact change exports and reuses the same six authenticated custody context fields for the three typed envelope purposes. It preserves Recipient-bound Decrypt signed request bytes, KeyId/region and native profile/network hashes; it does not consume VRF output or choose an economic winner, payout recipient or amount. This is security-critical custody authorization code that can control value. Non-value classifies economic VRF selection only and does not reduce that authority or admit custody/deployment. Independent exact source review: ce3ea721f3395dc7d731383fc92c7c89fc19eea3, tree12202454dcc2ce03ab5576955b2ec6ef881a49fd; verdict SHA256 c08b2bd127f500af640deb21522aed818e26e0e92a80b6b2d836eee821326df4.",
       "inputs": {
         "workers/neo-signer/src/enrollment.rs": {
           "sha256": "878b31bea50cc2ebe2e12bf9977dbf5fcb0c4f710d3cc48a9a43007b0c736b5d"
         },
         "workers/neo-signer/src/provision.rs": {
-          "sha256": "1c82f97858139de6a4f9a436903d8f0701fe0850907617397fd48cacf1e9c853"
+          "sha256": "65339cdfcdf49dadbe372c72a7ea50ddaddd2650b4adb1d6005af904c6496c27"
         },
         "workers/neo-signer/src/store/management.rs": {
           "sha256": "4ea2c9053a573fcdc3dfeb6d44980531b6ee26071e573045db05bb0d77d9b685"
@@ -1394,7 +1394,7 @@
       "consumer": "measured-testnet-genesis-regression-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These local fixtures exercise manifest/token/profile restrictions, complete virgin-state checks, audit rollback, real recovery/snapshot/receipt paths, strict provisioning and KMS purpose contexts using synthetic external interfaces and temporary databases. They do not broadcast, award economic value or consume VRF output for settlement. Tests of privileged paths do not downgrade the production authority or establish live custody readiness. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval.",
+      "justification": "These local fixtures exercise manifest/token/profile restrictions, complete virgin-state checks, audit rollback, real recovery/snapshot/receipt paths, strict provisioning and KMS purpose contexts using synthetic external interfaces and temporary databases. They do not broadcast, award economic value or consume VRF output for settlement. Tests of privileged paths do not downgrade the production authority or establish live custody readiness. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval. The exact local synthetic regressions compare the exported context with actual production request construction and exercise native profile mutations. They do not broadcast, grant live authority, settle value or consume VRF output for economic selection. Coverage of privileged paths does not lower the security-critical custody meaning of the production code. Focused tests do not establish full CI or live admission. Independent exact source review: ce3ea721f3395dc7d731383fc92c7c89fc19eea3, tree12202454dcc2ce03ab5576955b2ec6ef881a49fd; verdict SHA256 c08b2bd127f500af640deb21522aed818e26e0e92a80b6b2d836eee821326df4.",
       "inputs": {
         "workers/neo-signer/tests/unit/enrollment.rs": {
           "sha256": "4c983f258f740c9b9568040e4c037b6fecf8c217e6ee752803c835b5cf6ccc8e"
@@ -1403,7 +1403,7 @@
           "sha256": "bffae5ef38f13d9f683342a6d7921fe895acc893435bc0096def31a62790596a"
         },
         "workers/neo-signer/tests/unit/provision.rs": {
-          "sha256": "34e1786b9e1e6afba65c5828ece6618869fe0f95a0682506ff4f5ce5a791d4b6"
+          "sha256": "0101746f1b26a29b3dfd49eee4ae8765c77128d0b158845b180f07f4e20d3243"
         }
       }
     },
@@ -1614,6 +1614,17 @@
       "inputs": {
         "scripts/check-nitro-measurements.test.mjs": {
           "sha256": "61cc0c22296f98c323efb36fa7ebdc372ed44ec77703b9761db2d66b52554cb6"
+        }
+      }
+    },
+    {
+      "consumer": "testnet-preseal-custody-material-preparation-example",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "This exact standalone operator example prepares a new Testnet root and two distinct authentication credentials, derives privileged first-Admin enrollment/public profile bindings, and later constructs three purpose-separated KMS Encrypt requests. Its randomness is cryptographic custody/authentication material, not a VRF/random result used to choose an economic winner, payout recipient or amount. It is security-critical and can establish control over value; non-value classifies economic-VRF selection only. It is outside runtime startup and does not apply enrollment or publish grants. Independent exact source GO covers ce3ea721f3395dc7d731383fc92c7c89fc19eea3, tree12202454dcc2ce03ab5576955b2ec6ef881a49fd, verdict SHA256 c08b2bd127f500af640deb21522aed818e26e0e92a80b6b2d836eee821326df4, including original private-FD inode closure, externally pinned preparation receipt/substitution, completion-last real-I/O failures, strict dual Testnet/N3 identity and signed Decrypt byte parity. This binding does not authorize material generation, Encrypt, enrollment, permissions changes, source integration, full CI, measurement, custody release, deployment or live/runtime admission. Existing custody expiry and pin/manifest gates remain unchanged.",
+      "inputs": {
+        "workers/neo-signer/examples/prepare_testnet_material.rs": {
+          "sha256": "98b275e2ac38e310874b9e1b96c416a0bb0749cced7ee6a4610ddeff80f6aaac"
         }
       }
     }

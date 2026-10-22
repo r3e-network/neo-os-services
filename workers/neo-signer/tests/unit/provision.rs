@@ -423,7 +423,56 @@ fn production_release_sends_fixed_context_for_each_purpose_without_legacy_fallba
             })
         );
         assert_eq!(calls[0]["KeyId"], profile.document().custody_kms_key_arn);
+        let exported: serde_json::Map<String, serde_json::Value> =
+            custody_encryption_context(&profile, purpose)
+                .into_iter()
+                .map(|(key, value)| (key, serde_json::Value::String(value)))
+                .collect();
+        assert_eq!(
+            exported.len(),
+            6,
+            "offline seal must export exactly the actual Decrypt context"
+        );
+        assert_eq!(
+            serde_json::Value::Object(exported),
+            calls[0]["EncryptionContext"]
+        );
         assert_eq!(calls[0]["CiphertextBlob"], "legacy-or-mismatched-envelope");
+    }
+    Ok(())
+}
+
+#[test]
+fn exported_custody_context_binds_the_validated_profile_without_a_network_override() -> Result<()> {
+    let profile = crate::vault_profile::test_profile(RELEASED_MASTER_KEY);
+    let original = custody_encryption_context(&profile, EnvelopePurpose::FirstAdmin);
+    assert_eq!(original[0], ("neoos:component".into(), "custody".into()));
+    assert_eq!(
+        original[1],
+        ("neoos:purpose".into(), "first-admin/v1".into())
+    );
+    assert!(!original.iter().any(|(key, _)| key == "neoos:network"));
+    for field in ["vault", "root-version", "network", "policy", "key"] {
+        let mut document = profile.document().clone();
+        match field {
+            "vault" => document.vault_id = "fe".repeat(16),
+            "root-version" => document.root_key_version = "root-new".into(),
+            "network" => document.networks[0].genesis_hash = format!("0x{}", "a1".repeat(32)),
+            "policy" => document.release_policy_version = "policy-new".into(),
+            "key" => {
+                document.custody_kms_key_arn =
+                    "arn:aws:kms:us-east-1:123456789012:key/different".into()
+            }
+            _ => unreachable!(),
+        }
+        let changed = document.validate()?;
+        let context = custody_encryption_context(&changed, EnvelopePurpose::FirstAdmin);
+        assert_ne!(
+            original[3].1, context[3].1,
+            "every destination mutation must change native profile binding"
+        );
+        assert_eq!(context[3].1, hex::encode(changed.profile_hash()));
+        assert_eq!(context[4].1, hex::encode(changed.network_set_hash()));
     }
     Ok(())
 }
