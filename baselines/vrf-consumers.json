@@ -1560,6 +1560,23 @@
           "sha256": "3965010216b813860c8891aaa3d6a8c629ccf2bdfe2e079c890d55d1195b0058"
         }
       }
+    },
+    {
+      "consumer": "reviewed-web-test-typing-inputs",
+      "owner": "services lead",
+      "classification": "non-value",
+      "justification": "Exact three-file Web test typing candidate b99d8dcc109d56864258e2b3b005ddbb09e142c0, tree ca842999b285e764a66ab4215b5a877db47ad407: synthetic authorization boolean tests and cleanup, retired-route filesystem absence assertions, and mocked DID metadata/endpoint tests. Independently classified as non-value for VRF economic review of these test bytes only; no VRF random output, wager, winner, prize, payout or settlement selection is implemented or consumed here. This classification is a separate review from source GO and does not classify imported production implementations, grant runtime/native/measurement/custody/deployment authority, renew deadlines/debt, or waive future changed bytes. The gate conservatively selects all three changed .ts inputs under --base despite no VRF marker.",
+      "inputs": {
+        "apps/web/__tests__/control-plane-auth.test.ts": {
+          "sha256": "701f841801dd0044b2ecd6fd8311c87ed6d7e8a27b3872bd1ccbfa1789986027"
+        },
+        "apps/web/__tests__/retired-game-routes.test.ts": {
+          "sha256": "843882d912941a7a9da3525b4f780a3201281201d31034bb48e36cf08ef3e8e6"
+        },
+        "apps/web/lib/neodid-did.test.ts": {
+          "sha256": "d6eb9d59a7d2aa1be007060feeee6affb358052320ed75160206970898bccf36"
+        }
+      }
     }
   ]
 }
