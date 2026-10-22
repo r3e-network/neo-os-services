@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import http from 'node:http';
-import { writeFileSync, mkdtempSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -142,5 +142,56 @@ test('the committed production allow-list parses and includes the core providers
   assert.ok(set.size >= 10, 'production allow-list should have the full provider set');
   for (const host of ['api.twelvedata.com:443', 'api1.binance.com:443', 'api.coinbase.com:443']) {
     assert.equal(set.has(host), true, `${host} must be allow-listed`);
+  }
+});
+
+test('the default allow-list covers the exact public-quorum HTTPS destinations', () => {
+  const set = loadAllowlist(
+    fileURLToPath(new URL('./vsock-proxy.allowlist.yaml', import.meta.url))
+  );
+  const source = readFileSync(
+    new URL('../../workers/nitro-enclave-host/src/feed_public_quorum.rs', import.meta.url),
+    'utf8'
+  );
+  const hosts = [...new Set([...source.matchAll(/https:\/\/([a-z0-9.-]+)\//g)].map((m) => m[1]))];
+  assert.deepEqual(hosts.sort(), ['api.coinbase.com', 'api.coingecko.com', 'api1.binance.com']);
+  for (const host of hosts) {
+    assert.equal(set.has(`${host}:443`), true, `${host}:443 must be allow-listed`);
+  }
+  assert.deepEqual(
+    [...set].filter((target) => target.includes('coingecko')),
+    ['api.coingecko.com:443']
+  );
+});
+
+test('the default proxy refuses CoinGecko lookalikes and other ports without connecting', async (t) => {
+  const allowlist = loadAllowlist(
+    fileURLToPath(new URL('./vsock-proxy.allowlist.yaml', import.meta.url))
+  );
+  let connections = 0;
+  const originalConnect = net.connect;
+  t.mock.method(net, 'connect', (options, ...args) => {
+    if (options.host === '127.0.0.1' || (typeof options === 'number' && args[0] === '127.0.0.1')) {
+      return originalConnect.call(net, options, ...args);
+    }
+    connections += 1;
+    throw new Error('unlisted targets must not connect');
+  });
+  const proxy = createProxyServer({ allowlist });
+  try {
+    const port = await listen(proxy);
+    for (const target of [
+      'api.coingecko.com:80',
+      'api.coingecko.com:444',
+      'coingecko.com:443',
+      'api.coingecko.com.evil.invalid:443',
+      'evil-api.coingecko.com:443',
+    ]) {
+      const { statusLine } = await connectThroughProxy(port, target);
+      assert.match(statusLine, /\s403\s/, target);
+    }
+    assert.equal(connections, 0);
+  } finally {
+    proxy.close();
   }
 });

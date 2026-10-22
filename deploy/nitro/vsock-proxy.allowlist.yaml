@@ -32,6 +32,7 @@ allowlist:
   - { address: api.twelvedata.com, port: 443 } # providers.js:490 (TWELVEDATA_API_KEY)
   - { address: api1.binance.com, port: 443 } # providers.js:521 (binance-spot default base)
   - { address: api.coinbase.com, port: 443 } # providers.js:541 (coinbase-spot)
+  - { address: api.coingecko.com, port: 443 } # feed_public_quorum.rs (coingecko)
 
   # --- Neo N3 RPC + indexer ---
   - { address: api.n3index.dev, port: 443 } # relayer/config.js:24,32,469 (RPC + indexer; live box)

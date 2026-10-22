@@ -45,6 +45,19 @@ key, snapshot body, token, AWS credential or arbitrary environment map is accept
 No production fixture is supplied. Tests use synthetic commitments and a public
 P-256 generator point; they do not create a production identity or durable state.
 
+Each network may also declare `feed_price_plane`, exactly `twelvedata` or
+`public-quorum`. An omitted field preserves the existing generated map and the
+host's TwelveData default. A present empty, non-string or unknown value is
+refused. For key-free prices on both networks, declare
+`"feed_price_plane": "public-quorum"` in each network entry. Preparation writes
+that selection as `FEED_PRICE_PLANE` in that network's measured map; the
+independent release validator reconstructs and compares the same map. Global
+environment values and runtime provisioning cannot supply this selection.
+The default host egress allowlist includes the three fixed public-quorum hosts
+on port 443, including `api.coingecko.com`; redirects and unknown destinations
+remain refused. Changed context/map bytes require fresh measured release
+evidence and admission. Preparation or synthetic tests do not provide either.
+
 The generated map fixes profile paths at `/app/config/custody/{network}.json`,
 data at `/var/lib/neoos-custody/{network}`, and internal transport at
 `http://127.0.0.1:0/{network}`. It supplies reviewed role/RPC/KMS anchors separately

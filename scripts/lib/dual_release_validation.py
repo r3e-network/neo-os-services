@@ -265,7 +265,12 @@ def validate_public_inputs(docs, source_files):
     for network in NETWORKS:
         spec = value['networks'][network]
         spec_fields = ('profile_file', 'profile_sha256', 'workload_audience', 'roles', 'neo_n3_rpc', 'neo_x_rpc', 'frontier_kms_key_arn', 'aws_region')
-        public_fields(spec, spec_fields + (('enrollment',) if type(spec) is dict and 'enrollment' in spec else ()))
+        public_fields(spec, spec_fields + tuple(k for k in ('enrollment', 'feed_price_plane')
+                                               if type(spec) is dict and k in spec))
+        if 'feed_price_plane' in spec:
+            require(type(spec['feed_price_plane']) is str and
+                    spec['feed_price_plane'] in ('twelvedata', 'public-quorum'),
+                    'feed price plane must be twelvedata or public-quorum')
         require(spec['profile_file'] == network + '.json', 'profile file must be its network basename')
         profile = docs[network + '.json']
         digest(spec['profile_sha256'])
@@ -324,6 +329,8 @@ def validate_public_inputs(docs, source_files):
             'AWS_REGION': region,
             'FRONTIER_KMS_KEY_ARN': spec['frontier_kms_key_arn'],
         }
+        if 'feed_price_plane' in spec:
+            overlay['FEED_PRICE_PLANE'] = spec['feed_price_plane']
         if 'enrollment' in spec:
             enrollment = spec['enrollment']
             public_fields(enrollment, ('mode', 'manifest_file', 'manifest_sha256'))

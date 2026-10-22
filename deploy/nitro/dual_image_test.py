@@ -233,6 +233,59 @@ class Packaging(unittest.TestCase):
         self.assertNotIn('AWS_SECRET_ACCESS_KEY', self.env)
         self.assertNotIn('DOCKER_HOST', self.env)
 
+    def test_price_plane_selection_is_in_the_actual_generated_map(self):
+        choices = ({}, {'mainnet': 'public-quorum'}, {'testnet': 'public-quorum'},
+                   {'mainnet': 'twelvedata', 'testnet': 'public-quorum'},
+                   {'mainnet': 'public-quorum', 'testnet': 'public-quorum'})
+        for i, selected in enumerate(choices):
+            with self.subTest(selected=selected):
+                for network in dual.NETWORKS:
+                    self.input['networks'][network].pop('feed_price_plane', None)
+                    if network in selected:
+                        self.input['networks'][network]['feed_price_plane'] = selected[network]
+                self.write()
+                with patch.dict(os.environ, {'FEED_PRICE_PLANE': 'ambient-must-not-inherit'}):
+                    manifest = self.stage('price-plane-' + str(i))
+                context = self.root / ('price-plane-' + str(i))
+                raw = (context / 'public/network-profiles.json').read_bytes()
+                mapping = json.loads(raw)
+                for network in dual.NETWORKS:
+                    if network in selected:
+                        self.assertEqual(mapping[network]['FEED_PRICE_PLANE'], selected[network])
+                    else:
+                        self.assertNotIn('FEED_PRICE_PLANE', mapping[network])
+                self.assertEqual(manifest['map_sha256'], dual.sha(raw))
+                self.assertEqual(manifest['files']['public/network-profiles.json'], dual.sha(raw))
+                self.assertIn('ENV MORPHEUS_NETWORK_PROFILES_JSON=' + json.dumps(raw.decode().strip()),
+                              (context / 'Dockerfile').read_text())
+                if not selected:
+                    self.assertNotIn(b'FEED_PRICE_PLANE', raw)
+
+    def test_price_plane_present_values_are_strict_and_refuse_before_publication(self):
+        for network in dual.NETWORKS:
+            for i, value in enumerate((None, False, True, 0, 1, [], {}, '', ' ',
+                                       'PUBLIC-QUORUM', ' public-quorum', 'public-quorum ',
+                                       'public_quorum', 'unknown')):
+                with self.subTest(network=network, value=value):
+                    self.input['networks'][network]['feed_price_plane'] = value
+                    self.write()
+                    name = 'bad-plane-' + network + '-' + str(i)
+                    with self.assertRaises(ValueError):
+                        self.stage(name)
+                    self.assertFalse((self.root / name).exists())
+            del self.input['networks'][network]['feed_price_plane']
+
+    def test_price_plane_duplicate_field_is_not_last_value_wins(self):
+        self.input['networks']['mainnet']['feed_price_plane'] = 'public-quorum'
+        self.write()
+        raw = self.input_path.read_bytes().replace(b'"feed_price_plane":"public-quorum"',
+            b'"feed_price_plane":"twelvedata","feed_price_plane":"public-quorum"')
+        self.input_path.write_bytes(raw)
+        self.hash = dual.sha(raw)
+        with self.assertRaisesRegex(ValueError, 'duplicate JSON field'):
+            self.stage('duplicate-plane')
+        self.assertFalse((self.root / 'duplicate-plane').exists())
+
     def test_actual_cli_rejects_unverified_and_wrong_input_digest(self):
         base=['python3',str(HERE/'build-dual-enclave.py'),'prepare','--repo',str(self.repo),'--input',str(self.input_path),'--input-sha256',self.hash,'--output',str(self.root/'out')]
         self.assertEqual(subprocess.run(base, capture_output=True, env=self.env).returncode,0)
@@ -752,6 +805,9 @@ m.build(root / 'source', root / 'context', manifest, root / 'result', m.safe_env
             if '{{json .Config.Env}}' in a:
                 m=(context/'public/network-profiles.json').read_text().strip()
                 if fault=='runtime-map':m='{}'
+                if fault=='runtime-price-plane':
+                    mapping=json.loads(m);mapping['testnet']['FEED_PRICE_PLANE']='twelvedata'
+                    m=dual.encoded(mapping).decode().strip()
                 return dual.encoded(['NODE_ENV=production','MORPHEUS_ATTESTED_BOOT=require','MORPHEUS_ALLOW_EPHEMERAL_KEY=0','MORPHEUS_NETWORK_PROFILES_JSON='+m])
             if 'build-enclave' in a or 'describe-eif' in a:
                 if 'build-enclave' in a:Path(a[-1]).write_bytes(b'synthetic EIF control '+str(counter).encode())
@@ -769,6 +825,26 @@ m.build(root / 'source', root / 'context', manifest, root / 'result', m.safe_env
         self.enable_enrollment()
         result, _ = self.simulate()
         self.assertIn('public/custody/testnet-enrollment.json', result['files'])
+
+    def test_selected_price_planes_survive_recorded_image_readback(self):
+        for network in dual.NETWORKS:
+            self.input['networks'][network]['feed_price_plane'] = 'public-quorum'
+        self.write()
+        result, calls = self.simulate()
+        raw = (self.root / 'context/public/network-profiles.json').read_bytes()
+        mapping = json.loads(raw)
+        self.assertEqual({n: mapping[n]['FEED_PRICE_PLANE'] for n in dual.NETWORKS},
+                         {'mainnet': 'public-quorum', 'testnet': 'public-quorum'})
+        self.assertEqual(result['map_sha256'], dual.sha(raw))
+        self.assertEqual(len([a for a in calls if '{{json .Config.Env}}' in a]), 2)
+
+    def test_selected_price_plane_image_substitution_refuses_publication(self):
+        for network in dual.NETWORKS:
+            self.input['networks'][network]['feed_price_plane'] = 'public-quorum'
+        self.write()
+        with self.assertRaisesRegex(ValueError, 'image runtime map differs from measured map'):
+            self.simulate('runtime-price-plane')
+        self.assertFalse((self.root / 'result').exists())
 
     def test_enrollment_export_substitution_refuses_publication(self):
         self.enable_enrollment()

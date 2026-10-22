@@ -61,7 +61,7 @@ def packaging_module():
 
 
 def fixture(mutate_public=None, enrollment=False, mutate_enrollment=None,
-            enrollment_encoder=v.encoded, cross=False):
+            enrollment_encoder=v.encoded, cross=False, price_planes=None):
     # Reuse recorded public PCRs, never invent or register production measurements.
     old = v.parse((ROOT / 'deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.10.json').read_bytes())
     source = {p: ('100644', b'unit fixture only\n') for p in (*v.SOURCE_FILES, *v.RECIPE_FILES)}
@@ -80,6 +80,9 @@ def fixture(mutate_public=None, enrollment=False, mutate_enrollment=None,
     prefix = 'deploy/nitro/releases/' + release + '/'
     profiles, specs, overlays = public_fixture(source)
     spec = {'schema': 'neoos/dual-image-input/v1', 'release': release, 'source_commit': 'a'*40, 'networks': specs}
+    for network, plane in (price_planes or {}).items():
+        specs[network]['feed_price_plane'] = plane
+        overlays[network]['FEED_PRICE_PLANE'] = plane
     enrollment_docs = {}
     if enrollment:
         profile = v.parse(profiles['testnet'])
@@ -200,9 +203,14 @@ class Validation(unittest.TestCase):
                 self.files[name] = b''.join(chunks)
             def publish(self): self.published = True
         for cross in (False, True):
-            for enrollment in (False, True):
-                with self.subTest(cross=cross, enrollment=enrollment):
-                    m, files, source, evidence, context = fixture(enrollment=enrollment, cross=cross)
+            for enrollment, price_planes in ((enrollment, planes)
+                    for enrollment in (False, True)
+                    for planes in ({}, {'mainnet': 'public-quorum'}, {'testnet': 'public-quorum'},
+                                   {'mainnet': 'twelvedata', 'testnet': 'public-quorum'},
+                                   {'mainnet': 'public-quorum', 'testnet': 'public-quorum'})):
+                with self.subTest(cross=cross, enrollment=enrollment, price_planes=price_planes):
+                    m, files, source, evidence, context = fixture(enrollment=enrollment,
+                        cross=cross, price_planes=price_planes)
                     packaging = packaging_module()
                     publication = Publication()
                     with tempfile.TemporaryDirectory() as directory:
@@ -228,6 +236,36 @@ class Validation(unittest.TestCase):
                     rebind_context(m, files, evidence, actual)
                     self.assertEqual(v.validate_bundle(v.encoded(m), files, source), m)
                     self.assertEqual(len(m['public_bundle_files']), 8 if enrollment else 7)
+
+    def test_price_plane_independent_validator_accepts_explicit_network_choices(self):
+        for selected in ({}, {'mainnet': 'public-quorum'}, {'testnet': 'public-quorum'},
+                         {'mainnet': 'twelvedata', 'testnet': 'public-quorum'},
+                         {'mainnet': 'public-quorum', 'testnet': 'public-quorum'}):
+            m, files, source, _, _ = fixture(price_planes=selected)
+            with self.subTest(selected=selected):
+                self.assertEqual(v.validate_bundle(v.encoded(m), files, source), m)
+
+    def test_price_plane_independent_validator_refuses_present_invalid_values(self):
+        for network in v.NETWORKS:
+            for value in (None, False, True, 0, 1, [], {}, '', ' ', 'PUBLIC-QUORUM',
+                          ' public-quorum', 'public-quorum ', 'public_quorum', 'unknown'):
+                m, files, source, _, _ = fixture(price_planes={network: value})
+                with self.subTest(network=network, value=value), self.assertRaises(ValueError):
+                    v.validate_bundle(v.encoded(m), files, source)
+
+    def test_price_plane_map_substitution_refuses_after_every_outer_hash_is_updated(self):
+        for action in ('missing', 'wrong', 'swapped', 'ambient'):
+            def mutate(s, p, overlays, source):
+                if action == 'missing': del overlays['mainnet']['FEED_PRICE_PLANE']
+                elif action == 'wrong': overlays['mainnet']['FEED_PRICE_PLANE'] = 'twelvedata'
+                elif action == 'swapped':
+                    overlays['mainnet']['FEED_PRICE_PLANE'], overlays['testnet']['FEED_PRICE_PLANE'] = (
+                        overlays['testnet']['FEED_PRICE_PLANE'], overlays['mainnet']['FEED_PRICE_PLANE'])
+                else: overlays['mainnet']['FEED_PRICE_PLANE'] = 'ambient-must-not-inherit'
+            m, files, source, _, _ = fixture(mutate_public=mutate,
+                price_planes={'mainnet': 'public-quorum', 'testnet': 'twelvedata'})
+            with self.subTest(action=action), self.assertRaisesRegex(ValueError, 'exact generated network map'):
+                v.validate_bundle(v.encoded(m), files, source)
 
     def test_enrollment_bundle_matches_actual_builder_public_outputs(self):
         m, files, source, _, context = fixture(enrollment=True)
