@@ -359,10 +359,10 @@
       "consumer": "package-lock.json",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Locked development dependency metadata adds the TOML parser used by the crypto-ownership gate, with its exact version and integrity. It defines no random-output economic allocation. This classification covers the lock metadata only, not the security of all resolved implementations or permission to deploy them.",
+      "justification": "Locked development dependency metadata adds the TOML parser used by the crypto-ownership gate, with its exact version and integrity. It defines no random-output economic allocation. This classification covers the lock metadata only, not the security of all resolved implementations or permission to deploy them. Development advisory update: the lock is bound to independent four-file source review of b1d421a9ad1729cc0b561ce60d1dd816890807cf, review SHA256 9363f60d2a898ad08a002e0c8754e4779a408ea4eb96ed1f0354b0591a94992b. All 428 production downloadable entries remain identical; the changed development dependency closure and version-floor tests grant no runtime package certification or deployment approval.",
       "inputs": {
         "package-lock.json": {
-          "sha256": "82c9e0b31bb902e5772081f6eda19914cd8711a717aa342e822d382b0f28d5a3"
+          "sha256": "8947b730c4e2ac795c7ddab4a9e9baa0afe839d76608dd32d1d4a10fc56e1269"
         }
       }
     },
@@ -1242,7 +1242,7 @@
           "sha256": "615fd6ce4103a1ea9d7e6ef4fdb391c5df767216dde9062b6bb8c9f2456c6c82"
         },
         "deploy/nitro/dual_image_test.py": {
-          "sha256": "41b3750c354364e38219b9d0c72936533ba5609d263eefcc570fdc2de85b5d76"
+          "sha256": "407a8d85974909e24e4c4a9b21f72776556f2785c3c131a7f7ddc06462ef8bf4"
         },
         "deploy/nitro/dual_prepare_test.py": {
           "sha256": "b1bc40146434f85e0cecc4cb9284fcea7464ba594bd0636f1259be30e65dd60e"
@@ -1256,16 +1256,16 @@
       "consumer": "dual-cross-packaging-r12-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These exact seven cross-packaging inputs are bound to the independent R12 source review at c4718c5; they select and validate the native cross-build path but do not draw VRF output, select an economic winner, award value or authorize settlement. This exact-file classification does not authorize deployment, replace PCR measurement evidence, or exempt identity, custody, transport security or downstream economic consumers. Genesis source update: Only build-dual-enclave.py and dual_cross_test.py bindings are refreshed here. They stage and verify exact manifest/profile/opt-in bytes across both image paths. This is a security-sensitive measured input chain, not a VRF economic consumer. Other members retain their prior exact bindings and scope. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval. Diagnostic-only update: the builder and its two regression-test inputs are bound to independent cumulative source review of 67ce0867900b7844231cffef6324b69992220115, verdict SHA256 1ea38c91eeac185ccd77088873a1fbc3076e65d61eb7f691a6cc00bb27cc48b8. These fixed-schema failure receipts do not change execution, custody, image admission or economic selection; all release and runtime gates remain required. Current diagnostic source bindings supersede earlier diagnostic digests and refer to independent six-file source review of 5875c4705e22a8656a5dd6065138d5c34e86bef1 (tree 0c8e077b2d2e251cd37e5bff429546f09d1d16c8; review SHA256 e40455f624b96fc3a0f39861b3d4e919f397297b19575846ee79116288bae997). The optional EIF/CPIO reader compares bounded hashes and metadata from already built files, binds them to existing measurements, and preserves the original refusal, cleanup flags and artifact admission gate. It neither consumes economic randomness nor authorizes custody operations. Security-sensitive validation remains subject to its existing reviews; this classification establishes no full CI, real EIF compatibility, dispatch, release or runtime approval. Layer-export reproducibility update: the builder selects the Docker exporter with timestamp rewriting at the existing fixed SOURCE_DATE_EPOCH; packaging tests and documentation are bound to independent source review of 3cfa5cbaf09e3a373d548834a33080aae7c7bf21 (tree 4a60bfddd151e6841e306cdb8e19dd20a15a479a; review SHA256 641cae3864f7e094d2be0411395707932d2273640c5426242fc3f4226d7096b2). This intentionally changes layer-export behavior, not only diagnostics. Existing measurement equality, custody, transport and release checks remain mandatory. Non-value classifies economic randomness only; it grants no native repair, full CI, dispatch, release or runtime admission.",
+      "justification": "These exact seven cross-packaging inputs are bound to the independent R12 source review at c4718c5; they select and validate the native cross-build path but do not draw VRF output, select an economic winner, award value or authorize settlement. This exact-file classification does not authorize deployment, replace PCR measurement evidence, or exempt identity, custody, transport security or downstream economic consumers. Genesis source update: Only build-dual-enclave.py and dual_cross_test.py bindings are refreshed here. They stage and verify exact manifest/profile/opt-in bytes across both image paths. This is a security-sensitive measured input chain, not a VRF economic consumer. Other members retain their prior exact bindings and scope. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval. Diagnostic-only update: the builder and its two regression-test inputs are bound to independent cumulative source review of 67ce0867900b7844231cffef6324b69992220115, verdict SHA256 1ea38c91eeac185ccd77088873a1fbc3076e65d61eb7f691a6cc00bb27cc48b8. These fixed-schema failure receipts do not change execution, custody, image admission or economic selection; all release and runtime gates remain required. Current diagnostic source bindings supersede earlier diagnostic digests and refer to independent six-file source review of 5875c4705e22a8656a5dd6065138d5c34e86bef1 (tree 0c8e077b2d2e251cd37e5bff429546f09d1d16c8; review SHA256 e40455f624b96fc3a0f39861b3d4e919f397297b19575846ee79116288bae997). The optional EIF/CPIO reader compares bounded hashes and metadata from already built files, binds them to existing measurements, and preserves the original refusal, cleanup flags and artifact admission gate. It neither consumes economic randomness nor authorizes custody operations. Security-sensitive validation remains subject to its existing reviews; this classification establishes no full CI, real EIF compatibility, dispatch, release or runtime approval. Layer-export reproducibility update: the builder selects the Docker exporter with timestamp rewriting at the existing fixed SOURCE_DATE_EPOCH; packaging tests and documentation are bound to independent source review of 3cfa5cbaf09e3a373d548834a33080aae7c7bf21 (tree 4a60bfddd151e6841e306cdb8e19dd20a15a479a; review SHA256 641cae3864f7e094d2be0411395707932d2273640c5426242fc3f4226d7096b2). This intentionally changes layer-export behavior, not only diagnostics. Existing measurement equality, custody, transport and release checks remain mandatory. Non-value classifies economic randomness only; it grants no native repair, full CI, dispatch, release or runtime admission. Price-plane preparation update: README.dual-image.md and build-dual-enclave.py are bound to independent seven-file source review of 3183f7315fdf652353ba4412f87052297e3a1648, review SHA256 20c0f4d144d0885e996c7ccfafca60ba357b044d49786d3e67f0e9f6d13e6e91. The measured per-network feed selector changes build inputs intentionally. This classification concerns VRF economic selection only and grants no native, measurement, custody, deployment or runtime admission.",
       "inputs": {
         "deploy/nitro/Dockerfile.dual-enclave.cross": {
           "sha256": "66ddc376fd689f9ade48ce511c7c60385b6fd9efef1b36517c76bd05a4ac9374"
         },
         "deploy/nitro/README.dual-image.md": {
-          "sha256": "9fd0d471d5bb82dd5c349135a7a5503d82fd188f04e3411337937cc8e564e4e0"
+          "sha256": "548e43b27a74211f6b1cbb4cbe3f420f00855432a4c4c1b02967127f7e729c5b"
         },
         "deploy/nitro/build-dual-enclave.py": {
-          "sha256": "9963e2933fd542b6c16d0c4436b912836e5793134b36f1c036e5ea1afc640cd0"
+          "sha256": "522b8972518fe54cb577e4c20be8bab44b68f25cfcef4fec8de23ed94d5ebb6b"
         },
         "deploy/nitro/cross-inputs.lock.json": {
           "sha256": "a5086fffb3db277aa47b3ab475b0da0dc35d16ac070729b2a89a5ac6de3f824e"
@@ -1314,13 +1314,13 @@
       "consumer": "dual-release-validator-351b-input",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "This exact 351b validator input binds the native cross-build source selector and required closure checks; it validates source and measurement prerequisites but does not draw VRF output, select an economic winner, award value or authorize settlement. Its bytes are bound to the exact 351b source review, full affected CI receipt and parent review at commit 351bda5. This exact-file classification does not authorize deployment, replace measured artifacts or public identity evidence, or exempt custody, transport security or downstream economic consumers.",
+      "justification": "This exact 351b validator input binds the native cross-build source selector and required closure checks; it validates source and measurement prerequisites but does not draw VRF output, select an economic winner, award value or authorize settlement. Its bytes are bound to the exact 351b source review, full affected CI receipt and parent review at commit 351bda5. This exact-file classification does not authorize deployment, replace measured artifacts or public identity evidence, or exempt custody, transport security or downstream economic consumers. Price-plane validation update: both validator files are bound to independent seven-file source review of 3183f7315fdf652353ba4412f87052297e3a1648, review SHA256 20c0f4d144d0885e996c7ccfafca60ba357b044d49786d3e67f0e9f6d13e6e91. Exact reconstructed per-network map comparison remains required; this binding does not supply measurement evidence or authorize a live selector change.",
       "inputs": {
         "scripts/lib/dual_release_validation.py": {
-          "sha256": "893dd6cca301e05163f67be7e633b660c64a9afe7cd9045cedaf3492f1fe621a"
+          "sha256": "f061bcb54cfd64b2c00cee813a037a32a4958aeea5714892c26fa55e90c13c4b"
         },
         "scripts/lib/dual_release_validation_test.py": {
-          "sha256": "238a509d5eac4b392d06b1d4e2bc95f021e3451a3b745828022c420d0d5dd4f3"
+          "sha256": "0c51632f5fc62b47666deaf37cbe40ebe800ab4aa27847012c4063bb47336a08"
         }
       }
     },
@@ -1414,10 +1414,10 @@
       "justification": "These exact topology-audit and release/topology regression-test inputs were independently reviewed at source commit 6bfa1845aba97d6286b7fd4505f343560924de74 and verified unchanged at 7eba165fec3bdd339efec213d4ac63b5f9292067. They inspect repository deployment/publication configuration and test fail-closed gates; they do not draw VRF output, select economic winners, award value or authorize settlement. This classification does not approve the runtime consumers they inspect, renew any topology exception or economic debt, authorize publication/deployment, establish full CI, or replace custody inputs, measured artifacts and release admission.",
       "inputs": {
         "scripts/check-rust-production-topology.mjs": {
-          "sha256": "3b108521aa093acc58ea6c3a013d9796716366910a1ff92b89413cd11970cb9e"
+          "sha256": "6dd052468d60fad66b9a65a7ec761c4aba5bdbc66c5a548bc5faf913b9e44215"
         },
         "scripts/check-rust-production-topology.test.mjs": {
-          "sha256": "bec18b2f79b63f7115f5c067fa88e9ac1928d86dd7edbfff32cf6b925303843c"
+          "sha256": "a56749a43f25fa962542c3d95e03a7313434541ade9ad37078de322b3a16b24d"
         },
         "scripts/release-gating.test.mjs": {
           "sha256": "f6c1d2221db4d852087bdb4b093cfaa64cfd5184d38c10540c8e12a6841f9878"
@@ -1476,6 +1476,37 @@
       "inputs": {
         "scripts/lib/dual_release_bootstrap_test.py": {
           "sha256": "a89bc1a11f2d3a3ebe5846a66d1d2b50890c552964800d7d63d6625c32641b8b"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-price-plane-egress-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "The exact default egress allowlist and synthetic CONNECT regression test are bound to independent source review of 3183f7315fdf652353ba4412f87052297e3a1648, review SHA256 20c0f4d144d0885e996c7ccfafca60ba357b044d49786d3e67f0e9f6d13e6e91. These security-sensitive network restrictions do not draw economic VRF output, select a winner or authorize settlement. This classification is not an egress, custody, measurement, deployment, full CI or runtime waiver; exact destination and admission checks remain mandatory.",
+      "inputs": {
+        "deploy/nitro/host-egress-proxy.test.mjs": {
+          "sha256": "e30f40d42b10c6dbf4582747f86b4c379a66e5113ef8dbdb9a202f59c191d4ad"
+        },
+        "deploy/nitro/vsock-proxy.allowlist.yaml": {
+          "sha256": "35866dad29f5175ab41e25fb797eeb732ffbf4443fc5bd12e59be35ad1924f4b"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-development-advisory-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "These exact Web development manifest and dependency-floor regression tests are bound to independent source review of b1d421a9ad1729cc0b561ce60d1dd816890807cf, review SHA256 9363f60d2a898ad08a002e0c8754e4779a408ea4eb96ed1f0354b0591a94992b. Only the Vitest development floor and tests for reviewed package versions change. They do not consume VRF output or authorize economic actions. This classifies metadata and assertions only, not every dependency implementation, production runtime or publication permission.",
+      "inputs": {
+        "apps/web/package.json": {
+          "sha256": "cf9e6ab4314567fbd9ee506c4e12b5fbc4dcedb31255e84e24b9f2afe5f19fce"
+        },
+        "scripts/dependency-audit-regressions.test.mjs": {
+          "sha256": "b37145130e8462ff25b23b0411a7bc0c9c4b3e95a78360469245b8fcc4518937"
+        },
+        "scripts/dependency-security.test.mjs": {
+          "sha256": "69d10a54f032753f161171aa3d2252423bcf3662f7d2df3d758269e9c1f7d111"
         }
       }
     }
