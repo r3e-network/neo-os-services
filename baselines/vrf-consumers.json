@@ -1467,6 +1467,17 @@
           "sha256": "6cfb8784e85a416ced379eac87bcb3b08dedbdc1d7e334e91da146d568a6a64e"
         }
       }
+    },
+    {
+      "consumer": "dual-release-bootstrap-test-input",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "This exact regression test extracts the verified Node-to-Python input bootstrap and exercises bounded byte framing with local synthetic child processes. It does not consume VRF output, select economic winners, authorize signing, alter custody state, or establish deployment or runtime admission. Its bytes were independently reviewed with source commit 5a81f6c4e4fd9ff04a6d6a4da63c7eb991674666; the new binding requires its own policy composition review.",
+      "inputs": {
+        "scripts/lib/dual_release_bootstrap_test.py": {
+          "sha256": "a89bc1a11f2d3a3ebe5846a66d1d2b50890c552964800d7d63d6625c32641b8b"
+        }
+      }
     }
   ]
 }
