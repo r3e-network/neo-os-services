@@ -1213,16 +1213,16 @@
           "sha256": "a934492fb411ce9ebff7e99c82fafddf6971a30ba752b82f278ae6c08926ee6a"
         },
         "apps/web/lib/nitro-dual-measurements.test.ts": {
-          "sha256": "9474785952053077d76ecbba9f128e15c71124c37b5f88ec82017d57cbe9067b"
+          "sha256": "5db2b014e56a3eace3e9221c076e5d6615503b097c1f49c2f77a757b0914f2d1"
         },
         "apps/web/lib/nitro-dual-release-registry.ts": {
           "sha256": "e77dc60bc9f04f58875782f43b275c20d76ff790bb7403cc54af4a4c9b3134f1"
         },
         "apps/web/lib/nitro-measurements.ts": {
-          "sha256": "77c1eb562635671cb16ae4f3937552faac41e28425f845afeb1035a64f09583a"
+          "sha256": "8bf36a3f6f3a7336a4f662df3d55b31895a0b770ac2861b8400a3b420001ef48"
         },
         "apps/web/lib/dra02-independent-adversarial.test.ts": {
-          "sha256": "d2e33013d568510af05172699e2c4cd9ee83e94cf69222873bc939c916297e2a"
+          "sha256": "c7379812b9eb127b4e860a96e8c968f201d6e917f7ff9d40c04babb23c325e73"
         },
         "apps/web/lib/nitro-dual-ordering.test.ts": {
           "sha256": "9165d2ccd6c263feee3a6e02ee27862d29161fc2c757fcf8c3ad07e63e2e5f7a"
