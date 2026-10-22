@@ -36,20 +36,31 @@ test('workspace manifests pin the safe frontend dependency floors', () => {
   assert.equal(rootPkg.overrides?.readdirp?.picomatch, '2.3.2');
   assert.equal(rootPkg.overrides?.tinyglobby?.picomatch, '4.0.4');
   assert.equal(rootPkg.overrides?.tinyglobby?.fdir?.picomatch, '4.0.4');
-  // 4.1.11: GHSA-82fw-gwwq-j7x9 (@vitest/mocker path traversal) is fixed after 4.1.10.
-  assert.equal(webPkg.devDependencies?.vitest, '^4.1.11');
+  // 4.1.12 fixes GHSA-qxg6-89mg-rqv8 and GHSA-xp26-3454-mjgp in @vitest/mocker.
+  assert.equal(webPkg.devDependencies?.vitest, '^4.1.12');
 });
 
 test('package lock resolves patched vite, vitest, and installed picomatch versions', () => {
   const lock = readJson('package-lock.json');
   const packages = lock.packages ?? {};
 
-  assert.ok(versionAtLeast(packages['node_modules/vitest']?.version, '4.1.11'));
-  assert.ok(versionAtLeast(packages['node_modules/vite']?.version, '8.0.8'));
+  // npm may place the web-only runner in its workspace instead of hoisting it.
+  const vitestRoot = packages['apps/web/node_modules/vitest']
+    ? 'apps/web/node_modules'
+    : 'node_modules';
+  assert.ok(versionAtLeast(packages[`${vitestRoot}/vitest`]?.version, '4.1.12'));
+  assert.ok(versionAtLeast(packages['node_modules/vite']?.version, '8.3.3'));
   assert.equal(packages['node_modules/tinyglobby/node_modules/picomatch']?.version, '4.0.4');
   // No override pins these two paths, so they only need the patched floor.
   assert.ok(versionAtLeast(packages['node_modules/vite/node_modules/picomatch']?.version, '4.0.4'));
   assert.ok(
-    versionAtLeast(packages['node_modules/vitest/node_modules/picomatch']?.version, '4.0.4')
+    versionAtLeast(
+      (
+        packages[`${vitestRoot}/vitest/node_modules/picomatch`] ??
+        packages[`${vitestRoot}/picomatch`] ??
+        packages['node_modules/picomatch']
+      )?.version,
+      '4.0.4'
+    )
   );
 });

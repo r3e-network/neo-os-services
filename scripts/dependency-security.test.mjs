@@ -129,7 +129,7 @@ test('the declared Node range is one every installed package supports', () => {
 test('the apps/web closure resolves to patched versions', () => {
   assert.equal(webManifest.dependencies?.next, '^15.5.27');
   assert.equal(webManifest.devDependencies?.['eslint-config-next'], '^15.5.26');
-  assert.equal(webManifest.devDependencies?.vitest, '^4.1.11');
+  assert.equal(webManifest.devDependencies?.vitest, '^4.1.12');
   assert.equal(rootManifest.overrides?.['fast-uri'], '3.1.6');
   assert.equal(rootManifest.overrides?.sharp, '0.35.5');
   assert.equal(rootManifest.overrides?.['source-map-js'], '1.2.2');
@@ -178,6 +178,30 @@ test('the apps/web closure resolves to patched versions', () => {
     assert.ok(lockVersions(name).length > 0, `the root lock no longer resolves ${name}`);
   }
 });
+
+// GHSA-qxg6-89mg-rqv8 and GHSA-xp26-3454-mjgp are fixed together in
+// @vitest/mocker 4.1.12; vitest must move with its exact-version companion.
+// Vite 8.3.3 fixes GHSA-698v-4r3x-3vcv, GHSA-r825-w8mm-5pxw,
+// GHSA-587h-7wmj-h5pm, GHSA-rq7h-c2jc-7f22 and GHSA-vfpm-58rq-9qcg.
+// follow-redirects 1.16.1 fixes GHSA-q3jh-wrc6-jgq8 and GHSA-8r9p-f939-6h3c.
+for (const [name, floor] of Object.entries({
+  vitest: '4.1.12',
+  '@vitest/mocker': '4.1.12',
+  vite: '8.3.3',
+  'follow-redirects': '1.16.1',
+})) {
+  test(`${name} stays above its reviewed advisory floor ${floor}`, () => {
+    const versions = lockVersions(name);
+    assert.ok(versions.length > 0, `the root lock no longer resolves ${name}`);
+    for (const { key, version } of versions) {
+      assert.equal(semver.prerelease(version), null, `${key} resolves a prerelease`);
+      assert.ok(
+        semver.gte(version, floor),
+        `${key} resolves vulnerable ${name}@${version}; expected at least ${floor}`
+      );
+    }
+  });
+}
 
 test('sprintf-js never re-enters the root lock', () => {
   // GHSA-hp3w-g68c-fv3c covers every published release of sprintf-js (range `*`, top of the line
