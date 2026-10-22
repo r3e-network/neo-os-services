@@ -846,7 +846,7 @@ mod tool {
                 "schema":"neoos/testnet-material-plan/v1", "environment":"testnet",
                 "source_commit":"a".repeat(40), "source_tree":"b".repeat(40),
                 "ceremony_id":"synthetic-ceremony", "caller_id":"synthetic-admin", "caller_label":"Synthetic only",
-                "vault_id":"12".repeat(16), "root_key_version":"synthetic-root-v1", "custody_kms_key_arn":CMK,
+                "vault_id":"12".repeat(16), "root_key_version":"public-v1", "custody_kms_key_arn":CMK,
                 "networks":[
                     {"chain_family":"neo-n3","chain_id":894710606,"genesis_hash":"0x9d3276785e7306daf59a3f3b9e31912c095598bbfb8a4476b821b0e59be4c57a"},
                     {"chain_family":"neox","chain_id":12227332,"genesis_hash":format!("0x{}","34".repeat(32))}
@@ -1069,6 +1069,59 @@ mod tool {
 
         #[test]
         fn private_alias_permissions_paths_and_inheritance_refuse() {
+            const CHILD: &str = "NEOOS_SYNTHETIC_CLOEXEC_CHILD";
+            const COMPLETE: &[u8] = b"ISOLATED_CLOEXEC_WITNESS_COMPLETE";
+            if std::env::var_os(CHILD).as_deref() != Some(std::ffi::OsStr::new("1")) {
+                // The intentional process-wide FD leak must never share the default-parallel
+                // harness with positive child-spawn tests. Match the existing private-child
+                // test pattern, and require a witness so zero selected tests cannot pass.
+                let mut child = Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "tool::tests::private_alias_permissions_paths_and_inheritance_refuse",
+                        "--nocapture",
+                    ])
+                    .env_clear()
+                    .env(CHILD, "1")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                use std::io::BufRead;
+                let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+                loop {
+                    let mut line = String::new();
+                    assert!(
+                        stdout.read_line(&mut line).unwrap() > 0,
+                        "child witness missing"
+                    );
+                    if line.contains("ISOLATED_CLOEXEC_LEAK_HELD") {
+                        break;
+                    }
+                }
+                // The child holds its intentional leak until this parent releases it.
+                // These real fake-child calls therefore overlap the leak deterministically.
+                let echoes: Vec<_> = (0..16)
+                    .map(|_| {
+                        bounded_child(
+                            Command::new("/bin/cat").env_clear(),
+                            b"PUBLIC_SYNTHETIC_ECHO",
+                            Duration::from_secs(2),
+                        )
+                    })
+                    .collect();
+                child.stdin.take().unwrap().write_all(b"RELEASE\n").unwrap();
+                let mut tail = Vec::new();
+                stdout.read_to_end(&mut tail).unwrap();
+                let output = child.wait_with_output().unwrap();
+                assert!(output.status.success(), "isolated CLOEXEC child failed");
+                assert!(tail.windows(COMPLETE.len()).any(|w| w == COMPLETE));
+                for echoed in echoes {
+                    assert_eq!(echoed.unwrap().as_slice(), b"PUBLIC_SYNTHETIC_ECHO");
+                }
+                return;
+            }
             assert!(PrivateFile::take(1, Path::new("/unused"), true).is_err());
             let d = directory();
             let dir = canonical(&d);
@@ -1095,9 +1148,69 @@ mod tool {
             assert!(PrivateFile::take(f.into_raw_fd(), &path, true).is_err());
             let (f, _) = file(&dir, "inheritable.json");
             let fd = f.as_raw_fd();
+            let phases = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                let sibling = scope.spawn(|| {
+                    let echo = || {
+                        bounded_child(
+                            Command::new("/bin/cat").env_clear(),
+                            b"PUBLIC_SYNTHETIC_ECHO",
+                            Duration::from_secs(2),
+                        )
+                    };
+                    let before = echo();
+                    phases.wait();
+                    phases.wait();
+                    let during = echo();
+                    phases.wait();
+                    phases.wait();
+                    let after = echo();
+                    (before, during, after)
+                });
+                phases.wait();
+                let cleared = unsafe { fcntl(fd, 2, 0) };
+                phases.wait();
+                phases.wait();
+                let restored = unsafe { fcntl(fd, 2, 1) };
+                phases.wait();
+                let (before, during, after) = sibling.join().unwrap();
+                assert_eq!(cleared, 0);
+                assert_eq!(restored, 0);
+                // Positive fake-child witnesses prevent an ambient refusal from counting
+                // as the deliberate private-FD negative control.
+                assert_eq!(before.unwrap().as_slice(), b"PUBLIC_SYNTHETIC_ECHO");
+                assert_eq!(
+                    during.unwrap_err().to_string(),
+                    "inheritable descriptor refused"
+                );
+                assert_eq!(after.unwrap().as_slice(), b"PUBLIC_SYNTHETIC_ECHO");
+            });
+            // Hold a second leak while the parent proves that its own child-spawn
+            // tests remain uncontaminated. Only this isolated witness process mutates FD flags.
             assert_eq!(unsafe { fcntl(fd, 2, 0) }, 0);
-            assert!(refuse_inheritable_fds().is_err());
+            println!("ISOLATED_CLOEXEC_LEAK_HELD");
+            std::io::stdout().flush().unwrap();
+            nonblocking(0).unwrap();
+            let started = Instant::now();
+            let mut release = Vec::new();
+            while !release.ends_with(b"\n") {
+                assert!(
+                    started.elapsed() < Duration::from_secs(10),
+                    "parent release timed out"
+                );
+                let mut byte = [0u8; 1];
+                match std::io::stdin().read(&mut byte) {
+                    Ok(1) => release.push(byte[0]),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    _ => panic!("parent release missing"),
+                }
+                assert!(release.len() <= 8);
+            }
             assert_eq!(unsafe { fcntl(fd, 2, 1) }, 0);
+            assert_eq!(release, b"RELEASE\n");
+            println!("ISOLATED_CLOEXEC_WITNESS_COMPLETE");
         }
 
         #[test]
@@ -1187,7 +1300,7 @@ mod tool {
                 assert_eq!(STANDARD.decode(v["Plaintext"].as_str().unwrap()).unwrap(),expected);
                 assert_eq!(v["EncryptionContext"],json!({"neoos:component":"custody","neoos:purpose":(["master-key/v1","transport-token/v1","first-admin/v1"][calls]),
                     "neoos:vault-id":"12".repeat(16),"neoos:profile-sha256":hex::encode(public.profile.profile_hash()),
-                    "neoos:network-set-sha256":hex::encode(public.profile.network_set_hash()),"neoos:root-key-version":"synthetic-root-v1"}));
+                    "neoos:network-set-sha256":hex::encode(public.profile.network_set_hash()),"neoos:root-key-version":"public-v1"}));
                 calls+=1;Ok(successful_response(calls as u8))
             },write_new).unwrap();
             assert_eq!(calls, 3);
