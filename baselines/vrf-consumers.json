@@ -1294,10 +1294,10 @@
       "justification": "These exact DRA01 R2 validator and provenance files validate dual-release source closure and reject incomplete or inconsistent publication inputs; they do not draw VRF output, select an economic winner, award value or authorize settlement. Their bytes are bound to the independent DRA01 R2 review and source commit cc19e1ad. This exact-file classification does not authorize deployment, replace measured artifacts or public identity evidence, or exempt custody, transport security or downstream economic consumers.",
       "inputs": {
         "scripts/check-dual-release.mjs": {
-          "sha256": "f9671d4ec79611a9168f3f158ff5c9430ab8d8f7ae21ff01dcbbbadbcaa2a3d7"
+          "sha256": "57143f500310a88c01b585a2c2722b01f883df5237c4acf5c1abdc624b646ada"
         },
         "scripts/dual-release-validation.test.mjs": {
-          "sha256": "fc0d9cc825bca595aa0ff2aaa23809e3e3d2f3845db76f79aaad769f0ddab52f"
+          "sha256": "dc2777ed12486f8436a45321d0c140040a717cd12058b6607976014f41dfb910"
         },
         "scripts/lib/check_dual_release.py": {
           "sha256": "994f5f70ebe6f9bbb5ae47db2856d288ddd553a3d9542e5bf61ffdf98510f9b1"
@@ -1306,7 +1306,7 @@
           "sha256": "19f1a07167f800734f058a447a0ed03fd4ee856f5f1ffbb3b9904f335fdc01cf"
         },
         "scripts/lib/dual_release_provenance_test.py": {
-          "sha256": "5a66b47805b92ff0d3fa8965065481d4d039525be02911fc7bcb8514a0975093"
+          "sha256": "497c2c49db6fc93ce3ab9eec4f6cc1fcfe2fbe7d0fe02f4735ed8a0d7c279f74"
         }
       }
     },
