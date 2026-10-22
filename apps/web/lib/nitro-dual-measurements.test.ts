@@ -103,20 +103,102 @@ describe('DRA02 active dual history', () => {
       eligible_networks: ['testnet'],
     });
   });
-  it('keeps retirement even when the superseding release is not reproducible', () => {
+  it('keeps the eligible dual pin when its superseding history is not reproducible', () => {
     const d1 = dual();
     const d2 = dual(10, { supersedes: [d1.release] });
-    const s = set([d1, d2], [], [d1.release]);
-    expect(selectNitroPins(s)).toEqual({ mainnet: null, testnet: null });
-    expect(classifyNitroMeasurement(d1, s).verdict).toBe('mismatch');
-    expect(classifyNitroMeasurement(d2, s).verdict).toBe('measured-but-unreproducible');
+    for (const history of [
+      [d1, d2],
+      [d2, d1],
+    ]) {
+      const s = set(history, [], [d1.release]);
+      expect(selectNitroPins(s)).toMatchObject({
+        mainnet: { release: d1.release },
+        testnet: { release: d1.release },
+      });
+      expect(classifyNitroMeasurement(d1, s).verdict).toBe('reproducible-match');
+      expect(classifyNitroMeasurement(d2, s).verdict).toBe('measured-but-unreproducible');
+    }
   });
-  it('never revives explicitly retired legacy pins', () => {
+  it.each(['mainnet', 'testnet'] as const)(
+    'does not retire eligible legacy %s from an ineligible dual supersedes record',
+    (network) => {
+      const l = legacy({ release: 'legacy-2026-10-17.8', network });
+      const d = dual(9, { supersedes: [l.release] });
+      const s = set([d], [l], [l.release]);
+      expect(selectNitroPins(s)[network]?.release).toBe(l.release);
+      expect(classifyNitroMeasurement(l, s)).toMatchObject({
+        verdict: 'reproducible-match',
+        pinned_release: l.release,
+      });
+      expect(classifyNitroMeasurement(d, s)).toMatchObject({
+        verdict: 'measured-but-unreproducible',
+        eligible_networks: [],
+      });
+    }
+  );
+  it('stops applying supersession when a dual loses eligibility on either network', () => {
+    // Expiry/admission is decided outside this selector: withdrawal removes the ID
+    // from reproducible, without granting a new runtime expiry or activation field.
+    const mainnet = legacy({ release: 'mainnet-2026-10-17.8' });
+    const testnet = legacy({ release: 'testnet-2026-10-17.8', network: 'testnet' });
+    const d = dual(9, { supersedes: [mainnet.release, testnet.release] });
+    const eligible = [mainnet.release, testnet.release, d.release];
+    expect(selectNitroPins(set([d], [mainnet, testnet], eligible))).toMatchObject({
+      mainnet: { release: d.release },
+      testnet: { release: d.release },
+    });
+    const withdrawn = set([d], [mainnet, testnet], [testnet.release, mainnet.release]);
+    expect(selectNitroPins(withdrawn)).toMatchObject({
+      mainnet: { release: mainnet.release },
+      testnet: { release: testnet.release },
+    });
+    expect(classifyNitroMeasurement(mainnet, withdrawn).verdict).toBe('reproducible-match');
+    expect(classifyNitroMeasurement(testnet, withdrawn).verdict).toBe('reproducible-match');
+  });
+  it('keeps eligible supersession active when a later ineligible dual supersedes it', () => {
     const l = legacy({ release: 'legacy-2026-10-17.8' });
+    const d1 = dual(9, { supersedes: [l.release] });
+    const d2 = dual(10, { supersedes: [d1.release] });
+    for (const history of [
+      [d1, d2],
+      [d2, d1],
+    ]) {
+      for (const ids of [
+        [l.release, d1.release],
+        [d1.release, l.release],
+      ]) {
+        const s = set(history, [l], ids);
+        expect(selectNitroPins(s)).toMatchObject({
+          mainnet: { release: d1.release },
+          testnet: { release: d1.release },
+        });
+        expect(classifyNitroMeasurement(l, s).verdict).toBe('mismatch');
+        expect(classifyNitroMeasurement(d1, s).verdict).toBe('reproducible-match');
+      }
+    }
+  });
+  it('preserves explicit legacy retirement even when a superseding dual is ineligible', () => {
+    const l = legacy({ release: 'legacy-2026-10-17.8', superseded_by: 'retired-elsewhere' });
     const d = dual(9, { supersedes: [l.release] });
     expect(selectNitroPins(set([d], [l], [l.release]))).toEqual({ mainnet: null, testnet: null });
     expect(classifyNitroMeasurement(l, set([d], [l], [l.release])).verdict).toBe('mismatch');
   });
+  it.each([
+    ['zero PCR', { pcr0: '0'.repeat(96) }],
+    ['invalid timestamp', { built_at: 'bad' }],
+    ['unknown network', { networks: ['mainnet', 'other'] }],
+    ['missing Testnet', { networks: ['mainnet'] }],
+    ['unknown expiry field', { expires_at: '2026-10-01T00:00:00Z' }],
+  ])(
+    'refuses an invalid superseding record without mutating eligible legacy pins: %s',
+    (_name, patch) => {
+      const l = legacy({ release: 'legacy-2026-10-17.8' });
+      const invalid = set([dual(9, { ...patch, supersedes: [l.release] })], [l], [l.release]);
+      expect(() => selectNitroPins(invalid)).toThrow();
+      expect(() => classifyNitroMeasurement(l, invalid)).toThrow();
+      expect(selectNitroPins(set([], [l], [l.release])).mainnet?.release).toBe(l.release);
+    }
+  );
   it('names only the selected identity when older records share its tuple', () => {
     const d1 = dual();
     const d2 = dual(10, { pcr0: d1.pcr0 });

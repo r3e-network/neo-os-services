@@ -84,14 +84,16 @@ describe('Independent DRA02 adversarial', () => {
       expect(() => selectNitroPins(set(records))).toThrow(/inconsistent Nitro release ordering/);
     }
   });
-  it('retirement applies across a chain even when every retiring release is ineligible', () => {
+  it('ineligible supersession chains preserve the currently eligible release', () => {
     const x = dual('dual-2026-10-17.1', '2026-10-17T00:00:00Z');
     const y = dual('dual-2026-10-17.2', x.built_at, [x.release]);
     const z = dual('dual-2026-10-17.3', x.built_at, [y.release]);
-    expect(selectNitroPins(set([x, y, z], [], [x.release]))).toEqual({
-      mainnet: null,
-      testnet: null,
+    const s = set([x, y, z], [], [x.release]);
+    expect(selectNitroPins(s)).toMatchObject({
+      mainnet: { release: x.release },
+      testnet: { release: x.release },
     });
+    expect(classifyNitroMeasurement(x, s).verdict).toBe('reproducible-match');
   });
   it('cross-kind matching active tuples fail closed and query views retain selection', () => {
     const d = dual('dual-2026-10-17.2', '2026-10-17T00:00:00Z');
@@ -102,14 +104,13 @@ describe('Independent DRA02 adversarial', () => {
     expect(dualNitroMeasurements(s)[0].eligible_networks).toEqual(['testnet']);
   });
   it.each(['mainnet', 'testnet'])(
-    'unreproducible retiree cannot fall back via legacy %s network',
+    'ineligible dual cannot retire the eligible legacy %s pin',
     (network) => {
       const old = l('legacy-2026-10-17.1', network);
       const d = dual('dual-2026-10-17.2', '2026-10-17T00:00:00Z', [old.release]);
-      expect(selectNitroPins(set([d], [old], [old.release]))).toEqual({
-        mainnet: null,
-        testnet: null,
-      });
+      const s = set([d], [old], [old.release]);
+      expect(selectNitroPins(s)[network as 'mainnet' | 'testnet']?.release).toBe(old.release);
+      expect(classifyNitroMeasurement(old, s).verdict).toBe('reproducible-match');
     }
   );
   it('rejects unknown reproducible ID rather than accepting remaining good pins', () => {

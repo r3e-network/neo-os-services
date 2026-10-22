@@ -281,6 +281,7 @@ function registeredHistory(set: NitroMeasurementSet): {
     requireConsistentDualHistoryOrder(entries);
   }
   const retired = new Set<string>();
+  const reproducible = new Set(set.reproducible);
   for (const entry of entries) {
     if (entry.network !== null) {
       if (entry.superseded_by) retired.add(entry.release);
@@ -296,8 +297,8 @@ function registeredHistory(set: NitroMeasurementSet): {
       ) {
         throw new Error(`invalid Nitro supersession ${entry.release} -> ${id}`);
       }
-      // Retirement is independent of whether the superseding entry is eligible.
-      retired.add(id);
+      // Registered history alone cannot retire an eligible pin.
+      if (reproducible.has(entry.release)) retired.add(id);
     }
   }
   return { entries, retired };
