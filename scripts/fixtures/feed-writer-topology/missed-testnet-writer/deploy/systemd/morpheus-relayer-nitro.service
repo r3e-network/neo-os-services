@@ -1,2 +1,2 @@
 [Unit]
-Conflicts=morpheus-relayer.service morpheus-feed-pusher.service morpheus-feed-pusher.timer
+Conflicts=morpheus-relayer.service morpheus-feed-pusher.service morpheus-feed-pusher.timer morpheus-public-feed-writer.service morpheus-public-feed-writer.timer

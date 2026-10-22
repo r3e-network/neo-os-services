@@ -30,12 +30,22 @@ import {
   isNodeFeedWriterUnitName,
 } from './check-rust-production-topology.mjs';
 
+import { HISTORICAL_REVIEWED_TOPOLOGY_EXCEPTIONS } from './fixtures/feed-writer-topology/retired-public-writer/reviewed-exceptions.mjs';
+
 const FIXTURE_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   'fixtures/feed-writer-topology'
 );
 const MISSED_TESTNET_ROOT = path.join(FIXTURE_ROOT, 'missed-testnet-writer');
 const COMPLIANT_TESTNET_ROOT = path.join(FIXTURE_ROOT, 'compliant-testnet-writer');
+const HISTORICAL_PUBLIC_WRITER_ROOT = path.join(FIXTURE_ROOT, 'retired-public-writer');
+
+function auditHistoricalChainWriters(options = {}) {
+  return auditBootEnabledChainWriters(HISTORICAL_PUBLIC_WRITER_ROOT, {
+    exceptions: HISTORICAL_REVIEWED_TOPOLOGY_EXCEPTIONS,
+    ...options,
+  });
+}
 
 test('repository production topology keeps Rust authority and explicit compatibility boundaries', async () => {
   assert.deepEqual(await auditProductionTopology(), []);
@@ -387,11 +397,11 @@ const RENEWED_EXPIRY = '2026-10-21';
 const LAST_COVERED_DAY = '2026-10-20';
 const IN_WINDOW = '2026-10-15';
 
-test('repository discovery finds the boot-enabled public feed writer the name pattern missed', async () => {
+test('historical discovery finds the boot-enabled public feed writer the name pattern missed', async () => {
   // The historical discovery is by name only and never saw it.
   assert.equal(isNodeFeedWriterUnitName('morpheus-public-feed-writer.service'), false);
 
-  const { problems, writers, excepted } = await auditBootEnabledChainWriters(undefined, {
+  const { problems, writers, excepted } = await auditHistoricalChainWriters({
     today: BEFORE_EXPIRY,
   });
   assert.deepEqual(problems, []);
@@ -428,33 +438,33 @@ test('repository discovery finds the boot-enabled public feed writer the name pa
   assert.match(excepted[0].reason, /Condition: the owner caps the writer cadence/);
 });
 
-test('the public feed writer exception is recorded, not the unit deleted or disabled', async () => {
-  const exception = REVIEWED_TOPOLOGY_EXCEPTIONS.find((entry) => entry.key === PUBLIC_WRITER_KEY);
+test('the historical fixture preserves the boot-enabled units and exhausted exception', async () => {
+  const exception = HISTORICAL_REVIEWED_TOPOLOGY_EXCEPTIONS.find(
+    (entry) => entry.key === PUBLIC_WRITER_KEY
+  );
   assert.ok(exception);
   assert.equal(exception.expiresOn, RENEWED_EXPIRY);
   for (const unit of ['morpheus-public-feed-writer.service', 'morpheus-public-feed-writer.timer']) {
     const source = await fs.readFile(
-      path.resolve(FIXTURE_ROOT, '../..', '..', 'deploy/feed-pusher', unit),
+      path.join(HISTORICAL_PUBLIC_WRITER_ROOT, 'deploy/feed-pusher', unit),
       'utf8'
     );
-    assert.match(source, /^\[Install\]$/m, `${unit} stays boot-enabled until the owner decides`);
+    assert.match(source, /^\[Install\]$/m, `${unit} preserves the historical boot-enabled bytes`);
   }
 });
 
-test('the production topology gate runs the chain-writer audit', async () => {
-  const problems = await auditProductionTopology(undefined, {
-    chainWriters: { today: BEFORE_EXPIRY, exceptions: [] },
-  });
+test('the production topology gate refuses a restored historical public writer', async (t) => {
+  const root = await productionTreeWithHistoricalWriter(t);
+  const problems = await auditProductionTopology(root);
   assert.ok(
-    problems.some((problem) =>
-      problem.startsWith('deploy/feed-pusher/morpheus-public-feed-writer.service is a boot-enabled')
-    ),
+    problems.some((problem) => problem.startsWith(`${PUBLIC_WRITER_UNIT} is a boot-enabled`)),
     problems.join('\n')
   );
+  assert.ok(problems.some((problem) => problem.includes('is retired')));
 });
 
 test('without its reviewed exception the public feed writer fails the gate by name', async () => {
-  const { problems } = await auditBootEnabledChainWriters(undefined, {
+  const { problems } = await auditHistoricalChainWriters({
     today: BEFORE_EXPIRY,
     exceptions: [],
   });
@@ -470,7 +480,7 @@ test('without its reviewed exception the public feed writer fails the gate by na
 });
 
 test('an expired, stale or malformed reviewed exception fails the gate', async () => {
-  const expired = await auditBootEnabledChainWriters(undefined, { today: RENEWED_EXPIRY });
+  const expired = await auditHistoricalChainWriters({ today: RENEWED_EXPIRY });
   assert.equal(expired.excepted.length, 0);
   assert.ok(
     expired.problems.some((problem) =>
@@ -479,10 +489,10 @@ test('an expired, stale or malformed reviewed exception fails the gate', async (
     expired.problems.join('\n')
   );
 
-  const stale = await auditBootEnabledChainWriters(undefined, {
+  const stale = await auditHistoricalChainWriters({
     today: BEFORE_EXPIRY,
     exceptions: [
-      ...REVIEWED_TOPOLOGY_EXCEPTIONS,
+      ...HISTORICAL_REVIEWED_TOPOLOGY_EXCEPTIONS,
       { key: 'boot-enabled-chain-writer:no-such-unit', reason: 'r', expiresOn: '2099-01-01' },
     ],
   });
@@ -490,7 +500,7 @@ test('an expired, stale or malformed reviewed exception fails the gate', async (
     'reviewed exception boot-enabled-chain-writer:no-such-unit matches no boot-enabled chain writer under deploy/; remove it',
   ]);
 
-  const malformed = await auditBootEnabledChainWriters(undefined, {
+  const malformed = await auditHistoricalChainWriters({
     today: BEFORE_EXPIRY,
     exceptions: [{ key: PUBLIC_WRITER_KEY, reason: '', expiresOn: 'soon' }],
   });
@@ -587,9 +597,8 @@ test('discovery classifies boot-enabled units by content, not by name', async (t
 });
 
 // ── The exception renewed once, to 2026-10-21 (CU-21, DEC-CU-3) ────────────────
-// The renewal changes the entry and nothing else, so these tests pin both: the entry (date,
-// owner, condition, one renewal) and the gate around it (every other rule, the whole gate at
-// the boundary, and the CLI exit path with a pinned clock).
+// Preserve the exhausted entry and its adversarial tests as history. The real
+// production tree has no exception and is checked separately below.
 
 const REPO_ROOT = path.resolve(FIXTURE_ROOT, '..', '..', '..');
 const PUBLIC_WRITER_UNIT = 'deploy/feed-pusher/morpheus-public-feed-writer.service';
@@ -609,17 +618,17 @@ function daysBetween(from, to) {
   return (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000;
 }
 
-async function readShippedWriterUnits() {
+async function readHistoricalWriterUnits() {
   const [service, timer] = await Promise.all([
-    fs.readFile(path.join(REPO_ROOT, PUBLIC_WRITER_UNIT), 'utf8'),
-    fs.readFile(path.join(REPO_ROOT, PUBLIC_WRITER_TIMER), 'utf8'),
+    fs.readFile(path.join(HISTORICAL_PUBLIC_WRITER_ROOT, PUBLIC_WRITER_UNIT), 'utf8'),
+    fs.readFile(path.join(HISTORICAL_PUBLIC_WRITER_ROOT, PUBLIC_WRITER_TIMER), 'utf8'),
   ]);
   return { service, timer };
 }
 
-test('the renewed exception covers 2026-10-20 and every day from 2026-10-21 fails, on the real tree', async () => {
+test('the renewed exception covers 2026-10-20 and every day from 2026-10-21 fails, on the historical fixture', async () => {
   for (const today of ['2026-10-05', '2026-10-06', ORIGINAL_EXPIRY, IN_WINDOW, LAST_COVERED_DAY]) {
-    const { problems, excepted } = await auditBootEnabledChainWriters(undefined, { today });
+    const { problems, excepted } = await auditHistoricalChainWriters({ today });
     assert.deepEqual(problems, [], `${today} is covered`);
     assert.deepEqual(
       excepted.map((entry) => [entry.key, entry.expiresOn]),
@@ -628,7 +637,7 @@ test('the renewed exception covers 2026-10-20 and every day from 2026-10-21 fail
     );
   }
   for (const today of [RENEWED_EXPIRY, '2026-10-22', '2026-11-20', '2027-10-20', '2099-12-31']) {
-    const { problems, writers, excepted } = await auditBootEnabledChainWriters(undefined, {
+    const { problems, writers, excepted } = await auditHistoricalChainWriters({
       today,
     });
     assert.equal(problems.length, 1, `${today}: ${problems.join('\n')}`);
@@ -643,13 +652,15 @@ test('the renewed exception covers 2026-10-20 and every day from 2026-10-21 fail
   }
 });
 
-test('the shipped exception is one entry, renewed once for 14 days, naming its owner and condition', () => {
+test('the historical exception is one entry, renewed once for 14 days, naming its owner and condition', () => {
   assert.equal(
-    REVIEWED_TOPOLOGY_EXCEPTIONS.length,
+    HISTORICAL_REVIEWED_TOPOLOGY_EXCEPTIONS.length,
     1,
     'one reviewed exception, for the public feed writer'
   );
-  const exception = REVIEWED_TOPOLOGY_EXCEPTIONS.find((entry) => entry.key === PUBLIC_WRITER_KEY);
+  const exception = HISTORICAL_REVIEWED_TOPOLOGY_EXCEPTIONS.find(
+    (entry) => entry.key === PUBLIC_WRITER_KEY
+  );
   assert.ok(exception);
   assert.deepEqual(
     Object.keys(exception).sort(),
@@ -682,20 +693,36 @@ test('the shipped exception is one entry, renewed once for 14 days, naming its o
   assert.match(reason, /no second renewal/);
 });
 
-test('the excepted unit is the reviewed file: its sha256 is pinned', async () => {
-  const source = await fs.readFile(path.join(REPO_ROOT, PUBLIC_WRITER_UNIT));
+test('the historical units and exception are the exact reviewed bytes', async () => {
+  for (const [unit, expected] of [
+    [PUBLIC_WRITER_UNIT, REVIEWED_WRITER_UNIT_SHA256],
+    [PUBLIC_WRITER_TIMER, '20e34fd4ed5251f591435c911558a0445249a1caade6c758ea33f180a0f25f0b'],
+  ]) {
+    const source = await fs.readFile(path.join(HISTORICAL_PUBLIC_WRITER_ROOT, unit));
+    assert.equal(createHash('sha256').update(source).digest('hex'), expected, unit);
+  }
+  const fixture = await fs.readFile(
+    path.join(HISTORICAL_PUBLIC_WRITER_ROOT, 'reviewed-exceptions.mjs'),
+    'utf8'
+  );
+  const original = fixture
+    .slice(fixture.indexOf('export const '))
+    .trimEnd()
+    .replace('HISTORICAL_REVIEWED_TOPOLOGY_EXCEPTIONS', 'REVIEWED_TOPOLOGY_EXCEPTIONS');
   assert.equal(
-    createHash('sha256').update(source).digest('hex'),
-    REVIEWED_WRITER_UNIT_SHA256,
-    `${PUBLIC_WRITER_UNIT} changed while the reviewed exception stands: review the change, then update the hash here`
+    createHash('sha256').update(original).digest('hex'),
+    'b5e2a9deb4954f90fd679369c76fdbee8c4afc33c84f4a8b367945265dc62fe3'
   );
 });
 
 test('with the renewed entry every other chain-writer rule is unchanged', async (t) => {
-  const { service, timer } = await readShippedWriterUnits();
+  const { service, timer } = await readHistoricalWriterUnits();
   const shipped = { [PUBLIC_WRITER_UNIT]: service, [PUBLIC_WRITER_TIMER]: timer };
   const audit = async (files) =>
-    auditBootEnabledChainWriters(await writeTree(t, files), { today: IN_WINDOW });
+    auditBootEnabledChainWriters(await writeTree(t, files), {
+      today: IN_WINDOW,
+      exceptions: HISTORICAL_REVIEWED_TOPOLOGY_EXCEPTIONS,
+    });
 
   // The shipped units alone: excepted by name, no problem.
   let result = await audit(shipped);
@@ -751,19 +778,10 @@ test('with the renewed entry every other chain-writer rule is unchanged', async 
   assert.deepEqual(result.problems, [stale]);
 });
 
-test('across the whole gate the expiry is the only red at the boundary', async () => {
-  assert.deepEqual(
-    await auditProductionTopology(undefined, { chainWriters: { today: LAST_COVERED_DAY } }),
-    []
-  );
-  const problems = await auditProductionTopology(undefined, {
-    chainWriters: { today: RENEWED_EXPIRY },
-  });
-  assert.equal(problems.length, 1, problems.join('\n'));
-  assert.match(
-    problems[0],
-    new RegExp(`reviewed exception ${PUBLIC_WRITER_KEY} expired on ${RENEWED_EXPIRY}`)
-  );
+test('the real production gate has no public writer or exception across the old deadline', async () => {
+  for (const today of [LAST_COVERED_DAY, RENEWED_EXPIRY, '2026-10-22', '2099-12-31']) {
+    assert.deepEqual(await auditProductionTopology(undefined, { chainWriters: { today } }), []);
+  }
 });
 
 // The gate computes its UTC day from `new Date()`. A child process gets this preload, which pins
@@ -806,33 +824,289 @@ async function runGateCli(t, { now, timeZone }) {
   });
 }
 
-test('the gate CLI passes through 2026-10-20 and exits 1 from 2026-10-21, whatever the local zone', async (t) => {
-  for (const now of ['2026-10-07T00:00:00Z', '2026-10-20T23:59:59Z']) {
-    const { code, stdout, stderr } = await runGateCli(t, { now, timeZone: 'Asia/Shanghai' });
+test('the retired production gate CLI has no date-dependent public writer exemption', async (t) => {
+  for (const [now, timeZone] of [
+    ['2026-10-20T23:59:59Z', 'Asia/Shanghai'],
+    ['2026-10-21T00:00:00Z', 'America/Los_Angeles'],
+    ['2026-10-22T00:00:00Z', 'Asia/Shanghai'],
+  ]) {
+    const { code, stdout, stderr } = await runGateCli(t, { now, timeZone });
     assert.equal(code, 0, `${now}: ${stderr}`);
-    assert.match(
-      stderr,
-      new RegExp(
-        `^WARNING reviewed exception ${PUBLIC_WRITER_KEY} \\(expires ${RENEWED_EXPIRY}\\): `,
-        'm'
-      )
-    );
-    assert.match(stderr, /Owner: NeoOS program lead \(delegated by the owner\)/);
-    assert.match(stderr, /Condition: the owner caps the writer cadence and funds the updater/);
+    assert.equal(stderr, '');
     const report = JSON.parse(stdout);
     assert.equal(report.ok, true);
-    assert.deepEqual(
-      report.reviewed_exceptions.map((entry) => [entry.key, entry.expiresOn]),
-      [[PUBLIC_WRITER_KEY, RENEWED_EXPIRY]]
-    );
+    assert.deepEqual(report.reviewed_exceptions, []);
   }
-  const expired = await runGateCli(t, { now: '2026-10-21T00:00:00Z', timeZone: 'Asia/Shanghai' });
-  assert.equal(expired.code, 1, expired.stderr);
-  assert.equal(expired.stdout, '');
-  assert.match(expired.stderr, /Rust production topology audit failed:/);
-  assert.match(
-    expired.stderr,
-    new RegExp(`reviewed exception ${PUBLIC_WRITER_KEY} expired on ${RENEWED_EXPIRY}`)
+});
+
+// S2 source retirement: these assertions must fail on the original production tree.
+test('retirement removes the legacy public writer from deploy and the real exception list', async () => {
+  assert.deepEqual(REVIEWED_TOPOLOGY_EXCEPTIONS, []);
+  for (const unit of [PUBLIC_WRITER_UNIT, PUBLIC_WRITER_TIMER]) {
+    await assert.rejects(fs.access(path.join(REPO_ROOT, unit)), { code: 'ENOENT' });
+  }
+  const { problems, writers, excepted } = await auditBootEnabledChainWriters();
+  assert.deepEqual({ problems, writers, excepted }, { problems: [], writers: [], excepted: [] });
+});
+
+for (const unit of ['morpheus-relayer.service', 'morpheus-relayer-nitro.service']) {
+  test(`retirement keeps old installed public writer names in ${unit} conflicts`, async () => {
+    const source = await fs.readFile(path.join(REPO_ROOT, 'deploy/systemd', unit), 'utf8');
+    for (const retired of [
+      'morpheus-public-feed-writer.service',
+      'morpheus-public-feed-writer.timer',
+    ]) {
+      assert.match(
+        source,
+        new RegExp(`^Conflicts=.*\\b${retired.replaceAll('.', '\\.')}(?:\\s|$)`, 'm')
+      );
+      const mutant = source.replace(retired, '');
+      assert.notEqual(mutant, source);
+      assert.ok(
+        checkRustFeedAuthorityUnit(unit, mutant, ['morpheus-feed-pusher.service']).some((problem) =>
+          problem.includes(retired)
+        ),
+        `the guard must require ${retired} even after source discovery no longer finds it`
+      );
+    }
+  });
+}
+
+async function productionTreeWithHistoricalWriter(t) {
+  const root = await writeTree(t, {});
+  for (const entry of await fs.readdir(REPO_ROOT, { withFileTypes: true })) {
+    if (['.git', '.codegraph', 'node_modules'].includes(entry.name)) continue;
+    const source = path.join(REPO_ROOT, entry.name);
+    const destination = path.join(root, entry.name);
+    if (entry.name === 'deploy') {
+      await fs.cp(source, destination, {
+        recursive: true,
+        filter: (entry) => !entry.split(path.sep).includes('node_modules'),
+      });
+    } else await fs.symlink(source, destination);
+  }
+  const { service, timer } = await readHistoricalWriterUnits();
+  await fs.writeFile(path.join(root, PUBLIC_WRITER_UNIT), service);
+  await fs.writeFile(path.join(root, PUBLIC_WRITER_TIMER), timer);
+  return root;
+}
+
+test('retirement rejects old units restored anywhere under deploy even without Install', async (t) => {
+  const { service, timer } = await readHistoricalWriterUnits();
+  for (const [unit, content] of [
+    [PUBLIC_WRITER_UNIT, service],
+    [PUBLIC_WRITER_TIMER, timer],
+  ]) {
+    for (const source of [content, content.replace(/^\[Install\][\s\S]*$/m, '')]) {
+      const root = await writeTree(t, {
+        ...Object.fromEntries(
+          await Promise.all(
+            ['morpheus-relayer.service', 'morpheus-relayer-nitro.service'].map(async (name) => [
+              `deploy/systemd/${name}`,
+              await fs.readFile(path.join(REPO_ROOT, 'deploy/systemd', name), 'utf8'),
+            ])
+          )
+        ),
+        'deploy/feed-pusher/morpheus-feed-pusher.service': await fs.readFile(
+          path.join(REPO_ROOT, 'deploy/feed-pusher/morpheus-feed-pusher.service'),
+          'utf8'
+        ),
+        [`deploy/other/${path.basename(unit)}`]: source,
+      });
+      const { problems } = await auditNodeFeedWriterTopology(root);
+      assert.ok(
+        problems.some((problem) => problem.includes('is retired')),
+        problems.join('\n')
+      );
+    }
+  }
+});
+
+test('retirement keeps the operator-doc enable guard for the removed writer', async (t) => {
+  const root = await productionTreeWithHistoricalWriter(t);
+  await fs.rm(path.join(root, PUBLIC_WRITER_UNIT));
+  await fs.rm(path.join(root, PUBLIC_WRITER_TIMER));
+  await fs.writeFile(
+    path.join(root, 'deploy/unsafe.md'),
+    'systemctl enable --now morpheus-public-feed-writer.timer\n'
   );
-  assert.doesNotMatch(expired.stderr, /^WARNING/m);
+  const { problems } = await auditNodeFeedWriterTopology(root);
+  assert.ok(
+    problems.some((problem) =>
+      problem.includes('still enables Node chain writer morpheus-public-feed-writer')
+    )
+  );
+});
+
+for (const name of ['morpheus-public-feed-writer.service', 'morpheus-public-feed-writer.timer']) {
+  test(`retirement refuses a deploy unit symlink for ${name}`, async (t) => {
+    const root = await writeTree(t, {});
+    await fs.cp(COMPLIANT_TESTNET_ROOT, root, { recursive: true });
+    const target = path.join(root, 'historical', name);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.copyFile(path.join(HISTORICAL_PUBLIC_WRITER_ROOT, 'deploy/feed-pusher', name), target);
+    const link = path.join(root, 'deploy', name);
+    await fs.symlink(path.relative(path.dirname(link), target), link);
+    const { problems } = await auditNodeFeedWriterTopology(root);
+    assert.ok(
+      problems.some(
+        (problem) => problem.includes(`deploy/${name}`) && problem.includes('deployment symlink')
+      ),
+      problems.join('\n')
+    );
+  });
+}
+
+for (const name of ['retired', 'node_modules', '.git']) {
+  test(`retirement refuses a linked deploy directory named ${name}`, async (t) => {
+    const root = await writeTree(t, {});
+    await fs.cp(COMPLIANT_TESTNET_ROOT, root, { recursive: true });
+    const target = path.join(root, 'historical');
+    await fs.cp(path.join(HISTORICAL_PUBLIC_WRITER_ROOT, 'deploy/feed-pusher'), target, {
+      recursive: true,
+    });
+    await fs.symlink('../historical', path.join(root, 'deploy', name));
+    const { problems } = await auditNodeFeedWriterTopology(root);
+    assert.ok(
+      problems.some(
+        (problem) => problem.includes(`deploy/${name}`) && problem.includes('deployment symlink')
+      ),
+      problems.join('\n')
+    );
+  });
+}
+
+for (const target of ['missing.service', '.', '../deploy']) {
+  test(`retirement refuses unresolved or cyclic deploy link ${target}`, async (t) => {
+    const root = await writeTree(t, {});
+    await fs.cp(COMPLIANT_TESTNET_ROOT, root, { recursive: true });
+    await fs.symlink(target, path.join(root, 'deploy', 'link'));
+    const { problems } = await auditNodeFeedWriterTopology(root);
+    assert.ok(
+      problems.some(
+        (problem) => problem.includes('deploy/link') && problem.includes('deployment symlink')
+      ),
+      problems.join('\n')
+    );
+  });
+}
+
+test('retirement refuses a symlink at the deploy root', async (t) => {
+  const root = await writeTree(t, {});
+  await fs.cp(COMPLIANT_TESTNET_ROOT, root, { recursive: true });
+  await fs.rename(path.join(root, 'deploy'), path.join(root, 'historical'));
+  await fs.symlink('historical', path.join(root, 'deploy'));
+  const { problems } = await auditNodeFeedWriterTopology(root);
+  assert.ok(
+    problems.some((problem) => problem.startsWith('deploy is a deployment symlink')),
+    problems.join('\n')
+  );
+});
+
+for (const directory of ['node_modules', '.git']) {
+  test(`retirement still checks regular units under deploy/${directory}`, async (t) => {
+    const root = await writeTree(t, {});
+    await fs.cp(COMPLIANT_TESTNET_ROOT, root, { recursive: true });
+    const unit = `deploy/${directory}/morpheus-public-feed-writer.service`;
+    await fs.mkdir(path.dirname(path.join(root, unit)), { recursive: true });
+    await fs.copyFile(
+      path.join(
+        HISTORICAL_PUBLIC_WRITER_ROOT,
+        'deploy/feed-pusher/morpheus-public-feed-writer.service'
+      ),
+      path.join(root, unit)
+    );
+    const { problems } = await auditNodeFeedWriterTopology(root);
+    assert.ok(
+      problems.some((problem) => problem.includes(unit) && problem.includes('is retired')),
+      problems.join('\n')
+    );
+  });
+}
+
+async function clonedTopologyCli(t) {
+  const root = await writeTree(t, {});
+  await new Promise((resolve, reject) => {
+    execFile(
+      'git',
+      ['clone', '--no-local', '--no-tags', '--single-branch', REPO_ROOT, root],
+      { timeout: 30_000 },
+      (error) => (error ? reject(error) : resolve())
+    );
+  });
+  // The fixture must execute the exact checker under test, including an
+  // uncommitted repair during fail-before/fail-after development.
+  await fs.copyFile(
+    path.join(REPO_ROOT, 'scripts/check-rust-production-topology.mjs'),
+    path.join(root, 'scripts/check-rust-production-topology.mjs')
+  );
+  return root;
+}
+
+async function runClonedTopologyCli(root, preload) {
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  return new Promise((resolve) => {
+    execFile(
+      process.execPath,
+      [
+        ...(preload ? ['--import', pathToFileURL(preload).href] : []),
+        path.join(root, 'scripts/check-rust-production-topology.mjs'),
+      ],
+      { env, timeout: 2000, killSignal: 'SIGKILL' },
+      (error, stdout, stderr) =>
+        resolve({ code: error ? error.code : 0, signal: error?.signal, stdout, stderr })
+    );
+  });
+}
+
+test('production preflight refuses a linked root before any deployment content read', async (t) => {
+  const root = await clonedTopologyCli(t);
+  await fs.rename(path.join(root, 'deploy'), path.join(root, 'historical-deploy'));
+  await fs.symlink('historical-deploy', path.join(root, 'deploy'));
+  const preload = path.join(root, 'observe-reads.mjs');
+  await fs.writeFile(
+    preload,
+    `import fs from 'node:fs/promises';
+const read = fs.readFile;
+fs.readFile = async function(file, ...args) {
+  if (String(file).startsWith(${JSON.stringify(path.join(root, 'deploy') + path.sep)})) {
+    throw new Error('DEPLOY_CONTENT_READ_BEFORE_REFUSAL');
+  }
+  return read.call(this, file, ...args);
+};\n`
+  );
+  const result = await runClonedTopologyCli(root, preload);
+  assert.equal(result.code, 1, result.stderr);
+  assert.match(result.stderr, /deploy is a deployment symlink/);
+  assert.doesNotMatch(result.stderr, /DEPLOY_CONTENT_READ_BEFORE_REFUSAL/);
+});
+
+test('production preflight refuses a linked required file without opening its FIFO target', async (t) => {
+  const root = await clonedTopologyCli(t);
+  const fifo = path.join(root, 'blocked-target.fifo');
+  await new Promise((resolve, reject) => {
+    execFile('mkfifo', [fifo], { timeout: 5000 }, (error) => (error ? reject(error) : resolve()));
+  });
+  const target = path.join(root, 'deploy/nitro/Dockerfile.enclave');
+  await fs.unlink(target);
+  await fs.symlink(fifo, target);
+  const result = await runClonedTopologyCli(root);
+  assert.equal(result.code, 1, `expected a refusal before FIFO open: ${JSON.stringify(result)}`);
+  assert.match(result.stderr, /deployment symlink/);
+});
+
+test('production preflight refuses unsafe input through the direct audit API', async (t) => {
+  const root = await writeTree(t, {});
+  await fs.mkdir(path.join(root, 'historical'));
+  await fs.symlink('historical', path.join(root, 'deploy'));
+  let problems;
+  let error;
+  try {
+    problems = await auditProductionTopology(root);
+  } catch (caught) {
+    error = caught;
+  }
+  assert.equal(error, undefined, 'unsafe deploy references must be refused before other reads');
+  assert.ok(problems.some((problem) => problem.startsWith('deploy is a deployment symlink')));
 });

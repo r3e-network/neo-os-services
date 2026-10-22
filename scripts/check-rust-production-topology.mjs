@@ -54,6 +54,38 @@ function writerStem(fileName) {
   return path.basename(String(fileName || '')).replace(/\.(service|timer)$/, '');
 }
 
+async function auditDeployReferences(root, { checkRetiredNames = true } = {}) {
+  const deployRoot = path.join(root, 'deploy');
+  let rootEntry;
+  try {
+    rootEntry = await fs.lstat(deployRoot);
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return [];
+    throw error;
+  }
+  const linkProblem = (entry) =>
+    `${entry} is a deployment symlink; deploy sources must be regular files and directories`;
+  if (rootEntry.isSymbolicLink()) return [linkProblem('deploy')];
+
+  const found = [];
+  async function visit(directory) {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const fullPath = path.join(directory, entry.name);
+      const relativePath = path.relative(root, fullPath).split(path.sep).join('/');
+      if (checkRetiredNames && RETIRED_PUBLIC_FEED_WRITER_BASENAMES.includes(entry.name)) {
+        found.push(`${relativePath} is retired; historical units must stay outside deploy/`);
+      }
+      if (entry.isSymbolicLink()) {
+        found.push(linkProblem(relativePath));
+      } else if (entry.isDirectory()) {
+        await visit(fullPath);
+      }
+    }
+  }
+  await visit(deployRoot);
+  return found.sort();
+}
+
 async function walkDeployFiles(root, { predicate } = {}) {
   const deployRoot = path.join(root, 'deploy');
   const found = [];
@@ -107,23 +139,15 @@ export async function discoverNodeFeedWriterUnits(root = repoRoot) {
 // A reviewed exception is { key, reason, expiresOn }. `key` is
 // `boot-enabled-chain-writer:<service stem>`; `expiresOn` (YYYY-MM-DD, UTC) is
 // the first day the exception no longer holds.
-export const REVIEWED_TOPOLOGY_EXCEPTIONS = Object.freeze([
-  // Renewed once (CU-21, DEC-CU-3): first dated 2026-10-07, now 2026-10-21. A further renewal
-  // needs a new recorded decision. The owner and the condition are in `reason`, which is printed.
-  Object.freeze({
-    key: 'boot-enabled-chain-writer:morpheus-public-feed-writer',
-    reason:
-      'renewed once, for 14 days, from 2026-10-07 to 2026-10-21 (DEC-CU-3, which supersedes ' +
-      'DEC-P19; first reviewed in round-9 audit 3a): boot-enabled every 60 s, runs ' +
-      'workers/nitro-worker/.neoos-live-feed-write.mjs --execute (in no repository) with ' +
-      'the frontier signer env, outside the Rust relayer authority and absent from its ' +
-      'Conflicts=; kept running, not deleted or disabled. Owner: NeoOS program lead ' +
-      '(delegated by the owner). Condition: the owner caps the writer cadence and funds the ' +
-      'updater to at least 30 days (OP-02) and the runway and stale alerts exist (CU-11); ' +
-      'the key-free writer replaces this unit in the 2026-10-21 enclave rebuild window; ' +
-      'no second renewal',
-    expiresOn: '2026-10-21',
-  }),
+// The public-writer exception exhausted its single renewal on 2026-10-21.
+// Exact historical units and exception remain under scripts/fixtures/ only.
+export const REVIEWED_TOPOLOGY_EXCEPTIONS = Object.freeze([]);
+
+// Installed old units may outlive a source checkout; keep their names in the
+// authority conflict contract even though no deployable copy remains here.
+export const RETIRED_PUBLIC_FEED_WRITER_BASENAMES = Object.freeze([
+  'morpheus-public-feed-writer.service',
+  'morpheus-public-feed-writer.timer',
 ]);
 
 export const BOOT_ENABLED_CHAIN_WRITER_KEY_PREFIX = 'boot-enabled-chain-writer:';
@@ -639,7 +663,7 @@ export function checkRustFeedAuthorityUnit(name, source, writerUnitNames = []) {
     problems.push(`${name} has no discovered Node feed writers to conflict with`);
     return problems;
   }
-  for (const conflict of writers) {
+  for (const conflict of new Set([...writers, ...RETIRED_PUBLIC_FEED_WRITER_BASENAMES])) {
     requirePattern(
       problems,
       source,
@@ -690,14 +714,24 @@ export function checkNodeFeedCompatUnit(name, source, marker = 'ENABLE_NODE_FEED
 export async function auditNodeFeedWriterTopology(root) {
   const problems = [];
   const read = (relativePath) => fs.readFile(path.join(root, relativePath), 'utf8');
+  // Deployment source must be self-contained. Following links could restore
+  // retired units under another directory or escape the reviewed source tree.
+  const unsafeReferences = await auditDeployReferences(root);
+  if (unsafeReferences.length) {
+    return {
+      problems: unsafeReferences,
+      writers: [],
+    };
+  }
   const writers = await discoverNodeFeedWriterUnits(root);
   if (writers.length === 0) {
     problems.push('no Node feed writer units discovered under deploy/');
     return { problems, writers };
   }
   const writerBasenames = writers.map((unit) => unit.fileName);
-  const writerStems = [...new Set(writerBasenames.map(writerStem))];
-
+  const writerStems = [
+    ...new Set([...writerBasenames, ...RETIRED_PUBLIC_FEED_WRITER_BASENAMES].map(writerStem)),
+  ];
   for (const unit of RUST_FEED_AUTHORITY_UNITS) {
     try {
       await fs.access(path.join(root, unit));
@@ -864,6 +898,8 @@ export function checkSignerStartScript(source) {
 // `chainWriters` passes options through to auditBootEnabledChainWriters (tests
 // inject `exceptions` / `today`); production uses the defaults.
 export async function auditProductionTopology(root = repoRoot, { chainWriters = {} } = {}) {
+  const unsafeReferences = await auditDeployReferences(root, { checkRetiredNames: false });
+  if (unsafeReferences.length) return unsafeReferences;
   const problems = [];
   const read = (relativePath) => fs.readFile(path.join(root, relativePath), 'utf8');
 
@@ -1196,6 +1232,14 @@ export async function auditProductionTopology(root = repoRoot, { chainWriters = 
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  // Refuse before the production audit or its later exception-reporting scan
+  // can open deployment content. In particular, never open a linked FIFO.
+  const unsafeReferences = await auditDeployReferences(repoRoot, { checkRetiredNames: false });
+  if (unsafeReferences.length) {
+    console.error('Rust production topology audit failed:');
+    for (const problem of unsafeReferences) console.error(`- ${problem}`);
+    process.exit(1);
+  }
   const problems = await auditProductionTopology();
   // Reported whether or not the gate passes: an excepted unit is never silent.
   const { excepted } = await auditBootEnabledChainWriters();

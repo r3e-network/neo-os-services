@@ -117,12 +117,11 @@ systemctl start morpheus-feed-monitor.service       # back to the real balance
 
 ### What this does not cover
 
-1. **The live writer.** The budget lives in the tracked Node pusher. `morpheus-public-feed-writer.service` runs
-   `workers/nitro-worker/.neoos-live-feed-write.mjs`, a script that is in no repository, every 60 seconds
-   (`morpheus-public-feed-writer.timer`), and it does not read `feed-pusher.env`. The budget does not bind it,
-   and nothing else in this repository does: its cadence is that timer plus thresholds inside a script this
-   repository cannot see, so capping it is the owner's step (OP-02). The monitor's runway alert is the backstop,
-   because it measures what the updater actually spends, whichever process spends it.
+1. **The legacy public writer.** The `morpheus-public-feed-writer.service` and timer source have been
+   retired. Their old untracked `.neoos-live-feed-write.mjs` entry point was outside this budget.
+   Source removal does not stop an installed copy; follow the
+   [public writer cutover checklist](../../docs/LEGACY-PUBLIC-FEED-WRITER-CUTOVER.md) in the deployment lane.
+   The monitor's runway alert measures actual updater spend regardless of the process responsible.
 2. **The Rust writers.** The `/feed/sign` price plane now classifies provider failures and reports them, with its
    runway, on the enclave host's `/health` under `price_plane` (CU-90, shipped dark: it rides the enclave rebuild
    window, OP-11). Two limits remain. The classification covers 401, 403, expiry and quota/rate-limit, NOT the
