@@ -1,0 +1,34 @@
+{
+  "Version" : "2012-10-17",
+  "Id" : "morpheus-enclave-master",
+  "Statement" : [ {
+    "Sid" : "RootFull",
+    "Effect" : "Allow",
+    "Principal" : {
+      "AWS" : "arn:aws:iam::736326664265:root"
+    },
+    "Action" : "kms:*",
+    "Resource" : "*"
+  }, {
+    "Sid" : "DeployUserManage",
+    "Effect" : "Allow",
+    "Principal" : {
+      "AWS" : "arn:aws:iam::736326664265:user/codex-morpheus-deploy"
+    },
+    "Action" : [ "kms:Encrypt", "kms:ReEncrypt*", "kms:DescribeKey", "kms:GetKeyPolicy", "kms:PutKeyPolicy", "kms:GenerateDataKey*" ],
+    "Resource" : "*"
+  }, {
+    "Sid" : "EnclaveAttestedDecrypt",
+    "Effect" : "Allow",
+    "Principal" : {
+      "AWS" : "arn:aws:iam::736326664265:role/MorpheusNitroRelayerInstanceRole"
+    },
+    "Action" : "kms:Decrypt",
+    "Resource" : "*",
+    "Condition" : {
+      "StringEqualsIgnoreCase" : {
+        "kms:RecipientAttestation:ImageSha384" : "39fad73b3d3c528b2a176b0bdf6a6761810a0c5e1a548b5fe589e98feb448b38016bbe56939d52db873086f294dcba7c"
+      }
+    }
+  } ]
+}

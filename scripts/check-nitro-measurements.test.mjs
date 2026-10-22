@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -114,6 +115,130 @@ function fixture({ manifests = [manifest()], pins = null, policies = {}, files =
 }
 
 const TODAY = '2026-09-21';
+
+const LEGACY_ORACLE_PIN = {
+  app_id: 'morpheus-oracle',
+  key_alias: 'alias/morpheus-enclave-master',
+  key_arn: 'arn:aws:kms:us-east-1:736326664265:key/5d9b6835-6976-4fd9-92ba-5db5176d7c3a',
+  policy_file: 'morpheus-enclave-master.policy.json',
+  pinned_release: 'oracle-enclave-exec-2026-06-15.10',
+};
+const CUSTODY_UNPUBLISHED = {
+  app_id: 'morpheus-custody',
+  reason:
+    'No custody EIF has ever been built from this tree on a Nitro host. deploy/nitro/measurements/ holds nine manifests and every one is app_id morpheus-oracle, so build-custody-eif.sh:39 has never written measurements/<release>.json. Real PCR0/1/2 for the custody image can only come from `nitro-cli build-enclave` on the Nitro box; inventing them here would produce exactly the unverifiable pin this file exists to prevent. Until then the enclave holding every private key publishes no measurement at all, and workers/neo-signer/src/attestation.rs:9-20 delegates its identity gate to a KMS policy that is likewise unpublished.',
+  blocked_on:
+    'bash deploy/nitro/build-custody-eif.sh on the Nitro host (reproducibility verification is now the default), then commit the generated manifest and export the custody CMK policy beside it',
+  required_by: '2026-10-21',
+  owner: 'neo-os-services platform operator (Nitro host + KMS read)',
+};
+const CUSTODY_EXPIRY =
+  'deploy/nitro/kms/attestation-pins.json unpublished[0]: required_by 2026-10-21 is past due — publish the morpheus-custody measurement and key policy, or re-date the record under review';
+
+test('retained legacy Oracle policy is published while custody remains expired', () => {
+  const pins = JSON.parse(
+    readFileSync(join(repoRoot, 'deploy/nitro/kms/attestation-pins.json'), 'utf8')
+  );
+  assert.deepEqual(pins.required_app_ids, ['morpheus-oracle', 'morpheus-custody']);
+  assert.deepEqual(pins.pins, [LEGACY_ORACLE_PIN]);
+  assert.deepEqual(pins.unpublished, [CUSTODY_UNPUBLISHED]);
+  // Publication consistency does not establish exclusive KMS authorization.
+  assert.deepEqual(auditAttestationPins(repoRoot, { today: '2026-10-22' }), [CUSTODY_EXPIRY]);
+  const policy = readFileSync(join(repoRoot, 'deploy/nitro/kms', LEGACY_ORACLE_PIN.policy_file));
+  assert.equal(policy.length, 1020);
+  assert.equal(
+    createHash('sha256').update(policy).digest('hex'),
+    '3f933b785a356c24f041cb0b85d0796e6c1dbe62995ae7b99f756d208bc42172',
+    'preserve the public GetKeyPolicy export verbatim, including administrative statements'
+  );
+  const measurement = readFileSync(
+    join(repoRoot, 'deploy/nitro/measurements', `${LEGACY_ORACLE_PIN.pinned_release}.json`)
+  );
+  assert.equal(
+    createHash('sha256').update(measurement).digest('hex'),
+    'cde4fc16af3b572c5f12aa2261c77248d51957054109a3770e491b6eb1505a3f'
+  );
+});
+
+test('retained legacy Oracle binding refuses publication drift without clearing custody', async (t) => {
+  const pinPath = 'deploy/nitro/kms/attestation-pins.json';
+  const policyPath = `deploy/nitro/kms/${LEGACY_ORACLE_PIN.policy_file}`;
+  const measurement = JSON.parse(
+    readFileSync(
+      join(repoRoot, 'deploy/nitro/measurements', `${LEGACY_ORACLE_PIN.pinned_release}.json`),
+      'utf8'
+    )
+  );
+  const policyBytes = readFileSync(join(repoRoot, policyPath), 'utf8');
+  const pins = JSON.parse(readFileSync(join(repoRoot, pinPath), 'utf8'));
+  const editJson = (root, file, change) => {
+    const value = JSON.parse(readFileSync(join(root, file), 'utf8'));
+    change(value);
+    writeFileSync(join(root, file), JSON.stringify(value));
+  };
+  const changeCondition = (value) => (root) =>
+    editJson(root, policyPath, (policy) => {
+      policy.Statement.find(
+        (entry) => entry.Sid === 'EnclaveAttestedDecrypt'
+      ).Condition.StringEqualsIgnoreCase['kms:RecipientAttestation:ImageSha384'] = value;
+    });
+  for (const [name, change, finding] of [
+    ['PCR drift', changeCondition(PCR('9')), /does not equal/],
+    ['zero PCR', changeCondition(ZERO_PCR), /all-zero/],
+    ['malformed PCR', changeCondition('not-a-digest'), /96-character/],
+    [
+      'wrong release',
+      (root) =>
+        editJson(root, pinPath, (doc) => {
+          doc.pins[0].pinned_release = 'oracle-unpublished-release';
+        }),
+      /has no committed manifest/,
+    ],
+    [
+      'wrong app',
+      (root) =>
+        editJson(root, pinPath, (doc) => {
+          doc.pins[0].app_id = 'morpheus-custody';
+        }),
+      /app_id morpheus-oracle/,
+    ],
+    ['missing policy', (root) => rmSync(join(root, policyPath)), /policy_file.*not committed/],
+    [
+      'malformed policy',
+      (root) => writeFileSync(join(root, policyPath), '{'),
+      /not parseable JSON/,
+    ],
+    [
+      'stale Oracle unpublished record',
+      (root) =>
+        editJson(root, pinPath, (doc) => {
+          doc.unpublished.push({ ...CUSTODY_UNPUBLISHED, app_id: 'morpheus-oracle' });
+        }),
+      /morpheus-oracle is both pinned and recorded as unpublished/,
+    ],
+  ]) {
+    await t.test(name, () => {
+      const root = fixture({
+        manifests: [measurement],
+        pins,
+        policies: { [LEGACY_ORACLE_PIN.policy_file]: JSON.parse(policyBytes) },
+        files: { [policyPath]: policyBytes },
+      });
+      try {
+        assert.deepEqual(auditAttestationPins(root, { today: '2026-10-22' }), [CUSTODY_EXPIRY]);
+        change(root);
+        const problems = auditAttestationPins(root, { today: '2026-10-22' });
+        assert.ok(problems.includes(CUSTODY_EXPIRY), problems.join('; '));
+        assert.ok(
+          problems.some((problem) => finding.test(problem)),
+          problems.join('; ')
+        );
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
 
 test('the committed repository tree passes the whole gate', () => {
   assert.deepEqual(auditNitroMeasurements(repoRoot, { today: TODAY }), []);

@@ -71,3 +71,6 @@ contracts/__tests__/Generated/*.manifest.json
 # Captured parity fixtures are byte-pinned across Rust, JS and frozen baselines.
 crates/neo-os-games/src/engine-parity.goldens.json
 workers/nitro-worker/src/game/engine-parity.goldens.json
+
+# Retain the public AWS policy export verbatim; its exact bytes are hash-tested.
+deploy/nitro/kms/morpheus-enclave-master.policy.json

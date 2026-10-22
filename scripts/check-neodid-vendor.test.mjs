@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -100,6 +102,27 @@ function makeTree(t, { siblingBodies = null } = {}) {
   for (const entry of FILES) write(join(root, entry.dest), entry.body);
   writePin(root, pinFor(commit));
   return { base, root, siblingPath, commit };
+}
+
+// Copy the checked-in pin verbatim, never deriving its hashes from the bytes
+// being checked. Required consumer paths and all vendor data survive even if
+// their pin entry is missing. The nested fixture cannot discover a real sibling.
+function makeRepositoryTree(t) {
+  const base = mkdtempSync(join(tmpdir(), 'neodid-repository-pin-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const root = join(base, 'workspace', 'services');
+  write(join(root, PIN_FILE), readFileSync(join(REPO_ROOT, PIN_FILE)));
+  const vendor = 'vendor/neo-os-did';
+  if (existsSync(join(REPO_ROOT, vendor))) {
+    mkdirSync(dirname(join(root, vendor)), { recursive: true });
+    cpSync(join(REPO_ROOT, vendor), join(root, vendor), { recursive: true });
+  }
+  for (const dest of REQUIRED_DESTINATIONS) {
+    if (dest.startsWith(`${vendor}/`) || !existsSync(join(REPO_ROOT, dest))) continue;
+    mkdirSync(dirname(join(root, dest)), { recursive: true });
+    cpSync(join(REPO_ROOT, dest), join(root, dest), { recursive: true });
+  }
+  return { root };
 }
 
 // A throwaway tree's known destinations are its fixture files.
@@ -308,6 +331,48 @@ test('the repository pin declares every required destination', () => {
     [],
     'every consumer file and data file must stay pinned'
   );
+});
+
+test('the checked-in NeoDID tree matches its committed pin without a sibling', (t) => {
+  const { root } = makeRepositoryTree(t);
+  const { problems, summary } = checkNeoDidVendor({ root, env: {} });
+  assert.deepEqual(problems, []);
+  assert.equal(summary.siblingChecked, false);
+});
+
+test('the checked-in pin rejects drift in every required destination', async (t) => {
+  for (const dest of REQUIRED_DESTINATIONS) {
+    await t.test(dest, (t) => {
+      const { root } = makeRepositoryTree(t);
+      const file = join(root, dest);
+      const original = readFileSync(file);
+      const changed = Buffer.concat([original, Buffer.from('\nfixture drift\n')]);
+      writeFileSync(file, changed);
+      const pin = JSON.parse(readFileSync(join(root, PIN_FILE), 'utf8'));
+      const entry = pin.files.find((entry) => entry.dest === dest);
+      const { problems, summary } = checkNeoDidVendor({ root, env: {} });
+      assert.deepEqual(problems, [
+        `NeoDID pin drift: ${dest} expected ${entry.sha256} got ${sha256(changed)}`,
+      ]);
+      assert.equal(summary.siblingChecked, false);
+    });
+  }
+});
+
+test('the checked-in tree rejects a missing pin entry and undeclared vendor data', (t) => {
+  const { root } = makeRepositoryTree(t);
+  const pin = JSON.parse(readFileSync(join(root, PIN_FILE), 'utf8'));
+  const dest = 'apps/web/lib/neodid-did.test.ts';
+  pin.files = pin.files.filter((entry) => entry.dest !== dest);
+  writePin(root, pin);
+  const orphan = 'vendor/neo-os-did/undeclared-fixture.txt';
+  write(join(root, orphan), 'fixture data\n');
+  const { problems, summary } = checkNeoDidVendor({ root, env: {} });
+  assert.deepEqual(problems, [
+    `${PIN_FILE} does not pin required NeoDID destination ${dest}`,
+    `orphan under vendor/neo-os-did/: ${orphan} is not declared in ${PIN_FILE}`,
+  ]);
+  assert.equal(summary.siblingChecked, false);
 });
 
 test('runs the audit when invoked through a symlink', (t) => {

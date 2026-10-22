@@ -882,10 +882,10 @@
       "consumer": "vendor/neo-os-did.pin.json",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Pins17 explicit source-to-destination mappings to canonical DID1eca5b49113fcbc659c5b983c9a98eed0723a167 with SHA256 digests, including current resolver/common/host/docs and unchanged contract artifacts. Provenance metadata identifies trusted identity implementation bytes; it does not implement reward allocation. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "justification": "Pins17 explicit source-to-destination mappings to canonical DID7dac2321af7cb8d4d39306c780154bd8b88756ce with SHA256 digests, including current resolver/common/host/docs and unchanged contract artifacts. Provenance metadata identifies trusted identity implementation bytes; it does not implement reward allocation. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "vendor/neo-os-did.pin.json": {
-          "sha256": "82460de750837074e9fee96da977b51435905cc00ca53435ee4fe4863c5ba0be"
+          "sha256": "1749df289ea28eeb29f049623dd565dd7d11b51cb71ba00da056f6eb8c76b18e"
         }
       }
     },
@@ -1575,6 +1575,45 @@
         },
         "apps/web/lib/neodid-did.test.ts": {
           "sha256": "d6eb9d59a7d2aa1be007060feeee6affb358052320ed75160206970898bccf36"
+        }
+      }
+    },
+    {
+      "consumer": "neodid-committed-pin-regression",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "This exact Node regression file audits a verbatim committed NeoDID pin against copied consumer/vendor bytes and isolated synthetic Git fixtures. It checks hash, path, required-destination, orphan and sibling-provenance failures; copied contract artifacts are data and are not executed. It neither selects economic winners nor supplies production entropy, signs, deploys or settles value. This classification covers these exact test bytes only; it does not classify the DID implementation, contracts, custody authority or downstream economic consumers as non-value.",
+      "inputs": {
+        "scripts/check-neodid-vendor.test.mjs": {
+          "sha256": "7098644cebbc44caa96d752152d4a7221caa356e0864b5a222329112d57cf27e"
+        }
+      }
+    },
+    {
+      "consumer": "legacy-oracle-publication-metadata",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "These exact source files publish the retained historical Oracle GetKeyPolicy bytes and bind their ImageSha384 to the unchanged committed .10 manifest, with only the Oracle unpublished record removed; custody remains expired at its original2026-10-21 deadline. The exact formatting exclusion preserves that byte-hashed export and does not exempt measurement or authorization checks. These metadata bytes do not implement economic randomness, reward allocation or settlement. Classification is limited to VRF/economic meaning: it does not establish effective or exclusive KMS authorization, apply a cloud policy, activate the diagnostic or production image, waive measured-input requirements or admit custody/runtime operation.",
+      "inputs": {
+        ".prettierignore": {
+          "sha256": "d6b0d6203bc771a5b58e1424d624c4e79c4c53349253f248cb477a8147df84f9"
+        },
+        "deploy/nitro/kms/attestation-pins.json": {
+          "sha256": "704720bb284ee23b74ac99468ed9b78912d67ebf214d16f5ce4fc829fae476b4"
+        },
+        "deploy/nitro/kms/morpheus-enclave-master.policy.json": {
+          "sha256": "3f933b785a356c24f041cb0b85d0796e6c1dbe62995ae7b99f756d208bc42172"
+        }
+      }
+    },
+    {
+      "consumer": "legacy-oracle-publication-regressions",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "This exact Node test file verifies committed legacy Oracle policy/manifest hashes, publication correspondence and custody-record preservation, and exercises missing, malformed, drifted and expired fixtures against the existing checker. It does not execute enclave/contract artifacts, choose production entropy, allocate rewards, sign, deploy or settle value. Its classification does not approve the production KMS authorization model, expiry renewal, downstream economic consumers or diagnostic/production runtime admission.",
+      "inputs": {
+        "scripts/check-nitro-measurements.test.mjs": {
+          "sha256": "61cc0c22296f98c323efb36fa7ebdc372ed44ec77703b9761db2d66b52554cb6"
         }
       }
     }

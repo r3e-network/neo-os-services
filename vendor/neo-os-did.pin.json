@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "repository": "https://github.com/r3e-network/neo-os-did.git",
-  "commit": "1eca5b49113fcbc659c5b983c9a98eed0723a167",
+  "commit": "7dac2321af7cb8d4d39306c780154bd8b88756ce",
   "files": [
     {
       "source": "runtime/nitro-worker/src/neodid/index.js",
@@ -21,7 +21,7 @@
     {
       "source": "packages/web/src/neodid-did.test.ts",
       "dest": "apps/web/lib/neodid-did.test.ts",
-      "sha256": "56a0112f640fea28e5c589838e7309f1541153a750a3f4f56191b1a08017ef43"
+      "sha256": "d6eb9d59a7d2aa1be007060feeee6affb358052320ed75160206970898bccf36"
     },
     {
       "source": "packages/web/app/api/neodid/action-ticket.ts",
