@@ -1509,6 +1509,57 @@
           "sha256": "69d10a54f032753f161171aa3d2252423bcf3662f7d2df3d758269e9c1f7d111"
         }
       }
+    },
+    {
+      "consumer": "reviewed-s2-current-authority-conflict-configuration",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Exact systemd configuration launches the unchanged existing Rust relayer loop and config validator; the S2 delta only adds conflicts with the retired public service and timer. This constrains coexistence. It neither requests/consumes VRF randomness nor specifies a wager, winner, prize allocation, settlement rule or economic random selection. Non-value is limited to the VRF economic-classification purpose of this exact configuration; the relayer runtime remains security-sensitive and can perform financially relevant chain writes. Exact-byte classification was independently issued for source 8f93bdf13a12c1a3fda32933c2b3ac7468c99582 by review SHA256 5ca6df7b9df700fdb858369a8e17c2006e5f3dc61c41bc668369310e840a9acf. It grants no installation, publication, deployment, runtime authority, new debt, expiry renewal or exception for invoked implementations.",
+      "inputs": {
+        "deploy/systemd/morpheus-relayer-nitro.service": {
+          "sha256": "9c7e85191fff291e0ae6a67618b6c172ee57ffdf58dcebca03aaf6f49df2898b"
+        },
+        "deploy/systemd/morpheus-relayer.service": {
+          "sha256": "ba68a98c9cea6e9a9b1933475d06a3496d586c92ec933773241d5381193232df"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-s2-synthetic-testnet-conflict-fixture",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Synthetic [Unit]/Conflicts declarations only, without Service/ExecStart, credentials, code, network destinations, randomness, award or settlement. Read by local topology tests to distinguish complete testnet exclusion from missed testnet writers; never a production deployment unit. Exact-byte classification was independently issued for source 8f93bdf13a12c1a3fda32933c2b3ac7468c99582 by review SHA256 5ca6df7b9df700fdb858369a8e17c2006e5f3dc61c41bc668369310e840a9acf. It grants no installation, publication, deployment, runtime authority, new debt, expiry renewal or exception for invoked implementations.",
+      "inputs": {
+        "scripts/fixtures/feed-writer-topology/compliant-testnet-writer/deploy/systemd/morpheus-relayer-nitro.service": {
+          "sha256": "2201cc0940dab266246b3d0285994d39d76890376efc3479028c7732f207d695"
+        },
+        "scripts/fixtures/feed-writer-topology/compliant-testnet-writer/deploy/systemd/morpheus-relayer.service": {
+          "sha256": "11eac3a65538294abc5d5c9f6b5e9911b1411ea29f7bd836c4896d0859b6af0d"
+        },
+        "scripts/fixtures/feed-writer-topology/missed-testnet-writer/deploy/systemd/morpheus-relayer-nitro.service": {
+          "sha256": "9bf51a064cd4948f148d60f031d39d0c886518df8372a3864d44223325950f2b"
+        },
+        "scripts/fixtures/feed-writer-topology/missed-testnet-writer/deploy/systemd/morpheus-relayer.service": {
+          "sha256": "32b2ab0ff3198569bd8f29d9035712943f3cf17531feb98d634e9043cad5a337"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-s2-historical-retirement-fixture",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Exact formerly shipped service/timer bytes relocated outside deploy into the retired test fixture. The checker parses them as input data to demonstrate discovery/expiry/refusal; tests do not execute systemd or the untracked writer. Production deploy discovery starts at root/deploy and does not include this path. The service describes a financially sensitive historic writer, but this exact fixture is not a VRF random-output consumer or permission to install or run that writer. Frozen historical Object.freeze data only. The sole 2026-10-21 expiry and no-second-renewal text are preserved; imported explicitly by the topology test only. Production default exception array is empty and a probe confirms it cannot acquire this exception. No VRF invocation or economic result is selected. This classification does not renew the historical exception. Exact-byte classification was independently issued for source 8f93bdf13a12c1a3fda32933c2b3ac7468c99582 by review SHA256 5ca6df7b9df700fdb858369a8e17c2006e5f3dc61c41bc668369310e840a9acf. It grants no installation, publication, deployment, runtime authority, new debt, expiry renewal or exception for invoked implementations.",
+      "inputs": {
+        "scripts/fixtures/feed-writer-topology/retired-public-writer/deploy/feed-pusher/morpheus-public-feed-writer.service": {
+          "sha256": "4241f91f6b05c51d4ee97ebb2067ff3c6be0389f682fdce73a65d87457805dad"
+        },
+        "scripts/fixtures/feed-writer-topology/retired-public-writer/deploy/feed-pusher/morpheus-public-feed-writer.timer": {
+          "sha256": "20e34fd4ed5251f591435c911558a0445249a1caade6c758ea33f180a0f25f0b"
+        },
+        "scripts/fixtures/feed-writer-topology/retired-public-writer/reviewed-exceptions.mjs": {
+          "sha256": "3965010216b813860c8891aaa3d6a8c629ccf2bdfe2e079c890d55d1195b0058"
+        }
+      }
     }
   ]
 }
