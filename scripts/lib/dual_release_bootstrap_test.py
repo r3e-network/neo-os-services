@@ -25,7 +25,7 @@ class FramedBootstrap(unittest.TestCase):
                 'mode': '100644', 'data': base64.b64encode(code).decode(),
                 'sha256': hashlib.sha256(code).hexdigest(),
             }},
-            'source_root': '/synthetic', 'root': '/synthetic', 'head': 'a' * 40,
+            'source_root': '/synthetic-π-链', 'root': '/synthetic-π-链', 'head': 'a' * 40,
             'base': 'b' * 40,
         }, ensure_ascii=False).encode()
 
