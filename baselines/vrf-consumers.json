@@ -1624,7 +1624,7 @@
       "justification": "This exact standalone operator example prepares a new Testnet root and two distinct authentication credentials, derives privileged first-Admin enrollment/public profile bindings, and later constructs three purpose-separated KMS Encrypt requests. Its randomness is cryptographic custody/authentication material, not a VRF/random result used to choose an economic winner, payout recipient or amount. It is security-critical and can establish control over value; non-value classifies economic-VRF selection only. It is outside runtime startup and does not apply enrollment or publish grants. Independent exact source GO covers ce3ea721f3395dc7d731383fc92c7c89fc19eea3, tree12202454dcc2ce03ab5576955b2ec6ef881a49fd, verdict SHA256 c08b2bd127f500af640deb21522aed818e26e0e92a80b6b2d836eee821326df4, including original private-FD inode closure, externally pinned preparation receipt/substitution, completion-last real-I/O failures, strict dual Testnet/N3 identity and signed Decrypt byte parity. This binding does not authorize material generation, Encrypt, enrollment, permissions changes, source integration, full CI, measurement, custody release, deployment or live/runtime admission. Existing custody expiry and pin/manifest gates remain unchanged.",
       "inputs": {
         "workers/neo-signer/examples/prepare_testnet_material.rs": {
-          "sha256": "98b275e2ac38e310874b9e1b96c416a0bb0749cced7ee6a4610ddeff80f6aaac"
+          "sha256": "ab4730d5c1ff8e640b1c9c4395d459000fbe50610a43325cfba0a2769e46b984"
         }
       }
     }
