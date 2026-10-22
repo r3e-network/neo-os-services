@@ -25,3 +25,12 @@ test('dual source committed CLI and provenance drift controls', () => {
   );
   assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
 });
+
+test('verified Python input frames execute without waiting for pipe closure', () => {
+  const run = spawnSync(
+    'python3',
+    ['-B', fileURLToPath(new URL('./lib/dual_release_bootstrap_test.py', import.meta.url))],
+    { encoding: 'utf8', timeout: 30_000 }
+  );
+  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+});

@@ -105,6 +105,16 @@ class CommittedSource(unittest.TestCase):
         self.assertIn('DUAL_BUILD_INPUT_MISSING',codes)
         self.assertEqual(sum(c['status']=='NOT_EVALUABLE_MISSING_MEASUREMENT' for c in report['checks'] if 'status' in c),3)
 
+    def test_committed_cli_frames_utf8_paths_by_byte_length(self):
+        renamed = self.root.with_name('repo-π-链')
+        self.root.rename(renamed)
+        self.root = renamed
+        code, report = self.cli()
+        self.assertEqual(code, 1, report)
+        self.assertTrue(report['source_checks_complete'])
+        self.assertFalse(report['full_admission'])
+        self.assertEqual(report['provenance']['head']['commit'], self.head)
+
     def test_cli_uses_explicit_runtime_without_inheriting_environment(self):
         from unittest.mock import patch
         runtime = Path(self.temp.name) / 'tool cache' / 'node'

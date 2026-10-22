@@ -48,7 +48,16 @@ function refuse(message) {
 const bootstrap = String.raw`
 import base64, hashlib, importlib.abc, importlib.util, json, sys, types
 from types import MappingProxyType
-payload = json.load(sys.stdin)
+if len(sys.argv) != 2 or not sys.argv[1].isascii() or not sys.argv[1].isdecimal():
+    raise ValueError('Invalid input frame length')
+input_size = int(sys.argv[1])
+if str(input_size) != sys.argv[1] or not 0 < input_size <= 8 * 1024 * 1024:
+    raise ValueError('Invalid input frame length')
+# A complete frame is sufficient even if the parent pipe has not closed yet.
+data = sys.stdin.buffer.read(input_size)
+if len(data) != input_size:
+    raise ValueError('Incomplete input frame')
+payload = json.loads(data)
 assert sys.flags.isolated and sys.flags.no_site and sys.flags.dont_write_bytecode
 records = {}
 for name, record in payload['sources'].items():
@@ -156,9 +165,11 @@ try {
     'HEAD changed before execution'
   );
   const payload = { sources, source_root: sourceRoot, root, base, head };
-  const result = spawnSync('python3', ['-I', '-S', '-B', '-c', bootstrap], {
+  const input = Buffer.from(JSON.stringify(payload), 'utf8');
+  requireValue(input.length > 0 && input.length <= 8 * 1024 * 1024, 'Bounded input frame required');
+  const result = spawnSync('python3', ['-I', '-S', '-B', '-c', bootstrap, String(input.length)], {
     env: runtimeEnv,
-    input: JSON.stringify(payload),
+    input,
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
     timeout: 180_000,
@@ -187,6 +198,7 @@ try {
     'Executing tool mode differs from HEAD',
     'Executing tool differs from HEAD',
     'HEAD changed before execution',
+    'Bounded input frame required',
     'Isolated source gate execution failed',
     'Unexpected admission result',
   ]);
