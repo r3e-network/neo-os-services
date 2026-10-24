@@ -796,6 +796,20 @@ Order matters: there must never be a moment when nothing owns custody.
    call sites move to `/signer/api/v1/sign/transaction` one at a time, each with its own
    caller token.
 
+   **Legacy shim provisioning:** `POST /provision` on this Node compatibility shim remains
+   behind the boot-configured runtime bearer token, but accepts only `NEO_NETWORK_MAGIC`,
+   `SIGNER_SERVICE_URL`, `SIGNER_SERVICE_TOKEN`, and the four
+   `SIGNER_ROLE_{UPDATER,ORACLE_VERIFIER,RELAYER,WORKER}_KEY_ID` values. Unknown variables
+   and plaintext keys are refused. `NITRO_SIGNER_TOKEN`, `MORPHEUS_RUNTIME_TOKEN`,
+   `NITRO_API_TOKEN`, and `NITRO_SHARED_SECRET` are boot-only and can never be installed or
+   rotated through this route. The first valid provision succeeds once per boot; every
+   later call answers `409`, while a rejected attempt neither consumes the one chance nor
+   merges part of its candidate environment. Boot values are immutable, although an exact
+   restatement is accepted. A new custody URL and token must arrive together; a boot token
+   without a URL cannot later be bound to a caller-selected URL, while a boot URL may be
+   paired with its token. Custody HTTP calls refuse redirects rather than forwarding the
+   bearer credential to a redirect target.
+
    **Relayer migration status (done for request and feed delivery):** Neo N3 request and
    feed transactions are built locally, signed through custody `/sign/transaction`,
    broadcast, HALT-confirmed and durably recorded. NeoX request delivery first obtains a

@@ -21,17 +21,26 @@ const networkRegistry = readReviewedNetworkRegistrySync(
 );
 const maxBodyBytes = Math.max(Number(process.env.NITRO_SIGNER_MAX_BODY_BYTES || 65536), 1024);
 const attestBin = trimString(process.env.NITRO_ATTEST_BIN) || '/app/bin/nsm-attest';
+const RUNTIME_TOKEN_ENV_KEYS = [
+  'NITRO_SIGNER_TOKEN',
+  'MORPHEUS_RUNTIME_TOKEN',
+  'NITRO_API_TOKEN',
+  'NITRO_SHARED_SECRET',
+];
+const PROVISION_ENV_KEYS = new Set([
+  'NEO_NETWORK_MAGIC',
+  'SIGNER_SERVICE_URL',
+  'SIGNER_SERVICE_TOKEN',
+  'SIGNER_ROLE_UPDATER_KEY_ID',
+  'SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID',
+  'SIGNER_ROLE_RELAYER_KEY_ID',
+  'SIGNER_ROLE_WORKER_KEY_ID',
+]);
 const runtimeTrustedTokens = new Set(
-  [
-    process.env.NITRO_SIGNER_TOKEN,
-    process.env.MORPHEUS_RUNTIME_TOKEN,
-    process.env.NITRO_API_TOKEN,
-    process.env.NITRO_SHARED_SECRET,
-  ]
-    .map((value) => trimString(value))
-    .filter(Boolean)
+  RUNTIME_TOKEN_ENV_KEYS.map((key) => trimString(process.env[key])).filter(Boolean)
 );
 let provisionedEnv = {};
+let provisionCompleted = false;
 const PLAINTEXT_KEY_ENV_KEYS = new Set([
   'MORPHEUS_ORACLE_VERIFIER_WIF_MAINNET',
   'MORPHEUS_ORACLE_VERIFIER_WIF_TESTNET',
@@ -119,6 +128,7 @@ async function custodyRequest(method, pathname, body) {
         authorization: `Bearer ${token}`,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
+      redirect: 'error',
     });
   } catch (error) {
     const wrapped = new Error(`custody signer service unreachable: ${error?.message || error}`);
@@ -297,6 +307,7 @@ function reasonPhrase(status) {
   if (status === 401) return 'Unauthorized';
   if (status === 403) return 'Forbidden';
   if (status === 404) return 'Not Found';
+  if (status === 409) return 'Conflict';
   if (status === 413) return 'Payload Too Large';
   if (status === 502) return 'Bad Gateway';
   if (status === 503) return 'Service Unavailable';
@@ -306,14 +317,14 @@ function reasonPhrase(status) {
 // Health is custody readiness now: a role is up when its custody key id is
 // provisioned. The pinned registry still supplies the public identity the
 // attestation document binds — it never needed a secret to do that.
-function signerHealth() {
+function signerHealth(env = effectiveEnv()) {
   return CUSTODY_ROLES.map((role) => {
     const name = roleKeyIdEnvName(role);
-    const keyId = trimString(effectiveEnv()[name]);
+    const keyId = trimString(env[name]);
     let identity = null;
     try {
       const report = reportPinnedNeoN3Role(network, role, {
-        env: effectiveEnv(),
+        env,
         allowMissing: true,
       });
       identity = report.selected_identity || report.pinned || null;
@@ -330,6 +341,16 @@ function signerHealth() {
 }
 
 function handleProvision(payload) {
+  if (provisionCompleted) {
+    const error = new Error('legacy signer provision has already completed for this boot');
+    error.status = 409;
+    throw error;
+  }
+  const fail = (message, status = 400) => {
+    const error = new Error(message);
+    error.status = status;
+    throw error;
+  };
   const env =
     payload?.env && typeof payload.env === 'object' && !Array.isArray(payload.env)
       ? payload.env
@@ -342,29 +363,52 @@ function handleProvision(payload) {
     )
     .sort();
   if (rejected.length) {
-    const error = new Error(
+    fail(
       'legacy Nitro signer plaintext key provisioning is disabled; deploy the merged ' +
-        `KMS-attested enclave instead. Rejected: ${rejected.join(', ')}`
+        `KMS-attested enclave instead. Rejected: ${rejected.join(', ')}`,
+      403
     );
-    error.status = 403;
-    throw error;
   }
+  const unknown = Object.keys(env)
+    .filter((key) => !PROVISION_ENV_KEYS.has(key))
+    .sort();
+  if (unknown.length) {
+    const runtimeKeys = unknown.filter((key) => RUNTIME_TOKEN_ENV_KEYS.includes(key));
+    fail(
+      runtimeKeys.length
+        ? `legacy runtime tokens are boot-only and cannot be provisioned: ${runtimeKeys.join(', ')}`
+        : `legacy signer provision env is not allowlisted: ${unknown.join(', ')}`,
+      runtimeKeys.length ? 403 : 400
+    );
+  }
+
   const nextEnv = {};
   for (const [key, value] of Object.entries(env)) {
-    if (!/^[A-Z0-9_]{1,96}$/.test(key)) continue;
+    if (typeof value !== 'string') fail(`legacy signer provision value ${key} must be a string`);
     const text = trimString(value);
+    const bootValue = trimString(process.env[key]);
+    if (bootValue && text !== bootValue) {
+      fail(`legacy signer boot value ${key} is immutable`, 409);
+    }
     if (text) nextEnv[key] = text;
   }
-  provisionedEnv = { ...provisionedEnv, ...nextEnv };
-  for (const key of [
-    'NITRO_SIGNER_TOKEN',
-    'MORPHEUS_RUNTIME_TOKEN',
-    'NITRO_API_TOKEN',
-    'NITRO_SHARED_SECRET',
-  ]) {
-    if (provisionedEnv[key]) runtimeTrustedTokens.add(provisionedEnv[key]);
+
+  const currentEnv = effectiveEnv();
+  const currentUrl = trimString(currentEnv.SIGNER_SERVICE_URL);
+  const currentToken = trimString(currentEnv.SIGNER_SERVICE_TOKEN);
+  const candidateEnv = { ...currentEnv, ...nextEnv };
+  const candidateUrl = trimString(candidateEnv.SIGNER_SERVICE_URL);
+  const candidateToken = trimString(candidateEnv.SIGNER_SERVICE_TOKEN);
+  if (!currentUrl && !currentToken && Boolean(candidateUrl) !== Boolean(candidateToken)) {
+    fail('SIGNER_SERVICE_URL and SIGNER_SERVICE_TOKEN must be provisioned together');
   }
-  const roles = signerHealth();
+  if (currentToken && !currentUrl && candidateUrl) {
+    fail('SIGNER_SERVICE_URL cannot be introduced after a boot-only SIGNER_SERVICE_TOKEN');
+  }
+
+  const roles = signerHealth(candidateEnv);
+  provisionedEnv = nextEnv;
+  provisionCompleted = true;
   return {
     status: roles.every((entry) => entry.ok) ? 'ok' : 'degraded',
     runtime: 'aws-nitro-signer',

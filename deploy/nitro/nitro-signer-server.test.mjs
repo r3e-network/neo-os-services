@@ -129,10 +129,30 @@ function childEnv(token = TOKEN, networkMagic = NETWORK_MAGIC) {
   return env;
 }
 
-function stdioRequest(rawRequest, token = TOKEN) {
+function cleanBootEnv(overrides = {}) {
+  const env = childEnv();
+  for (const key of [
+    'NEO_NETWORK_MAGIC',
+    'SIGNER_SERVICE_URL',
+    'SIGNER_SERVICE_TOKEN',
+    'SIGNER_ROLE_UPDATER_KEY_ID',
+    'SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID',
+    'SIGNER_ROLE_RELAYER_KEY_ID',
+    'SIGNER_ROLE_WORKER_KEY_ID',
+  ]) {
+    delete env[key];
+  }
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) delete env[key];
+    else env[key] = String(value);
+  }
+  return env;
+}
+
+function stdioRequest(rawRequest, token = TOKEN, environment = null) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [SERVER, '--stdio'], {
-      env: childEnv(token),
+      env: environment || childEnv(token),
       encoding: 'utf8',
     });
     let stdout = '';
@@ -169,6 +189,61 @@ function stdioRequestWithNetworkMagic(rawRequest, networkMagic) {
     child.stdin.write(rawRequest);
     child.stdin.end();
   });
+}
+
+const signerChildren = new Set();
+test.after(() => {
+  for (const child of signerChildren) child.kill('SIGTERM');
+});
+
+async function startSigner(environment) {
+  const reservation = http.createServer();
+  await new Promise((resolve) => reservation.listen(0, '127.0.0.1', resolve));
+  const { port } = reservation.address();
+  await new Promise((resolve) => reservation.close(resolve));
+  const child = spawn(process.execPath, [SERVER], {
+    env: {
+      ...environment,
+      PORT: String(port),
+      NITRO_SIGNER_HOST: '127.0.0.1',
+    },
+    encoding: 'utf8',
+  });
+  signerChildren.add(child);
+  child.on('close', () => signerChildren.delete(child));
+  let output = '';
+  child.stdout.on('data', (chunk) => {
+    output += chunk;
+  });
+  child.stderr.on('data', (chunk) => {
+    output += chunk;
+  });
+  const baseUrl = `http://127.0.0.1:${port}`;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`legacy signer exited before startup: ${output}`);
+    }
+    try {
+      await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(500) });
+      return { baseUrl, child };
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  child.kill('SIGTERM');
+  throw new Error(`legacy signer did not start: ${output}`);
+}
+
+async function postSigner(baseUrl, pathname, body, token = TOKEN) {
+  const response = await fetch(`${baseUrl}${pathname}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  return { status: response.status, body: await response.json() };
 }
 
 test('signer refuses a network magic that disagrees with the reviewed registry', async () => {
@@ -259,6 +334,199 @@ test('legacy signer does not allow first-caller token installation', async () =>
   );
   assert.match(selfChosen.stdout, /^HTTP\/1\.1 401 Unauthorized/);
   assert.match(selfChosen.stdout, /legacy signer first provision is disabled/);
+});
+
+test('legacy provision accepts one atomic first configuration and rejects later calls', async () => {
+  const boot = cleanBootEnv({
+    NEO_NETWORK_MAGIC: String(NETWORK_MAGIC),
+    SIGNER_SERVICE_URL: CUSTODY_URL,
+    SIGNER_SERVICE_TOKEN: CUSTODY_TOKEN,
+    SIGNER_ROLE_UPDATER_KEY_ID: UPDATER_KEY_ID,
+    SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID: 'key-verifier-test',
+  });
+  const signer = await startSigner(boot);
+  const changedBoot = await postSigner(signer.baseUrl, '/provision', {
+    env: {
+      NEO_NETWORK_MAGIC: String(NETWORK_MAGIC + 1),
+      SIGNER_ROLE_RELAYER_KEY_ID: 'must-not-be-half-merged',
+    },
+  });
+  assert.equal(changedBoot.status, 409);
+  assert.match(changedBoot.body.error, /boot value NEO_NETWORK_MAGIC is immutable/);
+
+  const first = await postSigner(signer.baseUrl, '/provision', {
+    env: {
+      NEO_NETWORK_MAGIC: String(NETWORK_MAGIC),
+      SIGNER_SERVICE_URL: CUSTODY_URL,
+      SIGNER_SERVICE_TOKEN: CUSTODY_TOKEN,
+      SIGNER_ROLE_UPDATER_KEY_ID: UPDATER_KEY_ID,
+      SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID: 'key-verifier-test',
+      SIGNER_ROLE_WORKER_KEY_ID: 'key-worker-test',
+    },
+  });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.provisioned, true);
+  assert.deepEqual(first.body.env_keys, [
+    'NEO_NETWORK_MAGIC',
+    'SIGNER_ROLE_ORACLE_VERIFIER_KEY_ID',
+    'SIGNER_ROLE_UPDATER_KEY_ID',
+    'SIGNER_ROLE_WORKER_KEY_ID',
+    'SIGNER_SERVICE_TOKEN',
+    'SIGNER_SERVICE_URL',
+  ]);
+  const derived = await postSigner(signer.baseUrl, '/keys/derived', { role: 'updater' });
+  assert.equal(derived.status, 200);
+  assert.equal(derived.body.key_id, UPDATER_KEY_ID);
+
+  const second = await postSigner(signer.baseUrl, '/provision', { env: {} });
+  assert.equal(second.status, 409);
+  assert.match(second.body.error, /already completed/);
+  const halfMergedRole = await postSigner(signer.baseUrl, '/keys/derived', { role: 'relayer' });
+  assert.equal(halfMergedRole.status, 503);
+  assert.match(halfMergedRole.body.error, /relayer custody key is not provisioned/);
+});
+
+test('legacy provision rejects unknown and runtime-token env without consuming the retry', async () => {
+  const signer = await startSigner(cleanBootEnv());
+  const unknown = await postSigner(signer.baseUrl, '/provision', {
+    env: {
+      NEO_NETWORK_MAGIC: String(NETWORK_MAGIC),
+      SIGNER_ROLE_RELAYER_KEY_ID: 'must-not-be-half-merged',
+      UNLISTED_RUNTIME_SETTING: 'forbidden',
+    },
+  });
+  assert.equal(unknown.status, 400);
+  assert.match(unknown.body.error, /not allowlisted/);
+
+  const runtimeToken = await postSigner(signer.baseUrl, '/provision', {
+    env: { MORPHEUS_RUNTIME_TOKEN: 'provision-installed-token' },
+  });
+  assert.equal(runtimeToken.status, 403);
+  assert.match(runtimeToken.body.error, /boot-only/);
+
+  const first = await postSigner(signer.baseUrl, '/provision', {
+    env: { NEO_NETWORK_MAGIC: String(NETWORK_MAGIC) },
+  });
+  assert.equal(first.status, 200);
+  const second = await postSigner(signer.baseUrl, '/provision', {
+    env: { NEO_NETWORK_MAGIC: String(NETWORK_MAGIC) },
+  });
+  assert.equal(second.status, 409);
+  const halfMergedRole = await postSigner(signer.baseUrl, '/keys/derived', { role: 'relayer' });
+  assert.equal(halfMergedRole.status, 503);
+  const installedToken = await postSigner(
+    signer.baseUrl,
+    '/sign/payload',
+    { key_role: 'updater', data_hex: '00' },
+    'provision-installed-token'
+  );
+  assert.equal(installedToken.status, 401);
+});
+
+test('legacy provision requires a new custody URL/token pair and allows a failed retry', async () => {
+  const signer = await startSigner(cleanBootEnv());
+  const unpaired = await postSigner(signer.baseUrl, '/provision', {
+    env: {
+      NEO_NETWORK_MAGIC: String(NETWORK_MAGIC),
+      SIGNER_SERVICE_URL: CUSTODY_URL,
+    },
+  });
+  assert.equal(unpaired.status, 400);
+  assert.match(unpaired.body.error, /must be provisioned together/);
+
+  const paired = await postSigner(signer.baseUrl, '/provision', {
+    env: {
+      NEO_NETWORK_MAGIC: String(NETWORK_MAGIC),
+      SIGNER_SERVICE_URL: CUSTODY_URL,
+      SIGNER_SERVICE_TOKEN: CUSTODY_TOKEN,
+      SIGNER_ROLE_UPDATER_KEY_ID: UPDATER_KEY_ID,
+    },
+  });
+  assert.equal(paired.status, 200);
+  const derived = await postSigner(signer.baseUrl, '/keys/derived', { role: 'updater' });
+  assert.equal(derived.status, 200);
+});
+
+test('legacy provision can add a token to a boot URL but cannot add a URL to a boot token', async () => {
+  const signer = await startSigner(
+    cleanBootEnv({
+      NEO_NETWORK_MAGIC: String(NETWORK_MAGIC),
+      SIGNER_SERVICE_URL: CUSTODY_URL,
+      SIGNER_ROLE_UPDATER_KEY_ID: UPDATER_KEY_ID,
+    })
+  );
+  const paired = await postSigner(signer.baseUrl, '/provision', {
+    env: { SIGNER_SERVICE_TOKEN: CUSTODY_TOKEN },
+  });
+  assert.equal(paired.status, 200);
+  const derived = await postSigner(signer.baseUrl, '/keys/derived', { role: 'updater' });
+  assert.equal(derived.status, 200);
+
+  const before = custodyRequests.length;
+  const tokenOnly = await stdioRequest(
+    buildRequest(
+      '/provision',
+      [`authorization: Bearer ${TOKEN}`],
+      JSON.stringify({ env: { SIGNER_SERVICE_URL: CUSTODY_URL } })
+    ),
+    TOKEN,
+    cleanBootEnv({ SIGNER_SERVICE_TOKEN: CUSTODY_TOKEN })
+  );
+  assert.match(tokenOnly.stdout, /^HTTP\/1\.1 400 Bad Request/);
+  assert.match(tokenOnly.stdout, /cannot be introduced after a boot-only SIGNER_SERVICE_TOKEN/);
+  const unconfigured = await stdioRequest(
+    buildRequest(
+      '/keys/derived',
+      [`authorization: Bearer ${TOKEN}`],
+      JSON.stringify({ role: 'updater' })
+    ),
+    TOKEN,
+    cleanBootEnv({
+      SIGNER_SERVICE_TOKEN: CUSTODY_TOKEN,
+      SIGNER_ROLE_UPDATER_KEY_ID: UPDATER_KEY_ID,
+    })
+  );
+  assert.match(unconfigured.stdout, /^HTTP\/1\.1 503 Service Unavailable/);
+  assert.equal(custodyRequests.length, before);
+});
+
+test('legacy custody requests refuse redirects without contacting the redirect target', async () => {
+  let redirectedRequests = 0;
+  let targetRequests = 0;
+  const target = http.createServer((req, res) => {
+    targetRequests += 1;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{}');
+  });
+  await new Promise((resolve) => target.listen(0, '127.0.0.1', resolve));
+  const redirect = http.createServer((req, res) => {
+    redirectedRequests += 1;
+    res.writeHead(302, {
+      location: `http://127.0.0.1:${target.address().port}/fake-custody`,
+    });
+    res.end();
+  });
+  await new Promise((resolve) => redirect.listen(0, '127.0.0.1', resolve));
+  try {
+    const signer = await startSigner(
+      cleanBootEnv({
+        NEO_NETWORK_MAGIC: String(NETWORK_MAGIC),
+        SIGNER_SERVICE_URL: `http://127.0.0.1:${redirect.address().port}`,
+        SIGNER_SERVICE_TOKEN: CUSTODY_TOKEN,
+        SIGNER_ROLE_UPDATER_KEY_ID: UPDATER_KEY_ID,
+      })
+    );
+    const derived = await postSigner(signer.baseUrl, '/keys/derived', { role: 'updater' });
+    assert.equal(derived.status, 503);
+    assert.match(derived.body.error, /custody signer service unreachable/);
+    assert.equal(redirectedRequests, 1);
+    assert.equal(targetRequests, 0);
+  } finally {
+    await Promise.all([
+      new Promise((resolve) => redirect.close(resolve)),
+      new Promise((resolve) => target.close(resolve)),
+    ]);
+  }
 });
 
 test('signer refuses to act under a defaulted or unmappable role', async () => {
