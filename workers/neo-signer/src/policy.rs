@@ -782,7 +782,7 @@ fn check_contract(policy: &SignerPolicy, contract: ScriptHash, method: &str) -> 
 
 fn evaluate_evm_transaction(
     policy: &SignerPolicy,
-    _key_account: ScriptHash,
+    key_account: ScriptHash,
     transaction: &UnsignedEvmTransaction,
     intent: &EvmIntent,
     spent: &WindowSpend,
@@ -813,6 +813,16 @@ fn evaluate_evm_transaction(
         }
     }
 
+    if let EvmIntent::Erc20TransferFrom { from, .. } = intent {
+        let source = ScriptHash::from_evm_address(*from);
+        if source != key_account {
+            return deny(
+                DenyReason::SourceMismatch,
+                format!("transferFrom names {source} as the source, but this key is {key_account}"),
+            );
+        }
+    }
+
     // Evaluate intent-specific checks
     match intent {
         EvmIntent::NativeTransfer { to, value } => {
@@ -838,7 +848,10 @@ fn evaluate_evm_transaction(
             }
             Verdict::Allow
         }
-        EvmIntent::Erc20Transfer { token, to, amount } => {
+        EvmIntent::Erc20Transfer { token, to, amount }
+        | EvmIntent::Erc20TransferFrom {
+            token, to, amount, ..
+        } => {
             if !policy.allow_transfer {
                 return deny(
                     DenyReason::TransferForbidden,

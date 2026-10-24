@@ -19,7 +19,7 @@ use rusqlite::Connection;
 
 use super::*;
 use crate::{
-    evm_tx::UnsignedEvmTransaction,
+    evm_tx::{UnsignedEvmTransaction, ERC20_TRANSFER_FROM_SELECTOR},
     model::{AssetLimit, SignatureRateLimit, WindowLimit},
     neo_block::{NeoBlock, NeoBlockHeader},
     network,
@@ -42,6 +42,33 @@ fn neox_transfer(nonce: u64, value: u128) -> Vec<u8> {
         to: Some(RECIPIENT),
         value: evm_amount(value),
         data: Vec::new(),
+        access_list: Vec::new(),
+    }
+    .encode_unsigned()
+}
+
+fn neox_transfer_from(
+    nonce: u64,
+    token: [u8; 20],
+    from: [u8; 20],
+    to: [u8; 20],
+    amount: u128,
+) -> Vec<u8> {
+    let mut data = ERC20_TRANSFER_FROM_SELECTOR.to_vec();
+    data.extend_from_slice(&[0u8; 12]);
+    data.extend_from_slice(&from);
+    data.extend_from_slice(&[0u8; 12]);
+    data.extend_from_slice(&to);
+    data.extend_from_slice(&evm_amount(amount));
+    UnsignedEvmTransaction {
+        chain_id: network::neox_chain_id(Network::Testnet),
+        nonce,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 2,
+        gas_limit: 100_000,
+        to: Some(token),
+        value: [0u8; 32],
+        data,
         access_list: Vec::new(),
     }
     .encode_unsigned()
@@ -639,6 +666,118 @@ fn neox_keys_are_curve_bound_and_replay_the_complete_result_without_double_spend
         None,
     )?);
     assert_eq!(wrong_family.code, "signer-chain-family-mismatch");
+    Ok(())
+}
+
+#[test]
+fn neox_transfer_from_requires_own_source_and_records_one_spend() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let repository = Store::open(dir.path().join("signer.db"))?;
+    let service = SignerService::new(repository, MasterKey::from_bytes([23u8; 32]));
+    let (_, admin_token) = provision_admin_caller(service.repository(), "bootstrap")?;
+    let admin = CallerCredentials::server_to_server(&admin_token);
+    let key = allowed(service.generate_key_for_chain(
+        &admin,
+        "neox-transfer-from",
+        Network::Testnet,
+        network::ChainFamily::NeoX,
+        Some(network::neox_chain_id(Network::Testnet)),
+    )?);
+    let token = [0x55u8; 20];
+    allowed(service.save_policy(
+        &admin,
+        &key.key_id,
+        &SignerPolicy {
+            chain_family: Some(network::ChainFamily::NeoX),
+            evm_chain_id: Some(12_227_332),
+            allow_transfer: true,
+            asset_whitelist: vec![ScriptHash::from_evm_address(token)],
+            transfer_to_whitelist: vec![ScriptHash::from_evm_address(RECIPIENT)],
+            max_single_amount: Some(100),
+            window_limit: Some(WindowLimit {
+                seconds: 3_600,
+                max_amount: 100,
+            }),
+            evm_max_gas_price: Some(2),
+            evm_max_gas_limit: Some(100_000),
+            ..SignerPolicy::default()
+        },
+    )?);
+    let (_, caller_token) = allowed(service.create_caller(
+        &admin,
+        "neox-relayer",
+        KeyGrant::Only(vec![key.key_id.clone()]),
+        &[CallerCapability::Sign],
+        &[],
+    )?);
+    let credentials = CallerCredentials::server_to_server(&caller_token);
+
+    let third_party = neox_transfer_from(1, token, [0x33u8; 20], RECIPIENT, 60);
+    let mismatch = refused(service.sign_transaction_for_chain_with_request_id(
+        &credentials,
+        &key.key_id,
+        &third_party,
+        network::ChainFamily::NeoX,
+        Some(12_227_332),
+        Some("neox-transfer-from-third-party"),
+    )?);
+    assert_eq!(mismatch.code, "source-mismatch");
+    assert!(service
+        .repository()
+        .signer_value_events_since(&key.key_id, 0)?
+        .is_empty());
+
+    let own_source = parse_evm_address(&key.address).expect("NeoX key address");
+    let unsigned = neox_transfer_from(2, token, own_source, RECIPIENT, 60);
+    let first = allowed(service.sign_transaction_for_chain_with_request_id(
+        &credentials,
+        &key.key_id,
+        &unsigned,
+        network::ChainFamily::NeoX,
+        Some(12_227_332),
+        Some("neox-transfer-from-own-source"),
+    )?);
+    assert!(first.signed_transaction.is_some());
+    let replay = allowed(service.sign_transaction_for_chain_with_request_id(
+        &credentials,
+        &key.key_id,
+        &unsigned,
+        network::ChainFamily::NeoX,
+        Some(12_227_332),
+        Some("neox-transfer-from-own-source"),
+    )?);
+    assert_eq!(replay, first);
+
+    let over_window = refused(service.sign_transaction_for_chain_with_request_id(
+        &credentials,
+        &key.key_id,
+        &neox_transfer_from(3, token, own_source, RECIPIENT, 41),
+        network::ChainFamily::NeoX,
+        Some(12_227_332),
+        Some("neox-transfer-from-over-window"),
+    )?);
+    assert_eq!(over_window.code, "window-amount-exceeded");
+    let events = service
+        .repository()
+        .signer_value_events_since(&key.key_id, 0)?;
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].asset, ScriptHash::from_evm_address(token));
+    assert_eq!(events[0].amount, 60);
+    let audit = service
+        .repository()
+        .list_signer_audit(Some(&key.key_id), 100)?;
+    let row = audit
+        .iter()
+        .find(|row| {
+            row.action == SignerAuditAction::TransactionSigned
+                && row.outcome == SignerAuditOutcome::Allowed
+        })
+        .expect("allowed transferFrom audit row");
+    assert!(row
+        .detail
+        .as_deref()
+        .unwrap_or_default()
+        .contains("transferFrom"));
     Ok(())
 }
 

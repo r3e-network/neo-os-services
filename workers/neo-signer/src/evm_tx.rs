@@ -93,6 +93,17 @@ pub enum EvmIntent {
         /// Amount in token's smallest unit.
         amount: [u8; 32],
     },
+    /// ERC-20 transferFrom whose source must be this custody key's account.
+    Erc20TransferFrom {
+        /// Token contract address.
+        token: [u8; 20],
+        /// Source address.
+        from: [u8; 20],
+        /// Recipient address.
+        to: [u8; 20],
+        /// Amount in token's smallest unit.
+        amount: [u8; 32],
+    },
     /// Contract call we cannot specifically interpret.
     ContractCall {
         /// Target contract.
@@ -337,12 +348,15 @@ impl UnsignedEvmTransaction {
             && self.data.len() == 100
             && self.data.starts_with(&ERC20_TRANSFER_FROM_SELECTOR)
         {
+            let mut source = [0u8; 20];
+            source.copy_from_slice(&self.data[16..36]);
             let mut recipient = [0u8; 20];
             recipient.copy_from_slice(&self.data[48..68]);
             let mut amount = [0u8; 32];
             amount.copy_from_slice(&self.data[68..100]);
-            return EvmIntent::Erc20Transfer {
+            return EvmIntent::Erc20TransferFrom {
                 token: to,
+                from: source,
                 to: recipient,
                 amount,
             };
@@ -506,6 +520,41 @@ mod tests {
 
         assert_eq!(data.len(), 68);
         assert!(data.starts_with(&ERC20_TRANSFER_SELECTOR));
+    }
+
+    #[test]
+    fn test_erc20_transfer_from_decodes_distinct_abi_words() {
+        let token = [0x33u8; 20];
+        let from = [0x11u8; 20];
+        let to = [0x22u8; 20];
+        let amount = [0x44u8; 32];
+        let mut data = ERC20_TRANSFER_FROM_SELECTOR.to_vec();
+        data.extend_from_slice(&[0u8; 12]);
+        data.extend_from_slice(&from);
+        data.extend_from_slice(&[0u8; 12]);
+        data.extend_from_slice(&to);
+        data.extend_from_slice(&amount);
+        let transaction = UnsignedEvmTransaction {
+            chain_id: 12_227_332,
+            nonce: 0,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 2,
+            gas_limit: 100_000,
+            to: Some(token),
+            value: [0u8; 32],
+            data,
+            access_list: Vec::new(),
+        };
+
+        assert_eq!(
+            transaction.intent(),
+            EvmIntent::Erc20TransferFrom {
+                token,
+                from,
+                to,
+                amount,
+            }
+        );
     }
 
     #[test]

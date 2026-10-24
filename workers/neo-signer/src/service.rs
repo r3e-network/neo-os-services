@@ -3244,7 +3244,8 @@ fn evm_value_events(
 ) -> Result<Vec<SignerValueEvent>> {
     let movement = match intent {
         EvmIntent::NativeTransfer { value, .. } => Some(([0u8; 20], value)),
-        EvmIntent::Erc20Transfer { token, amount, .. } => Some((*token, amount)),
+        EvmIntent::Erc20Transfer { token, amount, .. }
+        | EvmIntent::Erc20TransferFrom { token, amount, .. } => Some((*token, amount)),
         EvmIntent::ContractCall { value, .. } if value.iter().any(|byte| *byte != 0) => {
             Some(([0u8; 20], value))
         }
@@ -3559,6 +3560,19 @@ fn request_intent_summary(intents: &[Intent], evm_intent: Option<&EvmIntent>) ->
         EvmIntent::Erc20Transfer { token, amount, .. } => format!(
             "NeoX token 0x{} transfer of {}",
             hex::encode(token),
+            unsigned_256_to_i128(amount)
+                .map(|amount| amount.to_string())
+                .unwrap_or_else(|| "an out-of-range amount".to_string())
+        ),
+        EvmIntent::Erc20TransferFrom {
+            token,
+            from,
+            amount,
+            ..
+        } => format!(
+            "NeoX token 0x{} transferFrom source 0x{} of {}",
+            hex::encode(token),
+            hex::encode(from),
             unsigned_256_to_i128(amount)
                 .map(|amount| amount.to_string())
                 .unwrap_or_else(|| "an out-of-range amount".to_string())
