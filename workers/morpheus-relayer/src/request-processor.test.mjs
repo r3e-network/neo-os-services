@@ -73,7 +73,13 @@ test('processChainByRequestCursor still drains due retries when discovery throws
   };
   state.neox.retry_queue.push({
     key: 'neox:7:::',
-    event: { chain: 'neox', requestId: '7', requestType: 'privacy_oracle', txHash: '' },
+    event: {
+      chain: 'neox',
+      requestId: '7',
+      requestType: 'privacy_oracle',
+      txHash: '',
+      payloadHex: '0x',
+    },
     attempts: 0,
     next_retry_at: Date.now() - 1000,
     prepared_fulfillment: preparedFulfillment,
@@ -160,9 +166,9 @@ test('reconcilePendingRequests skips requests already in retry_queue or processe
     {
       getLatestRequestId: async () => 3,
       scanByRequestId: async () => [
-        { chain: 'neox', requestId: '1', requestType: 'random', txHash: '' },
-        { chain: 'neox', requestId: '2', requestType: 'random', txHash: '' },
-        { chain: 'neox', requestId: '3', requestType: 'random', txHash: '' },
+        { chain: 'neox', requestId: '1', requestType: 'random', txHash: '', payloadHex: '0x' },
+        { chain: 'neox', requestId: '2', requestType: 'random', txHash: '', payloadHex: '0x' },
+        { chain: 'neox', requestId: '3', requestType: 'random', txHash: '', payloadHex: '0x' },
       ],
     },
     new Set()
@@ -194,7 +200,13 @@ test('quiet-chain early return still caps due retries and counts skipped items',
   for (const requestId of ['7', '8', '9']) {
     state.neox.retry_queue.push({
       key: `neox:${requestId}:::`,
-      event: { chain: 'neox', requestId, requestType: 'privacy_oracle', txHash: '' },
+      event: {
+        chain: 'neox',
+        requestId,
+        requestType: 'privacy_oracle',
+        txHash: '',
+        payloadHex: '0x',
+      },
       attempts: 0,
       next_retry_at: Date.now() - 1000,
       prepared_fulfillment: preparedFulfillment,

@@ -13,7 +13,7 @@ import {
   isQueuedAutomationExecutionPayload,
   isTerminalConfigurationError,
   isTransientWorkerStatus,
-  processEvent,
+  processEvent as processEventWithFixturePayload,
   resolveCallbackRetryCeiling,
   resolveEventFulfillmentContext,
   resolveExpectedPcr0,
@@ -32,6 +32,31 @@ import {
 import { buildFulfillmentDigestBytes, encodeFulfillmentResult } from './router.js';
 import { buildNeoXDigest, resolveResultBytesHex } from './neox.js';
 import { ErrorCode } from '@r3e-network/neo-os-services-shared/error-codes';
+import { prepareOracleFulfillment } from './fulfillment/executor.js';
+import { finalizeFailedRequest } from './fulfillment/delivery.js';
+
+function withFixturePayload(event) {
+  if (Object.prototype.hasOwnProperty.call(event, 'payloadHex')) return event;
+  const payloadText = Object.prototype.hasOwnProperty.call(event, 'payloadText')
+    ? String(event.payloadText ?? '')
+    : String(event.payload ?? '');
+  return {
+    ...event,
+    payloadText,
+    payloadHex: payloadText ? Buffer.from(payloadText, 'utf8').toString('hex') : '0x',
+  };
+}
+
+async function processEvent(config, state, persistState, logger, event, retryItem = null) {
+  return processEventWithFixturePayload(
+    config,
+    state,
+    persistState,
+    logger,
+    withFixturePayload(event),
+    retryItem
+  );
+}
 
 // ===================================================================
 // Custody signer service stubs
@@ -1202,6 +1227,7 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
   // this in fulfillment_digest_hex so the cross-check passes (or, when tampered,
   // a different value so the cross-check fails).
   function expectedDigestHex(chain, event, fulfillment) {
+    event = withFixturePayload(event);
     if (chain === 'neox') {
       const resultBytesHex = resolveResultBytesHex(
         fulfillment.result,
@@ -1285,6 +1311,7 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
     }
     const body = {
       status: 'ok',
+      chain: chain === 'legacy' || (chain === 'neo_n3' && !(event.appId || '')) ? 'legacy' : chain,
       success: fulfillment.success,
       result: fulfillment.result,
       error: fulfillment.error,
@@ -1368,6 +1395,8 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
         assert.ok(calls[0].url.startsWith('https://enclave.test'));
         // The enclave request carries the kernel context for the digest rebuild.
         assert.equal(calls[0].body.request_id, '4242');
+        assert.equal(calls[0].body.chain, chain);
+        assert.equal(calls[0].body.payload_hex, withFixturePayload(event).payloadHex);
         assert.equal(typeof calls[0].body.nonce, 'string');
 
         // Delivered successfully, carrying the ENCLAVE's signature (consumed, not
@@ -2056,6 +2085,121 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
     } finally {
       restore();
     }
+  });
+
+  async function withN3SigningCapture(run) {
+    const originalFetch = global.fetch;
+    const digests = [];
+    global.fetch = async (url, init = {}) => {
+      const endpoint = String(url);
+      if (endpoint.endsWith('/sign/raw')) {
+        digests.push(JSON.parse(init.body).data_hex);
+        return custodySignRawResponse('a'.repeat(128));
+      }
+      if (endpoint.endsWith('/oracle/decrypt')) {
+        return new Response(JSON.stringify({ plaintext: 'plain-text', message_id: '7' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected endpoint ${endpoint}`);
+    };
+    try {
+      return await run(digests);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  }
+
+  it('operator-only refusal signs the original payload bytes', async () => {
+    const payloadText = '{"symbol":"NEO-USD"}';
+    const event = {
+      chain: 'neo_n3',
+      requestId: '9201',
+      requestType: 'price_feed',
+      appId: 'miniapp-os',
+      moduleId: 'feed.publish',
+      operation: 'price_feed',
+      payloadText,
+      payloadHex: Buffer.from(payloadText).toString('hex'),
+    };
+    const error =
+      'datafeed requests are operator-only; users should read synchronized on-chain feed data';
+    await withN3SigningCapture(async (digests) => {
+      await prepareOracleFulfillment(baseConfig(), event);
+      assert.deepEqual(digests, [
+        expectedDigestHex('neo_n3', event, {
+          moduleId: 'feed.publish',
+          operation: 'price_feed',
+          success: false,
+          result: '',
+          result_bytes_base64: '',
+          error,
+        }),
+      ]);
+    });
+  });
+
+  it('failure finalize signs the original payload bytes', async () => {
+    const payloadText = '{"op":"add"}';
+    const event = {
+      chain: 'neo_n3',
+      requestId: '9202',
+      requestType: 'compute',
+      appId: 'miniapp-os',
+      moduleId: 'compute.run',
+      operation: 'compute',
+      payloadText,
+      payloadHex: Buffer.from(payloadText).toString('hex'),
+    };
+    const config = baseConfig({
+      hooks: {
+        fulfillNeoRequest: async () => ({ tx_hash: '0xfinalize', vm_state: 'HALT' }),
+      },
+    });
+    await withN3SigningCapture(async (digests) => {
+      await finalizeFailedRequest(config, event, 'worker failed');
+      assert.deepEqual(digests, [
+        expectedDigestHex('neo_n3', event, {
+          moduleId: 'compute.run',
+          operation: 'compute',
+          success: false,
+          result: '',
+          result_bytes_base64: '',
+          error: 'worker failed',
+        }),
+      ]);
+    });
+  });
+
+  it('flag-OFF confidential decrypt signs the original payload bytes', async () => {
+    const payloadText = 'sealed-envelope-bytes';
+    const event = {
+      chain: 'neo_n3',
+      requestId: '9203',
+      requestType: 'decrypt',
+      appId: 'miniapp-os',
+      moduleId: 'confidential.decrypt',
+      operation: 'decrypt',
+      payloadText,
+      payloadHex: Buffer.from(payloadText).toString('hex'),
+    };
+    const config = baseConfig();
+    config.nitro.enclaveFulfill = false;
+    const resultBytesBase64 = Buffer.from('plain-text').toString('base64');
+    await withN3SigningCapture(async (digests) => {
+      await prepareOracleFulfillment(config, event);
+      assert.deepEqual(digests, [
+        expectedDigestHex('neo_n3', event, {
+          moduleId: 'confidential.decrypt',
+          operation: 'decrypt',
+          success: true,
+          result: '',
+          result_bytes_base64: resultBytesBase64,
+          error: '',
+        }),
+      ]);
+    });
   });
 });
 

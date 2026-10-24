@@ -17,6 +17,7 @@ import {
 } from '../automation.js';
 import { buildUpkeepDispatch } from '../automation-supervisor.js';
 import { normalizeRequestType } from '../lib/strings.js';
+import { resolveEventPayload } from '../lib/payload.js';
 import { trimString } from '@r3e-network/neo-os-services-shared/utils';
 import {
   resolveExpectedPcr0,
@@ -194,6 +195,7 @@ export function buildDecryptBindingRequest(config, event = {}, payload = {}, env
 
 export async function prepareOracleFulfillment(config, event, logger = null) {
   assertEventIdentifiersClean(event);
+  resolveEventPayload(event);
   const payload = enrichAutomationExecutionPayload(event, decodePayloadText(event.payloadText));
   const kernelIntent = resolveKernelIntent(event.requestType);
   const fulfillmentContext = resolveEventFulfillmentContext(event, kernelIntent);
@@ -257,6 +259,7 @@ export async function prepareOracleFulfillment(config, event, logger = null) {
       requestId: event.requestId,
       requestType: event.requestType,
       ...fulfillmentContext,
+      ...resolveEventPayload(event),
       success: false,
       result: '',
       result_bytes_base64: '',
@@ -378,6 +381,7 @@ export async function prepareOracleFulfillment(config, event, logger = null) {
       requestId: event.requestId,
       requestType: event.requestType,
       ...fulfillmentContext,
+      ...resolveEventPayload(event),
       success: decryptFulfillment.success,
       result: decryptFulfillment.result,
       result_bytes_base64: decryptFulfillment.result_bytes_base64,

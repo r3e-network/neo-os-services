@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { callNitro } from '../nitro.js';
 import {
   buildFulfillmentDigestBytes,
+  decodePayloadText,
   TRUST_TIER_ENCLAVE_ATTESTED,
   TRUST_TIER_HOST_UNATTESTED,
 } from '../router.js';
@@ -14,7 +15,8 @@ import {
   verifyEnclaveSignatureAgainstPinnedVerifier,
 } from '../attestation.js';
 import { buildTransientWorkerError, isTransientWorkerStatus } from './classifier.js';
-import { resolveDigestBinding } from './signer.js';
+import { resolveDigestBinding, resolveFulfillmentSigningContext } from './signer.js';
+import { resolveEventPayload } from '../lib/payload.js';
 
 /**
  * Compute-in-enclave fulfillment helpers (POST /oracle/fulfill). Flag-gated:
@@ -94,7 +96,7 @@ function buildEnclaveFulfillmentContext(config, chain, event, fulfillmentContext
  * @param {string} chain Target chain id.
  * @param {object} event On-chain request event.
  * @param {object} fulfillmentContext Resolved fulfillment context.
- * @param {object} payload Decoded request payload.
+ * @param {object} _payload Decoded request payload (reserved; raw event bytes are authoritative).
  * @param {object} _kernelIntent Resolved kernel intent (reserved).
  * @returns {Promise<object>} Enclave fulfillment result.
  */
@@ -103,24 +105,47 @@ export async function callEnclaveFulfill(
   chain,
   event,
   fulfillmentContext,
-  payload,
+  _payload,
   _kernelIntent
 ) {
+  const eventPayload = resolveEventPayload(event);
+  const signingContext = resolveFulfillmentSigningContext(chain, {
+    ...fulfillmentContext,
+    ...eventPayload,
+  });
+  const signingChain = signingContext.chain;
+  if (
+    (chain !== 'neo_n3' && chain !== 'neox') ||
+    (signingChain !== chain && !(chain === 'neo_n3' && signingChain === 'legacy'))
+  ) {
+    throw new Error(`unsupported measured fulfillment domain: ${chain} -> ${signingChain}`);
+  }
+  const decodedPayload = decodePayloadText(eventPayload.payloadText);
+  const basePayload =
+    decodedPayload && typeof decodedPayload === 'object' && !Array.isArray(decodedPayload)
+      ? decodedPayload
+      : {};
   const requestNonce = crypto.randomBytes(16).toString('hex');
   const enclavePayload = {
-    chain,
+    chain: signingChain,
     request_type: event.requestType,
     request_id: String(event.requestId),
-    payload: {
-      ...payload,
-      requester: event.requester || payload.requester || '',
-      callback_contract: event.callbackContract || payload.callback_contract || '',
-      callback_method: event.callbackMethod || payload.callback_method || '',
+    payload: basePayload,
+    payload_text: eventPayload.payloadText,
+    payload_hex: eventPayload.payloadHex,
+    request_context: {
+      requester: String(event.requester ?? ''),
+      callback_contract: String(event.callbackContract ?? ''),
+      callback_method: String(event.callbackMethod ?? ''),
+      message_id: String(event.messageId ?? event.message_id ?? ''),
+      contract: String(config?.neox?.messageContract || config?.neox?.oracleContract || ''),
     },
-    payload_text: event.payloadText || '',
-    payload_hex:
-      event.payloadHex || Buffer.from(String(event.payloadText || ''), 'utf8').toString('hex'),
-    fulfillment_context: buildEnclaveFulfillmentContext(config, chain, event, fulfillmentContext),
+    fulfillment_context: buildEnclaveFulfillmentContext(
+      config,
+      signingChain,
+      event,
+      signingContext
+    ),
     nonce: requestNonce,
   };
 
@@ -143,6 +168,11 @@ export async function callEnclaveFulfill(
         : `enclave fulfill failed with status ${response.status}`
     );
   }
+  if (body.chain !== signingChain) {
+    throw new Error(
+      `invalid signature: enclave fulfillment domain mismatch (enclave=${body.chain || 'missing'} relayer=${signingChain})`
+    );
+  }
   if (typeof body.signature !== 'string' || !body.signature) {
     throw new Error(
       typeof body.error === 'string' && body.error
@@ -154,11 +184,10 @@ export async function callEnclaveFulfill(
   const fulfillment = {
     requestId: String(event.requestId),
     requestType: event.requestType,
-    appId: fulfillmentContext.appId,
-    moduleId: fulfillmentContext.moduleId,
-    operation: fulfillmentContext.operation,
-    payloadText: String(event.payloadText || ''),
-    payloadHex: event.payloadHex,
+    appId: signingContext.appId,
+    moduleId: signingContext.moduleId,
+    operation: signingContext.operation,
+    ...eventPayload,
     success: Boolean(body.success),
     result: typeof body.result === 'string' ? body.result : '',
     result_bytes_base64:
@@ -167,7 +196,9 @@ export async function callEnclaveFulfill(
   };
 
   const returnedDigest = normalizePublicKey(body.fulfillment_digest_hex || '');
-  const localDigest = normalizePublicKey(recomputeFulfillmentDigestHex(config, chain, fulfillment));
+  const localDigest = normalizePublicKey(
+    recomputeFulfillmentDigestHex(config, signingChain, fulfillment)
+  );
   if (!returnedDigest || returnedDigest !== localDigest) {
     throw new Error(
       'invalid signature: enclave fulfillment digest mismatch ' +
@@ -176,7 +207,7 @@ export async function callEnclaveFulfill(
   }
 
   if (enclaveSignatureVerificationEnabled(config)) {
-    verifyEnclaveSignatureAgainstPinnedVerifier(config, chain, body, localDigest);
+    verifyEnclaveSignatureAgainstPinnedVerifier(config, signingChain, body, localDigest);
   }
 
   const attestation = verifyEnclaveAttestation(config, body, localDigest, {

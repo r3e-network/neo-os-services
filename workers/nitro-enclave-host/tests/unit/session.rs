@@ -494,14 +494,14 @@ fn previewed_payload(harness: &TestState, played: &Played, at_ms: u64) -> Json {
 /// One kernel request as the relayer delivers it: the requester and the ids
 /// come from the chain request, the rest from the payload.
 fn kernel_fulfill(harness: &TestState, request_id: &str, requester: &str, payload: &Json) -> Json {
-    let mut delivered = payload.clone();
-    delivered["requester"] = Json::String(requester.to_string());
     let body = json!({
         "chain": "neo_n3",
         "request_type": "session.finalize",
         "request_id": request_id,
         "payload_text": payload.to_string(),
-        "payload": delivered,
+        "payload_hex": hex::encode(payload.to_string().as_bytes()),
+        "payload": payload,
+        "request_context": { "requester": requester },
         "fulfillment_context": {
             "app_id": payload["app_id"],
             "module_id": "game.session",

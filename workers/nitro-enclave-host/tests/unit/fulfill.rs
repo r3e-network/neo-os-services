@@ -27,6 +27,41 @@ use serde_json::json;
 mod support;
 use support::*;
 
+fn fulfill_with_fixture(
+    state: &AppState,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value, RuntimeError> {
+    let mut body = body.clone();
+    if body.get("payload_hex").is_none() && body.get("payloadHex").is_none() {
+        let request_type = body["request_type"].as_str().unwrap_or_default();
+        let confidential = resolve_kernel_intent(request_type).module_id == "confidential.decrypt";
+        let text = if confidential {
+            body["payload"]["envelope"]
+                .as_str()
+                .unwrap_or_else(|| body["payload_text"].as_str().unwrap_or_default())
+                .to_string()
+        } else if body["payload_text"] == json!("")
+            && body["payload"]
+                .as_object()
+                .is_some_and(|payload| !payload.is_empty())
+        {
+            serde_json::to_string(&body["payload"]).expect("fixture JSON payload")
+        } else {
+            body["payload_text"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        };
+        body["payload_text"] = json!(text);
+        body["payload_hex"] = json!(if text.is_empty() {
+            "0x".to_string()
+        } else {
+            hex::encode(text.as_bytes())
+        });
+    }
+    handle_oracle_fulfill(state, &body)
+}
+
 fn fixed_price_body() -> serde_json::Value {
     json!({
         "mode": "oracle",
@@ -98,7 +133,8 @@ fn price_body_without_binding() -> serde_json::Value {
         "request_type": "oracle_query",
         "request_id": "4242",
         "payload_text": "",
-        "payload": { "symbol": "BTC/USD", "requester": format!("0x{}", "aa".repeat(20)) },
+        "payload_hex": "0x",
+        "payload": {},
         "fulfillment_context": {},
         "nonce": "",
     })
@@ -113,7 +149,8 @@ fn neo_n3_with_app_id_digest_envelope_and_signature_byte_exact() {
         "request_type": "oracle_query",
         "request_id": "4242",
         "payload_text": "",
-        "payload": { "symbol": "BTC/USD", "requester": format!("0x{}", "aa".repeat(20)) },
+        "payload_hex": "0x",
+        "payload": {},
         "fulfillment_context": {
             "app_id": "demo.app",
             "module_id": intent.module_id,
@@ -124,7 +161,7 @@ fn neo_n3_with_app_id_digest_envelope_and_signature_byte_exact() {
         "nonce": "deadbeef",
     });
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("fulfillment");
+    let response = fulfill_with_fixture(&harness.state, &body).expect("fulfillment");
     assert_eq!(response["status"], "ok");
     assert_eq!(response["trust_tier"], "enclave-attested");
     assert_eq!(response["success"], true);
@@ -219,7 +256,7 @@ fn neo_n3_refuses_parent_selected_contract_or_network_domain_before_signing() {
         let mut body = price_body_without_binding();
         body["fulfillment_context"][field] = value;
 
-        let error = handle_oracle_fulfill(&harness.state, &body).expect_err("foreign N3 domain");
+        let error = fulfill_with_fixture(&harness.state, &body).expect_err("foreign N3 domain");
         assert_eq!(error.status, 400);
         assert!(error.message.contains(expected), "{}", error.message);
         assert!(harness.signer.sign_calls().is_empty());
@@ -236,7 +273,8 @@ fn neox_fulfillment_uses_structured_verifier_custody_and_exposes_delivery_fields
         "request_type": "oracle_query",
         "request_id": "4242",
         "payload_text": "",
-        "payload": { "symbol": "BTC/USD", "requester": format!("0x{}", "aa".repeat(20)) },
+        "payload_hex": "0x",
+        "payload": {},
         "fulfillment_context": {
             "app_id": "demo.app",
             "module_id": intent.module_id,
@@ -247,7 +285,7 @@ fn neox_fulfillment_uses_structured_verifier_custody_and_exposes_delivery_fields
         "nonce": "deadbeef",
     });
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("NeoX fulfillment");
+    let response = fulfill_with_fixture(&harness.state, &body).expect("NeoX fulfillment");
     assert_eq!(response["status"], "ok");
     assert_eq!(response["chain"], "neox");
     assert_eq!(response["request_id"], "4242");
@@ -325,7 +363,7 @@ fn migrated_compute_fulfillment_executes_in_process() {
         "fulfillment_context": {},
     });
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("fulfillment");
+    let response = fulfill_with_fixture(&harness.state, &body).expect("fulfillment");
     assert_eq!(response["status"], "ok");
     assert_eq!(response["success"], true);
     // Successful decryption reaches the canonical compact envelope. The
@@ -348,11 +386,12 @@ fn session_finalize_fulfillment_uses_the_session_handler() {
         "request_type": "session.finalize",
         "request_id": "901",
         "payload_text": "",
+        "payload_hex": "0x",
         "payload": {},
         "fulfillment_context": {},
     });
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("signed rejection");
+    let response = fulfill_with_fixture(&harness.state, &body).expect("signed rejection");
     assert_eq!(response["status"], "ok");
     assert_eq!(response["success"], false);
     assert!(
@@ -386,7 +425,7 @@ fn automation_fulfillment_executes_the_nested_rust_handler() {
         "fulfillment_context": {},
     });
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("fulfillment");
+    let response = fulfill_with_fixture(&harness.state, &body).expect("fulfillment");
     assert_eq!(response["status"], "ok");
     assert_eq!(response["success"], true);
     assert!(response["result"]
@@ -395,6 +434,43 @@ fn automation_fulfillment_executes_the_nested_rust_handler() {
         .contains("automation"));
     assert!(harness.bridge.forwards().is_empty());
     assert_eq!(harness.signer.sign_calls().len(), 2);
+}
+
+#[test]
+fn automation_execution_fields_are_derived_from_raw_payload_and_request_id() {
+    let harness = fulfill_harness(price_reply());
+    let payload = json!({
+        "automation_id": "automation:fulfill:test",
+        "execution_count": 4,
+        "execution_request_type": "compute_hash",
+        "execution_payload": {
+            "function": "hash.sha256",
+            "input": { "answer": 42 },
+        },
+    });
+    let text = payload.to_string();
+    let body = json!({
+        "chain": "neo_n3",
+        "request_type": "automation_execute",
+        "request_id": "902",
+        "payload_text": text,
+        "payload_hex": hex::encode(text.as_bytes()),
+        "payload": payload,
+        "fulfillment_context": {},
+    });
+    handle_oracle_fulfill(&harness.state, &body).expect("automation fulfillment");
+    let forwards = harness.bridge.forwards();
+    assert_eq!(forwards.len(), 1);
+    assert_eq!(forwards[0].0, "/automation/execute");
+    assert_eq!(forwards[0].1["workflow_id"], "automation.upkeep");
+    assert_eq!(forwards[0].1["workflow_version"], 1.0);
+    assert_eq!(forwards[0].1["execution_id"], "902");
+    assert_eq!(
+        forwards[0].1["idempotency_key"],
+        "automation.upkeep:automation:fulfill:test:5"
+    );
+    assert_eq!(forwards[0].1["replay_window"], "strict");
+    assert_eq!(forwards[0].1["delivery_mode"], "onchain_callback");
 }
 
 /// SVC-E-1 (CL-19/CL-14). `resolve_kernel_intent` picks the lane by a
@@ -424,7 +500,7 @@ fn an_operator_only_feed_lane_is_refused_as_a_settleable_fulfillment() {
         "fulfillment_context": {},
     });
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("signed rejection");
+    let response = fulfill_with_fixture(&harness.state, &body).expect("signed rejection");
     assert_eq!(response["success"], false);
     assert_eq!(
         response["error"].as_str().expect("feed error"),
@@ -463,7 +539,7 @@ fn a_granted_module_that_disagrees_with_the_routed_lane_is_refused() {
         "fulfillment_context": { "module_id": "oracle.fetch" },
     });
 
-    let error = handle_oracle_fulfill(&harness.state, &body).expect_err("module mismatch");
+    let error = fulfill_with_fixture(&harness.state, &body).expect_err("module mismatch");
     assert_eq!(error.status, 400);
     assert!(error
         .message
@@ -489,7 +565,7 @@ fn a_matching_module_and_an_absent_module_both_still_fulfil() {
             "fulfillment_context": context,
         });
 
-        let response = handle_oracle_fulfill(&harness.state, &body).expect("fulfillment");
+        let response = fulfill_with_fixture(&harness.state, &body).expect("fulfillment");
         assert_eq!(response["success"], true, "context {context}");
     }
 }
@@ -521,7 +597,7 @@ fn migrated_decrypt_fulfillment_executes_in_process() {
         "fulfillment_context": {},
     });
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("fulfillment");
+    let response = fulfill_with_fixture(&harness.state, &body).expect("fulfillment");
     assert_eq!(response["status"], "ok");
     assert_eq!(response["success"], true);
     assert!(response["result"]
@@ -546,12 +622,13 @@ fn random_fulfillment_executes_in_process_without_a_bridge() {
         "request_type": "random",
         "request_id": "103",
         "payload_text": "",
+        "payload_hex": "0x",
         "payload": {},
         // The VRF lane binds the oracle contract the relayer names.
         "fulfillment_context": { "contract_script_hash": N3_TESTNET_ORACLE_CONTRACT },
     });
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("signed fulfillment");
+    let response = fulfill_with_fixture(&harness.state, &body).expect("signed fulfillment");
     assert_eq!(response["status"], "ok");
     assert_eq!(response["success"], true);
     assert!(response["error"].as_str().unwrap_or_default().is_empty());
@@ -571,11 +648,15 @@ fn random_fulfillment_executes_in_process_without_a_bridge() {
 fn fulfillment_digest_binds_the_exact_request_payload() {
     let mut body_a = price_body_without_binding();
     body_a["payload_text"] = json!("{\"op\":\"add\"}");
+    body_a["payload"] = json!({"op":"add"});
+    body_a["payload_hex"] = json!(hex::encode(b"{\"op\":\"add\"}"));
     let mut body_b = body_a.clone();
     body_b["payload_text"] = json!("{\"op\":\"sub\"}");
-    let response_a = handle_oracle_fulfill(&fulfill_harness(price_reply()).state, &body_a)
+    body_b["payload"] = json!({"op":"sub"});
+    body_b["payload_hex"] = json!(hex::encode(b"{\"op\":\"sub\"}"));
+    let response_a = fulfill_with_fixture(&fulfill_harness(price_reply()).state, &body_a)
         .expect("first payload");
-    let response_b = handle_oracle_fulfill(&fulfill_harness(price_reply()).state, &body_b)
+    let response_b = fulfill_with_fixture(&fulfill_harness(price_reply()).state, &body_b)
         .expect("second payload");
     assert_ne!(
         response_a["fulfillment_digest_hex"],
@@ -589,10 +670,235 @@ fn inconsistent_payload_hex_and_text_are_refused_before_signing() {
     let mut body = price_body_without_binding();
     body["payload_text"] = json!("");
     body["payload_hex"] = json!("00");
-    let error = handle_oracle_fulfill(&harness.state, &body).expect_err("payload mismatch");
+    let error = fulfill_with_fixture(&harness.state, &body).expect_err("payload mismatch");
     assert_eq!(error.status, 400);
     assert!(error.message.contains("does not match"));
     assert!(harness.signer.sign_calls().is_empty());
+}
+
+fn body_with_json_payload(text: &str) -> serde_json::Value {
+    let mut body = price_body_without_binding();
+    body["payload_text"] = json!(text);
+    body["payload"] = serde_json::from_str(text).expect("JSON fixture");
+    body["payload_hex"] = json!(hex::encode(text.as_bytes()));
+    body
+}
+
+#[test]
+fn substituted_execution_object_is_refused_even_when_text_and_hex_stay_unchanged() {
+    let body = body_with_json_payload("{\"op\":\"add\"}");
+    let response = handle_oracle_fulfill(&fulfill_harness(price_reply()).state, &body)
+        .expect("original object fulfills");
+    assert_eq!(response["success"], true);
+
+    let harness = fulfill_harness(price_reply());
+    let mut replaced = body;
+    replaced["payload"] = json!({"op":"sub"});
+    let error = handle_oracle_fulfill(&harness.state, &replaced).expect_err("substitution");
+    assert_eq!(error.status, 400);
+    assert!(error.message.contains("payload object does not match"));
+    assert!(harness.signer.sign_calls().is_empty());
+}
+
+#[test]
+fn missing_empty_and_non_utf8_raw_payloads_fail_closed_but_explicit_empty_works() {
+    let valid = body_with_json_payload("{\"op\":\"add\"}");
+    let mut missing = valid.clone();
+    missing
+        .as_object_mut()
+        .expect("body object")
+        .remove("payload_hex");
+    let mut null = valid.clone();
+    null["payload_hex"] = serde_json::Value::Null;
+    for body in [missing, null] {
+        let harness = fulfill_harness(price_reply());
+        let error = handle_oracle_fulfill(&harness.state, &body).expect_err("missing raw");
+        assert_eq!(error.status, 400);
+        assert!(harness.signer.sign_calls().is_empty());
+    }
+    for value in [json!(""), json!("   "), json!(0)] {
+        let mut body = valid.clone();
+        body["payload_hex"] = value;
+        let harness = fulfill_harness(price_reply());
+        let error = handle_oracle_fulfill(&harness.state, &body).expect_err("empty raw");
+        assert_eq!(error.status, 400);
+        assert!(harness.signer.sign_calls().is_empty());
+    }
+
+    let harness = fulfill_harness(price_reply());
+    let mut non_utf8 = valid;
+    non_utf8["payload_hex"] = json!("ff");
+    non_utf8["payload_text"] = json!("\u{fffd}");
+    non_utf8["payload"] = json!({"raw_payload":"\u{fffd}"});
+    let error = handle_oracle_fulfill(&harness.state, &non_utf8).expect_err("non-UTF8 raw");
+    assert_eq!(error.status, 400);
+    assert!(error.message.contains("not valid UTF-8"));
+    assert!(harness.signer.sign_calls().is_empty());
+
+    let response = handle_oracle_fulfill(
+        &fulfill_harness(price_reply()).state,
+        &price_body_without_binding(),
+    )
+    .expect("0x is an explicitly empty payload");
+    assert_eq!(response["success"], true);
+}
+
+fn neox_abi_confidential_body() -> (serde_json::Value, Vec<u8>) {
+    let envelope = base64::engine::general_purpose::STANDARD.encode(GOLDEN_ENVELOPE_JSON);
+    let mut message_id = [0u8; 32];
+    message_id[31] = 42;
+    let raw = neo_os_chain_evm::abi_encode(&[
+        neo_os_chain_evm::AbiValue::Uint256(message_id),
+        neo_os_chain_evm::AbiValue::Bytes(envelope.as_bytes().to_vec()),
+    ])
+    .expect("ABI fixture");
+    let oracle = format!("0x{}", "22".repeat(20));
+    let body = json!({
+        "chain": "neox",
+        "request_type": "decrypt",
+        "request_id": "10242",
+        "payload_text": envelope,
+        "payload_hex": hex::encode(&raw),
+        "payload": { "raw_payload": envelope },
+        "request_context": { "contract": oracle },
+        "fulfillment_context": {
+            "app_id": "demo.app",
+            "module_id": "confidential.decrypt",
+            "operation": "decrypt",
+            "chain_id": 12_227_332,
+            "oracle_contract": oracle,
+        },
+        "nonce": "deadbeef",
+    });
+    (body, raw)
+}
+
+#[test]
+fn neox_abi_confidential_derives_envelope_and_message_id_and_really_decrypts() {
+    let (body, raw) = neox_abi_confidential_body();
+    let inspection = fulfill_harness(price_reply());
+    handle_oracle_fulfill(&inspection.state, &body).expect("ABI lane");
+    let forwards = inspection.bridge.forwards();
+    assert_eq!(forwards.len(), 1);
+    assert_eq!(forwards[0].1["envelope"], body["payload_text"]);
+    assert_eq!(forwards[0].1["message_id"], "42");
+    assert_eq!(forwards[0].1["chain"], "neox");
+    assert_eq!(
+        forwards[0].1["contract"],
+        body["request_context"]["contract"]
+    );
+
+    let key_env = golden_key_env();
+    let message_contract = body["request_context"]["contract"].as_str().unwrap();
+    let mut harness = test_state(
+        &[
+            ("MORPHEUS_NETWORK", TEST_NETWORK),
+            ("NITRO_API_TOKEN", "s3cret"),
+            ("MORPHEUS_ORACLE_KEY_MATERIAL_JSON", key_env.as_str()),
+            ("NEOX_MESSAGE_RPC", "https://rpc.example"),
+            ("NEOX_MESSAGE_CONTRACT", message_contract),
+        ],
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    use_production_compute(&mut harness);
+    let mut timestamp = [0u8; 32];
+    timestamp[31] = 1;
+    let message = neo_os_chain_evm::abi_encode(&[
+        neo_os_chain_evm::AbiValue::Address([0x11; 20]),
+        neo_os_chain_evm::AbiValue::Address([0x22; 20]),
+        neo_os_chain_evm::AbiValue::Bytes(
+            body["payload_text"].as_str().unwrap().as_bytes().to_vec(),
+        ),
+        neo_os_chain_evm::AbiValue::Uint256(timestamp),
+        neo_os_chain_evm::AbiValue::Uint256(timestamp),
+        neo_os_chain_evm::AbiValue::Bool(false),
+        neo_os_chain_evm::AbiValue::Bytes(Vec::new()),
+    ])
+    .expect("getMessage response");
+    harness.oracle_io.set_now_ms(2_000);
+    harness
+        .oracle_io
+        .set_reply(Ok(neo_os_compute::transport::HttpResponse {
+            status: 200,
+            headers: Vec::new(),
+            body: serde_json::to_vec(&json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": format!("0x{}", hex::encode(message)),
+            }))
+            .unwrap(),
+        }));
+    let response = handle_oracle_fulfill(&harness.state, &body).expect("real ABI decrypt");
+    assert_eq!(response["success"], true);
+    let calls = harness.signer.eip191_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].fulfillment.payload, hex::encode(&raw));
+
+    let mut replaced = body.clone();
+    replaced["payload"] = json!({"envelope":"attacker-controlled-envelope"});
+    let error = handle_oracle_fulfill(&harness.state, &replaced).expect_err("envelope replacement");
+    assert_eq!(error.status, 400);
+    assert!(error.message.contains("original envelope"));
+
+    let mut unrelated = body;
+    unrelated["payload"] = json!({"unrelated":true});
+    let error = handle_oracle_fulfill(&harness.state, &unrelated).expect_err("unrelated object");
+    assert_eq!(error.status, 400);
+    assert!(harness.signer.eip191_calls().len() == 1);
+}
+
+#[test]
+fn legacy_domain_is_distinct_from_the_kernel_domain_in_the_real_enclave() {
+    let harness = fulfill_harness(price_reply());
+    let mut body = price_body_without_binding();
+    body["chain"] = json!("legacy");
+    body["fulfillment_context"] = json!({
+        "app_id": "",
+        "module_id": "",
+        "operation": "",
+        "contract_script_hash": measured_n3_oracle_contract(TEST_NETWORK).expect("test network"),
+        "network_magic": 894710606,
+    });
+    body["request_context"] = json!({
+        "requester": "",
+        "callback_contract": "",
+        "callback_method": "onOracleResult",
+    });
+    let response = handle_oracle_fulfill(&harness.state, &body).expect("legacy fulfillment");
+    assert_eq!(response["chain"], "legacy");
+    let worker_response =
+        JsValue::from_json(&json!({ "ok": true, "status": 200, "body": fixed_price_body() }));
+    let fulfillment = encode_fulfillment_result("oracle_query", &worker_response).expect("encode");
+    let digest_for = |chain: &str| {
+        build_fulfillment_digest_bytes(
+            &JsValue::Str("4242".to_string()),
+            "oracle_query",
+            fulfillment.success,
+            &fulfillment.result,
+            &fulfillment.error,
+            fulfillment.result_bytes_base64.as_deref().unwrap_or(""),
+            &FulfillmentOptions {
+                chain: Some(chain.to_string()),
+                contract_script_hash: measured_n3_oracle_contract(TEST_NETWORK)
+                    .expect("test network")
+                    .to_string(),
+                network_magic: Some(894710606.0),
+                ..FulfillmentOptions::default()
+            },
+        )
+        .expect("digest")
+    };
+    assert_eq!(
+        response["fulfillment_digest_hex"],
+        hex::encode(digest_for("legacy"))
+    );
+    assert_ne!(
+        response["fulfillment_digest_hex"],
+        hex::encode(digest_for("neo_n3"))
+    );
 }
 
 fn intent_public_key() -> serde_json::Value {
@@ -606,7 +912,7 @@ fn legacy_no_app_id_uses_the_legacy_domain() {
     let mut body = body.clone();
     body["chain"] = json!("legacy");
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("fulfillment");
+    let response = fulfill_with_fixture(&harness.state, &body).expect("fulfillment");
     assert_eq!(response["trust_tier"], "enclave-attested");
 
     let worker_response =
@@ -651,6 +957,7 @@ fn vrf_compact_lane_returns_the_callback_bytes() {
         "request_type": "random",
         "request_id": "99",
         "payload_text": "",
+        "payload_hex": "0x",
         "payload": {},
         "fulfillment_context": {
             "app_id": "dice.app",
@@ -661,7 +968,7 @@ fn vrf_compact_lane_returns_the_callback_bytes() {
         },
     });
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("fulfillment");
+    let response = fulfill_with_fixture(&harness.state, &body).expect("fulfillment");
     // VRF -> compact 32-byte randomness as result_bytes_base64, empty result.
     assert_eq!(response["result"], "");
     let compact = response["result_bytes_base64"]
@@ -716,7 +1023,7 @@ fn arbitrary_url_smart_fetch_is_host_unattested() {
         "fulfillment_context": {},
     });
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("host-unattested");
+    let response = fulfill_with_fixture(&harness.state, &body).expect("host-unattested");
     assert_eq!(
         response,
         json!({
@@ -744,11 +1051,12 @@ fn neox_invalid_contract_never_reaches_any_signing_surface() {
         "request_type": "oracle_query",
         "request_id": "1",
         "payload_text": "",
+        "payload_hex": "0x",
         "payload": {},
         "fulfillment_context": { "chain_id": 1868, "oracle_contract": "0xabc" },
     });
 
-    let error = handle_oracle_fulfill(&harness.state, &body).expect_err("invalid contract");
+    let error = fulfill_with_fixture(&harness.state, &body).expect_err("invalid contract");
     assert_eq!(error.status, 400);
     assert!(error.message.contains("invalid oracle contract address"));
     assert!(harness.signer.sign_calls().is_empty());
@@ -764,7 +1072,7 @@ fn a_deterministic_business_rejection_encodes_as_an_unsuccessful_fulfillment() {
     });
     let body = price_body_without_binding();
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("signed failure");
+    let response = fulfill_with_fixture(&harness.state, &body).expect("signed failure");
     assert_eq!(response["status"], "ok");
     assert_eq!(response["success"], false);
     assert_eq!(response["result"], "");
@@ -784,7 +1092,7 @@ fn transient_compute_failures_are_never_signed_as_permanent_fulfillments() {
             body: json!({ "error": "try again" }),
         });
 
-        let error = handle_oracle_fulfill(&harness.state, &price_body_without_binding())
+        let error = fulfill_with_fixture(&harness.state, &price_body_without_binding())
             .expect_err("transient compute failure must remain retryable");
 
         assert_eq!(error.status, status);
@@ -805,7 +1113,7 @@ fn the_decrypt_lane_forwards_the_envelope() {
         "fulfillment_context": {},
     });
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("fulfillment");
+    let response = fulfill_with_fixture(&harness.state, &body).expect("fulfillment");
     assert_eq!(response["status"], "ok");
     let forwards = harness.bridge.forwards();
     assert_eq!(forwards.len(), 1);
@@ -820,7 +1128,7 @@ fn the_response_binds_an_attestation_document() {
     let mut body = price_body_without_binding();
     body["nonce"] = json!("deadbeef");
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("fulfillment");
+    let response = fulfill_with_fixture(&harness.state, &body).expect("fulfillment");
     assert_eq!(
         response["attestation_doc_base64"],
         base64::engine::general_purpose::STANDARD.encode(b"doc")
@@ -866,7 +1174,7 @@ fn fulfillment_still_signs_when_attestation_is_unavailable() {
     harness.bridge.set_reply(price_reply());
     let body = price_body_without_binding();
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("fulfillment");
+    let response = fulfill_with_fixture(&harness.state, &body).expect("fulfillment");
     // The signature path still returned; the relayer downgrades trust.
     assert_eq!(response["trust_tier"], "enclave-attested");
     assert_eq!(response["signature"], "00");
@@ -883,12 +1191,12 @@ fn fulfillment_still_signs_when_attestation_is_unavailable() {
 fn missing_request_fields_are_400s_before_any_compute() {
     let harness = fulfill_harness(price_reply());
     let missing_type = json!({ "request_id": "1", "payload": {} });
-    let error = handle_oracle_fulfill(&harness.state, &missing_type).expect_err("no type");
+    let error = fulfill_with_fixture(&harness.state, &missing_type).expect_err("no type");
     assert_eq!(error.status, 400);
     assert_eq!(error.message, "request_type is required");
 
     let missing_id = json!({ "request_type": "oracle_query", "payload": {} });
-    let error = handle_oracle_fulfill(&harness.state, &missing_id).expect_err("no id");
+    let error = fulfill_with_fixture(&harness.state, &missing_id).expect_err("no id");
     assert_eq!(error.status, 400);
     assert_eq!(error.message, "request_id is required");
     assert!(harness.bridge.forwards().is_empty());
@@ -948,7 +1256,7 @@ fn fresh_kernel_fulfils_when_the_test_override_names_it() {
     let harness = override_harness(&override_env(), price_reply());
     let body = bound_body(FRESH_KERNEL_CONTRACT);
 
-    let response = handle_oracle_fulfill(&harness.state, &body).expect("fresh kernel fulfilment");
+    let response = fulfill_with_fixture(&harness.state, &body).expect("fresh kernel fulfilment");
     assert_eq!(response["status"], "ok");
     assert_eq!(response["success"], true);
 
@@ -997,7 +1305,7 @@ fn test_override_is_refused_in_production_before_signing() {
     for node_env in ["production", " PrOdUcTiOn "] {
         let overlay = [("NODE_ENV", node_env), override_env()[0]];
         let harness = override_harness(&overlay, price_reply());
-        let error = handle_oracle_fulfill(&harness.state, &bound_body(FRESH_KERNEL_CONTRACT))
+        let error = fulfill_with_fixture(&harness.state, &bound_body(FRESH_KERNEL_CONTRACT))
             .expect_err("production refuses the override");
         assert_eq!(error.status, 503);
         assert_eq!(
@@ -1023,7 +1331,7 @@ fn test_override_must_be_a_script_hash() {
             &[("MORPHEUS_TEST_MEASURED_ORACLE_CONTRACT_OVERRIDE", bad)],
             price_reply(),
         );
-        let error = handle_oracle_fulfill(&harness.state, &bound_body(FRESH_KERNEL_CONTRACT))
+        let error = fulfill_with_fixture(&harness.state, &bound_body(FRESH_KERNEL_CONTRACT))
             .expect_err("malformed override");
         assert_eq!(error.status, 503, "{bad}");
         assert_eq!(
@@ -1040,7 +1348,7 @@ fn test_override_is_refused_on_mainnet() {
     let mut overlay = vec![("MORPHEUS_NETWORK", "mainnet")];
     overlay.extend_from_slice(&override_env());
     let harness = override_harness(&overlay, price_reply());
-    let error = handle_oracle_fulfill(&harness.state, &bound_body(FRESH_KERNEL_CONTRACT))
+    let error = fulfill_with_fixture(&harness.state, &bound_body(FRESH_KERNEL_CONTRACT))
         .expect_err("mainnet refuses the override");
     assert_eq!(error.status, 503);
     assert_eq!(
@@ -1055,7 +1363,7 @@ fn test_override_still_requires_the_supplied_contract_to_match() {
     let harness = override_harness(&override_env(), price_reply());
     // The override names kernel A; the request names kernel B. The override
     // widens the expected value, it does not disable the comparison.
-    let error = handle_oracle_fulfill(&harness.state, &bound_body(OTHER_FRESH_KERNEL_CONTRACT))
+    let error = fulfill_with_fixture(&harness.state, &bound_body(OTHER_FRESH_KERNEL_CONTRACT))
         .expect_err("foreign fresh kernel");
     assert_eq!(error.status, 400);
     assert!(
@@ -1072,7 +1380,7 @@ fn test_override_still_requires_the_supplied_contract_to_match() {
 fn default_configuration_binds_the_measured_contract() {
     // No flag: the measured constant still binds and a fresh kernel is refused.
     let harness = fulfill_harness(price_reply());
-    let error = handle_oracle_fulfill(&harness.state, &bound_body(FRESH_KERNEL_CONTRACT))
+    let error = fulfill_with_fixture(&harness.state, &bound_body(FRESH_KERNEL_CONTRACT))
         .expect_err("measured binding is unchanged by default");
     assert_eq!(error.status, 400);
     assert!(

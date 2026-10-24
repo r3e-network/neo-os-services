@@ -84,6 +84,7 @@ function signDurableHydrationRows(rows, network = 'testnet') {
   return rows.map((row) => {
     const event = {
       payloadText: '{}',
+      payloadHex: '7b7d',
       requester: 'NTestRequesterAddress',
       callbackContract: '0x1111111111111111111111111111111111111111',
       callbackMethod: 'onOracleResult',
@@ -978,10 +979,43 @@ test('buildWorkerPayload injects relayer metadata', () => {
 });
 
 test('buildFulfillmentDigestBytes binds the full callback context', () => {
-  const baseline = buildFulfillmentDigestBytes('42', 'compute', true, '{"ok":true}', '');
-  const changedResult = buildFulfillmentDigestBytes('42', 'compute', true, '{"ok":false}', '');
-  const changedError = buildFulfillmentDigestBytes('42', 'compute', false, '', 'failed');
-  const changedRequest = buildFulfillmentDigestBytes('43', 'compute', true, '{"ok":true}', '');
+  const options = { payloadHex: '0x' };
+  const baseline = buildFulfillmentDigestBytes(
+    '42',
+    'compute',
+    true,
+    '{"ok":true}',
+    '',
+    '',
+    options
+  );
+  const changedResult = buildFulfillmentDigestBytes(
+    '42',
+    'compute',
+    true,
+    '{"ok":false}',
+    '',
+    '',
+    options
+  );
+  const changedError = buildFulfillmentDigestBytes(
+    '42',
+    'compute',
+    false,
+    '',
+    'failed',
+    '',
+    options
+  );
+  const changedRequest = buildFulfillmentDigestBytes(
+    '43',
+    'compute',
+    true,
+    '{"ok":true}',
+    '',
+    '',
+    options
+  );
 
   assert.equal(Buffer.isBuffer(baseline), true);
   assert.equal(baseline.length, 32);
@@ -1001,6 +1035,7 @@ test('buildFulfillmentDigestBytes binds deployment (script hash + network) to ma
     appId: 'demo.app',
     moduleId: 'oracle.fetch',
     operation: 'fetch',
+    payloadHex: '0x',
     contractScriptHash: '0x1122334455667788990011223344556677889900',
     networkMagic: 894710606,
   });
@@ -1009,6 +1044,7 @@ test('buildFulfillmentDigestBytes binds deployment (script hash + network) to ma
     appId: 'demo.app',
     moduleId: 'oracle.fetch',
     operation: 'fetch',
+    payloadHex: '0x',
   });
   assert.equal(
     bound.toString('hex'),
@@ -1091,14 +1127,24 @@ test('encodeFulfillmentResult emits raw randomness bytes for rng callbacks', () 
 
 test('buildFulfillmentDigestBytes can bind raw callback bytes instead of utf8 JSON', () => {
   const raw = Buffer.from('01020304', 'hex').toString('base64');
-  const baseline = buildFulfillmentDigestBytes('42', 'neodid_recovery_ticket', true, '', '', raw);
+  const options = { payloadHex: '0x' };
+  const baseline = buildFulfillmentDigestBytes(
+    '42',
+    'neodid_recovery_ticket',
+    true,
+    '',
+    '',
+    raw,
+    options
+  );
   const changed = buildFulfillmentDigestBytes(
     '42',
     'neodid_recovery_ticket',
     true,
     '',
     '',
-    Buffer.from('05060708', 'hex').toString('base64')
+    Buffer.from('05060708', 'hex').toString('base64'),
+    options
   );
 
   assert.equal(Buffer.isBuffer(baseline), true);
@@ -2143,7 +2189,8 @@ test('buildNeoN3EventFromRequestRecord decodes pending miniapp kernel requests',
       '',
       '',
     ],
-    4
+    4,
+    '7b2273796d626f6c223a224e454f2d555344227d'
   );
 
   assert.deepEqual(event, {
@@ -2184,7 +2231,8 @@ test('buildNeoN3EventFromRequestRecord skips settled miniapp kernel requests', (
       '{}',
       '',
     ],
-    4
+    4,
+    '7b7d'
   );
 
   assert.equal(event, null);
@@ -2885,6 +2933,7 @@ test('processEvent redelivers prepared fulfillment without re-running the worker
     requestType: 'privacy_oracle',
     txHash: '0xeee',
     payloadText: '{"symbol":"NEO-USD"}',
+    payloadHex: '7b2273796d626f6c223a224e454f2d555344227d',
   };
   const preparedFulfillment = {
     success: true,

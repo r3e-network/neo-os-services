@@ -214,18 +214,13 @@ where
 
     // SVC-E-4 (CL-05/CL-14). The NeoX branch pins the verifier identity the
     // enclave answered with; the N3 branch compared only the digest — and the
-    // digest binds requestId/appId/moduleId/operation/success/result/error/
-    // scriptHash/magic, all of which the relayer recomputes from the same
+    // digest binds requestId/appId/moduleId/operation/payload/success/result/
+    // error/scriptHash/magic, all of which the relayer recomputes from the same
     // inputs, so a correctly-computed digest signed by SOME OTHER key would
     // pass. Pinning the returned `public_key` to the configured
     // oracle_verifier makes "this came from the measured verifier key" a
     // checked claim on this lane too, using the identity custody already
     // publishes.
-    //
-    // Not yet closed, and recorded as the follow-on: the digest does not
-    // cover the request payload, so faithful execution of substituted inputs
-    // still produces a fulfilment nobody can distinguish. Fixing that is a
-    // contract ABI change.
     let verifier_key_id = n3
         .get("custodyKeyIds")
         .and_then(Value::as_object)
@@ -385,6 +380,15 @@ where
     let rpc_url = required_string(neox, "rpcUrl", "NeoX primary RPC URL")?;
     let rpc_urls = string_array(neox.get("rpcUrls"));
 
+    let prepared = prepare_once(
+        config,
+        "neox",
+        event,
+        nitro,
+        transport,
+        nonce_source,
+        journal,
+    )?;
     let custody_url = required_string(nitro, "custodyUrl", "custody signer service URL")?;
     let custody_token = required_string(nitro, "custodyToken", "custody signer service token")?;
     let custody_timeout = nitro
@@ -417,15 +421,6 @@ where
         );
     }
 
-    let prepared = prepare_once(
-        config,
-        "neox",
-        event,
-        nitro,
-        transport,
-        nonce_source,
-        journal,
-    )?;
     let semantic = EvmFulfillment {
         request_id: prepared.request_id.clone(),
         app_id: prepared.app_id.clone(),
@@ -667,7 +662,14 @@ where
     T: N3HttpTransport + EvmHttpTransport,
     N: NonceSource,
 {
+    let event_object = event
+        .as_object()
+        .ok_or_else(|| "oracle request event must be an object".to_string())?;
+    required_event_payload_hex(event_object)?;
     if let Some(prepared) = journal.get("prepared") {
+        // Journals written before payload binding have no `payload` field and
+        // fail deserialization here. Never reconstruct those bytes from text:
+        // discard the prepared stage and prepare again from the raw chain event.
         return serde_json::from_value(prepared)
             .map_err(|e| format!("invalid prepared journal: {e}"));
     }
@@ -941,6 +943,40 @@ pub(crate) fn resume_signed<T: N3HttpTransport + EvmHttpTransport>(
     Err(format!("delivery pending confirmation: {hash}"))
 }
 
+fn required_event_payload_hex(event: &JsObject) -> Result<String, String> {
+    fn decode(value: Option<&JsValue>) -> Result<Option<String>, String> {
+        match value {
+            None | Some(JsValue::Null | JsValue::Undefined) => Ok(None),
+            Some(JsValue::Str(value)) => {
+                let value = value.trim();
+                if value.is_empty() {
+                    return Err(
+                        "oracle request event payloadHex is required (use 0x for explicit empty payload)"
+                            .to_string(),
+                    );
+                }
+                hex::decode(strip_hex_prefix(value))
+                    .map_err(|_| "oracle request event has invalid payloadHex".to_string())?;
+                Ok(Some(value.to_string()))
+            }
+            Some(_) => Err("oracle request event payloadHex must be a string".to_string()),
+        }
+    }
+
+    let camel = decode(event.get("payloadHex"))?;
+    let snake = decode(event.get("payload_hex"))?;
+    match (camel, snake) {
+        (Some(camel), Some(snake)) if camel != snake => {
+            Err("oracle request event payloadHex aliases disagree".to_string())
+        }
+        (Some(value), _) | (_, Some(value)) => Ok(value),
+        (None, None) => Err(
+            "oracle request event payloadHex is required; rebuild legacy durable jobs from chain data"
+                .to_string(),
+        ),
+    }
+}
+
 fn prepare_in_enclave<T, N>(
     config: &RelayerConfig,
     chain: &str,
@@ -988,59 +1024,42 @@ where
         }
     }
 
-    let payload_text = {
-        let direct = event_field(event_object, "payloadText");
-        if direct.is_empty() {
-            event_field(event_object, "payload")
-        } else {
-            direct
-        }
+    let payload_text = match event_object.get("payloadText") {
+        Some(JsValue::Str(value) | JsValue::BigInt(value)) => value.clone(),
+        Some(JsValue::Null | JsValue::Undefined) | None => event_field(event_object, "payload"),
+        Some(_) => return Err("oracle request event payloadText must be a string".to_string()),
     };
-    let payload_hex = event_field(event_object, "payloadHex");
-    let payload_hex = if payload_hex.trim().is_empty() {
-        event_field(event_object, "payload_hex")
+    let payload_hex = required_event_payload_hex(event_object)?;
+    let payload_bytes = hex::decode(strip_hex_prefix(&payload_hex))
+        .map_err(|_| "oracle request event has invalid payloadHex".to_string())?;
+    let trimmed_payload_text = payload_text.trim();
+    let payload = if trimmed_payload_text.is_empty() {
+        json!({})
     } else {
-        payload_hex
+        match serde_json::from_str::<Value>(trimmed_payload_text) {
+            Ok(value @ Value::Object(_)) => value,
+            Ok(_) => json!({}),
+            Err(_) => json!({ "raw_payload": trimmed_payload_text }),
+        }
     };
-    let payload_bytes = if payload_hex.trim().is_empty() {
-        payload_text.as_bytes().to_vec()
+    let signing_chain = if chain == "neo_n3" && app_id.is_empty() {
+        "legacy"
     } else {
-        hex::decode(payload_hex)
-            .map_err(|_| "oracle request event has invalid payloadHex".to_string())?
+        chain
     };
-    let mut payload = serde_json::from_str::<Value>(&payload_text).unwrap_or_else(|_| json!({}));
-    if !payload.is_object() {
-        payload = json!({});
-    }
-    if let Value::Object(payload) = &mut payload {
-        // The requester is chain state: the account that submitted the
-        // request. The payload is bytes that account chose, so its own
-        // `requester` key is never trusted — the enclave binds game sessions
-        // (and their results) to this value.
-        let requester = event_field(event_object, "requester");
-        if requester.is_empty() {
-            payload.remove("requester");
-        } else {
-            payload.insert("requester".to_string(), Value::String(requester));
-        }
-        for (wire, event_name) in [
-            ("callback_contract", "callbackContract"),
-            ("callback_method", "callbackMethod"),
-        ] {
-            let value = event_field(event_object, event_name);
-            if !value.is_empty() && !payload.contains_key(wire) {
-                payload.insert(wire.to_string(), Value::String(value));
-            }
-        }
-    }
+    let (signing_app_id, signing_module_id, signing_operation) = if signing_chain == "legacy" {
+        (String::new(), String::new(), String::new())
+    } else {
+        (app_id.clone(), module_id.clone(), operation.clone())
+    };
 
     let chain_context = match chain {
         "neo_n3" => {
             let n3 = object_at(&config.raw, "neo_n3")?;
             json!({
-                "app_id": app_id,
-                "module_id": module_id,
-                "operation": operation,
+                "app_id": signing_app_id,
+                "module_id": signing_module_id,
+                "operation": signing_operation,
                 "contract_script_hash": n3.get("oracleContract").cloned().unwrap_or(Value::Null),
                 "network_magic": n3.get("networkMagic").cloned().unwrap_or(Value::Null),
             })
@@ -1048,14 +1067,24 @@ where
         "neox" => {
             let neox = object_at(&config.raw, "neox")?;
             json!({
-                "app_id": app_id,
-                "module_id": module_id,
-                "operation": operation,
+                "app_id": signing_app_id,
+                "module_id": signing_module_id,
+                "operation": signing_operation,
                 "oracle_contract": neox.get("oracleContract").cloned().unwrap_or(Value::Null),
                 "chain_id": neox.get("chainId").cloned().unwrap_or(Value::Null),
             })
         }
         other => return Err(format!("unsupported measured fulfillment chain {other}")),
+    };
+    let message_contract = if chain == "neox" {
+        let neox = object_at(&config.raw, "neox")?;
+        neox.get("messageContract")
+            .filter(|value| value.as_str().is_some_and(|text| !text.is_empty()))
+            .or_else(|| neox.get("oracleContract"))
+            .cloned()
+            .unwrap_or(Value::Null)
+    } else {
+        Value::Null
     };
     let nonce = format!(
         "{:08x}{:08x}{:08x}{:08x}",
@@ -1065,13 +1094,20 @@ where
         nonce_source.nonce()
     );
     let body = json!({
-        "chain": chain,
+        "chain": signing_chain,
         "network": config.network,
         "request_type": request_type,
         "request_id": request_id,
         "payload": payload,
         "payload_text": payload_text,
-        "payload_hex": hex::encode(&payload_bytes),
+        "payload_hex": payload_hex,
+        "request_context": {
+            "requester": event_field(event_object, "requester"),
+            "callback_contract": event_field(event_object, "callbackContract"),
+            "callback_method": event_field(event_object, "callbackMethod"),
+            "message_id": event_field(event_object, "messageId"),
+            "contract": message_contract,
+        },
         "fulfillment_context": chain_context,
         "nonce": nonce,
     });
@@ -1122,13 +1158,18 @@ where
     if response.get("nonce").and_then(Value::as_str) != Some(nonce.as_str()) {
         return Err("Rust enclave fulfillment nonce binding mismatch".to_string());
     }
+    if response.get("chain").and_then(Value::as_str) != Some(signing_chain) {
+        return Err(format!(
+            "Rust enclave fulfillment domain mismatch: expected {signing_chain}"
+        ));
+    }
 
     let prepared = PreparedFulfillment {
         request_id: request_id.clone(),
         request_type: request_type.clone(),
-        app_id: app_id.clone(),
-        module_id: module_id.clone(),
-        operation: operation.clone(),
+        app_id: signing_app_id.clone(),
+        module_id: signing_module_id.clone(),
+        operation: signing_operation.clone(),
         payload: payload_bytes,
         success: response
             .get("success")
@@ -1166,7 +1207,7 @@ where
         "neo_n3" => {
             let n3 = object_at(&config.raw, "neo_n3")?;
             let options = FulfillmentOptions {
-                chain: Some("neo_n3".to_string()),
+                chain: Some(signing_chain.to_string()),
                 app_id: prepared.app_id.clone(),
                 module_id: prepared.module_id.clone(),
                 operation: prepared.operation.clone(),
@@ -1821,7 +1862,8 @@ mod tests {
             "appId": "morpheus",
             "moduleId": "compute.execute",
             "operation": "compute",
-            "payload": "{}"
+            "payload": "{}",
+            "payloadHex": "7b7d"
         }))
     }
 
@@ -1920,8 +1962,7 @@ mod tests {
             );
             let calls = transport.calls.lock().unwrap();
             assert_eq!(calls.len(), 1, "exactly one enclave request");
-            let body: Value = serde_json::from_str(&calls[0].1).unwrap();
-            body["payload"].clone()
+            serde_json::from_str(&calls[0].1).unwrap()
         };
         let payload = json!({
             "kind": "miniapp.game.session.finalize.v2",
@@ -1937,11 +1978,11 @@ mod tests {
             "operation": "session.finalize",
             "requester": CHAIN_REQUESTER,
             "payload": payload,
+            "payloadHex": hex::encode(payload.as_bytes()),
         }));
-        assert_eq!(delivered["requester"], CHAIN_REQUESTER);
+        assert_eq!(delivered["request_context"]["requester"], CHAIN_REQUESTER);
+        assert_eq!(delivered["payload"]["requester"], FORGED);
 
-        // An event that carries no requester leaves none: the forged key is
-        // dropped rather than trusted.
         let delivered = posted_payload(json!({
             "requestId": "78",
             "requestType": "session.finalize",
@@ -1949,8 +1990,166 @@ mod tests {
             "moduleId": "game.session",
             "operation": "session.finalize",
             "payload": payload,
+            "payloadHex": hex::encode(payload.as_bytes()),
         }));
-        assert!(delivered.get("requester").is_none(), "{delivered}");
+        assert_eq!(delivered["request_context"]["requester"], "");
+        assert_eq!(delivered["payload"]["requester"], FORGED);
+    }
+
+    #[test]
+    fn missing_raw_payload_is_refused_before_any_http_on_both_chains() {
+        for chain in ["neo_n3", "neox"] {
+            let config = config();
+            let nitro = config.raw["nitro"].as_object().unwrap().clone();
+            let mut event = event();
+            event
+                .as_object_mut()
+                .expect("event object")
+                .remove("payloadHex");
+            let transport = ScriptedTransport::new(vec![]);
+            let error =
+                prepare_in_enclave(&config, chain, &event, &nitro, &transport, &FixedNonce(7))
+                    .expect_err("missing raw payload");
+            assert!(error.contains("payloadHex is required"), "{error}");
+            assert!(transport.calls.lock().unwrap().is_empty(), "{chain}");
+        }
+    }
+
+    #[test]
+    fn explicit_empty_payload_uses_zero_x_not_a_missing_field_fallback() {
+        let config = config();
+        let nitro = config.raw["nitro"].as_object().unwrap().clone();
+        let mut event = event();
+        let object = event.as_object_mut().expect("event object");
+        object.set("payload", JsValue::Str(String::new()));
+        object.set("payloadHex", JsValue::Str("0x".to_string()));
+        for chain in ["neo_n3", "neox"] {
+            let transport = ScriptedTransport::new(vec![]);
+            let _ = prepare_in_enclave(&config, chain, &event, &nitro, &transport, &FixedNonce(7));
+            let calls = transport.calls.lock().unwrap();
+            assert_eq!(calls.len(), 1, "{chain}");
+            let body: Value = serde_json::from_str(&calls[0].1).unwrap();
+            assert_eq!(body["payload_hex"], "0x");
+            assert_eq!(body["payload_text"], "");
+        }
+    }
+
+    #[test]
+    fn old_prepared_journal_without_payload_fails_before_regeneration_or_signing() {
+        let prepared = PreparedFulfillment {
+            request_id: "42".into(),
+            request_type: "compute".into(),
+            app_id: "morpheus".into(),
+            module_id: "compute.execute".into(),
+            operation: "compute".into(),
+            payload: b"{}".to_vec(),
+            success: true,
+            result: "ok".into(),
+            result_bytes_base64: String::new(),
+            result_bytes_hex: String::new(),
+            error: String::new(),
+            signature: "aa".into(),
+            public_key: "bb".into(),
+        };
+        let mut old = serde_json::to_value(prepared.clone()).unwrap();
+        old.as_object_mut().unwrap().remove("payload");
+        let journal = TestJournal(Mutex::new(json!({"prepared":old})));
+        let config = config();
+        let nitro = config.raw["nitro"].as_object().unwrap().clone();
+        let transport = ScriptedTransport::new(vec![]);
+        let error = prepare_once(
+            &config,
+            "neo_n3",
+            &event(),
+            &nitro,
+            &transport,
+            &FixedNonce(7),
+            &journal,
+        )
+        .expect_err("old prepared journal");
+        assert!(error.contains("invalid prepared journal"), "{error}");
+        assert!(transport.calls.lock().unwrap().is_empty());
+
+        let journal = TestJournal(Mutex::new(
+            json!({"prepared":serde_json::to_value(prepared).unwrap()}),
+        ));
+        let mut event = event();
+        event
+            .as_object_mut()
+            .expect("event object")
+            .remove("payloadHex");
+        let error = prepare_once(
+            &config,
+            "neo_n3",
+            &event,
+            &nitro,
+            &transport,
+            &FixedNonce(7),
+            &journal,
+        )
+        .expect_err("durable event without raw payload");
+        assert!(error.contains("payloadHex is required"), "{error}");
+        assert!(transport.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn n3_legacy_relayer_and_enclave_share_an_explicit_legacy_domain() {
+        let config = config();
+        let nitro = config.raw["nitro"].as_object().unwrap().clone();
+        let mut event = event();
+        event.as_object_mut().expect("event object").remove("appId");
+        let options = FulfillmentOptions {
+            chain: Some("legacy".into()),
+            app_id: String::new(),
+            module_id: String::new(),
+            operation: String::new(),
+            payload: b"{}".to_vec(),
+            contract_script_hash: config.raw["neo_n3"]["oracleContract"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            network_magic: Some(894_710_606.0),
+        };
+        let digest = hex::encode(
+            build_fulfillment_digest_bytes(
+                &JsValue::Str("42".into()),
+                "compute",
+                true,
+                "ok",
+                "",
+                "",
+                &options,
+            )
+            .unwrap(),
+        );
+        let transport = ScriptedTransport::new(vec![(
+            200,
+            json!({
+                "chain": "legacy",
+                "nonce": "00000007000000070000000700000007",
+                "success": true,
+                "result": "ok",
+                "error": "",
+                "signature": "aa",
+                "fulfillment_digest_hex": digest,
+            }),
+        )]);
+        let prepared = prepare_in_enclave(
+            &config,
+            "neo_n3",
+            &event,
+            &nitro,
+            &transport,
+            &FixedNonce(7),
+        )
+        .expect("legacy fulfillment");
+        assert_eq!(prepared.app_id, "");
+        assert_eq!(prepared.module_id, "");
+        assert_eq!(prepared.operation, "");
+        let calls = transport.calls.lock().unwrap();
+        let body: Value = serde_json::from_str(&calls[0].1).unwrap();
+        assert_eq!(body["chain"], "legacy");
+        assert_eq!(body["fulfillment_context"]["app_id"], "");
     }
 
     #[test]
@@ -1958,6 +2157,7 @@ mod tests {
         let transport = ScriptedTransport::new(vec![(
             200,
             json!({
+                "chain": "neo_n3",
                 "nonce": "00000007000000070000000700000007",
                 "success": true,
                 "result": "ok",
@@ -2021,7 +2221,8 @@ mod tests {
             (
                 200,
                 json!({
-                    "nonce": "00000007000000070000000700000007",
+                    "chain": "neo_n3",
+                "nonce": "00000007000000070000000700000007",
                     "success": true,
                     "result": "ok",
                     "error": "",
@@ -2122,7 +2323,8 @@ mod tests {
             (
                 200,
                 json!({
-                    "nonce": "00000007000000070000000700000007",
+                    "chain": "neo_n3",
+                "nonce": "00000007000000070000000700000007",
                     "success": true,
                     "result": "ok",
                     "error": "",
@@ -2178,7 +2380,8 @@ mod tests {
             (
                 200,
                 json!({
-                    "nonce": "00000007000000070000000700000007",
+                    "chain": "neo_n3",
+                "nonce": "00000007000000070000000700000007",
                     "success": true,
                     "result": "ok",
                     "error": "",
@@ -2247,8 +2450,6 @@ mod tests {
         let signed_transaction = signed_evm_transaction(&unsigned, &updater_key);
         let tx_hash = decode_signed_eip1559(&signed_transaction).unwrap().tx_hash;
         let transport = ScriptedTransport::new(vec![
-            (200, evm_key_reply("neox-updater-key", &updater_key)),
-            (200, evm_key_reply("neox-verifier-key", &verifier_key)),
             (
                 200,
                 json!({
@@ -2272,6 +2473,8 @@ mod tests {
                     "trust_tier": "enclave-attested"
                 }),
             ),
+            (200, evm_key_reply("neox-updater-key", &updater_key)),
+            (200, evm_key_reply("neox-verifier-key", &verifier_key)),
             (200, json!({"jsonrpc":"2.0","id":1,"result":"0x7"})),
             (200, json!({"jsonrpc":"2.0","id":1,"result":"0x186a0"})),
             (200, json!({"jsonrpc":"2.0","id":1,"result":"0x4"})),
@@ -2316,10 +2519,10 @@ mod tests {
         assert_eq!(receipt.tx_hash, tx_hash);
         let calls = transport.calls.lock().unwrap();
         assert_eq!(calls.len(), 10);
-        assert!(calls[0].0.ends_with("/keys/neox-updater-key"));
-        assert!(calls[1].0.ends_with("/keys/neox-verifier-key"));
-        assert!(calls[2].0.ends_with("/oracle/fulfill"));
-        let fulfil: Value = serde_json::from_str(&calls[2].1).expect("fulfil body");
+        assert!(calls[0].0.ends_with("/oracle/fulfill"));
+        assert!(calls[1].0.ends_with("/keys/neox-updater-key"));
+        assert!(calls[2].0.ends_with("/keys/neox-verifier-key"));
+        let fulfil: Value = serde_json::from_str(&calls[0].1).expect("fulfil body");
         assert_eq!(fulfil["chain"], "neox");
         assert_eq!(fulfil["fulfillment_context"]["chain_id"], 12227332);
         assert_eq!(

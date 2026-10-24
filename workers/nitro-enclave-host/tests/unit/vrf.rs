@@ -467,6 +467,7 @@ fn random_body(
         "request_type": "random",
         "request_id": request_id,
         "payload_text": "{}",
+        "payload_hex": "7b7d",
         "payload": {},
         "fulfillment_context": fulfillment_context,
     })

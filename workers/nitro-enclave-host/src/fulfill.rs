@@ -174,34 +174,216 @@ fn payload_text(body: &serde_json::Value, payload: &serde_json::Value) -> serde_
         .unwrap_or(serde_json::Value::Null)
 }
 
+#[derive(Debug, Clone)]
+struct ConfidentialPayload {
+    envelope: String,
+    message_id: Option<String>,
+    contract: String,
+}
+
+#[derive(Debug, Clone)]
+struct DerivedRequestPayload {
+    raw: Vec<u8>,
+    payload: serde_json::Value,
+    confidential: Option<ConfidentialPayload>,
+}
+
 fn request_payload_bytes(body: &serde_json::Value) -> Result<Vec<u8>, RuntimeError> {
-    let text = body.get("payload_text").and_then(serde_json::Value::as_str);
-    let encoded = body
-        .get("payload_hex")
-        .or_else(|| body.get("payloadHex"))
-        .and_then(serde_json::Value::as_str);
-    let decoded = match encoded {
-        Some(value) => {
-            let raw = value
-                .strip_prefix("0x")
-                .or_else(|| value.strip_prefix("0X"))
-                .unwrap_or(value);
-            Some(hex::decode(raw).map_err(|_| http_error(400, "payload_hex is invalid"))?)
+    let snake = body.get("payload_hex").filter(|value| !value.is_null());
+    let camel = body.get("payloadHex").filter(|value| !value.is_null());
+    if let (Some(snake), Some(camel)) = (snake, camel) {
+        if snake != camel {
+            return Err(http_error(400, "payload_hex aliases disagree"));
         }
-        None => None,
-    };
-    match (text, decoded) {
-        (Some(text), Some(bytes)) if bytes != text.as_bytes() => {
-            Err(http_error(400, "payload_hex does not match payload_text"))
-        }
-        (Some(text), Some(bytes)) => {
-            debug_assert_eq!(bytes, text.as_bytes());
-            Ok(bytes)
-        }
-        (Some(text), None) => Ok(text.as_bytes().to_vec()),
-        (None, Some(bytes)) => Ok(bytes),
-        (None, None) => Err(http_error(400, "payload_text or payload_hex is required")),
     }
+    let encoded = snake
+        .or(camel)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| http_error(400, "payload_hex is required"))?;
+    let raw = encoded
+        .strip_prefix("0x")
+        .or_else(|| encoded.strip_prefix("0X"))
+        .unwrap_or(encoded);
+    hex::decode(raw).map_err(|_| http_error(400, "payload_hex is invalid"))
+}
+
+fn payload_text_from_raw(
+    raw: &[u8],
+    chain: &str,
+    confidential: bool,
+) -> Result<(String, Option<String>), RuntimeError> {
+    if confidential && chain == "neox" {
+        if let Ok((message_id, envelope)) = neo_os_chain_evm::abi_decode_uint256_bytes(raw) {
+            let envelope = String::from_utf8(envelope)
+                .map_err(|_| http_error(400, "confidential payload envelope is not valid UTF-8"))?;
+            return Ok((envelope, Some(uint256_hex_to_decimal(&message_id))));
+        }
+    }
+    let text = String::from_utf8(raw.to_vec())
+        .map_err(|_| http_error(400, "request payload is not valid UTF-8 for this lane"))?;
+    Ok((text, None))
+}
+
+fn uint256_hex_to_decimal(value: &str) -> String {
+    let mut digits = vec![0u8];
+    for byte in hex::decode(value).unwrap_or_default() {
+        let mut carry = u32::from(byte);
+        for digit in &mut digits {
+            let next = u32::from(*digit) * 256 + carry;
+            *digit = (next % 10) as u8;
+            carry = next / 10;
+        }
+        while carry > 0 {
+            digits.push((carry % 10) as u8);
+            carry /= 10;
+        }
+    }
+    while digits.len() > 1 && digits.last() == Some(&0) {
+        digits.pop();
+    }
+    digits
+        .iter()
+        .rev()
+        .map(|digit| char::from(b'0' + *digit))
+        .collect()
+}
+
+fn base_payload_from_text(text: &str) -> serde_json::Value {
+    let trimmed = js_trim(text);
+    if trimmed.is_empty() {
+        return serde_json::json!({});
+    }
+    match serde_json::from_str::<serde_json::Value>(trimmed) {
+        Ok(value @ serde_json::Value::Object(_)) => value,
+        Ok(_) => serde_json::json!({}),
+        Err(_) => serde_json::json!({ "raw_payload": trimmed }),
+    }
+}
+
+fn enrich_automation_execution_payload(
+    payload: &mut serde_json::Value,
+    chain: &str,
+    request_id: &str,
+    request_type: &str,
+) -> Result<(), RuntimeError> {
+    if !resolve_kernel_intent(request_type)
+        .legacy_request_type
+        .starts_with("automation_")
+        || truthy_trimmed(payload, &["automation_id", "automationId"]).is_empty()
+    {
+        return Ok(());
+    }
+    let mut input = payload.clone();
+    input["chain"] = serde_json::Value::String(chain.to_string());
+    if truthy_trimmed(payload, &["execution_id"]).is_empty() {
+        input["execution_id"] = serde_json::Value::String(request_id.to_string());
+    }
+    let execution = neo_os_compute::automation::normalize_automation_execution(&input)
+        .map_err(|error| http_error(400, error))?;
+    payload["workflow_id"] = serde_json::Value::String(execution.workflow_id);
+    payload["workflow_version"] = serde_json::json!(execution.workflow_version);
+    payload["execution_id"] = serde_json::Value::String(execution.execution_id);
+    payload["idempotency_key"] = serde_json::Value::String(execution.idempotency_key);
+    payload["replay_window"] = serde_json::Value::String(execution.replay_window);
+    payload["delivery_mode"] = serde_json::Value::String(execution.delivery_mode);
+    Ok(())
+}
+
+fn derive_request_payload(
+    body: &serde_json::Value,
+    supplied_payload: &serde_json::Value,
+    chain: &str,
+    intent_module_id: &str,
+) -> Result<DerivedRequestPayload, RuntimeError> {
+    let raw = request_payload_bytes(body)?;
+    let confidential = intent_module_id == "confidential.decrypt";
+    let (derived_text, message_id) = payload_text_from_raw(&raw, chain, confidential)?;
+    let supplied_text = payload_text(body, supplied_payload);
+    let supplied_text = supplied_text
+        .as_str()
+        .ok_or_else(|| http_error(400, "payload_text is required and must be a string"))?;
+    if supplied_text != derived_text {
+        return Err(http_error(
+            400,
+            "payload_text does not match the lane's original payload encoding",
+        ));
+    }
+
+    let expected_payload = base_payload_from_text(&derived_text);
+    if !confidential && supplied_payload != &expected_payload {
+        return Err(http_error(
+            400,
+            "payload object does not match the original payload bytes",
+        ));
+    }
+    if confidential {
+        let legacy_envelope = supplied_payload.as_object().is_some_and(|payload| {
+            payload.len() == 1
+                && payload.get("envelope").and_then(|value| value.as_str())
+                    == Some(derived_text.as_str())
+        });
+        if supplied_payload != &expected_payload && !legacy_envelope {
+            return Err(http_error(
+                400,
+                "confidential payload object does not match the original envelope",
+            ));
+        }
+    }
+
+    let request_context = body
+        .get("request_context")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let mut payload = expected_payload;
+    if !confidential {
+        enrich_automation_execution_payload(
+            &mut payload,
+            chain,
+            &trim_string(
+                body.get("request_id")
+                    .filter(|value| !value.is_null())
+                    .or_else(|| body.get("requestId").filter(|value| !value.is_null())),
+            ),
+            &truthy_trimmed(body, &["request_type", "requestType"]),
+        )?;
+    }
+    for (field, aliases) in [
+        ("requester", &["requester"][..]),
+        (
+            "callback_contract",
+            &["callback_contract", "callbackContract"][..],
+        ),
+        (
+            "callback_method",
+            &["callback_method", "callbackMethod"][..],
+        ),
+    ] {
+        payload[field] = serde_json::Value::String(string_coalesce(&request_context, aliases));
+    }
+
+    let confidential = confidential.then(|| {
+        let mut contract = truthy_trimmed(&request_context, &["contract", "contract_address"]);
+        if contract.is_empty() {
+            contract = truthy_trimmed(
+                body.get("fulfillment_context")
+                    .unwrap_or(&serde_json::Value::Null),
+                &["oracle_contract", "oracleContract"],
+            );
+        }
+        ConfidentialPayload {
+            envelope: derived_text,
+            message_id,
+            contract,
+        }
+    });
+    Ok(DerivedRequestPayload {
+        raw,
+        payload,
+        confidential,
+    })
 }
 
 pub fn handle_oracle_fulfill(
@@ -215,7 +397,7 @@ pub fn handle_oracle_fulfill(
             .filter(|v| !v.is_null())
             .or_else(|| body.get("requestId").filter(|v| !v.is_null())),
     );
-    let payload = match body.get("payload") {
+    let supplied_payload = match body.get("payload") {
         Some(payload @ serde_json::Value::Object(_)) => payload.clone(),
         _ => serde_json::json!({}),
     };
@@ -232,9 +414,11 @@ pub fn handle_oracle_fulfill(
         return Err(http_error(400, "request_id is required"));
     }
     let network = state.resolve_network()?;
-    let original_payload = request_payload_bytes(body)?;
-
     let intent = resolve_kernel_intent(&request_type);
+    let derived = derive_request_payload(body, &supplied_payload, chain, intent.module_id)?;
+    let original_payload = derived.raw;
+    let payload = derived.payload;
+    let confidential = derived.confidential;
 
     // Kernel envelope fields the digest binds (verbatim — matches the
     // relayer's resolveEventFulfillmentContext: prefer the on-chain
@@ -331,7 +515,7 @@ pub fn handle_oracle_fulfill(
             &payload,
             &request_id,
             intent.module_id,
-            &payload_text(body, &payload),
+            confidential.as_ref(),
             vrf_domain.as_ref(),
         )
     };
@@ -750,19 +934,21 @@ fn compute_worker_response(
     request_type: &str,
     payload: &serde_json::Value,
     request_id: &str,
-    intent_module_id: &str,
-    payload_text_value: &serde_json::Value,
+    _intent_module_id: &str,
+    confidential: Option<&ConfidentialPayload>,
     vrf_domain: Option<&crate::vrf::VrfRequestDomain>,
 ) -> crate::state::BridgeReply {
-    if intent_module_id == "confidential.decrypt" {
-        // `trimString(context.payloadText || payload?.envelope || '')`.
-        let envelope = match payload_text_value {
-            serde_json::Value::Null => truthy_trimmed(payload, &["envelope"]),
-            value if js_truthy(value) => trim_string(Some(value)),
-            _ => truthy_trimmed(payload, &["envelope"]),
-        };
-        let mut decrypted = payload.clone();
-        decrypted["envelope"] = serde_json::Value::String(envelope);
+    if let Some(confidential) = confidential {
+        let mut decrypted = serde_json::json!({
+            "envelope": js_trim(&confidential.envelope),
+        });
+        if let Some(message_id) = &confidential.message_id {
+            decrypted["message_id"] = serde_json::Value::String(message_id.clone());
+            decrypted["chain"] = serde_json::Value::String("neox".to_string());
+            if !confidential.contract.is_empty() {
+                decrypted["contract"] = serde_json::Value::String(confidential.contract.clone());
+            }
+        }
         return execute_fulfillment_route(state, "/oracle/decrypt", &decrypted, None);
     }
 

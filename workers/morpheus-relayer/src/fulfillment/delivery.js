@@ -11,6 +11,7 @@ import { fulfillNeoXRequest } from '../neox.js';
 import { normalizeErrorMessage } from '../feed-sync.js';
 import { resolveEventFulfillmentContext, signFulfillmentPayload } from './signer.js';
 import { trimOnchainErrorMessage } from './classifier.js';
+import { resolveEventPayload } from '../lib/payload.js';
 
 /**
  * Prepared-fulfillment helpers: building retry metadata, checkpointing pending
@@ -179,6 +180,7 @@ async function fulfillNeoRequest(config, event, fulfillment, verification) {
  * @returns {Promise<object>} Delivery result with fulfill_tx.
  */
 export async function deliverPreparedFulfillment(config, event, prepared) {
+  resolveEventPayload(event);
   const fulfillStartedAt = Date.now();
   const fulfillTx = await fulfillNeoRequest(
     config,
@@ -221,6 +223,7 @@ export async function finalizeFailedRequest(config, event, errorMessage) {
     requestId: event.requestId,
     requestType: event.requestType,
     ...fulfillmentContext,
+    ...resolveEventPayload(event),
     success: false,
     result: '',
     result_bytes_base64: '',

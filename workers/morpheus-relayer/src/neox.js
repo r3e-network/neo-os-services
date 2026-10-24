@@ -16,6 +16,7 @@ import {
   trimString,
 } from '@r3e-network/neo-os-services-shared/utils';
 import { LEGACY_CALLBACK_METHOD } from '@r3e-network/neo-os-services-shared/callback-methods';
+import { requireRawPayloadHex } from './lib/payload.js';
 
 // Minimal ABI for the MorpheusOracleEVM kernel (request_cursor scan + fulfil).
 const ORACLE_ABI = [
@@ -380,14 +381,8 @@ export function resolveResultBytesHex(result, resultBytesBase64) {
 
 // keccak digest matching MorpheusOracleEVM.fulfillmentDigest (bound to chain+contract+payload).
 export function buildNeoXDigest(config, fulfillment, resultBytesHex) {
-  const payloadHex =
-    fulfillment.payloadHex === undefined || fulfillment.payloadHex === null
-      ? null
-      : String(fulfillment.payloadHex);
-  const payload =
-    payloadHex === null
-      ? ethers.toUtf8Bytes(String(fulfillment.payloadText ?? ''))
-      : ethers.getBytes(payloadHex.startsWith('0x') ? payloadHex : `0x${payloadHex}`);
+  const payloadHex = requireRawPayloadHex(fulfillment);
+  const payload = ethers.getBytes(payloadHex.startsWith('0x') ? payloadHex : `0x${payloadHex}`);
   const enc = ethers.AbiCoder.defaultAbiCoder().encode(
     [
       'string',

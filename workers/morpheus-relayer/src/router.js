@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 import { sha256Hex } from '@r3e-network/neo-os-services-shared/node-runtime';
 import { neoNetworkMagicLe4 } from '@r3e-network/neo-os-services-shared/neo-encoding';
 import { normalizeRequestType, strip0x, trimString } from './lib/strings.js';
+import { requireRawPayloadHex } from './lib/payload.js';
 // Neo N3 contract uses the v2 kernel domain with envelope and request-payload binding.
 const FULFILLMENT_SIGNATURE_DOMAIN_N3 = Buffer.from('miniapp-os-fulfillment-v2', 'utf8');
 
@@ -436,14 +437,10 @@ export function buildFulfillmentDigestBytes(
   const resultBytes = trimString(resultBytesBase64)
     ? Buffer.from(trimString(resultBytesBase64), 'base64')
     : Buffer.from(String(result || ''), 'utf8');
-  const normalizedPayloadHex =
-    payloadHex === undefined || payloadHex === null ? '' : strip0x(String(payloadHex));
-  if (normalizedPayloadHex && !/^(?:[0-9a-fA-F]{2})+$/.test(normalizedPayloadHex)) {
-    throw new Error('payloadHex must be even-length hexadecimal');
-  }
-  const requestPayload = normalizedPayloadHex
-    ? Buffer.from(normalizedPayloadHex, 'hex')
-    : Buffer.from(String(payloadText ?? ''), 'utf8');
+  const requestPayload =
+    chain === 'legacy'
+      ? Buffer.from(String(payloadText ?? ''), 'utf8')
+      : Buffer.from(strip0x(requireRawPayloadHex({ payloadHex })), 'hex');
 
   // Deployment + network binding (kernel ComputeFulfillmentDigest): the contract
   // appends (ByteString)Runtime.ExecutingScriptHash (20 bytes, little-endian) and

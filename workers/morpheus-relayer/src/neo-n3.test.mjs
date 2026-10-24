@@ -7,6 +7,7 @@ import {
   confirmNeoN3FulfillExecution,
   scanNeoN3OracleRequests,
   scanNeoN3OracleRequestsById,
+  scanNeoN3OracleRequestsViaN3Index,
 } from './neo-n3.js';
 import { classifyError } from './fulfillment.js';
 
@@ -473,6 +474,116 @@ test('scanNeoN3OracleRequests aborts the scan on a transport error mid-range', a
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+function rawByteString(bytes) {
+  return { type: 'ByteString', value: Buffer.from(bytes).toString('base64') };
+}
+
+async function withStubbedFetch(stub, run) {
+  const originalFetch = global.fetch;
+  try {
+    global.fetch = stub;
+    return await run();
+  } finally {
+    global.fetch = originalFetch;
+  }
+}
+
+function indexedNotificationRow(notification) {
+  return {
+    block_index: 100,
+    notification_index: 0,
+    txid: '0xindexed',
+    event_name: notification.eventname,
+    state_json: { value: notification.state.value },
+  };
+}
+
+const n3IndexConfig = () => ({
+  network: 'testnet',
+  maxBlocksPerTick: 10,
+  neo_n3: {
+    indexerUrl: 'https://n3index.test',
+    oracleContract: ORACLE_CONTRACT,
+  },
+});
+
+test('block scanning preserves non-UTF8 and script-hash-looking payload bytes', async () => {
+  const nonUtf8 = queuedNotification(90);
+  nonUtf8.state.value[6] = rawByteString([0xff]);
+  const hashPayload = queuedNotification(91);
+  const hashBytes = Array.from({ length: 20 }, (_, index) => index + 1);
+  hashPayload.state.value[6] = rawByteString(hashBytes);
+  const fixture = buildBlockFixture({ 100: [[nonUtf8, hashPayload]] });
+
+  const events = await withStubbedFetch(stubBlockScanRpc(fixture, []), () =>
+    scanNeoN3OracleRequests(blockScanConfig(1), 100, 100)
+  );
+  assert.equal(events.length, 2);
+  assert.equal(events[0].payloadText, '\uFFFD');
+  assert.equal(events[0].payloadHex, 'ff');
+  assert.equal(events[1].payloadText, `0x${Buffer.from(hashBytes).reverse().toString('hex')}`);
+  assert.equal(events[1].payloadHex, Buffer.from(hashBytes).toString('hex'));
+});
+
+test('request-id scanning preserves raw bytes and distinguishes explicit empty payload', async () => {
+  const record = kernelRequestRecord(7);
+  record.value[4] = rawByteString([0xff]);
+  const [event] = await withStubbedFetch(stubGetRequestRpc({ 7: record }, []), () =>
+    scanNeoN3OracleRequestsById(scanConfig(1), 7, 7)
+  );
+  assert.equal(event.payloadText, '\uFFFD');
+  assert.equal(event.payloadHex, 'ff');
+
+  record.value[4] = { type: 'ByteString', value: '' };
+  const [empty] = await withStubbedFetch(stubGetRequestRpc({ 7: record }, []), () =>
+    scanNeoN3OracleRequestsById(scanConfig(1), 7, 7)
+  );
+  assert.equal(empty.payloadText, '');
+  assert.equal(empty.payloadHex, '0x');
+});
+
+test('n3index scanning preserves raw bytes instead of decoded replacement text', async () => {
+  const notification = queuedNotification(92);
+  notification.state.value[6] = rawByteString([0xff]);
+  const rows = [indexedNotificationRow(notification)];
+  const events = await withStubbedFetch(
+    async () => new Response(JSON.stringify(rows), { status: 200 }),
+    () => scanNeoN3OracleRequestsViaN3Index(n3IndexConfig(), 100, 100)
+  );
+  assert.equal(events.length, 1);
+  assert.equal(events[0].payloadText, '\uFFFD');
+  assert.equal(events[0].payloadHex, 'ff');
+});
+
+test('all N3 scan entrypoints fail closed on missing or wrongly typed raw payload', async () => {
+  const badNotification = queuedNotification(1);
+  badNotification.state.value[6] = { type: 'String', value: '/w==' };
+  const fixture = buildBlockFixture({ 100: [[badNotification]] });
+  await withStubbedFetch(stubBlockScanRpc(fixture, []), () =>
+    assert.rejects(scanNeoN3OracleRequests(blockScanConfig(1), 100, 100), /must be a ByteString/)
+  );
+
+  const missingNotification = queuedNotification(2);
+  missingNotification.state.value.pop();
+  await withStubbedFetch(
+    async () =>
+      new Response(JSON.stringify([indexedNotificationRow(missingNotification)]), {
+        status: 200,
+      }),
+    () =>
+      assert.rejects(
+        scanNeoN3OracleRequestsViaN3Index(n3IndexConfig(), 100, 100),
+        /stack item is missing/
+      )
+  );
+
+  const badRecord = kernelRequestRecord(3);
+  badRecord.value[4] = { type: 'String', value: '/w==' };
+  await withStubbedFetch(stubGetRequestRpc({ 3: badRecord }, []), () =>
+    assert.rejects(scanNeoN3OracleRequestsById(scanConfig(1), 3, 3), /must be a ByteString/)
+  );
 });
 
 // ===================================================================

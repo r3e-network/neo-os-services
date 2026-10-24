@@ -76,20 +76,41 @@ fn decode_byte_string_from_base64(raw: &str) -> String {
     String::from_utf8_lossy(&bytes).to_string()
 }
 
-fn raw_byte_string_base64(item: Option<&Value>) -> Option<Vec<u8>> {
-    let object = item?.as_object()?;
-    let item_type = object.get("type")?.as_str()?.to_lowercase();
+fn raw_byte_string_base64(item: Option<&Value>) -> Result<Vec<u8>, String> {
+    let object = item
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Neo N3 request payload stack item is missing".to_string())?;
+    let item_type = object
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_lowercase();
     if item_type != "bytestring" && item_type != "bytearray" {
-        return None;
+        return Err("Neo N3 request payload must be a ByteString".to_string());
     }
-    let raw = object.get("value")?.as_str()?.trim();
-    Some(neo_os_core::base64::decode_lenient(raw))
+    let raw = object
+        .get("value")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Neo N3 request payload ByteString value is missing".to_string())?
+        .trim();
+    if raw.is_empty() {
+        return Ok(Vec::new());
+    }
+    let bytes = neo_os_core::base64::decode_lenient(raw);
+    if neo_os_core::base64::encode_standard(&bytes) != raw {
+        return Err("Neo N3 request payload ByteString is not canonical base64".to_string());
+    }
+    Ok(bytes)
 }
 
-fn attach_raw_payload(event: &mut NeoN3Event, item: Option<&Value>) {
-    if let Some(bytes) = raw_byte_string_base64(item) {
-        event.payload_hex = hex(&bytes);
-    }
+fn attach_raw_payload(event: &mut NeoN3Event, item: Option<&Value>) -> Result<(), String> {
+    let bytes = raw_byte_string_base64(item)?;
+    event.payload_hex = if bytes.is_empty() {
+        "0x".to_string()
+    } else {
+        hex(&bytes)
+    };
+    Ok(())
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -245,7 +266,7 @@ pub fn build_event_from_notification_state(
             callback_contract: String::new(),
             callback_method: LEGACY_CALLBACK_METHOD.to_string(),
             payload_text: string_at(6),
-            payload_hex: hex(string_at(6).as_bytes()),
+            payload_hex: String::new(),
             created_at_ms: 0,
             fulfilled_at_ms: 0,
             block_number,
@@ -270,7 +291,7 @@ pub fn build_event_from_notification_state(
             callback_contract: string_at(3),
             callback_method: string_at(4),
             payload_text: string_at(5),
-            payload_hex: hex(string_at(5).as_bytes()),
+            payload_hex: String::new(),
             app_id: String::new(),
             module_id: String::new(),
             operation: String::new(),
@@ -324,7 +345,7 @@ pub fn build_event_from_request_record(decoded: &[Value], request_id: &str) -> O
             callback_contract: as_string(7),
             callback_method: LEGACY_CALLBACK_METHOD.to_string(),
             payload_text: as_string(4),
-            payload_hex: hex(as_string(4).as_bytes()),
+            payload_hex: String::new(),
             created_at_ms,
             fulfilled_at_ms,
             block_number: created_at_ms,
@@ -358,7 +379,7 @@ pub fn build_event_from_request_record(decoded: &[Value], request_id: &str) -> O
             callback_contract: as_string(3),
             callback_method: as_string(4),
             payload_text: as_string(2),
-            payload_hex: hex(as_string(2).as_bytes()),
+            payload_hex: String::new(),
             app_id: String::new(),
             module_id: String::new(),
             operation: String::new(),
@@ -459,7 +480,7 @@ pub fn scan_oracle_request_block<T: HttpTransport>(
                     } else {
                         5
                     };
-                    attach_raw_payload(&mut event, state.get(payload_index));
+                    attach_raw_payload(&mut event, state.get(payload_index))?;
                     events.push(event);
                 }
             }
@@ -555,11 +576,11 @@ pub fn scan_oracle_requests_via_n3index<T: HttpTransport>(
                 } else {
                     5
                 };
-                attach_raw_payload(event, state.get(payload_index));
+                attach_raw_payload(event, state.get(payload_index))?;
             }
-            event
+            Ok(event)
         })
-        .collect();
+        .collect::<Result<Vec<Option<NeoN3Event>>, String>>()?;
 
     // (block_index, notification_index) ascending.
     events.sort_by(|left, right| match (&left, &right) {
@@ -624,7 +645,7 @@ pub fn scan_oracle_requests_by_id<T: HttpTransport>(
             attach_raw_payload(
                 event,
                 raw_fields.and_then(|fields| fields.get(payload_index)),
-            );
+            )?;
         }
         Ok(event)
     })?;
@@ -857,6 +878,61 @@ mod tests {
         .expect("event");
         assert_eq!(event.request_type, " fetch");
         assert_eq!(event.operation, " fetch");
+    }
+
+    #[test]
+    fn raw_payload_attachment_preserves_non_utf8_and_script_hash_display_bytes() {
+        let event_for = |payload: Value| {
+            let state = serde_json::json!([
+                { "type": "Integer", "value": "7" },
+                { "type": "String", "value": "demo.app" },
+                { "type": "String", "value": "oracle.fetch" },
+                { "type": "String", "value": "fetch" },
+                { "type": "String", "value": "requester" },
+                { "type": "String", "value": "sponsor" },
+                payload
+            ]);
+            let decoded: Vec<Value> = state
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| decode_neo_item(entry, Encoding::Base64))
+                .collect();
+            let mut event = build_event_from_notification_state(
+                "MiniAppRequestQueued",
+                &decoded,
+                1,
+                "0xtx",
+                Some(0),
+            )
+            .expect("event");
+            attach_raw_payload(&mut event, state.get(6)).expect("raw payload");
+            event
+        };
+
+        let non_utf8 = event_for(serde_json::json!({"type":"ByteString","value":"/w=="}));
+        assert_eq!(non_utf8.payload_text, "\u{fffd}");
+        assert_eq!(non_utf8.payload_hex, "ff");
+
+        let raw: Vec<u8> = (1u8..=20).collect();
+        let encoded = neo_os_core::base64::encode_standard(&raw);
+        let hashed = event_for(serde_json::json!({"type":"ByteString","value":encoded}));
+        let mut reversed = raw.clone();
+        reversed.reverse();
+        assert_eq!(hashed.payload_text, format!("0x{}", hex(&reversed)));
+        assert_eq!(hashed.payload_hex, hex(&raw));
+
+        let empty = event_for(serde_json::json!({"type":"ByteString","value":""}));
+        assert_eq!(empty.payload_text, "");
+        assert_eq!(empty.payload_hex, "0x");
+
+        let wrong_type = serde_json::json!({"type":"String","value":"/w=="});
+        for invalid in [None, Some(&wrong_type)] {
+            let error = attach_raw_payload(&mut empty.clone(), invalid).expect_err("invalid raw");
+            assert!(error.contains("payload"));
+        }
+        let noncanonical = serde_json::json!({"type":"ByteString","value":"/w"});
+        assert!(attach_raw_payload(&mut empty.clone(), Some(&noncanonical)).is_err());
     }
 
     #[test]

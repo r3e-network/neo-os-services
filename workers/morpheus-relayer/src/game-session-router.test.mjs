@@ -128,6 +128,7 @@ test('buildFulfillmentDigestBytes binds SHA256(result) over the 79-byte codec', 
       appId: 'miniapp-color-clash',
       moduleId: 'game.session',
       operation: 'session.finalize',
+      payloadHex: '0x',
     }
   );
 

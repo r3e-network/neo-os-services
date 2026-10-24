@@ -63,6 +63,7 @@ test('buildFulfillmentDigestBytes hashes kernel identifiers verbatim (matches th
     appId: ' app ',
     moduleId: ' module ',
     operation: ' op ',
+    payloadHex: '0x',
   });
   const expected = contractStyleN3Digest(
     '42',
@@ -80,6 +81,7 @@ test('buildFulfillmentDigestBytes hashes kernel identifiers verbatim (matches th
     appId: 'app',
     moduleId: 'module',
     operation: 'op',
+    payloadHex: '0x',
   });
   assert.notDeepEqual(verbatim, trimmedInputs);
 });
@@ -224,7 +226,7 @@ test('buildNeoN3EventFromRequestRecord surfaces whitespace-bearing identifiers v
     '',
     '',
   ];
-  const event = buildNeoN3EventFromRequestRecord(decoded, 7);
+  const event = buildNeoN3EventFromRequestRecord(decoded, 7, '7b7d');
   assert.ok(event, 'pending request with whitespace identifiers must surface');
   assert.equal(event.appId, ' app');
   assert.equal(event.operation, ' privacy_oracle ');
@@ -292,6 +294,7 @@ test('ingestion rejects whitespace identifiers and finalizes with a contract-ver
     appId: ' vrf-e2e',
     moduleId: 'random.generate',
     operation: 'random',
+    payloadHex: '0x',
     txHash: '',
     logIndex: 0,
     blockNumber: 1,

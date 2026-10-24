@@ -62,6 +62,8 @@ fn validate_delivery_operation(operation: &str) -> Result<(), String> {
 fn pack_event(event: &Value) -> Value {
     let semantics = json!([
         event.get("payload"),
+        event.get("payloadHex"),
+        event.get("payload_hex"),
         event.get("appId"),
         event.get("moduleId"),
         event.get("operation"),
@@ -348,7 +350,7 @@ impl<T: HttpTransport> DeliveryStore<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_delivery_operation, DeliveryStatus};
+    use super::{pack_event, validate_delivery_operation, DeliveryStatus};
     use serde_json::json;
 
     #[test]
@@ -358,6 +360,32 @@ mod tests {
         assert_eq!(completed.as_str(), "completed");
         assert!(serde_json::from_value::<DeliveryStatus>(json!("confirmed")).is_err());
         assert!(serde_json::from_value::<DeliveryStatus>(json!("unknown")).is_err());
+    }
+
+    #[test]
+    fn payload_digest_distinguishes_raw_bytes_and_preserves_exact_retry_idempotency() {
+        let first = json!({
+            "requestId": "7",
+            "payload": "{}",
+            "payloadHex": "7b7d",
+            "appId": "app",
+            "operation": "compute"
+        });
+        let mut second = first.clone();
+        second["payloadHex"] = json!("7b20");
+        let packed_first = pack_event(&first);
+        let packed_retry = pack_event(&first);
+        let packed_second = pack_event(&second);
+        assert_eq!(packed_first["payload"], packed_second["payload"]);
+        assert_eq!(
+            packed_first["payload_digest"],
+            packed_retry["payload_digest"]
+        );
+        assert_ne!(
+            packed_first["payload_digest"],
+            packed_second["payload_digest"]
+        );
+        assert_ne!(packed_first["event_base64"], packed_second["event_base64"]);
     }
 
     #[test]

@@ -13,6 +13,7 @@ import {
 } from '@r3e-network/neo-os-services-shared/automation-supervisor';
 import { custodyKeyId, custodyKeyInfo, custodySignTransaction } from './custody.js';
 import { strip0x as stripHexPrefix, trimString } from './lib/strings.js';
+import { requireRawPayloadHex } from './lib/payload.js';
 
 // Identifier hygiene: event identifier fields must carry the on-chain bytes
 // VERBATIM (no trimming) so fulfillment digests reproduce exactly what the
@@ -166,6 +167,26 @@ function decodeByteStringFromBase64(raw) {
   }
 }
 
+function rawNeoPayloadHex(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) {
+    throw new Error('Neo N3 request payload stack item is missing');
+  }
+  const type = trimString(item.type).toLowerCase();
+  if (type !== 'bytestring' && type !== 'bytearray') {
+    throw new Error('Neo N3 request payload must be a ByteString');
+  }
+  if (typeof item.value !== 'string') {
+    throw new Error('Neo N3 request payload ByteString value is missing');
+  }
+  const raw = item.value.trim();
+  if (!raw) return '0x';
+  const bytes = Buffer.from(raw, 'base64');
+  if (bytes.toString('base64') !== raw) {
+    throw new Error('Neo N3 request payload ByteString is not canonical base64');
+  }
+  return bytes.toString('hex');
+}
+
 // Decode a Neo VM stack/notification item. `encoding` pins how ByteString /
 // ByteArray values are encoded by the source: Neo JSON-RPC and n3index both
 // emit base64, so all in-repo call sites pass 'base64'. The 'auto' default
@@ -263,7 +284,7 @@ export function buildNeoN3RelayRequestId(scope, requestId) {
   return `relayer:n3:${normalizedScope}:${requestId}:${randomUUID()}`;
 }
 
-export function buildNeoN3EventFromRequestRecord(decoded, requestId) {
+export function buildNeoN3EventFromRequestRecord(decoded, requestId, payloadHex) {
   if (!Array.isArray(decoded)) return null;
 
   if (decoded.length >= 14) {
@@ -301,7 +322,7 @@ export function buildNeoN3EventFromRequestRecord(decoded, requestId) {
       callbackContract: String(callbackContract || ''),
       callbackMethod: LEGACY_CALLBACK_METHOD,
       payloadText: String(payloadText || ''),
-      payloadHex: Buffer.from(String(payloadText || ''), 'utf8').toString('hex'),
+      payloadHex: requireRawPayloadHex({ payloadHex }),
       createdAtMs: Number(createdAtMs || 0),
       fulfilledAtMs: Number(fulfilledAtMs || 0),
       blockNumber: Number(createdAtMs || 0),
@@ -340,7 +361,7 @@ export function buildNeoN3EventFromRequestRecord(decoded, requestId) {
       callbackContract: String(callbackContract || ''),
       callbackMethod: String(callbackMethod || ''),
       payloadText: String(payloadText || ''),
-      payloadHex: Buffer.from(String(payloadText || ''), 'utf8').toString('hex'),
+      payloadHex: requireRawPayloadHex({ payloadHex }),
       createdAtMs: Number(createdAtMs || 0),
       fulfilledAtMs: Number(fulfilledAtMs || 0),
       blockNumber: Number(createdAtMs || 0),
@@ -386,7 +407,7 @@ function buildNeoN3EventFromNotificationState(eventName, decodedState, meta = {}
       callbackContract: '',
       callbackMethod: LEGACY_CALLBACK_METHOD,
       payloadText: String(payload || ''),
-      payloadHex: Buffer.from(String(payload || ''), 'utf8').toString('hex'),
+      payloadHex: requireRawPayloadHex({ payloadHex: meta.payloadHex }),
       blockNumber: Number(meta.blockNumber ?? 0),
       txHash: String(meta.txHash || ''),
       ...(meta.logIndex !== undefined ? { logIndex: Number(meta.logIndex) } : {}),
@@ -403,7 +424,7 @@ function buildNeoN3EventFromNotificationState(eventName, decodedState, meta = {}
       callbackContract: String(callbackContract || ''),
       callbackMethod: String(callbackMethod || ''),
       payloadText: String(payload || ''),
-      payloadHex: Buffer.from(String(payload || ''), 'utf8').toString('hex'),
+      payloadHex: requireRawPayloadHex({ payloadHex: meta.payloadHex }),
       blockNumber: Number(meta.blockNumber ?? 0),
       txHash: String(meta.txHash || ''),
       ...(meta.logIndex !== undefined ? { logIndex: Number(meta.logIndex) } : {}),
@@ -458,6 +479,7 @@ async function scanNeoN3OracleRequestBlock(config, height, targetContract) {
           blockNumber: height,
           txHash,
           logIndex: notificationIndex,
+          payloadHex: rawNeoPayloadHex(state[eventName === 'MiniAppRequestQueued' ? 6 : 5]),
         });
         if (event) events.push(event);
       }
@@ -535,10 +557,13 @@ export async function scanNeoN3OracleRequestsViaN3Index(config, fromBlock, toBlo
       // n3index serves state_json/raw_json values base64-encoded, mirroring the
       // node's JSON-RPC notification format.
       const decodedState = state.map((entry) => decodeNeoItem(entry, 'base64'));
-      return buildNeoN3EventFromNotificationState(trimString(row?.event_name), decodedState, {
+      const eventName = trimString(row?.event_name);
+      if (!NEO_N3_REQUEST_EVENT_NAMES.has(eventName)) return null;
+      return buildNeoN3EventFromNotificationState(eventName, decodedState, {
         blockNumber: Number(row?.block_index || 0),
         txHash: String(row?.txid || ''),
         logIndex: Number(row?.notification_index || 0),
+        payloadHex: rawNeoPayloadHex(state[eventName === 'MiniAppRequestQueued' ? 6 : 5]),
       });
     })
     .filter((event) => event && asEventString(event.requestType));
@@ -567,9 +592,12 @@ export async function scanNeoN3OracleRequestsById(config, fromRequestId, toReque
       if (String(result?.state || '').toUpperCase() === 'FAULT') {
         throw new Error(result?.exception || `Neo N3 getRequest faulted for request ${requestId}`);
       }
+      const decoded = decodeNeoItem(result?.stack?.[0], 'base64');
+      const payloadIndex = Array.isArray(decoded) && decoded.length >= 14 ? 4 : 2;
       return buildNeoN3EventFromRequestRecord(
-        decodeNeoItem(result?.stack?.[0], 'base64'),
-        requestId
+        decoded,
+        requestId,
+        rawNeoPayloadHex(result?.stack?.[0]?.value?.[payloadIndex])
       );
     }
   );

@@ -64,6 +64,7 @@ test('buildNeoXDigest matches the contract ABI encoding spec', () => {
     appId: 'vrf-e2e',
     moduleId: 'random.generate',
     operation: 'random',
+    payloadHex: '0x',
     success: true,
     error: '',
   };
@@ -110,6 +111,7 @@ test('signNeoXFulfillment produces an EIP-191 signature recoverable to the verif
     appId: 'vrf-e2e',
     moduleId: 'random.generate',
     operation: 'random',
+    payloadHex: '0x',
     success: true,
     result: '',
     result_bytes_base64: Buffer.from('cd'.repeat(32), 'hex').toString('base64'),
@@ -162,6 +164,7 @@ test('signNeoXFulfillment honours a separate verifier key', async () => {
     appId: 'a',
     moduleId: 'random.generate',
     operation: 'random',
+    payloadHex: '0x',
     success: true,
     result: '',
     result_bytes_base64: '',

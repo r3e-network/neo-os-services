@@ -4,6 +4,7 @@ import { resolvePinnedNeoN3VerifierPublicKey } from '../lib/neo-signers.js';
 import { custodyKeyId, custodySignRaw } from '../custody.js';
 import { trimString } from '@r3e-network/neo-os-services-shared/utils';
 import { normalizePublicKey } from '../attestation.js';
+import { requireRawPayloadHex, resolveEventPayload } from '../lib/payload.js';
 
 /**
  * Fulfillment signing helpers: digest context binding, and the top-level
@@ -95,6 +96,7 @@ export function resolveDigestBinding(config, chain, fulfillment) {
  * @returns {Promise<object>} Signature verification object.
  */
 export async function signFulfillmentPayload(config, chain, fulfillment) {
+  requireRawPayloadHex(fulfillment);
   // Neo X (EVM): keccak digest + secp256k1 EIP-191 signature (ecrecover on-chain).
   if (chain === 'neox') {
     return signNeoXFulfillment(config, fulfillment);
@@ -141,8 +143,7 @@ export function signEncodedFulfillment(config, event, fulfillmentContext, fulfil
     requestId: event.requestId,
     requestType: event.requestType,
     ...fulfillmentContext,
-    payloadText: String(event.payloadText || ''),
-    payloadHex: event.payloadHex,
+    ...resolveEventPayload(event),
     success: fulfillment.success,
     result: fulfillment.result || '',
     result_bytes_base64: fulfillment.result_bytes_base64 || '',

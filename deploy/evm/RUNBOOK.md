@@ -5,14 +5,20 @@ Neo N3 `MorpheusOracle` kernel. Production request and price-feed delivery are
 both owned by the Rust `neo-os-relayer`; the Node tools documented below are
 deployment utilities or explicit non-production compatibility assets.
 
+> **Deployment status:** the frozen mainnet oracle at
+> `0xeCFC1C652B5cCdBfe3E9314a83156787D92a3fD2` is still **v1**. It does not
+> implement the payload-bound v2 fulfilment digest below. The current contract
+> source and the v2 Rust relayer require a **fresh v2 deployment**; do not point
+> a v2 relayer at the frozen v1 address or describe that address as upgraded.
+
 ## Components
 
-| Piece                | Where                                                     | What                                                          |
-| -------------------- | --------------------------------------------------------- | ------------------------------------------------------------- |
-| `MorpheusOracleEVM`  | NeoX mainnet `0xeCFC1C652B5cCdBfe3E9314a83156787D92a3fD2` | request lifecycle + ecrecover-verified fulfilment + callbacks |
-| `neo-os-relayer`     | Rust production service                                   | scans requests/feeds → custody signs → broadcasts → confirms  |
-| `neox-fulfiller.mjs` | non-production compatibility artifact                     | host-key bootstrap tool; exits 78 in production               |
-| `MorpheusPriceFeed`  | NeoX mainnet `0x38DD6BCEBDD47f4234AE11760CEFB58f9ae6a3bB` | price feed delivered by the Rust relayer                      |
+| Piece                           | Where                                                     | What                                                             |
+| ------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------- |
+| `MorpheusOracleEVM` (frozen v1) | NeoX mainnet `0xeCFC1C652B5cCdBfe3E9314a83156787D92a3fD2` | existing v1 request lifecycle + ecrecover fulfilment + callbacks |
+| `neo-os-relayer`                | Rust production service                                   | scans requests/feeds → custody signs → broadcasts → confirms     |
+| `neox-fulfiller.mjs`            | non-production compatibility artifact                     | host-key bootstrap tool; exits 78 in production                  |
+| `MorpheusPriceFeed`             | NeoX mainnet `0x38DD6BCEBDD47f4234AE11760CEFB58f9ae6a3bB` | price feed delivered by the Rust relayer                         |
 
 Production custody roles must be distinct:
 
@@ -23,7 +29,7 @@ Production custody roles must be distinct:
   EIP-191 fulfilment proof checked with `ecrecover`. The measured Rust host
   refuses startup if updater and verifier resolve to the same underlying address.
 
-## Request lifecycle
+## Fresh v2 request lifecycle (not the frozen v1 address)
 
 1. A miniapp calls `submitRequest(appId, moduleId, operation, payload)` (or a
    registered callback contract calls `requestFromCallback(requester, operation, payload)`).
@@ -63,16 +69,37 @@ node deploy/evm/oracle-admin.mjs request <id>
 NEOX_REQUESTER_PK=0x.. node deploy/evm/validate-vrf.mjs
 ```
 
-## Fulfilment: Rust production relayer
+## v1 → v2 deployment and migration
 
-NeoX is a first-class chain in `workers/neo-os-relayer`. Configure
-`MORPHEUS_ACTIVE_CHAINS=neox` (or `neo_n3,neox`), the NeoX RPC/chain-id/oracle
-contract, both custody role IDs, the measured runtime URL/token, and the custody
-URL with a dedicated bearer caller token. The Rust lane recomputes the semantic
-fulfilment digest, obtains the EIP-191 verifier proof, builds and custody-signs the
-EIP-1559 updater transaction, broadcasts it, requires receipt `status=1`, and
-records durable success before advancing the cursor. See
-`deploy/nitro/neo-os-relayer.env.example` for the exact names.
+The frozen v1 address is not an in-place v2 target. A v2 cutover requires all of
+these steps:
+
+1. Deploy a fresh `MorpheusOracleEVM` and record its new address; configure the
+   distinct owner, updater and oracle-verifier roles on that deployment.
+2. Re-register every module, app and app/module grant. Migrate callback-consumer
+   configuration and any callbacks or request builders that name the old oracle.
+3. Point the relayer and consumers at the new address, then verify the fresh
+   chain ID, registration state and a non-production request before opening
+   production traffic. Keep any intentionally retained v1 writer on an explicit
+   v1 configuration; never mix a v2 signer/relayer with the frozen v1 digest.
+4. Rescan chain requests so every durable job carries the original `payloadHex`.
+   Prepared journals written before payload binding may lack `payload` and are
+   rejected rather than re-signed or backfilled from `payloadText`. Discard only
+   that prepared stage and regenerate it from the raw chain event; an already
+   signed stage may only resume its identical signed transaction, never a
+   rewritten payload.
+
+## Fulfilment: Rust production relayer (fresh v2)
+
+For a fresh v2 deployment, NeoX is a first-class chain in
+`workers/neo-os-relayer`. Configure `MORPHEUS_ACTIVE_CHAINS=neox` (or
+`neo_n3,neox`), the NeoX RPC/chain-id/oracle contract, both custody role IDs,
+the measured runtime URL/token, and the custody URL with a dedicated bearer
+caller token. The Rust lane recomputes the semantic fulfilment digest, obtains
+the EIP-191 verifier proof, builds and custody-signs the EIP-1559 updater
+transaction, broadcasts it, requires receipt `status=1`, and records durable
+success before advancing the cursor. See `deploy/nitro/neo-os-relayer.env.example`
+for the exact names.
 
 Operate with `morpheus-relayer.service` or `morpheus-relayer-nitro.service`. The
 units run `config:validate` before start and conflict with every Node writer.
