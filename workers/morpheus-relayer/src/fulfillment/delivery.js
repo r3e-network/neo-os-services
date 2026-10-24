@@ -11,7 +11,7 @@ import { fulfillNeoXRequest } from '../neox.js';
 import { normalizeErrorMessage } from '../feed-sync.js';
 import { resolveEventFulfillmentContext, signFulfillmentPayload } from './signer.js';
 import { trimOnchainErrorMessage } from './classifier.js';
-import { resolveEventPayload } from '../lib/payload.js';
+import { decodeJsonObjectPayload, resolveEventPayload } from '../lib/payload.js';
 
 /**
  * Prepared-fulfillment helpers: building retry metadata, checkpointing pending
@@ -171,6 +171,14 @@ async function fulfillNeoRequest(config, event, fulfillment, verification) {
   }
 }
 
+function assertEventPayloadObject(event) {
+  const { payloadText } = resolveEventPayload(event);
+  const kernelIntent = resolveKernelIntent(event.requestType);
+  decodeJsonObjectPayload(payloadText, {
+    allowNonObject: kernelIntent.moduleId === 'confidential.decrypt',
+  });
+}
+
 /**
  * Submit a prepared fulfillment on-chain.
  *
@@ -180,7 +188,7 @@ async function fulfillNeoRequest(config, event, fulfillment, verification) {
  * @returns {Promise<object>} Delivery result with fulfill_tx.
  */
 export async function deliverPreparedFulfillment(config, event, prepared) {
-  resolveEventPayload(event);
+  assertEventPayloadObject(event);
   const fulfillStartedAt = Date.now();
   const fulfillTx = await fulfillNeoRequest(
     config,
@@ -216,6 +224,7 @@ export async function deliverPreparedFulfillment(config, event, prepared) {
  * @returns {Promise<object>} Failure result record.
  */
 export async function finalizeFailedRequest(config, event, errorMessage) {
+  assertEventPayloadObject(event);
   const safeError = trimOnchainErrorMessage(errorMessage);
   const kernelIntent = resolveKernelIntent(event.requestType);
   const fulfillmentContext = resolveEventFulfillmentContext(event, kernelIntent);

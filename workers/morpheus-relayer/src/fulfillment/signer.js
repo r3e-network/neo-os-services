@@ -1,10 +1,14 @@
-import { buildFulfillmentDigestBytes } from '../router.js';
+import { buildFulfillmentDigestBytes, resolveKernelIntent } from '../router.js';
 import { signNeoXFulfillment } from '../neox.js';
 import { resolvePinnedNeoN3VerifierPublicKey } from '../lib/neo-signers.js';
 import { custodyKeyId, custodySignRaw } from '../custody.js';
 import { trimString } from '@r3e-network/neo-os-services-shared/utils';
 import { normalizePublicKey } from '../attestation.js';
-import { requireRawPayloadHex, resolveEventPayload } from '../lib/payload.js';
+import {
+  decodeJsonObjectPayload,
+  requireRawPayloadHex,
+  resolveEventPayload,
+} from '../lib/payload.js';
 
 /**
  * Fulfillment signing helpers: digest context binding, and the top-level
@@ -97,6 +101,10 @@ export function resolveDigestBinding(config, chain, fulfillment) {
  */
 export async function signFulfillmentPayload(config, chain, fulfillment) {
   requireRawPayloadHex(fulfillment);
+  decodeJsonObjectPayload(fulfillment.payloadText ?? '', {
+    allowNonObject:
+      resolveKernelIntent(fulfillment.requestType).moduleId === 'confidential.decrypt',
+  });
   // Neo X (EVM): keccak digest + secp256k1 EIP-191 signature (ecrecover on-chain).
   if (chain === 'neox') {
     return signNeoXFulfillment(config, fulfillment);

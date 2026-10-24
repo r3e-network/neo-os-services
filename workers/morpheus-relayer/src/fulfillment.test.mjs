@@ -2241,6 +2241,137 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
     assert.equal(calls.length, 0);
     assert.equal(submissions, 0);
   });
+
+  function nonObjectEvent(payloadText) {
+    return {
+      chain: 'neo_n3',
+      requestId: '9400',
+      requestType: 'compute',
+      appId: 'miniapp-os',
+      moduleId: 'compute.run',
+      operation: 'compute',
+      payloadText,
+      payloadHex: Buffer.from(payloadText).toString('hex'),
+    };
+  }
+
+  function preparedRecord() {
+    return {
+      success: true,
+      result: '{"ok":true}',
+      result_bytes_base64: '',
+      error: '',
+      route: '/oracle/fetch',
+      module_id: 'oracle.fetch',
+      operation: 'privacy_oracle',
+      worker_status: 200,
+      verification_signature: 'already-signed',
+    };
+  }
+
+  it('rejects non-object JSON on finalize-only durable retry without signing or submitting', async () => {
+    let submissions = 0;
+    const config = baseConfig({
+      hooks: {
+        fulfillNeoRequest: async () => {
+          submissions += 1;
+          return { tx_hash: '0xmust-not-happen', vm_state: 'HALT' };
+        },
+      },
+    });
+    await withN3SigningCapture(async (digests) => {
+      await processEvent(
+        config,
+        createEmptyRelayerState(),
+        () => {},
+        silentLogger,
+        nonObjectEvent('[]'),
+        {
+          attempts: 0,
+          finalize_only: true,
+          terminal_error: 'worker failed',
+          durable_claimed: true,
+        }
+      );
+      assert.deepEqual(digests, []);
+    });
+    assert.equal(submissions, 0);
+  });
+
+  it('rejects non-object JSON on retry-exhaustion finalize without signing or submitting', async () => {
+    let submissions = 0;
+    const config = baseConfig({
+      maxRetries: 0,
+      hooks: {
+        fulfillNeoRequest: async () => {
+          submissions += 1;
+          return { tx_hash: '0xmust-not-happen', vm_state: 'HALT' };
+        },
+      },
+    });
+    await withN3SigningCapture(async (digests) => {
+      await processEvent(
+        config,
+        createEmptyRelayerState(),
+        () => {},
+        silentLogger,
+        nonObjectEvent('[]'),
+        { attempts: 0, durable_claimed: true }
+      );
+      assert.deepEqual(digests, []);
+    });
+    assert.equal(submissions, 0);
+  });
+
+  it('rejects non-object JSON on prepared redelivery without submitting the prepared signature', async () => {
+    let submissions = 0;
+    const config = baseConfig({
+      hooks: {
+        fulfillNeoRequest: async () => {
+          submissions += 1;
+          return { tx_hash: '0xmust-not-happen', vm_state: 'HALT' };
+        },
+      },
+    });
+    await withN3SigningCapture(async (digests) => {
+      await processEvent(
+        config,
+        createEmptyRelayerState(),
+        () => {},
+        silentLogger,
+        nonObjectEvent('null'),
+        {
+          attempts: 1,
+          prepared_fulfillment: preparedRecord(),
+          durable_claimed: true,
+        }
+      );
+      assert.deepEqual(digests, []);
+    });
+    assert.equal(submissions, 0);
+  });
+
+  it('allows raw non-JSON text and explicitly empty prepared redelivery', async () => {
+    let submissions = 0;
+    const config = baseConfig({
+      hooks: {
+        fulfillNeoRequest: async () => {
+          submissions += 1;
+          return { tx_hash: '0xallowed', vm_state: 'HALT' };
+        },
+      },
+    });
+    for (const payloadText of ['not-json', '']) {
+      const event = nonObjectEvent(payloadText);
+      event.payloadHex = payloadText ? Buffer.from(payloadText).toString('hex') : '0x';
+      await processEvent(config, createEmptyRelayerState(), () => {}, silentLogger, event, {
+        attempts: 1,
+        prepared_fulfillment: preparedRecord(),
+        durable_claimed: true,
+      });
+    }
+    assert.equal(submissions, 2);
+  });
 });
 
 // ===================================================================

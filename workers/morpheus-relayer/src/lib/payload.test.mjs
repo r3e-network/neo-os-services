@@ -105,6 +105,52 @@ test('all signing chains reject missing raw payload before custody or wallet acc
   assert.equal(calls.length, 0);
 });
 
+test('the signing entrypoint rejects non-object JSON before custody or wallet access', async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (...args) => {
+    calls.push(args);
+    throw new Error('custody must not be called');
+  };
+  const config = {
+    network: 'testnet',
+    nitro: { custodyUrl: 'https://custody.test', custodyToken: 'token' },
+    neo_n3: {
+      oracleContract: '0x1212121212121212121212121212121212121212',
+      networkMagic: 894710606,
+      custodyKeyIds: { oracle_verifier: 'verifier' },
+    },
+    neox: {
+      ...NEOX_CONFIG.neox,
+      verifierPrivateKey: 'not-a-key',
+    },
+  };
+  try {
+    for (const chain of ['neo_n3', 'neox']) {
+      for (const payloadText of ['[]', 'null', '"text"', '42', 'true']) {
+        await assert.rejects(
+          signFulfillmentPayload(config, chain, {
+            requestId: '7',
+            requestType: 'compute',
+            appId: 'app',
+            moduleId: 'compute.run',
+            operation: 'compute',
+            payloadText,
+            payloadHex: Buffer.from(payloadText).toString('hex'),
+            success: false,
+            result: '',
+            error: 'failed',
+          }),
+          /must be a JSON object/
+        );
+      }
+    }
+  } finally {
+    global.fetch = originalFetch;
+  }
+  assert.equal(calls.length, 0);
+});
+
 test('old durable prepared records without raw hex cannot be broadcast', async () => {
   let submissions = 0;
   await assert.rejects(
