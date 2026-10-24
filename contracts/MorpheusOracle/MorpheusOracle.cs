@@ -171,7 +171,7 @@ namespace MorpheusOracle.Contracts
         private static readonly byte[] PREFIX_UPGRADE_HASH = new byte[] { 0x32 };
         private static readonly byte[] PREFIX_PENDING_RUNTIME_KEY = new byte[] { 0x33 };
         private static readonly byte[] PREFIX_PENDING_RUNTIME_VERIFIER = new byte[] { 0x34 };
-        private static readonly byte[] FULFILLMENT_SIGNATURE_DOMAIN = new byte[] { 109, 105, 110, 105, 97, 112, 112, 45, 111, 115, 45, 102, 117, 108, 102, 105, 108, 108, 109, 101, 110, 116, 45, 118, 49 };
+        private static readonly byte[] FULFILLMENT_SIGNATURE_DOMAIN = new byte[] { 109, 105, 110, 105, 97, 112, 112, 45, 111, 115, 45, 102, 117, 108, 102, 105, 108, 108, 109, 101, 110, 116, 45, 118, 50 };
 
         // 24 hours in milliseconds — same delay as the PlatformRegistry spine.
         // A compromised admin EOA can no longer repoint verification keys, swap
@@ -1319,6 +1319,7 @@ namespace MorpheusOracle.Contracts
                 req.AppId,
                 req.ModuleId,
                 req.Operation,
+                req.Payload,
                 success,
                 result ?? (ByteString)"",
                 error ?? ""

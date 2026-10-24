@@ -97,6 +97,7 @@ fn price_body_without_binding() -> serde_json::Value {
         "chain": "neo_n3",
         "request_type": "oracle_query",
         "request_id": "4242",
+        "payload_text": "",
         "payload": { "symbol": "BTC/USD", "requester": format!("0x{}", "aa".repeat(20)) },
         "fulfillment_context": {},
         "nonce": "",
@@ -111,6 +112,7 @@ fn neo_n3_with_app_id_digest_envelope_and_signature_byte_exact() {
         "chain": "neo_n3",
         "request_type": "oracle_query",
         "request_id": "4242",
+        "payload_text": "",
         "payload": { "symbol": "BTC/USD", "requester": format!("0x{}", "aa".repeat(20)) },
         "fulfillment_context": {
             "app_id": "demo.app",
@@ -143,6 +145,7 @@ fn neo_n3_with_app_id_digest_envelope_and_signature_byte_exact() {
             .expect("reviewed test network")
             .to_string(),
         network_magic: Some(894710606.0),
+        ..FulfillmentOptions::default()
     };
     let expected_digest = build_fulfillment_digest_bytes(
         &JsValue::Str("4242".to_string()),
@@ -188,6 +191,7 @@ fn neo_n3_with_app_id_digest_envelope_and_signature_byte_exact() {
             operation: intent.operation.to_string(),
             contract_script_hash: String::new(),
             network_magic: None,
+            ..FulfillmentOptions::default()
         },
     )
     .expect("digest");
@@ -231,6 +235,7 @@ fn neox_fulfillment_uses_structured_verifier_custody_and_exposes_delivery_fields
         "chain": "neox",
         "request_type": "oracle_query",
         "request_id": "4242",
+        "payload_text": "",
         "payload": { "symbol": "BTC/USD", "requester": format!("0x{}", "aa".repeat(20)) },
         "fulfillment_context": {
             "app_id": "demo.app",
@@ -266,6 +271,7 @@ fn neox_fulfillment_uses_structured_verifier_custody_and_exposes_delivery_fields
         app_id: "demo.app".to_string(),
         module_id: intent.module_id.to_string(),
         operation: intent.operation.to_string(),
+        payload: String::new(),
         success: true,
         error: String::new(),
     };
@@ -311,6 +317,7 @@ fn migrated_compute_fulfillment_executes_in_process() {
         "chain": "neo_n3",
         "request_type": "compute_hash",
         "request_id": "101",
+        "payload_text": "",
         "payload": {
             "function": "hash.sha256",
             "input": { "z": 1 },
@@ -340,6 +347,7 @@ fn session_finalize_fulfillment_uses_the_session_handler() {
         "chain": "neo_n3",
         "request_type": "session.finalize",
         "request_id": "901",
+        "payload_text": "",
         "payload": {},
         "fulfillment_context": {},
     });
@@ -365,6 +373,7 @@ fn automation_fulfillment_executes_the_nested_rust_handler() {
         "chain": "neo_n3",
         "request_type": "automation_execute",
         "request_id": "902",
+        "payload_text": "",
         "payload": {
             "automation_id": "automation:fulfill:test",
             "idempotency_key": "automation-fulfill-test-902",
@@ -410,6 +419,7 @@ fn an_operator_only_feed_lane_is_refused_as_a_settleable_fulfillment() {
         "chain": "neo_n3",
         "request_type": "price_feed",
         "request_id": "903",
+        "payload_text": "",
         "payload": { "symbol": "NEO-USD", "fast_ack": true },
         "fulfillment_context": {},
     });
@@ -446,6 +456,7 @@ fn a_granted_module_that_disagrees_with_the_routed_lane_is_refused() {
         "chain": "neo_n3",
         "request_type": "compute_hash",
         "request_id": "904",
+        "payload_text": "",
         "payload": { "function": "hash.sha256", "input": { "answer": 42 } },
         // The chain granted the cheap oracle.fetch module; the operation
         // string routes to compute.run.
@@ -473,7 +484,8 @@ fn a_matching_module_and_an_absent_module_both_still_fulfil() {
             "chain": "neo_n3",
             "request_type": "compute_hash",
             "request_id": "905",
-            "payload": { "function": "hash.sha256", "input": { "answer": 42 } },
+            "payload_text": "",
+        "payload": { "function": "hash.sha256", "input": { "answer": 42 } },
             "fulfillment_context": context,
         });
 
@@ -502,6 +514,7 @@ fn migrated_decrypt_fulfillment_executes_in_process() {
         "chain": "neo_n3",
         "request_type": "decrypt",
         "request_id": "102",
+        "payload_text": "",
         "payload": {
             "envelope": base64::engine::general_purpose::STANDARD.encode(GOLDEN_ENVELOPE_JSON),
         },
@@ -532,6 +545,7 @@ fn random_fulfillment_executes_in_process_without_a_bridge() {
         "chain": "neo_n3",
         "request_type": "random",
         "request_id": "103",
+        "payload_text": "",
         "payload": {},
         // The VRF lane binds the oracle contract the relayer names.
         "fulfillment_context": { "contract_script_hash": N3_TESTNET_ORACLE_CONTRACT },
@@ -551,6 +565,34 @@ fn random_fulfillment_executes_in_process_without_a_bridge() {
         .expect("base64 callback");
     assert_eq!(callback.len(), 32);
     assert!(harness.bridge.forwards().is_empty());
+}
+
+#[test]
+fn fulfillment_digest_binds_the_exact_request_payload() {
+    let mut body_a = price_body_without_binding();
+    body_a["payload_text"] = json!("{\"op\":\"add\"}");
+    let mut body_b = body_a.clone();
+    body_b["payload_text"] = json!("{\"op\":\"sub\"}");
+    let response_a = handle_oracle_fulfill(&fulfill_harness(price_reply()).state, &body_a)
+        .expect("first payload");
+    let response_b = handle_oracle_fulfill(&fulfill_harness(price_reply()).state, &body_b)
+        .expect("second payload");
+    assert_ne!(
+        response_a["fulfillment_digest_hex"],
+        response_b["fulfillment_digest_hex"]
+    );
+}
+
+#[test]
+fn inconsistent_payload_hex_and_text_are_refused_before_signing() {
+    let harness = fulfill_harness(price_reply());
+    let mut body = price_body_without_binding();
+    body["payload_text"] = json!("");
+    body["payload_hex"] = json!("00");
+    let error = handle_oracle_fulfill(&harness.state, &body).expect_err("payload mismatch");
+    assert_eq!(error.status, 400);
+    assert!(error.message.contains("does not match"));
+    assert!(harness.signer.sign_calls().is_empty());
 }
 
 fn intent_public_key() -> serde_json::Value {
@@ -608,6 +650,7 @@ fn vrf_compact_lane_returns_the_callback_bytes() {
         "chain": "neo_n3",
         "request_type": "random",
         "request_id": "99",
+        "payload_text": "",
         "payload": {},
         "fulfillment_context": {
             "app_id": "dice.app",
@@ -643,6 +686,7 @@ fn vrf_compact_lane_returns_the_callback_bytes() {
             .expect("reviewed test network")
             .to_string(),
         network_magic: Some(894710606.0),
+        ..FulfillmentOptions::default()
     };
     let expected_digest = build_fulfillment_digest_bytes(
         &JsValue::Str("99".to_string()),
@@ -667,6 +711,7 @@ fn arbitrary_url_smart_fetch_is_host_unattested() {
         "chain": "neo_n3",
         "request_type": "privacy_oracle",
         "request_id": "7",
+        "payload_text": "",
         "payload": { "url": "https://example.com/price" },
         "fulfillment_context": {},
     });
@@ -698,6 +743,7 @@ fn neox_invalid_contract_never_reaches_any_signing_surface() {
         "chain": "neox",
         "request_type": "oracle_query",
         "request_id": "1",
+        "payload_text": "",
         "payload": {},
         "fulfillment_context": { "chain_id": 1868, "oracle_contract": "0xabc" },
     });
@@ -754,6 +800,7 @@ fn the_decrypt_lane_forwards_the_envelope() {
         "chain": "neo_n3",
         "request_type": "decrypt",
         "request_id": "8",
+        "payload_text": "",
         "payload": { "envelope": " sealed-envelope " },
         "fulfillment_context": {},
     });
@@ -919,6 +966,7 @@ fn fresh_kernel_fulfils_when_the_test_override_names_it() {
         operation: intent.operation.to_string(),
         contract_script_hash: contract.to_string(),
         network_magic: Some(894710606.0),
+        ..FulfillmentOptions::default()
     };
     let digest_for = |contract: &str| {
         hex::encode(

@@ -1012,7 +1012,7 @@ test('buildFulfillmentDigestBytes binds deployment (script hash + network) to ma
   });
   assert.equal(
     bound.toString('hex'),
-    '44630ca9e11ee6941fde907dc51342b997e301ae215f80daedd59c423aff7566'
+    '9c8e421367690cbb384bec70aa155a649aa8c852505f5d903c2428d4e7d5e213'
   );
   assert.notDeepEqual(bound, unbound); // deployment binding is actually applied
 });
@@ -2157,6 +2157,7 @@ test('buildNeoN3EventFromRequestRecord decodes pending miniapp kernel requests',
     callbackContract: '0xcallback',
     callbackMethod: 'onOracleResult',
     payloadText: '{"symbol":"NEO-USD"}',
+    payloadHex: '7b2273796d626f6c223a224e454f2d555344227d',
     createdAtMs: 123456,
     fulfilledAtMs: 0,
     blockNumber: 123456,

@@ -202,7 +202,7 @@ namespace MorpheusOracle.Contracts.Tests
             byte[] scriptHashLe = h.Contract.Hash.GetSpan().ToArray();
             uint network = ProtocolSettings.Default.Network;
             byte[] digest = ComputeFulfillmentDigest(
-                requestId, AppId, ModuleId, "fetch", true, result, "", scriptHashLe, network);
+                requestId, AppId, ModuleId, "fetch", new byte[] { 1, 2, 3 }, true, result, "", scriptHashLe, network);
             byte[] signature = SignVerified(digest, verifier);
 
             h.Contract.FulfillRequest(requestId, true, result, "", signature);
@@ -370,7 +370,7 @@ namespace MorpheusOracle.Contracts.Tests
             byte[] scriptHashLe = h.Contract.Hash.GetSpan().ToArray(); // (ByteString)Runtime.ExecutingScriptHash (LE)
             uint network = ProtocolSettings.Default.Network;        // == Runtime.GetNetwork() in the engine
             byte[] digest = ComputeFulfillmentDigest(
-                id, AppId, ModuleId, "fetch", true, result, error, scriptHashLe, network);
+                id, AppId, ModuleId, "fetch", new byte[] { 1, 2, 3 }, true, result, error, scriptHashLe, network);
             byte[] signature = SignVerified(digest, verifier);
 
             h.Engine.SetTransactionSigners(h.Owner);
@@ -385,7 +385,7 @@ namespace MorpheusOracle.Contracts.Tests
         // buildFulfillmentDigestBytes). If FulfillRequest above accepts a signature
         // over this, the contract computes the identical bytes.
         private static byte[] ComputeFulfillmentDigest(
-            BigInteger requestId, string appId, string moduleId, string operation,
+            BigInteger requestId, string appId, string moduleId, string operation, byte[] requestPayload,
             bool success, byte[] result, string error, byte[] scriptHashLe, uint network)
         {
             static byte[] Sha(byte[] b)
@@ -394,11 +394,12 @@ namespace MorpheusOracle.Contracts.Tests
                 return sha.ComputeHash(b);
             }
             var payload = new List<byte>();
-            payload.AddRange(System.Text.Encoding.ASCII.GetBytes("miniapp-os-fulfillment-v1"));
+            payload.AddRange(System.Text.Encoding.ASCII.GetBytes("miniapp-os-fulfillment-v2"));
             payload.AddRange(ToUInt256BE(requestId));
             payload.AddRange(Sha(System.Text.Encoding.UTF8.GetBytes(appId)));
             payload.AddRange(Sha(System.Text.Encoding.UTF8.GetBytes(moduleId)));
             payload.AddRange(Sha(System.Text.Encoding.UTF8.GetBytes(operation)));
+            payload.AddRange(Sha(requestPayload ?? System.Array.Empty<byte>()));
             payload.Add(success ? (byte)0x01 : (byte)0x00);
             payload.AddRange(Sha(result ?? System.Array.Empty<byte>()));
             payload.AddRange(Sha(System.Text.Encoding.UTF8.GetBytes(error ?? "")));

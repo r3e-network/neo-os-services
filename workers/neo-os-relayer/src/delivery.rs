@@ -53,6 +53,7 @@ struct PreparedFulfillment {
     app_id: String,
     module_id: String,
     operation: String,
+    payload: Vec<u8>,
     success: bool,
     result: String,
     result_bytes_base64: String,
@@ -430,6 +431,7 @@ where
         app_id: prepared.app_id.clone(),
         module_id: prepared.module_id.clone(),
         operation: prepared.operation.clone(),
+        payload: hex::encode(&prepared.payload),
         success: prepared.success,
         error: prepared.error.clone(),
     };
@@ -994,6 +996,18 @@ where
             direct
         }
     };
+    let payload_hex = event_field(event_object, "payloadHex");
+    let payload_hex = if payload_hex.trim().is_empty() {
+        event_field(event_object, "payload_hex")
+    } else {
+        payload_hex
+    };
+    let payload_bytes = if payload_hex.trim().is_empty() {
+        payload_text.as_bytes().to_vec()
+    } else {
+        hex::decode(payload_hex)
+            .map_err(|_| "oracle request event has invalid payloadHex".to_string())?
+    };
     let mut payload = serde_json::from_str::<Value>(&payload_text).unwrap_or_else(|_| json!({}));
     if !payload.is_object() {
         payload = json!({});
@@ -1057,6 +1071,7 @@ where
         "request_id": request_id,
         "payload": payload,
         "payload_text": payload_text,
+        "payload_hex": hex::encode(&payload_bytes),
         "fulfillment_context": chain_context,
         "nonce": nonce,
     });
@@ -1114,6 +1129,7 @@ where
         app_id: app_id.clone(),
         module_id: module_id.clone(),
         operation: operation.clone(),
+        payload: payload_bytes,
         success: response
             .get("success")
             .and_then(Value::as_bool)
@@ -1154,6 +1170,7 @@ where
                 app_id: prepared.app_id.clone(),
                 module_id: prepared.module_id.clone(),
                 operation: prepared.operation.clone(),
+                payload: prepared.payload.clone(),
                 contract_script_hash: n3
                     .get("oracleContract")
                     .and_then(Value::as_str)
@@ -1220,6 +1237,7 @@ where
                 app_id: prepared.app_id.clone(),
                 module_id: prepared.module_id.clone(),
                 operation: prepared.operation.clone(),
+                payload: hex::encode(&prepared.payload),
                 success: prepared.success,
                 error: prepared.error.clone(),
             };
@@ -1813,6 +1831,7 @@ mod tests {
             app_id: "morpheus".into(),
             module_id: "compute.execute".into(),
             operation: "compute".into(),
+            payload: b"{}".to_vec(),
             contract_script_hash: "0xf54d8584ef82315c1800373272ab08ae0db2d5ef".into(),
             network_magic: Some(894_710_606.0),
         };
@@ -2195,6 +2214,7 @@ mod tests {
             app_id: "morpheus".into(),
             module_id: "compute.execute".into(),
             operation: "compute".into(),
+            payload: "7b7d".into(),
             success: true,
             error: String::new(),
         };

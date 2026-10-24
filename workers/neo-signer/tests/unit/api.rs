@@ -732,6 +732,7 @@ async fn structured_eip191_fulfillment_is_vector_locked_policy_bound_and_idempot
             "app_id": "app:1",
             "module_id": "oracle.fetch",
             "operation": "privacy_oracle",
+            "payload_hex": "7b7d",
             "success": true,
             "error": "",
         },
@@ -743,7 +744,7 @@ async fn structured_eip191_fulfillment_is_vector_locked_policy_bound_and_idempot
     assert_eq!(first.status, StatusCode::OK, "{first:?}");
     assert_eq!(
         first.field("digest"),
-        "0x0241615a24f31aba60cf4323dac9d6ebd35eb3451b367c070e17184f08e4a5a3"
+        "0x7ac78c144b536fb87524b0a9fd4502625b7b5a9ae7ac90914bfcbff0f34519e6"
     );
     assert_eq!(first.field("chain_family"), "neox");
     assert_eq!(first.json()["chain_id"], chain_id);
@@ -852,6 +853,7 @@ async fn eip191_fulfillment_refuses_every_unbounded_policy_dimension() {
                 "app_id": "app:1",
                 "module_id": "oracle.fetch",
                 "operation": "privacy_oracle",
+                "payload_hex": "7b7d",
                 "success": true,
                 "error": "",
             },

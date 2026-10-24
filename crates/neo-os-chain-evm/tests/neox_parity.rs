@@ -63,6 +63,7 @@ fn all_neox_digest_vectors_reproduce_the_ethers_output() {
             app_id: string_field("appId"),
             module_id: string_field("moduleId"),
             operation: string_field("operation"),
+            payload: string_field("payloadHex"),
             success: fulfillment_json
                 .get("success")
                 .and_then(serde_json::Value::as_bool)
@@ -92,6 +93,44 @@ fn all_neox_digest_vectors_reproduce_the_ethers_output() {
             "digest mismatch for case {name}"
         );
     }
+}
+
+#[test]
+fn request_payload_changes_the_neox_digest_and_must_be_valid_hex() {
+    let fulfillment = Fulfillment {
+        request_id: "42".into(),
+        app_id: "app:1".into(),
+        module_id: "oracle.fetch".into(),
+        operation: "privacy_oracle".into(),
+        payload: "7b7d".into(),
+        success: true,
+        error: String::new(),
+    };
+    let digest_a = build_neox_digest(
+        12_227_332,
+        "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B",
+        &fulfillment,
+        "0x01",
+    )
+    .expect("first payload");
+    let mut changed = fulfillment.clone();
+    changed.payload = "010203".into();
+    let digest_b = build_neox_digest(
+        12_227_332,
+        "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B",
+        &changed,
+        "0x01",
+    )
+    .expect("second payload");
+    assert_ne!(digest_a, digest_b);
+    changed.payload = "not-hex".into();
+    assert!(build_neox_digest(
+        12_227_332,
+        "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B",
+        &changed,
+        "0x01"
+    )
+    .is_err());
 }
 
 #[test]

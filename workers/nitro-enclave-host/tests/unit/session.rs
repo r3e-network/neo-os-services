@@ -500,6 +500,7 @@ fn kernel_fulfill(harness: &TestState, request_id: &str, requester: &str, payloa
         "chain": "neo_n3",
         "request_type": "session.finalize",
         "request_id": request_id,
+        "payload_text": payload.to_string(),
         "payload": delivered,
         "fulfillment_context": {
             "app_id": payload["app_id"],

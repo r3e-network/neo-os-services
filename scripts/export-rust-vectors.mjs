@@ -399,6 +399,7 @@ function digestFamily() {
     appId: 'app:1',
     moduleId: 'oracle.fetch',
     operation: 'privacy_oracle',
+    payloadHex: '7b7d',
   };
   const cases = [
     { name: 'n3 minimal', args: ['42', 'oracle/query', true, 'hello', '', '', base] },
@@ -811,9 +812,9 @@ function neoxFamily() {
         name,
         kind: 'digest',
         config,
-        fulfillment,
+        fulfillment: { payloadHex: '7b7d', ...fulfillment },
         result_bytes_hex: resultBytesHex,
-        expected: buildNeoXDigest(config, fulfillment, resultBytesHex),
+        expected: buildNeoXDigest(config, { payloadHex: '7b7d', ...fulfillment }, resultBytesHex),
       })),
       ...resolveCases.map(({ name, result, resultBytesBase64 }) => ({
         name,
@@ -1606,22 +1607,31 @@ function buildAll() {
   });
 }
 
+function outputPaths(filename) {
+  const paths = [path.join(vectorsDir, filename)];
+  if (filename === 'neox_digest.json') {
+    paths.push(path.join(repoRoot, 'crates', 'neo-os-chain-evm', 'tests', 'vectors', filename));
+  }
+  return paths;
+}
+
 const check = process.argv.includes('--check');
 if (check) {
   let drift = 0;
   for (const { filename, contents } of buildAll()) {
-    const existingPath = path.join(vectorsDir, filename);
-    let existing;
-    try {
-      existing = readFileSync(existingPath, 'utf8');
-    } catch {
-      console.error(`MISSING: ${filename}`);
-      drift += 1;
-      continue;
-    }
-    if (existing !== contents) {
-      console.error(`DRIFT: ${filename} no longer matches the JS oracle`);
-      drift += 1;
+    for (const existingPath of outputPaths(filename)) {
+      let existing;
+      try {
+        existing = readFileSync(existingPath, 'utf8');
+      } catch {
+        console.error(`MISSING: ${existingPath}`);
+        drift += 1;
+        continue;
+      }
+      if (existing !== contents) {
+        console.error(`DRIFT: ${existingPath} no longer matches the JS oracle`);
+        drift += 1;
+      }
     }
   }
   if (drift > 0) {
@@ -1632,9 +1642,11 @@ if (check) {
   }
   console.log('all vector files match the JS oracle');
 } else {
-  mkdirSync(vectorsDir, { recursive: true });
   for (const { filename, contents } of buildAll()) {
-    writeFileSync(path.join(vectorsDir, filename), contents);
-    console.log(`wrote ${filename}`);
+    for (const outputPath of outputPaths(filename)) {
+      mkdirSync(path.dirname(outputPath), { recursive: true });
+      writeFileSync(outputPath, contents);
+      console.log(`wrote ${outputPath}`);
+    }
   }
 }

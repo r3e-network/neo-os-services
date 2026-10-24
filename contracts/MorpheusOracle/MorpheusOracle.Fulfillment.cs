@@ -42,12 +42,13 @@ namespace MorpheusOracle.Contracts
             return output;
         }
 
-        private static ByteString ComputeFulfillmentDigest(BigInteger requestId, string appId, string moduleId, string operation, bool success, ByteString result, string error)
+        private static ByteString ComputeFulfillmentDigest(BigInteger requestId, string appId, string moduleId, string operation, ByteString requestPayload, bool success, ByteString result, string error)
         {
             byte[] payload = Helper.Concat(FULFILLMENT_SIGNATURE_DOMAIN, ToUInt256Bytes(requestId));
             payload = Helper.Concat(payload, CryptoLib.Sha256((ByteString)(appId ?? "")));
             payload = Helper.Concat(payload, CryptoLib.Sha256((ByteString)(moduleId ?? "")));
             payload = Helper.Concat(payload, CryptoLib.Sha256((ByteString)(operation ?? "")));
+            payload = Helper.Concat(payload, CryptoLib.Sha256(requestPayload ?? (ByteString)""));
             payload = Helper.Concat(payload, new byte[] { success ? (byte)0x01 : (byte)0x00 });
             payload = Helper.Concat(payload, ComputeResultHash(result));
             payload = Helper.Concat(payload, CryptoLib.Sha256((ByteString)(error ?? "")));

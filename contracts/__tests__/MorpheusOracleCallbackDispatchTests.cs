@@ -88,7 +88,7 @@ namespace MorpheusOracle.Contracts.Tests
             byte[] scriptHashLe = oracle.Hash.GetSpan().ToArray();
             uint network = ProtocolSettings.Default.Network;
             byte[] digest = ComputeFulfillmentDigest(
-                requestId, AppId, ModuleId, Operation, true, result, "", scriptHashLe, network);
+                requestId, AppId, ModuleId, Operation, new byte[] { 1, 2, 3 }, true, result, "", scriptHashLe, network);
             byte[] signature = SignVerified(digest, verifier);
             oracle.FulfillRequest(requestId, true, result, "", signature);
 
@@ -100,6 +100,17 @@ namespace MorpheusOracle.Contracts.Tests
             Assert.Equal(ModuleId, Str(cb[1]));     // ModuleId
             Assert.Equal(Operation, Str(cb[2]));    // Operation
             Assert.False(cb[3] is Neo.VM.Types.Null, "requester populated; legacy adapter passes null");
+
+            // A signature honestly produced for another payload must not fulfill this request.
+            engine.SetTransactionSigners(requester);
+            BigInteger secondRequest = oracle.SubmitMiniAppRequest(
+                AppId, ModuleId, Operation, new byte[] { 1, 2, 3 })!.Value;
+            byte[] wrongPayloadDigest = ComputeFulfillmentDigest(
+                secondRequest, AppId, ModuleId, Operation, new byte[] { 3, 2, 1 },
+                true, result, "", scriptHashLe, network);
+            engine.SetTransactionSigners(owner);
+            Assert.ThrowsAny<Exception>(() => oracle.FulfillRequest(
+                secondRequest, true, result, "", SignVerified(wrongPayloadDigest, verifier)));
         }
 
         [Fact]
@@ -150,7 +161,7 @@ namespace MorpheusOracle.Contracts.Tests
 
             byte[] result = new byte[] { 0x01 };
             byte[] digest = ComputeFulfillmentDigest(
-                requestId, AppId, ModuleId, Operation, true, result, "",
+                requestId, AppId, ModuleId, Operation, new byte[] { 1, 2, 3 }, true, result, "",
                 oracle.Hash.GetSpan().ToArray(), ProtocolSettings.Default.Network);
             oracle.FulfillRequest(requestId, true, result, "", SignVerified(digest, verifier));
 
@@ -271,7 +282,7 @@ namespace MorpheusOracle.Contracts.Tests
         }
 
         private static byte[] ComputeFulfillmentDigest(
-            BigInteger requestId, string appId, string moduleId, string operation,
+            BigInteger requestId, string appId, string moduleId, string operation, byte[] requestPayload,
             bool success, byte[] result, string error, byte[] scriptHashLe, uint network)
         {
             static byte[] Sha(byte[] b)
@@ -280,11 +291,12 @@ namespace MorpheusOracle.Contracts.Tests
                 return sha.ComputeHash(b);
             }
             var payload = new List<byte>();
-            payload.AddRange(System.Text.Encoding.ASCII.GetBytes("miniapp-os-fulfillment-v1"));
+            payload.AddRange(System.Text.Encoding.ASCII.GetBytes("miniapp-os-fulfillment-v2"));
             payload.AddRange(ToUInt256BE(requestId));
             payload.AddRange(Sha(System.Text.Encoding.UTF8.GetBytes(appId)));
             payload.AddRange(Sha(System.Text.Encoding.UTF8.GetBytes(moduleId)));
             payload.AddRange(Sha(System.Text.Encoding.UTF8.GetBytes(operation)));
+            payload.AddRange(Sha(requestPayload ?? System.Array.Empty<byte>()));
             payload.Add(success ? (byte)0x01 : (byte)0x00);
             payload.AddRange(Sha(result ?? System.Array.Empty<byte>()));
             payload.AddRange(Sha(System.Text.Encoding.UTF8.GetBytes(error ?? "")));

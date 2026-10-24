@@ -76,6 +76,22 @@ fn decode_byte_string_from_base64(raw: &str) -> String {
     String::from_utf8_lossy(&bytes).to_string()
 }
 
+fn raw_byte_string_base64(item: Option<&Value>) -> Option<Vec<u8>> {
+    let object = item?.as_object()?;
+    let item_type = object.get("type")?.as_str()?.to_lowercase();
+    if item_type != "bytestring" && item_type != "bytearray" {
+        return None;
+    }
+    let raw = object.get("value")?.as_str()?.trim();
+    Some(neo_os_core::base64::decode_lenient(raw))
+}
+
+fn attach_raw_payload(event: &mut NeoN3Event, item: Option<&Value>) {
+    if let Some(bytes) = raw_byte_string_base64(item) {
+        event.payload_hex = hex(&bytes);
+    }
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -175,6 +191,8 @@ pub struct NeoN3Event {
     pub callback_contract: String,
     pub callback_method: String,
     pub payload_text: String,
+    /// Lowercase hex of the exact on-chain payload bytes.
+    pub payload_hex: String,
     pub created_at_ms: i64,
     pub fulfilled_at_ms: i64,
     pub block_number: i64,
@@ -227,6 +245,7 @@ pub fn build_event_from_notification_state(
             callback_contract: String::new(),
             callback_method: LEGACY_CALLBACK_METHOD.to_string(),
             payload_text: string_at(6),
+            payload_hex: hex(string_at(6).as_bytes()),
             created_at_ms: 0,
             fulfilled_at_ms: 0,
             block_number,
@@ -251,6 +270,7 @@ pub fn build_event_from_notification_state(
             callback_contract: string_at(3),
             callback_method: string_at(4),
             payload_text: string_at(5),
+            payload_hex: hex(string_at(5).as_bytes()),
             app_id: String::new(),
             module_id: String::new(),
             operation: String::new(),
@@ -304,6 +324,7 @@ pub fn build_event_from_request_record(decoded: &[Value], request_id: &str) -> O
             callback_contract: as_string(7),
             callback_method: LEGACY_CALLBACK_METHOD.to_string(),
             payload_text: as_string(4),
+            payload_hex: hex(as_string(4).as_bytes()),
             created_at_ms,
             fulfilled_at_ms,
             block_number: created_at_ms,
@@ -337,6 +358,7 @@ pub fn build_event_from_request_record(decoded: &[Value], request_id: &str) -> O
             callback_contract: as_string(3),
             callback_method: as_string(4),
             payload_text: as_string(2),
+            payload_hex: hex(as_string(2).as_bytes()),
             app_id: String::new(),
             module_id: String::new(),
             operation: String::new(),
@@ -425,13 +447,19 @@ pub fn scan_oracle_request_block<T: HttpTransport>(
                     .iter()
                     .map(|entry| decode_neo_item(entry, Encoding::Base64))
                     .collect();
-                if let Some(event) = build_event_from_notification_state(
+                if let Some(mut event) = build_event_from_notification_state(
                     &event_name,
                     &decoded_state,
                     height as i64,
                     tx_hash,
                     Some(notification_index as i64),
                 ) {
+                    let payload_index = if event_name == "MiniAppRequestQueued" {
+                        6
+                    } else {
+                        5
+                    };
+                    attach_raw_payload(&mut event, state.get(payload_index));
                     events.push(event);
                 }
             }
@@ -514,13 +542,22 @@ pub fn scan_oracle_requests_via_n3index<T: HttpTransport>(
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .trim();
-            build_event_from_notification_state(
+            let mut event = build_event_from_notification_state(
                 event_name,
                 &decoded_state,
                 row.get("block_index").and_then(Value::as_i64).unwrap_or(0),
                 row.get("txid").and_then(Value::as_str).unwrap_or(""),
                 row.get("notification_index").and_then(Value::as_i64),
-            )
+            );
+            if let Some(event) = event.as_mut() {
+                let payload_index = if event_name == "MiniAppRequestQueued" {
+                    6
+                } else {
+                    5
+                };
+                attach_raw_payload(event, state.get(payload_index));
+            }
+            event
         })
         .collect();
 
@@ -580,10 +617,16 @@ pub fn scan_oracle_requests_by_id<T: HttpTransport>(
         let first = stack.first().cloned().unwrap_or(Value::Null);
         let decoded = decode_neo_item(&first, Encoding::Base64);
         let decoded_array = decoded.as_array().cloned().unwrap_or_default();
-        Ok(build_event_from_request_record(
-            &decoded_array,
-            &request_id.to_string(),
-        ))
+        let mut event = build_event_from_request_record(&decoded_array, &request_id.to_string());
+        if let Some(event) = event.as_mut() {
+            let raw_fields = first.get("value").and_then(Value::as_array);
+            let payload_index = if decoded_array.len() >= 14 { 4 } else { 2 };
+            attach_raw_payload(
+                event,
+                raw_fields.and_then(|fields| fields.get(payload_index)),
+            );
+        }
+        Ok(event)
     })?;
     Ok(events.into_iter().flatten().collect())
 }

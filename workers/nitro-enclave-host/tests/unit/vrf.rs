@@ -466,6 +466,7 @@ fn random_body(
         "chain": chain,
         "request_type": "random",
         "request_id": request_id,
+        "payload_text": "{}",
         "payload": {},
         "fulfillment_context": fulfillment_context,
     })

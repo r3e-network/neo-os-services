@@ -34,7 +34,7 @@ const ORACLE_ABI = [
   'error ModuleNotGranted()',
 ];
 
-const FULFILLMENT_DOMAIN = 'morpheus-evm-fulfillment-v1';
+const FULFILLMENT_DOMAIN = 'morpheus-evm-fulfillment-v2';
 const STATUS_PENDING = 1; // Status enum: None=0, Pending=1, Succeeded=2, Failed=3
 
 const providerCache = new Map();
@@ -301,6 +301,7 @@ function buildNeoXEventFromRequest(record) {
     payloadText: isConfidentialDecryptOperation(operation)
       ? decodeConfidentialEnvelope(record.payload)
       : decodePayload(record.payload),
+    payloadHex: record.payload,
     // Preserve the on-chain messageId for the decrypt lane so the relayer can bind the
     // /oracle/decrypt request to the stored message (the worker requires binding by default).
     messageId: isConfidentialDecryptOperation(operation)
@@ -377,14 +378,23 @@ export function resolveResultBytesHex(result, resultBytesBase64) {
   return `0x${Buffer.from(text, 'utf8').toString('hex')}`;
 }
 
-// keccak digest matching MorpheusOracleEVM.fulfillmentDigest (bound to chain+contract).
+// keccak digest matching MorpheusOracleEVM.fulfillmentDigest (bound to chain+contract+payload).
 export function buildNeoXDigest(config, fulfillment, resultBytesHex) {
+  const payloadHex =
+    fulfillment.payloadHex === undefined || fulfillment.payloadHex === null
+      ? null
+      : String(fulfillment.payloadHex);
+  const payload =
+    payloadHex === null
+      ? ethers.toUtf8Bytes(String(fulfillment.payloadText ?? ''))
+      : ethers.getBytes(payloadHex.startsWith('0x') ? payloadHex : `0x${payloadHex}`);
   const enc = ethers.AbiCoder.defaultAbiCoder().encode(
     [
       'string',
       'uint256',
       'address',
       'uint256',
+      'bytes32',
       'bytes32',
       'bytes32',
       'bytes32',
@@ -404,6 +414,7 @@ export function buildNeoXDigest(config, fulfillment, resultBytesHex) {
       ethers.keccak256(ethers.toUtf8Bytes(String(fulfillment.appId ?? ''))),
       ethers.keccak256(ethers.toUtf8Bytes(String(fulfillment.moduleId ?? ''))),
       ethers.keccak256(ethers.toUtf8Bytes(String(fulfillment.operation ?? ''))),
+      ethers.keccak256(payload),
       Boolean(fulfillment.success),
       ethers.keccak256(resultBytesHex),
       ethers.keccak256(ethers.toUtf8Bytes(String(fulfillment.error ?? ''))),

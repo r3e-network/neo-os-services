@@ -266,9 +266,9 @@ contract MorpheusOracleEVM is IMorpheusOracleEVM, Updatable {
     /// delegates here, so both produce identical digests.
     function _fulfillmentDigest(Request storage r, uint256 requestId, bool success, bytes memory result, string memory error_) internal view returns (bytes32) {
         return keccak256(abi.encode(
-            "morpheus-evm-fulfillment-v1", block.chainid, address(this),
+            "morpheus-evm-fulfillment-v2", block.chainid, address(this),
             requestId, keccak256(bytes(r.appId)), keccak256(bytes(r.moduleId)), keccak256(bytes(r.operation)),
-            success, keccak256(result), keccak256(bytes(error_))
+            keccak256(r.payload), success, keccak256(result), keccak256(bytes(error_))
         ));
     }
 

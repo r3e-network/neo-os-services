@@ -1009,6 +1009,7 @@ impl SignerPlane for CustodySigner {
                         "app_id": fulfillment.app_id,
                         "module_id": fulfillment.module_id,
                         "operation": fulfillment.operation,
+                        "payload_hex": fulfillment.payload,
                         "success": fulfillment.success,
                         "error": fulfillment.error,
                     },

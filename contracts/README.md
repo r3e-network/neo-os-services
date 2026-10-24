@@ -104,6 +104,13 @@ The deployed kernel is upgradeable (admin-gated `Update`), but until the next up
 the following are live behaviors integrators must account for — and required fixes for the
 next `ContractManagement.Update`:
 
+- **Fulfillment payload binding (fixed in source; pending coordinated Update)**: the N3 digest
+  domain is now `miniapp-os-fulfillment-v2` and includes SHA-256 of the exact stored request
+  payload. NeoX uses `morpheus-evm-fulfillment-v2` with `keccak256(payload)`. Enclave, relayer,
+  compatibility signers and both contracts must move together. Old-domain signatures are not
+  accepted by the new code; drain or otherwise settle in-flight requests in the owner-approved
+  upgrade window rather than enabling a legacy verification fallback.
+
 - **Callback reverse-mapping uniqueness (OR-D-03)**: `PutMiniApp` (and `RebuildIndexes`) must
   assert `CallbackIndexMap[callbackContract]` is empty, already equals the appId, or maps to
   an app with the SAME admin before writing, or any account can repoint another app's callback

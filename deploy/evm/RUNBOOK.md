@@ -30,8 +30,8 @@ Production custody roles must be distinct:
    The app must be registered and the module granted. → `RequestQueued` event.
 2. The fulfiller sees the event, runs the lane (VRF locally; HTTP/compute via the
    Nitro worker when `NEOX_WORKER_URL` is set), and signs
-   `digest = keccak(abi.encode("morpheus-evm-fulfillment-v1", chainId, oracle, id,
-keccak(appId), keccak(moduleId), keccak(operation), success, keccak(result), keccak(errorMessage)))`
+   `digest = keccak(abi.encode("morpheus-evm-fulfillment-v2", chainId, oracle, id,
+keccak(appId), keccak(moduleId), keccak(operation), keccak(payload), success, keccak(result), keccak(errorMessage)))`
    with the verifier key (EIP-191 personal-sign over the 32-byte digest).
 3. `fulfillRequest(id, success, result, errorMessage, signature)` — `onlyUpdater`; the kernel
    recomputes the digest and requires `ecrecover == oracleVerifier`, stores the result,

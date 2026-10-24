@@ -947,6 +947,7 @@ async fn sign_eip191_fulfillment_route(
         app_id: request.fulfillment.app_id,
         module_id: request.fulfillment.module_id,
         operation: request.fulfillment.operation,
+        payload: request.fulfillment.payload_hex,
         success: request.fulfillment.success,
         error: request.fulfillment.error,
     };
@@ -1913,6 +1914,8 @@ pub struct Eip191FulfillmentFields {
     pub app_id: String,
     pub module_id: String,
     pub operation: String,
+    /// Exact request payload bytes, hex encoded with an optional 0x prefix.
+    pub payload_hex: String,
     pub success: bool,
     #[serde(default)]
     pub error: String,

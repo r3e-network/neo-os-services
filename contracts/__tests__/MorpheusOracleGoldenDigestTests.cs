@@ -53,6 +53,7 @@ namespace MorpheusOracle.Contracts.Tests
                 AppId,
                 ModuleId,
                 Operation,
+                new byte[] { 1, 2, 3 },
                 Success,
                 Encoding.UTF8.GetBytes(ResultJson),
                 Error,
@@ -62,7 +63,7 @@ namespace MorpheusOracle.Contracts.Tests
             // MUST equal the relayer JS bound golden vector (cross-language parity).
             // If this fails, the contract's digest algorithm drifted from the JS implementation.
             Assert.Equal(
-                "cf2832f7e5ab9a37a6c93907be5d7762d7b6c62c256363df432adc7b2fb2192e",
+                "2ab9c0ca2902504a50c71404d71f7c8231aadebf816cdde61c553df34f8672dc",
                 BitConverter.ToString(digest).Replace("-", "").ToLowerInvariant()
             );
         }
@@ -71,7 +72,7 @@ namespace MorpheusOracle.Contracts.Tests
         // kernel + the dispatch-test helper). Kept here so a simultaneous drift in kernel source
         // AND the dispatch helper is still caught.
         private static byte[] ComputeFulfillmentDigest(
-            BigInteger requestId, string appId, string moduleId, string operation,
+            BigInteger requestId, string appId, string moduleId, string operation, byte[] requestPayload,
             bool success, byte[] result, string error, byte[] scriptHashLe, uint network)
         {
             static byte[] Sha(byte[] b)
@@ -80,11 +81,12 @@ namespace MorpheusOracle.Contracts.Tests
                 return sha.ComputeHash(b);
             }
             var payload = new List<byte>();
-            payload.AddRange(Encoding.ASCII.GetBytes("miniapp-os-fulfillment-v1"));
+            payload.AddRange(Encoding.ASCII.GetBytes("miniapp-os-fulfillment-v2"));
             payload.AddRange(ToUInt256BE(requestId));
             payload.AddRange(Sha(Encoding.UTF8.GetBytes(appId)));
             payload.AddRange(Sha(Encoding.UTF8.GetBytes(moduleId)));
             payload.AddRange(Sha(Encoding.UTF8.GetBytes(operation)));
+            payload.AddRange(Sha(requestPayload ?? Array.Empty<byte>()));
             payload.Add(success ? (byte)0x01 : (byte)0x00);
             payload.AddRange(Sha(result ?? Array.Empty<byte>()));
             payload.AddRange(Sha(Encoding.UTF8.GetBytes(error ?? "")));

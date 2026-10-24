@@ -20,6 +20,8 @@ pub struct NeoXEvent {
     pub module_id: String,
     pub operation: String,
     pub payload_text: String,
+    /// Lowercase hex of the original request payload before any decrypt decoding.
+    pub payload_hex: String,
     pub message_id: String,
     pub requester: String,
     pub callback_contract: String,
@@ -95,6 +97,11 @@ pub fn build_event_from_request(record: &Value) -> Option<NeoXEvent> {
         } else {
             decode_payload(&payload_hex)
         },
+        payload_hex: payload_hex
+            .trim()
+            .strip_prefix("0x")
+            .unwrap_or(payload_hex.trim())
+            .to_ascii_lowercase(),
         message_id: if decrypt_lane {
             decode_confidential_message_id(&payload_hex)
         } else {

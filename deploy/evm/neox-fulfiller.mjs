@@ -141,6 +141,7 @@ function buildDigest(r, success, result, error) {
   const kAppId = ethers.keccak256(ethers.toUtf8Bytes(r.appId));
   const kModule = ethers.keccak256(ethers.toUtf8Bytes(r.moduleId));
   const kOp = ethers.keccak256(ethers.toUtf8Bytes(r.operation));
+  const kPayload = ethers.keccak256(r.payload);
   const kResult = ethers.keccak256(result);
   const kError = ethers.keccak256(ethers.toUtf8Bytes(error));
   const enc = ethers.AbiCoder.defaultAbiCoder().encode(
@@ -152,18 +153,20 @@ function buildDigest(r, success, result, error) {
       'bytes32',
       'bytes32',
       'bytes32',
+      'bytes32',
       'bool',
       'bytes32',
       'bytes32',
     ],
     [
-      'morpheus-evm-fulfillment-v1',
+      'morpheus-evm-fulfillment-v2',
       CHAIN_ID,
       ADDR,
       r.id,
       kAppId,
       kModule,
       kOp,
+      kPayload,
       success,
       kResult,
       kError,

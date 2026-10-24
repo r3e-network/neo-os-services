@@ -1075,6 +1075,7 @@ fn an_eip191_request_is_structured_and_the_returned_signature_is_recovered() {
         app_id: "demo.app".to_string(),
         module_id: "oracle.fetch".to_string(),
         operation: "privacy_oracle".to_string(),
+        payload: String::new(),
         success: true,
         error: String::new(),
     };
@@ -1126,6 +1127,7 @@ fn an_eip191_request_is_structured_and_the_returned_signature_is_recovered() {
                 "app_id": "demo.app",
                 "module_id": "oracle.fetch",
                 "operation": "privacy_oracle",
+                "payload_hex": "",
                 "success": true,
                 "error": "",
             },
@@ -1143,6 +1145,7 @@ fn an_eip191_success_cannot_substitute_digest_or_signature_identity() {
         app_id: "demo.app".to_string(),
         module_id: "oracle.fetch".to_string(),
         operation: "privacy_oracle".to_string(),
+        payload: String::new(),
         success: true,
         error: String::new(),
     };
@@ -1309,6 +1312,7 @@ fn tokens_presented(overlay: &[(&str, &str)]) -> (Option<String>, Option<String>
             app_id: "demo.app".to_string(),
             module_id: "oracle.fetch".to_string(),
             operation: "privacy_oracle".to_string(),
+            payload: String::new(),
             success: true,
             error: String::new(),
         },

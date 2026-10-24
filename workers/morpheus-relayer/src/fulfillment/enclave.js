@@ -118,6 +118,8 @@ export async function callEnclaveFulfill(
       callback_method: event.callbackMethod || payload.callback_method || '',
     },
     payload_text: event.payloadText || '',
+    payload_hex:
+      event.payloadHex || Buffer.from(String(event.payloadText || ''), 'utf8').toString('hex'),
     fulfillment_context: buildEnclaveFulfillmentContext(config, chain, event, fulfillmentContext),
     nonce: requestNonce,
   };
@@ -155,6 +157,8 @@ export async function callEnclaveFulfill(
     appId: fulfillmentContext.appId,
     moduleId: fulfillmentContext.moduleId,
     operation: fulfillmentContext.operation,
+    payloadText: String(event.payloadText || ''),
+    payloadHex: event.payloadHex,
     success: Boolean(body.success),
     result: typeof body.result === 'string' ? body.result : '',
     result_bytes_base64:

@@ -174,6 +174,36 @@ fn payload_text(body: &serde_json::Value, payload: &serde_json::Value) -> serde_
         .unwrap_or(serde_json::Value::Null)
 }
 
+fn request_payload_bytes(body: &serde_json::Value) -> Result<Vec<u8>, RuntimeError> {
+    let text = body.get("payload_text").and_then(serde_json::Value::as_str);
+    let encoded = body
+        .get("payload_hex")
+        .or_else(|| body.get("payloadHex"))
+        .and_then(serde_json::Value::as_str);
+    let decoded = match encoded {
+        Some(value) => {
+            let raw = value
+                .strip_prefix("0x")
+                .or_else(|| value.strip_prefix("0X"))
+                .unwrap_or(value);
+            Some(hex::decode(raw).map_err(|_| http_error(400, "payload_hex is invalid"))?)
+        }
+        None => None,
+    };
+    match (text, decoded) {
+        (Some(text), Some(bytes)) if bytes != text.as_bytes() => {
+            Err(http_error(400, "payload_hex does not match payload_text"))
+        }
+        (Some(text), Some(bytes)) => {
+            debug_assert_eq!(bytes, text.as_bytes());
+            Ok(bytes)
+        }
+        (Some(text), None) => Ok(text.as_bytes().to_vec()),
+        (None, Some(bytes)) => Ok(bytes),
+        (None, None) => Err(http_error(400, "payload_text or payload_hex is required")),
+    }
+}
+
 pub fn handle_oracle_fulfill(
     state: &AppState,
     body: &serde_json::Value,
@@ -201,6 +231,8 @@ pub fn handle_oracle_fulfill(
     if request_id.is_empty() {
         return Err(http_error(400, "request_id is required"));
     }
+    let network = state.resolve_network()?;
+    let original_payload = request_payload_bytes(body)?;
 
     let intent = resolve_kernel_intent(&request_type);
 
@@ -341,7 +373,6 @@ pub fn handle_oracle_fulfill(
         &fulfillment_context,
         &["contract_script_hash", "contractScriptHash"],
     );
-    let network = state.resolve_network()?;
     let (digest_hex, signed, result_bytes_hex, attestation_role) = if chain == "neox" {
         let chain_id = required_neox_chain_id(&fulfillment_context)?;
         let oracle_contract =
@@ -357,6 +388,7 @@ pub fn handle_oracle_fulfill(
             app_id: app_id.clone(),
             module_id: module_id.clone(),
             operation: operation.clone(),
+            payload: hex::encode(&original_payload),
             success: fulfillment.success,
             error: error.clone(),
         };
@@ -400,6 +432,7 @@ pub fn handle_oracle_fulfill(
             app_id: app_id.clone(),
             module_id: module_id.clone(),
             operation: operation.clone(),
+            payload: original_payload.clone(),
             contract_script_hash,
             network_magic,
         };

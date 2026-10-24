@@ -3,8 +3,8 @@ import { isIP } from 'node:net';
 import { sha256Hex } from '@r3e-network/neo-os-services-shared/node-runtime';
 import { neoNetworkMagicLe4 } from '@r3e-network/neo-os-services-shared/neo-encoding';
 import { normalizeRequestType, strip0x, trimString } from './lib/strings.js';
-// Neo N3 contract uses the v1 kernel domain with the full envelope (appId, moduleId, operation).
-const FULFILLMENT_SIGNATURE_DOMAIN_N3 = Buffer.from('miniapp-os-fulfillment-v1', 'utf8');
+// Neo N3 contract uses the v2 kernel domain with envelope and request-payload binding.
+const FULFILLMENT_SIGNATURE_DOMAIN_N3 = Buffer.from('miniapp-os-fulfillment-v2', 'utf8');
 
 /**
  * SECURITY (S11): the smart-fetch lane forwards a caller-supplied URL to the
@@ -426,6 +426,8 @@ export function buildFulfillmentDigestBytes(
     appId = '',
     moduleId = '',
     operation = '',
+    payloadText = '',
+    payloadHex,
     contractScriptHash = '',
     networkMagic,
   } = {}
@@ -434,6 +436,14 @@ export function buildFulfillmentDigestBytes(
   const resultBytes = trimString(resultBytesBase64)
     ? Buffer.from(trimString(resultBytesBase64), 'base64')
     : Buffer.from(String(result || ''), 'utf8');
+  const normalizedPayloadHex =
+    payloadHex === undefined || payloadHex === null ? '' : strip0x(String(payloadHex));
+  if (normalizedPayloadHex && !/^(?:[0-9a-fA-F]{2})+$/.test(normalizedPayloadHex)) {
+    throw new Error('payloadHex must be even-length hexadecimal');
+  }
+  const requestPayload = normalizedPayloadHex
+    ? Buffer.from(normalizedPayloadHex, 'hex')
+    : Buffer.from(String(payloadText ?? ''), 'utf8');
 
   // Deployment + network binding (kernel ComputeFulfillmentDigest): the contract
   // appends (ByteString)Runtime.ExecutingScriptHash (20 bytes, little-endian) and
@@ -469,7 +479,7 @@ export function buildFulfillmentDigestBytes(
   }
 
   // Neo N3 kernel contract: domain + requestId + sha256(appId) + sha256(moduleId)
-  // + sha256(operation) + success + sha256(result) + sha256(error)
+  // + sha256(operation) + sha256(requestPayload) + success + sha256(result) + sha256(error)
   return createHash('sha256')
     .update(
       Buffer.concat([
@@ -478,6 +488,7 @@ export function buildFulfillmentDigestBytes(
         sha256Buffer(String(appId ?? '')),
         sha256Buffer(String(moduleId ?? '')),
         sha256Buffer(String(operation ?? '')),
+        sha256Buffer(requestPayload),
         successByte,
         sha256Buffer(resultBytes),
         sha256Buffer(String(error ?? '')),

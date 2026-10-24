@@ -133,7 +133,7 @@ test('buildFulfillmentDigestBytes binds SHA256(result) over the 79-byte codec', 
 
   // Independently recompute the expected digest with SHA256(GOLDEN_RESULT) inline
   // to prove the codec bytes (not a JSON envelope) drive the signature.
-  const DOMAIN = Buffer.from('miniapp-os-fulfillment-v1', 'utf8');
+  const DOMAIN = Buffer.from('miniapp-os-fulfillment-v2', 'utf8');
   const u256 = (v) => Buffer.from(BigInt(v).toString(16).padStart(64, '0'), 'hex');
   const sha = (b) => createHash('sha256').update(b).digest();
   const expected = createHash('sha256')
@@ -144,6 +144,7 @@ test('buildFulfillmentDigestBytes binds SHA256(result) over the 79-byte codec', 
         sha(Buffer.from('miniapp-color-clash', 'utf8')),
         sha(Buffer.from('game.session', 'utf8')),
         sha(Buffer.from('session.finalize', 'utf8')),
+        sha(Buffer.from('', 'utf8')),
         Buffer.from([1]),
         sha(GOLDEN_RESULT),
         sha(Buffer.from('', 'utf8')),

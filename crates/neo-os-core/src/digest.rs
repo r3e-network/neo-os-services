@@ -13,7 +13,7 @@ use crate::js_value::JsValue;
 use crate::neo_encoding::{decode_hex_lossy, network_magic_le4, parse_bigint};
 use crate::{sha256, CoreError, CoreResult};
 
-pub const FULFILLMENT_DOMAIN_N3: &[u8] = b"miniapp-os-fulfillment-v1";
+pub const FULFILLMENT_DOMAIN_N3: &[u8] = b"miniapp-os-fulfillment-v2";
 pub const FULFILLMENT_DOMAIN_LEGACY: &[u8] = b"morpheus-fulfillment-v2";
 
 /// Mirrors the JS options object of `buildFulfillmentDigestBytes`.
@@ -24,6 +24,8 @@ pub struct FulfillmentOptions {
     pub app_id: String,
     pub module_id: String,
     pub operation: String,
+    /// Exact payload bytes stored by the request, not a JSON re-serialization.
+    pub payload: Vec<u8>,
     pub contract_script_hash: String,
     /// JS receives this as a `Number`; `Number.isFinite` gates deployment
     /// binding. `None` models `undefined`.
@@ -149,6 +151,7 @@ pub fn build_fulfillment_digest_bytes(
         message.extend_from_slice(&sha256_str(&options.app_id));
         message.extend_from_slice(&sha256_str(&options.module_id));
         message.extend_from_slice(&sha256_str(&options.operation));
+        message.extend_from_slice(&sha256(&options.payload));
         message.extend_from_slice(&success_byte);
         message.extend_from_slice(&sha256(&result_bytes));
         message.extend_from_slice(&sha256_str(error));

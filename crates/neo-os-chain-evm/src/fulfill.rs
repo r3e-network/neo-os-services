@@ -13,7 +13,7 @@ use sha3::{Digest, Keccak256};
 
 use crate::abi::{abi_decode_uint256_bytes, AbiValue};
 
-pub const FULFILLMENT_DOMAIN: &str = "morpheus-evm-fulfillment-v1";
+pub const FULFILLMENT_DOMAIN: &str = "morpheus-evm-fulfillment-v2";
 /// Status enum on the kernel: None=0, Pending=1, Succeeded=2, Failed=3.
 pub const STATUS_PENDING: u64 = 1;
 
@@ -29,14 +29,16 @@ pub struct Fulfillment {
     pub app_id: String,
     pub module_id: String,
     pub operation: String,
+    /// Exact request payload bytes as hex, including any confidential envelope wrapper.
+    pub payload: String,
     pub success: bool,
     pub error: String,
 }
 
 /// buildNeoXDigest: `keccak256(abi.encode(domain, chainId, oracleContract,
 /// requestId, keccak256(appId), keccak256(moduleId), keccak256(operation),
-/// success, keccak256(resultBytes), keccak256(error)))` — bound to
-/// chain + contract so a signature cannot be replayed across deployments.
+/// keccak256(payload), success, keccak256(resultBytes), keccak256(error)))` —
+/// bound to chain + contract + exact request payload.
 pub fn build_neox_digest(
     chain_id: u64,
     oracle_contract: &str,
@@ -51,6 +53,9 @@ pub fn build_neox_digest(
     let result_bytes = decode_hex_strict(result_bytes_hex).ok_or_else(|| {
         crate::abi::AbiError("result bytes must be even-length hexadecimal".into())
     })?;
+    let payload = decode_hex_strict(&fulfillment.payload).ok_or_else(|| {
+        crate::abi::AbiError("request payload must be even-length hexadecimal".into())
+    })?;
     let mut contract_word = [0u8; 32];
     contract_word[12..].copy_from_slice(&contract_bytes);
 
@@ -62,6 +67,7 @@ pub fn build_neox_digest(
         AbiValue::Uint256(keccak256(fulfillment.app_id.as_bytes())),
         AbiValue::Uint256(keccak256(fulfillment.module_id.as_bytes())),
         AbiValue::Uint256(keccak256(fulfillment.operation.as_bytes())),
+        AbiValue::Uint256(keccak256(&payload)),
         AbiValue::Bool(fulfillment.success),
         AbiValue::Uint256(keccak256(&result_bytes)),
         AbiValue::Uint256(keccak256(fulfillment.error.as_bytes())),

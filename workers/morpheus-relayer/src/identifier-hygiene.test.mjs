@@ -29,15 +29,25 @@ function sha256(buffer) {
 // Independent contract-mirroring recompute of the Neo N3 kernel digest
 // (MorpheusOracle.ComputeFulfillmentDigest, unbound legacy-deployment form):
 // domain || uint256(requestId) || sha256(appId) || sha256(moduleId) ||
-// sha256(operation) || successByte || sha256(result) || sha256(error).
-function contractStyleN3Digest(requestId, appId, moduleId, operation, success, result, error) {
+// sha256(operation) || sha256(requestPayload) || successByte || sha256(result) || sha256(error).
+function contractStyleN3Digest(
+  requestId,
+  appId,
+  moduleId,
+  operation,
+  success,
+  result,
+  error,
+  requestPayload = ''
+) {
   return sha256(
     Buffer.concat([
-      Buffer.from('miniapp-os-fulfillment-v1', 'utf8'),
+      Buffer.from('miniapp-os-fulfillment-v2', 'utf8'),
       Buffer.from(BigInt(requestId).toString(16).padStart(64, '0'), 'hex'),
       sha256(Buffer.from(appId, 'utf8')),
       sha256(Buffer.from(moduleId, 'utf8')),
       sha256(Buffer.from(operation, 'utf8')),
+      sha256(Buffer.from(requestPayload, 'utf8')),
       Buffer.from([success ? 1 : 0]),
       sha256(Buffer.from(result, 'utf8')),
       sha256(Buffer.from(error, 'utf8')),
@@ -103,10 +113,11 @@ test('N3 fulfillment digest matches the cross-language golden vector (bound + un
     appId: 'demo.app',
     moduleId: 'oracle.fetch',
     operation: 'fetch',
+    payloadHex: '010203',
   }).toString('hex');
   assert.equal(
     unbound,
-    'f1d56005dafa9f199ccb9d6525bc155b9583779aadd8c89dc7a2060077d675aa',
+    'f212156d681619b49c52cdd67059253f788249b528b8fab9d7d7b120be9a4380',
     'unbound N3 digest drifted from the golden vector (cross-language parity broken)'
   );
 
@@ -116,12 +127,13 @@ test('N3 fulfillment digest matches the cross-language golden vector (bound + un
     appId: 'demo.app',
     moduleId: 'oracle.fetch',
     operation: 'fetch',
+    payloadHex: '010203',
     contractScriptHash: '0x1212121212121212121212121212121212121212',
     networkMagic: 894710606,
   }).toString('hex');
   assert.equal(
     bound,
-    'cf2832f7e5ab9a37a6c93907be5d7762d7b6c62c256363df432adc7b2fb2192e',
+    '2ab9c0ca2902504a50c71404d71f7c8231aadebf816cdde61c553df34f8672dc',
     'bound N3 digest drifted from the golden vector (cross-language parity broken)'
   );
 });
@@ -308,18 +320,20 @@ test('ingestion rejects whitespace identifiers and finalizes with a contract-ver
       'bytes32',
       'bytes32',
       'bytes32',
+      'bytes32',
       'bool',
       'bytes32',
       'bytes32',
     ],
     [
-      'morpheus-evm-fulfillment-v1',
+      'morpheus-evm-fulfillment-v2',
       47763n,
       ethers.getAddress(config.neox.oracleContract),
       9n,
       ethers.keccak256(ethers.toUtf8Bytes(' vrf-e2e')),
       ethers.keccak256(ethers.toUtf8Bytes('random.generate')),
       ethers.keccak256(ethers.toUtf8Bytes('random')),
+      ethers.keccak256(ethers.toUtf8Bytes('')),
       false,
       ethers.keccak256(
         `0x${Buffer.from(String(fulfillment.result || ''), 'utf8').toString('hex')}`

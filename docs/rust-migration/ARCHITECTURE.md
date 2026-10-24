@@ -374,8 +374,8 @@ baselines/js-parity/
 
 | 契约                  | 细节                                                                                                                                                                                      |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| fulfillment digest 域 | `miniapp-os-fulfillment-v1`（N3 kernel）、`morpheus-fulfillment-v2`（legacy）                                                                                                             |
-| digest 结构           | domain + requestId(uint256 BE) + sha256(appId) + sha256(moduleId) + sha256(operation) + success + sha256(result) + sha256(error) + [部署后缀：script hash 反序 20B + network magic LE 4B] |
+| fulfillment digest 域 | `miniapp-os-fulfillment-v2`（N3 kernel）、`morpheus-fulfillment-v2`（legacy）                                                                                                             |
+| digest 结构           | domain + requestId(uint256 BE) + sha256(appId) + sha256(moduleId) + sha256(operation) + sha256(原始 payload 字节) + success + sha256(result) + sha256(error) + [部署后缀：script hash 反序 20B + network magic LE 4B] |
 | 标识符卫生            | requestId/error **原样哈希不 trim**（链上按存储字节哈希），空白标识符在摄入时拒绝                                                                                                         |
 | 79 字节 RESULT CODEC  | `0x02` tag + commitment 32 + answerHash 32 + elapsedMs u64 BE + undos u8 + score u32 BE + difficulty u8，**大端，非 StdLib.Serialize**                                                    |
 | 签名信封              | `{output_hash, attestation_hash, signature, public_key, signer_address, signer_script_hash, tee_attestation}`                                                                             |

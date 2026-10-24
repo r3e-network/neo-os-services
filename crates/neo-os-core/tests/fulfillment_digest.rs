@@ -25,6 +25,11 @@ fn options_from(value: &serde_json::Value) -> FulfillmentOptions {
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string(),
+        payload: value
+            .get("payloadHex")
+            .and_then(|v| v.as_str())
+            .map(|v| hex::decode(v).expect("payloadHex is valid hex"))
+            .unwrap_or_default(),
         contract_script_hash: value
             .get("contractScriptHash")
             .and_then(|v| v.as_str())
@@ -73,6 +78,28 @@ fn fulfillment_digest_matches_js_oracle() {
             "{name}"
         );
     }
+}
+
+#[test]
+fn request_payload_changes_the_n3_fulfillment_digest() {
+    let mut options = FulfillmentOptions::n3("app:1", "oracle.fetch", "privacy_oracle");
+    let digest = |options: &FulfillmentOptions| {
+        build_fulfillment_digest_bytes(
+            &JsValue::Str("42".into()),
+            "oracle/query",
+            true,
+            "result",
+            "",
+            "",
+            options,
+        )
+        .expect("digest")
+    };
+    options.payload = b"{\"op\":\"add\"}".to_vec();
+    let digest_a = digest(&options);
+    options.payload = b"{\"op\":\"sub\"}".to_vec();
+    let digest_b = digest(&options);
+    assert_ne!(digest_a, digest_b);
 }
 
 fn str_field(value: Option<&serde_json::Value>) -> String {

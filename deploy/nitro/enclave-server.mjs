@@ -777,6 +777,12 @@ export async function handleOracleFulfill(requestBody) {
     appId,
     moduleId,
     operation,
+    payloadText: String(context.payloadText ?? ''),
+    payloadHex:
+      requestBody?.payload_hex ??
+      requestBody?.payloadHex ??
+      payload?.payload_hex ??
+      payload?.payloadHex,
     success,
     result,
     result_bytes_base64: resultBytesBase64,

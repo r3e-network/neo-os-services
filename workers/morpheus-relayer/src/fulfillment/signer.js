@@ -25,11 +25,17 @@ export function resolveFulfillmentSigningContext(chain, fulfillment = {}) {
   const appId = String(fulfillment.appId ?? '');
   const moduleId = String(fulfillment.moduleId ?? '');
   const operation = String(fulfillment.operation ?? '');
+  const payloadFields = {
+    ...(Object.prototype.hasOwnProperty.call(fulfillment, 'payloadText')
+      ? { payloadText: String(fulfillment.payloadText ?? '') }
+      : {}),
+    ...(fulfillment.payloadHex !== undefined ? { payloadHex: fulfillment.payloadHex } : {}),
+  };
 
   // Legacy Neo N3 requests do not carry appId and still verify against the
   // legacy digest domain.
   if (normalizedChain === 'neo_n3' && !appId) {
-    return { chain: 'legacy', appId: '', moduleId: '', operation: '' };
+    return { chain: 'legacy', appId: '', moduleId: '', operation: '', ...payloadFields };
   }
 
   return {
@@ -37,6 +43,7 @@ export function resolveFulfillmentSigningContext(chain, fulfillment = {}) {
     appId,
     moduleId,
     operation,
+    ...payloadFields,
   };
 }
 
@@ -134,6 +141,8 @@ export function signEncodedFulfillment(config, event, fulfillmentContext, fulfil
     requestId: event.requestId,
     requestType: event.requestType,
     ...fulfillmentContext,
+    payloadText: String(event.payloadText || ''),
+    payloadHex: event.payloadHex,
     success: fulfillment.success,
     result: fulfillment.result || '',
     result_bytes_base64: fulfillment.result_bytes_base64 || '',
