@@ -372,6 +372,7 @@ function recoveryV3Payload() {
     network: 'neo3-testnet',
     aa_contract: `0x${'33'.repeat(20)}`,
     account_id_raw: `0x${'66'.repeat(20)}`,
+    verifier_contract: `0x${'77'.repeat(20)}`,
     account_address: `0x${'44'.repeat(20)}`,
     account_id: 'acct-1',
     new_owner: `0x${'55'.repeat(20)}`,
@@ -1146,7 +1147,7 @@ test('neodid action v3 matches the Rust golden and binds action id and digest to
   assert.match((await foreignRes.json()).error, /action_id.*derived AA action/);
 });
 
-test('neodid action v3 rejects missing context and non-decimal nonce or expiry', async () => {
+test('neodid action v3 rejects missing or zero context and non-decimal nonce or expiry', async () => {
   process.env.MORPHEUS_NEODID_ALLOW_UNVERIFIED_UID = 'true';
   for (const field of [
     'network',
@@ -1162,6 +1163,18 @@ test('neodid action v3 rejects missing context and non-decimal nonce or expiry',
     const res = await issueNeoDidTicket('action-ticket', payload);
     assert.equal(res.status, 400, field);
     assert.match((await res.json()).error, new RegExp(field), field);
+  }
+  for (const field of ['aa_contract', 'verifier_contract', 'account_id_raw', 'disposable_account']) {
+    const res = await issueNeoDidTicket('action-ticket', {
+      ...aaActionV3Payload(),
+      [field]: `0x${'00'.repeat(20)}`,
+    });
+    assert.equal(res.status, 400, field);
+    assert.match(
+      (await res.json()).error,
+      new RegExp(`${field} must be a non-zero 20-byte hash160`),
+      field
+    );
   }
   for (const field of ['session_nonce', 'expires_at']) {
     const res = await issueNeoDidTicket('action-ticket', {
@@ -1279,6 +1292,8 @@ test('neodid recovery-ticket supports confidential provider payloads and binds A
           provider: 'github',
           aa_contract: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
           account_id_raw: '0x0268a387913b250166ddec032b03332690a1ef78',
+          verifier_contract: '0x03013f49c42a14546c8bbe58f9d434c3517fccab',
+          account_address: '0x6d0656f6dd91469db1c90cc1e574380613f43738',
           account_id: 'aa-social-recovery-demo',
           new_owner: '0x89b05cac00804648c666b47ecb1c57bc185821b7',
           recovery_nonce: '8',
@@ -1312,7 +1327,8 @@ test('neodid recovery action id matches the Rust golden and rejects foreign or c
     body.action_nullifier,
     '0x4751923c6caacd2506e954a94a46badfd16b49fbbc49fc56ebab154e4500cd2f'
   );
-  assert.equal(body.digest, '0x052563ca766bef9e5fb108668d46e6f834a7099b06aea69e03dc334a96624f8a');
+  assert.equal(body.verifier_contract, `0x${'77'.repeat(20)}`);
+  assert.equal(body.digest, '0xc6df81ac0312f04224fa3ae534853efd98bd65c94b9f47ff0c75f005fb37415e');
 
   const explicitRes = await issueNeoDidTicket('recovery-ticket', {
     ...recoveryV3Payload(),
@@ -1338,18 +1354,40 @@ test('neodid recovery action id matches the Rust golden and rejects foreign or c
   assert.equal(foreignRes.status, 400);
   assert.match((await foreignRes.json()).error, /action_id.*derived recovery action/);
 
-  const missingRaw = recoveryV3Payload();
-  delete missingRaw.account_id_raw;
-  const missingRawRes = await issueNeoDidTicket('recovery-ticket', missingRaw);
-  assert.equal(missingRawRes.status, 400);
-  assert.match((await missingRawRes.json()).error, /account_id_raw/);
-
   const badNonceRes = await issueNeoDidTicket('recovery-ticket', {
     ...recoveryV3Payload(),
     recovery_nonce: 'n-1',
   });
   assert.equal(badNonceRes.status, 400);
   assert.match((await badNonceRes.json()).error, /recovery_nonce must be a decimal string/);
+});
+
+test('neodid recovery v3 rejects missing or zero AA hash context', async () => {
+  process.env.MORPHEUS_NEODID_RECOVERY_ALLOW_UNVERIFIED_PROVIDERS = 'twitter';
+  for (const field of [
+    'aa_contract',
+    'account_id_raw',
+    'verifier_contract',
+    'account_address',
+    'new_owner',
+  ]) {
+    const missing = recoveryV3Payload();
+    delete missing[field];
+    const missingRes = await issueNeoDidTicket('recovery-ticket', missing);
+    assert.equal(missingRes.status, 400, field);
+    assert.match((await missingRes.json()).error, new RegExp(`${field} is required`), field);
+
+    const zeroRes = await issueNeoDidTicket('recovery-ticket', {
+      ...recoveryV3Payload(),
+      [field]: `0x${'00'.repeat(20)}`,
+    });
+    assert.equal(zeroRes.status, 400, field);
+    assert.match(
+      (await zeroRes.json()).error,
+      new RegExp(`${field} must be a non-zero 20-byte hash160`),
+      field
+    );
+  }
 });
 
 test('neodid recovery-ticket accepts confidential web3auth id_token payloads', async () => {
@@ -1461,6 +1499,7 @@ test('neodid recovery-ticket resolves encrypted_params_ref under the worker netw
     aa_contract: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
     account_id_raw: '0x0268a387913b250166ddec032b03332690a1ef78',
     verifier_contract: '0x03013f49c42a14546c8bbe58f9d434c3517fccab',
+    account_address: '0x6d0656f6dd91469db1c90cc1e574380613f43738',
     account_id: 'aa-social-recovery-demo',
     new_owner: '0x89b05cac00804648c666b47ecb1c57bc185821b7',
     recovery_nonce: '7',

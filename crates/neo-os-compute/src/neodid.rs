@@ -570,14 +570,16 @@ fn resolve_hash160(value: Option<&Json>, field_name: &str) -> Result<String, Str
     Ok(format!("0x{normalized}"))
 }
 
-fn resolve_optional_hash160(
-    value: Option<&Json>,
-    field_name: &str,
-) -> Result<Option<String>, String> {
-    if js_trim_string(value).is_empty() {
-        return Ok(None);
+fn resolve_aa_hash160(value: Option<&Json>, field_name: &str) -> Result<String, String> {
+    let text = js_trim_string(value);
+    if text.is_empty() {
+        return Err(format!("{field_name} is required"));
     }
-    Ok(Some(resolve_hash160(value, field_name)?))
+    let resolved = resolve_hash160(value, field_name)?;
+    if resolved == format!("0x{}", "00".repeat(20)) {
+        return Err(format!("{field_name} must be a non-zero 20-byte hash160"));
+    }
+    Ok(resolved)
 }
 
 fn resolve_hash32(value: Option<&Json>, field_name: &str) -> Result<String, String> {
@@ -821,8 +823,8 @@ struct RecoveryTicket {
     network: String,
     aa_contract: String,
     account_id_raw: String,
-    verifier_contract: Option<String>,
-    account_address: Option<String>,
+    verifier_contract: String,
+    account_address: String,
     account_id: String,
     new_owner: String,
     recovery_nonce: String,
@@ -838,8 +840,8 @@ fn build_recovery_digest_bytes(ticket: &RecoveryTicket) -> Result<[u8; 32], Stri
     input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.network)?);
     input.extend_from_slice(&hex_bytes_0x(&ticket.aa_contract));
     input.extend_from_slice(&hex_bytes_0x(&ticket.account_id_raw));
-    input.extend_from_slice(&encode_hash160_or_zero(ticket.verifier_contract.as_deref()));
-    input.extend_from_slice(&encode_hash160_or_zero(ticket.account_address.as_deref()));
+    input.extend_from_slice(&hex_bytes_0x(&ticket.verifier_contract));
+    input.extend_from_slice(&hex_bytes_0x(&ticket.account_address));
     input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.account_id)?);
     input.extend_from_slice(&hex_bytes_0x(&ticket.new_owner));
     input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.recovery_nonce)?);
@@ -964,15 +966,15 @@ pub fn neodid_action_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Resul
 
     if is_aa_action_v3_payload(resolved_payload) {
         let network = resolve_required_text(resolved_payload.get("network"), "network")?;
-        let aa_contract = resolve_hash160(resolved_payload.get("aa_contract"), "aa_contract")?;
+        let aa_contract = resolve_aa_hash160(resolved_payload.get("aa_contract"), "aa_contract")?;
         let account_id_raw =
-            resolve_hash160(resolved_payload.get("account_id_raw"), "account_id_raw")?;
-        let verifier_contract = resolve_hash160(
+            resolve_aa_hash160(resolved_payload.get("account_id_raw"), "account_id_raw")?;
+        let verifier_contract = resolve_aa_hash160(
             resolved_payload.get("verifier_contract"),
             "verifier_contract",
         )?;
         let account_id = resolve_required_text(resolved_payload.get("account_id"), "account_id")?;
-        let disposable_account = resolve_hash160(
+        let disposable_account = resolve_aa_hash160(
             js_first_truthy(
                 resolved_payload,
                 &["disposable_account", "disposable_script_hash"],
@@ -1072,28 +1074,28 @@ pub fn neodid_recovery_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Res
         js_first_truthy(resolved_payload, &["network", "target_chain"]).or(Some(&neo_n3)),
         "network",
     )?;
-    let aa_contract = resolve_hash160(
+    let aa_contract = resolve_aa_hash160(
         js_first_truthy(
             resolved_payload,
             &["aa_contract", "account_contract", "wallet_contract"],
         ),
         "aa_contract",
     )?;
-    let verifier_contract = resolve_optional_hash160(
+    let verifier_contract = resolve_aa_hash160(
         js_first_truthy(
             resolved_payload,
             &["verifier_contract", "recovery_verifier_contract"],
         ),
         "verifier_contract",
     )?;
-    let account_address = resolve_optional_hash160(
+    let account_address = resolve_aa_hash160(
         js_first_truthy(
             resolved_payload,
             &["account_address", "aa_address", "wallet_address"],
         ),
         "account_address",
     )?;
-    let account_id_raw = resolve_hash160(
+    let account_id_raw = resolve_aa_hash160(
         js_first_truthy(resolved_payload, &["account_id_raw", "accountIdRaw"]),
         "account_id_raw",
     )?;
@@ -1101,7 +1103,7 @@ pub fn neodid_recovery_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Res
         js_first_truthy(resolved_payload, &["account_id", "accountId", "wallet_id"]),
         "account_id",
     )?;
-    let new_owner = resolve_hash160(
+    let new_owner = resolve_aa_hash160(
         js_first_truthy(
             resolved_payload,
             &["new_owner", "recovery_address", "target_owner"],
@@ -1311,7 +1313,7 @@ mod tests {
     const GOLDEN_REC_NULL: &str =
         "4751923c6caacd2506e954a94a46badfd16b49fbbc49fc56ebab154e4500cd2f";
     const GOLDEN_REC_DIGEST: &str =
-        "052563ca766bef9e5fb108668d46e6f834a7099b06aea69e03dc334a96624f8a";
+        "c6df81ac0312f04224fa3ae534853efd98bd65c94b9f47ff0c75f005fb37415e";
     const GOLDEN_ZK_ACTION_ID_DIGEST: &str =
         "ba9ae2ee36d9ced6d1d848bf8b890a56b658804f48ac15aab21969adbfe1183b";
     const GOLDEN_ZK_NULL: &str = "1d1f3ef311785b4b021f9b4b25ebceffa801478117e25cfcce33812578cb7b7a";
@@ -1710,6 +1712,7 @@ mod tests {
             "network": "neo3-testnet",
             "aa_contract": format!("0x{}", "33".repeat(20)),
             "account_id_raw": format!("0x{}", "66".repeat(20)),
+            "verifier_contract": format!("0x{}", "77".repeat(20)),
             "account_address": format!("0x{}", "44".repeat(20)),
             "account_id": "acct-1",
             "new_owner": format!("0x{}", "55".repeat(20)),
@@ -1788,7 +1791,7 @@ mod tests {
     }
 
     #[test]
-    fn aa_action_v3_rejects_missing_context_and_non_decimal_numbers() {
+    fn aa_action_v3_rejects_missing_or_zero_context_and_non_decimal_numbers() {
         let env = host_env(None);
         let io = io_with(&env, unreachable_verify(), unreachable_derive());
         for field in [
@@ -1807,6 +1810,19 @@ mod tests {
                 .remove(field);
             let error = neodid_action_ticket(&io, &payload).unwrap_err();
             assert!(error.contains(field), "{field}: {error}");
+        }
+        for field in [
+            "aa_contract",
+            "verifier_contract",
+            "account_id_raw",
+            "disposable_account",
+        ] {
+            let mut payload = aa_action_v3_payload();
+            payload[field] = json!(format!("0x{}", "00".repeat(20)));
+            assert_eq!(
+                neodid_action_ticket(&io, &payload).unwrap_err(),
+                format!("{field} must be a non-zero 20-byte hash160")
+            );
         }
         for field in ["session_nonce", "expires_at"] {
             let mut payload = aa_action_v3_payload();
@@ -1910,18 +1926,41 @@ mod tests {
             format!("0x{GOLDEN_MASTER_TWITTER}")
         );
         assert_eq!(result["action_nullifier"], format!("0x{GOLDEN_REC_NULL}"));
-        // verifier_contract absent → null survives into the result…
-        assert!(result["verifier_contract"].is_null());
-        // …and the digest folded 20 zero bytes in its slot (Node golden).
+        assert_eq!(
+            result["verifier_contract"],
+            format!("0x{}", "77".repeat(20))
+        );
         assert_eq!(result["digest"], format!("0x{GOLDEN_REC_DIGEST}"));
+    }
 
-        let mut missing_raw = payload.clone();
-        missing_raw
-            .as_object_mut()
-            .expect("payload object")
-            .remove("account_id_raw");
-        let error = neodid_recovery_ticket(&io, &missing_raw).unwrap_err();
-        assert!(error.contains("account_id_raw"), "{error}");
+    #[test]
+    fn recovery_rejects_missing_or_zero_aa_hash_context() {
+        let env = recovery_env();
+        let io = io_with(&env, unreachable_verify(), unreachable_derive());
+        for field in [
+            "aa_contract",
+            "account_id_raw",
+            "verifier_contract",
+            "account_address",
+            "new_owner",
+        ] {
+            let mut missing = recovery_v3_payload();
+            missing
+                .as_object_mut()
+                .expect("payload object")
+                .remove(field);
+            assert_eq!(
+                neodid_recovery_ticket(&io, &missing).unwrap_err(),
+                format!("{field} is required")
+            );
+
+            let mut zero = recovery_v3_payload();
+            zero[field] = json!(format!("0x{}", "00".repeat(20)));
+            assert_eq!(
+                neodid_recovery_ticket(&io, &zero).unwrap_err(),
+                format!("{field} must be a non-zero 20-byte hash160")
+            );
+        }
     }
 
     #[test]
@@ -2079,6 +2118,8 @@ mod tests {
             "network": "neo_n3",
             "aa_contract": format!("0x{}", "33".repeat(20)),
             "account_id_raw": format!("0x{}", "66".repeat(20)),
+            "verifier_contract": format!("0x{}", "77".repeat(20)),
+            "account_address": format!("0x{}", "44".repeat(20)),
             "account_id": "acct-1",
             "new_owner": format!("0x{}", "55".repeat(20)),
             "recovery_nonce": "7",
@@ -2293,12 +2334,21 @@ mod tests {
             resolve_hash160(Some(&json!("ab")), "x").unwrap_err(),
             "x must be a 20-byte hash160"
         );
-        assert!(resolve_optional_hash160(Some(&json!("  ")), "x")
-            .unwrap()
-            .is_none());
         assert_eq!(
-            resolve_optional_hash160(Some(&json!("zz")), "x").unwrap_err(),
+            resolve_aa_hash160(Some(&json!("  ")), "x").unwrap_err(),
+            "x is required"
+        );
+        assert_eq!(
+            resolve_aa_hash160(Some(&json!("zz")), "x").unwrap_err(),
             "x must be a 20-byte hash160"
+        );
+        assert_eq!(
+            resolve_aa_hash160(Some(&json!(format!("0x{}", "00".repeat(20)))), "x").unwrap_err(),
+            "x must be a non-zero 20-byte hash160"
+        );
+        assert_eq!(
+            resolve_hash160(Some(&json!(format!("0x{}", "00".repeat(20)))), "legacy").unwrap(),
+            format!("0x{}", "00".repeat(20))
         );
         assert_eq!(
             resolve_hash32(Some(&json!(format!("0x{}", "ab".repeat(32)))), "h").unwrap(),

@@ -426,6 +426,8 @@ fn recovery_payload(network: serde_json::Value) -> serde_json::Value {
         "network": network,
         "aa_contract": "0x11223344556677889900aabbccddeeff00112233",
         "account_id_raw": "0x6666666666666666666666666666666666666666",
+        "verifier_contract": "0x7777777777777777777777777777777777777777",
+        "account_address": "0x4444444444444444444444444444444444444444",
         "account_id": "acct-1",
         "new_owner": "0xaabbccddeeff00112233445566778899aabbccdd",
         "recovery_nonce": "1",
@@ -467,22 +469,24 @@ fn recovery_ticket_chain_family_label_signs_under_the_host_network() {
 
 #[test]
 fn aa_recovery_v3_preserves_raw_network_text_under_the_host_custody_network() {
-    let harness = neodid_harness(&recovery_overlay());
-    let mut payload = recovery_payload(json!("neo3-testnet"));
-    payload["callback_encoding"] = json!("neo_n3_recovery_v3");
-    let response = post(&harness.state, "/neodid/recovery-ticket", &payload)
-        .expect("AA recovery v3 lane executes");
-    assert_eq!(response["network"], "neo3-testnet");
-    assert!(response["action_id"]
-        .as_str()
-        .expect("action id")
-        .starts_with("aa_recovery:"));
-    assert_eq!(response["callback_encoding"], "neo_n3_recovery_v3");
-    let calls = harness.signer.sign_calls();
-    assert_eq!(calls.len(), 2);
-    assert!(calls
-        .iter()
-        .all(|(network, role, _)| network == TEST_NETWORK && role == "worker"));
+    for network in ["neo3-testnet", "neo3-local"] {
+        let harness = neodid_harness(&recovery_overlay());
+        let mut payload = recovery_payload(json!(network));
+        payload["callback_encoding"] = json!("neo_n3_recovery_v3");
+        let response = post(&harness.state, "/neodid/recovery-ticket", &payload)
+            .expect("AA recovery v3 lane executes");
+        assert_eq!(response["network"], network);
+        assert!(response["action_id"]
+            .as_str()
+            .expect("action id")
+            .starts_with("aa_recovery:"));
+        assert_eq!(response["callback_encoding"], "neo_n3_recovery_v3");
+        let calls = harness.signer.sign_calls();
+        assert_eq!(calls.len(), 2);
+        assert!(calls
+            .iter()
+            .all(|(network, role, _)| network == TEST_NETWORK && role == "worker"));
+    }
 }
 
 /// A legacy recovery `network` that is neither a chain family nor a reviewed

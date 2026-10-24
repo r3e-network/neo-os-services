@@ -499,8 +499,8 @@ function buildRecoveryDigestBytes(ticket) {
         encodeLengthPrefixedAscii(ticket.network),
         Buffer.from(ticket.aa_contract.replace(/^0x/i, ''), 'hex'),
         Buffer.from(ticket.account_id_raw.replace(/^0x/i, ''), 'hex'),
-        encodeHash160OrZero(ticket.verifier_contract),
-        encodeHash160OrZero(ticket.account_address),
+        Buffer.from(ticket.verifier_contract.replace(/^0x/i, ''), 'hex'),
+        Buffer.from(ticket.account_address.replace(/^0x/i, ''), 'hex'),
         encodeLengthPrefixedAscii(ticket.account_id),
         Buffer.from(ticket.new_owner.replace(/^0x/i, ''), 'hex'),
         encodeLengthPrefixedAscii(ticket.recovery_nonce),
@@ -544,10 +544,14 @@ function resolveHash160(value, fieldName) {
   return `0x${normalized}`;
 }
 
-function resolveOptionalHash160(value, fieldName) {
+function resolveAaHash160(value, fieldName) {
   const text = trimString(value);
-  if (!text) return null;
-  return resolveHash160(text, fieldName);
+  if (!text) throw new Error(`${fieldName} is required`);
+  const resolved = resolveHash160(text, fieldName);
+  if (resolved === `0x${'00'.repeat(20)}`) {
+    throw new Error(`${fieldName} must be a non-zero 20-byte hash160`);
+  }
+  return resolved;
 }
 
 function resolveHash32(value, fieldName) {
@@ -819,11 +823,11 @@ export async function handleNeoDidActionTicket(payload = {}) {
   let digestBytes;
   if (isAaActionV3Payload(resolvedPayload)) {
     const network = resolveRequiredText(resolvedPayload.network, 'network');
-    const aaContract = resolveHash160(resolvedPayload.aa_contract, 'aa_contract');
-    const accountIdRaw = resolveHash160(resolvedPayload.account_id_raw, 'account_id_raw');
-    const verifierContract = resolveHash160(resolvedPayload.verifier_contract, 'verifier_contract');
+    const aaContract = resolveAaHash160(resolvedPayload.aa_contract, 'aa_contract');
+    const accountIdRaw = resolveAaHash160(resolvedPayload.account_id_raw, 'account_id_raw');
+    const verifierContract = resolveAaHash160(resolvedPayload.verifier_contract, 'verifier_contract');
     const accountId = resolveRequiredText(resolvedPayload.account_id, 'account_id');
-    const disposableAccount = resolveHash160(
+    const disposableAccount = resolveAaHash160(
       resolvedPayload.disposable_account || resolvedPayload.disposable_script_hash,
       'disposable_account'
     );
@@ -890,17 +894,17 @@ export async function handleNeoDidRecoveryTicket(payload = {}) {
     resolvedPayload.network || resolvedPayload.target_chain || 'neo_n3',
     'network'
   );
-  const aaContract = resolveHash160(
+  const aaContract = resolveAaHash160(
     resolvedPayload.aa_contract ||
       resolvedPayload.account_contract ||
       resolvedPayload.wallet_contract,
     'aa_contract'
   );
-  const verifierContract = resolveOptionalHash160(
+  const verifierContract = resolveAaHash160(
     resolvedPayload.verifier_contract || resolvedPayload.recovery_verifier_contract,
     'verifier_contract'
   );
-  const accountAddress = resolveOptionalHash160(
+  const accountAddress = resolveAaHash160(
     resolvedPayload.account_address || resolvedPayload.aa_address || resolvedPayload.wallet_address,
     'account_address'
   );
@@ -908,7 +912,7 @@ export async function handleNeoDidRecoveryTicket(payload = {}) {
     resolvedPayload.account_id || resolvedPayload.accountId || resolvedPayload.wallet_id,
     'account_id'
   );
-  const newOwner = resolveHash160(
+  const newOwner = resolveAaHash160(
     resolvedPayload.new_owner || resolvedPayload.recovery_address || resolvedPayload.target_owner,
     'new_owner'
   );
@@ -920,7 +924,7 @@ export async function handleNeoDidRecoveryTicket(payload = {}) {
     resolvedPayload.expires_at || resolvedPayload.expiry || resolvedPayload.ticket_expires_at,
     'expires_at'
   );
-  const accountIdRaw = resolveHash160(
+  const accountIdRaw = resolveAaHash160(
     resolvedPayload.account_id_raw || resolvedPayload.accountIdRaw,
     'account_id_raw'
   );
