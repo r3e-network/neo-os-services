@@ -3246,6 +3246,7 @@ fn evm_value_events(
         EvmIntent::NativeTransfer { value, .. } => Some(([0u8; 20], value)),
         EvmIntent::Erc20Transfer { token, amount, .. }
         | EvmIntent::Erc20TransferFrom { token, amount, .. } => Some((*token, amount)),
+        EvmIntent::InvalidErc20TransferFrom => None,
         EvmIntent::ContractCall { value, .. } if value.iter().any(|byte| *byte != 0) => {
             Some(([0u8; 20], value))
         }
@@ -3577,6 +3578,7 @@ fn request_intent_summary(intents: &[Intent], evm_intent: Option<&EvmIntent>) ->
                 .map(|amount| amount.to_string())
                 .unwrap_or_else(|| "an out-of-range amount".to_string())
         ),
+        EvmIntent::InvalidErc20TransferFrom => "NeoX invalid ERC-20 transferFrom".to_string(),
         EvmIntent::ContractCall { to, data, .. } => format!(
             "NeoX contract call to 0x{} with {} calldata byte(s)",
             hex::encode(to),

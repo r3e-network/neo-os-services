@@ -75,6 +75,13 @@ pub enum Erc20Call {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Erc20TransferFromCall {
+    pub from: [u8; 20],
+    pub to: [u8; 20],
+    pub amount: [u8; 32],
+}
+
 /// What an EVM transaction intends to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EvmIntent {
@@ -104,6 +111,8 @@ pub enum EvmIntent {
         /// Amount in token's smallest unit.
         amount: [u8; 32],
     },
+    /// ERC-20 transferFrom with malformed calldata or attached native value.
+    InvalidErc20TransferFrom,
     /// Contract call we cannot specifically interpret.
     ContractCall {
         /// Target contract.
@@ -343,22 +352,18 @@ impl UnsignedEvmTransaction {
             };
         }
 
-        // Check for ERC-20 transferFrom
-        if is_zero(&self.value)
-            && self.data.len() == 100
-            && self.data.starts_with(&ERC20_TRANSFER_FROM_SELECTOR)
-        {
-            let mut source = [0u8; 20];
-            source.copy_from_slice(&self.data[16..36]);
-            let mut recipient = [0u8; 20];
-            recipient.copy_from_slice(&self.data[48..68]);
-            let mut amount = [0u8; 32];
-            amount.copy_from_slice(&self.data[68..100]);
-            return EvmIntent::Erc20TransferFrom {
-                token: to,
-                from: source,
-                to: recipient,
-                amount,
+        if let Some(decoded) = decode_erc20_transfer_from(&self.data) {
+            if !is_zero(&self.value) {
+                return EvmIntent::InvalidErc20TransferFrom;
+            }
+            return match decoded {
+                Ok(call) => EvmIntent::Erc20TransferFrom {
+                    token: to,
+                    from: call.from,
+                    to: call.to,
+                    amount: call.amount,
+                },
+                Err(_) => EvmIntent::InvalidErc20TransferFrom,
             };
         }
 
@@ -393,6 +398,28 @@ impl UnsignedEvmTransaction {
         encode_eip1559_fields(self, None, &mut encoded);
         encoded
     }
+}
+
+pub(crate) fn decode_erc20_transfer_from(
+    data: &[u8],
+) -> Option<Result<Erc20TransferFromCall, &'static str>> {
+    if !data.starts_with(&ERC20_TRANSFER_FROM_SELECTOR) {
+        return None;
+    }
+    if data.len() != 100 {
+        return Some(Err("calldata must be exactly 100 bytes"));
+    }
+    if data[4..16].iter().any(|byte| *byte != 0) || data[36..48].iter().any(|byte| *byte != 0) {
+        return Some(Err("addresses must use canonical ABI padding"));
+    }
+
+    let mut from = [0u8; 20];
+    from.copy_from_slice(&data[16..36]);
+    let mut to = [0u8; 20];
+    to.copy_from_slice(&data[48..68]);
+    let mut amount = [0u8; 32];
+    amount.copy_from_slice(&data[68..100]);
+    Some(Ok(Erc20TransferFromCall { from, to, amount }))
 }
 
 /// Sign an EVM transaction with secp256k1.
@@ -555,6 +582,39 @@ mod tests {
                 amount,
             }
         );
+    }
+
+    #[test]
+    fn test_erc20_transfer_from_rejects_noncanonical_calls() {
+        let mut data = ERC20_TRANSFER_FROM_SELECTOR.to_vec();
+        data.extend_from_slice(&[0u8; 96]);
+        let transaction = UnsignedEvmTransaction {
+            chain_id: 12_227_332,
+            nonce: 0,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 2,
+            gas_limit: 100_000,
+            to: Some([0x33u8; 20]),
+            value: [0u8; 32],
+            data,
+            access_list: Vec::new(),
+        };
+
+        let mut short = transaction.clone();
+        short.data.truncate(99);
+        let mut trailing = transaction.clone();
+        trailing.data.push(0);
+        let mut noncanonical_address = transaction.clone();
+        noncanonical_address.data[4] = 1;
+        let mut nonzero_value = transaction.clone();
+        nonzero_value.value[31] = 1;
+        for transaction in [short, trailing, noncanonical_address, nonzero_value] {
+            assert_eq!(transaction.intent(), EvmIntent::InvalidErc20TransferFrom);
+        }
+
+        let mut unknown = transaction;
+        unknown.data[3] ^= 1;
+        assert!(matches!(unknown.intent(), EvmIntent::ContractCall { .. }));
     }
 
     #[test]

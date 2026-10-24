@@ -628,6 +628,7 @@ fn every_reason_has_a_unique_code() {
         DenyReason::SignatureRateExceeded,
         DenyReason::AssetSingleAmountExceeded,
         DenyReason::AssetWindowAmountExceeded,
+        DenyReason::EvmInvalidTransferFrom,
     ];
     let codes: HashSet<&str> = reasons.iter().map(|reason| reason.code()).collect();
     assert_eq!(
@@ -832,6 +833,106 @@ fn evm_transfer_obeys_asset_limits_and_windows() {
         denied(verdict).0,
         DenyReason::WindowAmountExceeded,
         "700 + 400 must exceed window limit 1000"
+    );
+}
+
+#[test]
+fn evm_transfer_from_policy_rechecks_raw_calldata_and_source() {
+    let token = [TOKEN; 20];
+    let build = |from: [u8; 20]| {
+        let mut data = crate::evm_tx::ERC20_TRANSFER_FROM_SELECTOR.to_vec();
+        data.extend_from_slice(&[0u8; 12]);
+        data.extend_from_slice(&from);
+        data.extend_from_slice(&[0u8; 12]);
+        data.extend_from_slice(&[RECEIVER; 20]);
+        data.extend_from_slice(&[0u8; 32]);
+        UnsignedEvmTransaction {
+            chain_id: 12_227_332,
+            nonce: 0,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 2,
+            gas_limit: 100_000,
+            to: Some(token),
+            value: [0u8; 32],
+            data,
+            access_list: Vec::new(),
+        }
+    };
+    let generic = |transaction: &UnsignedEvmTransaction| EvmIntent::ContractCall {
+        to: transaction.to.expect("contract call target"),
+        data: transaction.data.clone(),
+        value: transaction.value,
+    };
+    let policy = SignerPolicy {
+        allow_transfer: true,
+        allow_contract_call: true,
+        ..Default::default()
+    };
+    let key_account = ScriptHash::from_evm_address([KEY; 20]);
+
+    let canonical = build([KEY; 20]);
+    assert_eq!(
+        evaluate_evm_transaction(
+            &policy,
+            key_account,
+            &canonical,
+            &canonical.intent(),
+            &WindowSpend::new(),
+        ),
+        Verdict::Allow
+    );
+
+    let third_party = build([VICTIM; 20]);
+    let mut forged_intent = third_party.intent();
+    let EvmIntent::Erc20TransferFrom { from, .. } = &mut forged_intent else {
+        unreachable!("canonical transferFrom intent")
+    };
+    *from = [KEY; 20];
+    assert_eq!(
+        denied(evaluate_evm_transaction(
+            &policy,
+            key_account,
+            &third_party,
+            &forged_intent,
+            &WindowSpend::new(),
+        ))
+        .0,
+        DenyReason::SourceMismatch,
+        "the source check must use signed calldata, not the supplied intent"
+    );
+
+    let mut trailing = build([KEY; 20]);
+    trailing.data.push(0);
+    let mut short = build([KEY; 20]);
+    short.data.truncate(99);
+    let mut nonzero_value = build([KEY; 20]);
+    nonzero_value.value[31] = 1;
+    for transaction in [trailing, short, nonzero_value] {
+        assert_eq!(
+            denied(evaluate_evm_transaction(
+                &policy,
+                key_account,
+                &transaction,
+                &generic(&transaction),
+                &WindowSpend::new(),
+            ))
+            .0,
+            DenyReason::EvmInvalidTransferFrom,
+            "raw calldata must fail closed even with a forged generic intent"
+        );
+    }
+
+    assert_eq!(
+        denied(evaluate_evm_transaction(
+            &policy,
+            key_account,
+            &canonical,
+            &generic(&canonical),
+            &WindowSpend::new(),
+        ))
+        .0,
+        DenyReason::EvmInvalidTransferFrom,
+        "a valid transferFrom cannot be relabelled as a generic contract call"
     );
 }
 

@@ -28,7 +28,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::evm_tx::{EvmIntent, UnsignedEvmTransaction};
+use crate::evm_tx::{decode_erc20_transfer_from, EvmIntent, UnsignedEvmTransaction};
 use crate::model::{ContractMethod, ScriptHash, SignerPolicy};
 use crate::tx::{ConsensusPayload, Intent, Scope, UnsignedTransaction, HASH160_LEN};
 
@@ -224,6 +224,8 @@ pub enum DenyReason {
     EvmMethodBlacklisted,
     /// EVM contract method selector not in whitelist.
     EvmMethodNotWhitelisted,
+    /// ERC-20 transferFrom calldata or native value is malformed.
+    EvmInvalidTransferFrom,
     /// EVM chain ID doesn't match expected value.
     EvmInvalidChainId,
 }
@@ -263,6 +265,7 @@ impl DenyReason {
             DenyReason::EvmGasLimitExceeded => "evm-gas-limit-exceeded",
             DenyReason::EvmMethodBlacklisted => "evm-method-blacklisted",
             DenyReason::EvmMethodNotWhitelisted => "evm-method-not-whitelisted",
+            DenyReason::EvmInvalidTransferFrom => "evm-invalid-transfer-from",
             DenyReason::EvmInvalidChainId => "evm-invalid-chain-id",
         }
     }
@@ -317,6 +320,9 @@ impl fmt::Display for DenyReason {
             DenyReason::EvmMethodBlacklisted => "the EVM contract method selector is blacklisted",
             DenyReason::EvmMethodNotWhitelisted => {
                 "the EVM contract method selector is not whitelisted"
+            }
+            DenyReason::EvmInvalidTransferFrom => {
+                "the ERC-20 transferFrom calldata or native value is invalid"
             }
             DenyReason::EvmInvalidChainId => {
                 "the EVM transaction chain ID doesn't match expected value"
@@ -813,14 +819,58 @@ fn evaluate_evm_transaction(
         }
     }
 
-    if let EvmIntent::Erc20TransferFrom { from, .. } = intent {
-        let source = ScriptHash::from_evm_address(*from);
-        if source != key_account {
+    let transfer_from = if transaction.to.is_some() {
+        match decode_erc20_transfer_from(&transaction.data) {
+            Some(Err(detail)) => {
+                return deny(
+                    DenyReason::EvmInvalidTransferFrom,
+                    format!("invalid ERC-20 transferFrom calldata: {detail}"),
+                );
+            }
+            Some(Ok(call)) => {
+                if transaction.value.iter().any(|byte| *byte != 0) {
+                    return deny(
+                        DenyReason::EvmInvalidTransferFrom,
+                        "ERC-20 transferFrom must not carry native value",
+                    );
+                }
+                let source = ScriptHash::from_evm_address(call.from);
+                if source != key_account {
+                    return deny(
+                        DenyReason::SourceMismatch,
+                        format!(
+                            "transferFrom names {source} as the source, but this key is {key_account}"
+                        ),
+                    );
+                }
+                Some(call)
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    match (transfer_from.as_ref(), intent) {
+        (
+            Some(call),
+            EvmIntent::Erc20TransferFrom {
+                token,
+                from,
+                to,
+                amount,
+            },
+        ) if transaction.to == Some(*token)
+            && call.from == *from
+            && call.to == *to
+            && call.amount == *amount => {}
+        (Some(_), _) | (None, EvmIntent::Erc20TransferFrom { .. }) => {
             return deny(
-                DenyReason::SourceMismatch,
-                format!("transferFrom names {source} as the source, but this key is {key_account}"),
+                DenyReason::EvmInvalidTransferFrom,
+                "the transferFrom intent does not match the transaction being signed",
             );
         }
+        _ => {}
     }
 
     // Evaluate intent-specific checks
@@ -891,6 +941,10 @@ fn evaluate_evm_transaction(
             }
             Verdict::Allow
         }
+        EvmIntent::InvalidErc20TransferFrom => deny(
+            DenyReason::EvmInvalidTransferFrom,
+            "invalid ERC-20 transferFrom cannot be signed as a contract call",
+        ),
         EvmIntent::ContractCall { to, data, value } => {
             if !policy.allow_contract_call {
                 return deny(

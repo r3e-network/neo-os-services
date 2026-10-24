@@ -74,6 +74,17 @@ fn neox_transfer_from(
     .encode_unsigned()
 }
 
+fn edit_neox_transaction(
+    unsigned: &[u8],
+    edit: impl FnOnce(&mut UnsignedEvmTransaction),
+) -> Vec<u8> {
+    let mut transaction =
+        UnsignedEvmTransaction::parse(unsigned, network::neox_chain_id(Network::Testnet))
+            .expect("valid NeoX transaction");
+    edit(&mut transaction);
+    transaction.encode_unsigned()
+}
+
 /// A recipient, an asset-agnostic account: nothing in these tests depends on it
 /// being a real wallet, only on it being an account that is not the key's own.
 const RECIPIENT: [u8; HASH160_LEN] = [0x22u8; HASH160_LEN];
@@ -691,8 +702,13 @@ fn neox_transfer_from_requires_own_source_and_records_one_spend() -> Result<()> 
             chain_family: Some(network::ChainFamily::NeoX),
             evm_chain_id: Some(12_227_332),
             allow_transfer: true,
+            allow_contract_call: true,
+            contract_whitelist: vec![ScriptHash::from_evm_address(token)],
             asset_whitelist: vec![ScriptHash::from_evm_address(token)],
-            transfer_to_whitelist: vec![ScriptHash::from_evm_address(RECIPIENT)],
+            transfer_to_whitelist: vec![
+                ScriptHash::from_evm_address(RECIPIENT),
+                ScriptHash::from_evm_address(token),
+            ],
             max_single_amount: Some(100),
             window_limit: Some(WindowLimit {
                 seconds: 3_600,
@@ -700,6 +716,7 @@ fn neox_transfer_from_requires_own_source_and_records_one_spend() -> Result<()> 
             }),
             evm_max_gas_price: Some(2),
             evm_max_gas_limit: Some(100_000),
+            evm_method_whitelist: vec!["23b872dd".to_string()],
             ..SignerPolicy::default()
         },
     )?);
@@ -727,6 +744,23 @@ fn neox_transfer_from_requires_own_source_and_records_one_spend() -> Result<()> 
         .signer_value_events_since(&key.key_id, 0)?
         .is_empty());
 
+    let third_party_trailing = edit_neox_transaction(&third_party, |transaction| {
+        transaction.data.push(0);
+    });
+    let padded_mismatch = refused(service.sign_transaction_for_chain_with_request_id(
+        &credentials,
+        &key.key_id,
+        &third_party_trailing,
+        network::ChainFamily::NeoX,
+        Some(12_227_332),
+        Some("neox-transfer-from-third-party-trailing"),
+    )?);
+    assert_eq!(padded_mismatch.code, "evm-invalid-transfer-from");
+    assert!(service
+        .repository()
+        .signer_value_events_since(&key.key_id, 0)?
+        .is_empty());
+
     let own_source = parse_evm_address(&key.address).expect("NeoX key address");
     let unsigned = neox_transfer_from(2, token, own_source, RECIPIENT, 60);
     let first = allowed(service.sign_transaction_for_chain_with_request_id(
@@ -748,15 +782,53 @@ fn neox_transfer_from_requires_own_source_and_records_one_spend() -> Result<()> 
     )?);
     assert_eq!(replay, first);
 
+    let own_trailing = edit_neox_transaction(
+        &neox_transfer_from(3, token, own_source, RECIPIENT, 41),
+        |transaction| transaction.data.push(0),
+    );
+    let padded_over_window = refused(service.sign_transaction_for_chain_with_request_id(
+        &credentials,
+        &key.key_id,
+        &own_trailing,
+        network::ChainFamily::NeoX,
+        Some(12_227_332),
+        Some("neox-transfer-from-own-source-trailing"),
+    )?);
+    assert_eq!(padded_over_window.code, "evm-invalid-transfer-from");
+
     let over_window = refused(service.sign_transaction_for_chain_with_request_id(
         &credentials,
         &key.key_id,
-        &neox_transfer_from(3, token, own_source, RECIPIENT, 41),
+        &neox_transfer_from(4, token, own_source, RECIPIENT, 41),
         network::ChainFamily::NeoX,
         Some(12_227_332),
         Some("neox-transfer-from-over-window"),
     )?);
     assert_eq!(over_window.code, "window-amount-exceeded");
+
+    let short = edit_neox_transaction(
+        &neox_transfer_from(5, token, own_source, RECIPIENT, 1),
+        |transaction| transaction.data.truncate(99),
+    );
+    let nonzero_value = edit_neox_transaction(
+        &neox_transfer_from(6, token, own_source, RECIPIENT, 1),
+        |transaction| transaction.value = evm_amount(1),
+    );
+    for (request_id, malformed) in [
+        ("neox-transfer-from-short", short),
+        ("neox-transfer-from-nonzero-value", nonzero_value),
+    ] {
+        let refusal = refused(service.sign_transaction_for_chain_with_request_id(
+            &credentials,
+            &key.key_id,
+            &malformed,
+            network::ChainFamily::NeoX,
+            Some(12_227_332),
+            Some(request_id),
+        )?);
+        assert_eq!(refusal.code, "evm-invalid-transfer-from");
+    }
+
     let events = service
         .repository()
         .signer_value_events_since(&key.key_id, 0)?;
@@ -766,13 +838,19 @@ fn neox_transfer_from_requires_own_source_and_records_one_spend() -> Result<()> 
     let audit = service
         .repository()
         .list_signer_audit(Some(&key.key_id), 100)?;
-    let row = audit
+    let allowed_rows: Vec<_> = audit
         .iter()
-        .find(|row| {
+        .filter(|row| {
             row.action == SignerAuditAction::TransactionSigned
                 && row.outcome == SignerAuditOutcome::Allowed
         })
-        .expect("allowed transferFrom audit row");
+        .collect();
+    assert_eq!(
+        allowed_rows.len(),
+        1,
+        "malformed transferFrom requests must not produce allowed audit rows"
+    );
+    let row = allowed_rows[0];
     assert!(row
         .detail
         .as_deref()
