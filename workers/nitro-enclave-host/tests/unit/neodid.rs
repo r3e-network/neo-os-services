@@ -357,6 +357,46 @@ fn action_ticket_returns_the_action_nullifier() {
 }
 
 #[test]
+fn aa_action_v3_raw_network_reaches_the_fold_without_changing_custody_network() {
+    let mut overlay = salted_overlay();
+    overlay.retain(|(name, _)| *name != "NEODID_SECRET_SALT");
+    overlay.push(("NEODID_SECRET_SALT", "unit-test-salt-text"));
+    let harness = neodid_harness(&overlay);
+    let response = post(
+        &harness.state,
+        "/neodid/action-ticket",
+        &json!({
+            "provider": "twitter",
+            "provider_uid": "user-42",
+            "network": "neo3-testnet",
+            "aa_contract": format!("0x{}", "11".repeat(20)),
+            "verifier_contract": format!("0x{}", "33".repeat(20)),
+            "account_id_raw": format!("0x{}", "22".repeat(20)),
+            "account_id": "acct-1",
+            "disposable_account": format!("0x{}", "44".repeat(20)),
+            "expires_at": "1735689600",
+            "session_nonce": "7",
+            "callback_encoding": "neo_n3_action_v3",
+        }),
+    )
+    .expect("AA action v3 lane executes");
+    assert_eq!(
+        response["action_id"],
+        "aa_proxy:ca0d3b5865caf8b07c0a2b2eb7ea05ded9b7f4eb81a657ed64316af587553557"
+    );
+    assert_eq!(
+        response["digest"],
+        "0x6997b70a6dd9a8d54c56c9c5792ebec5c780ee884d73464ec4d9eed6b9b405ae"
+    );
+    assert_eq!(response["callback_encoding"], "neo_n3_action_v3");
+    let calls = harness.signer.sign_calls();
+    assert_eq!(calls.len(), 2);
+    assert!(calls
+        .iter()
+        .all(|(network, role, _)| network == TEST_NETWORK && role == "worker"));
+}
+
+#[test]
 fn recovery_ticket_fails_closed_for_unverified_providers() {
     let harness = neodid_harness(&salted_overlay());
     let (status, message) = error_body(
@@ -385,6 +425,7 @@ fn recovery_payload(network: serde_json::Value) -> serde_json::Value {
         "provider_uid": "uid-1",
         "network": network,
         "aa_contract": "0x11223344556677889900aabbccddeeff00112233",
+        "account_id_raw": "0x6666666666666666666666666666666666666666",
         "account_id": "acct-1",
         "new_owner": "0xaabbccddeeff00112233445566778899aabbccdd",
         "recovery_nonce": "1",
@@ -424,8 +465,28 @@ fn recovery_ticket_chain_family_label_signs_under_the_host_network() {
     }
 }
 
-/// A recovery `network` that is neither a chain family nor a reviewed network
-/// is refused before any custody call, like on every other ticket.
+#[test]
+fn aa_recovery_v3_preserves_raw_network_text_under_the_host_custody_network() {
+    let harness = neodid_harness(&recovery_overlay());
+    let mut payload = recovery_payload(json!("neo3-testnet"));
+    payload["callback_encoding"] = json!("neo_n3_recovery_v3");
+    let response = post(&harness.state, "/neodid/recovery-ticket", &payload)
+        .expect("AA recovery v3 lane executes");
+    assert_eq!(response["network"], "neo3-testnet");
+    assert!(response["action_id"]
+        .as_str()
+        .expect("action id")
+        .starts_with("aa_recovery:"));
+    assert_eq!(response["callback_encoding"], "neo_n3_recovery_v3");
+    let calls = harness.signer.sign_calls();
+    assert_eq!(calls.len(), 2);
+    assert!(calls
+        .iter()
+        .all(|(network, role, _)| network == TEST_NETWORK && role == "worker"));
+}
+
+/// A legacy recovery `network` that is neither a chain family nor a reviewed
+/// network is refused before any custody call, like on every other ticket.
 #[test]
 fn recovery_ticket_refuses_an_unknown_network_label() {
     for label in [json!("staging"), json!(false)] {

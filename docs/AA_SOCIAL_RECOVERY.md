@@ -78,6 +78,82 @@ This means AA recovery no longer needs a side-channel worker call. The preferred
 4. TEE signs the recovery ticket.
 5. The kernel inbox stores the result, and optional callback adapters may store or forward the ticket to the AA recovery verifier flow.
 
+## AA Action Ticket Schema / AA 操作票据结构
+
+Only an effective `callback_encoding` of `neo_n3_action_v3` selects the
+`MorpheusSocialRecoveryVerifier` action-v2 protocol. An omitted/legacy encoding
+or `neo_n3_action_v1` keeps the existing NeoDIDRegistry request schema and this
+v1 digest unchanged:
+
+```text
+SHA256(
+  "neodid-action-v1"
+  || raw20(disposable_account)
+  || lengthPrefixedUtf8(action_id)
+  || raw32(action_nullifier)
+  || networkMagicLE4
+)
+```
+
+An AA v3 request carries the on-chain AA context directly:
+
+```json
+{
+  "provider": "web3auth",
+  "network": "neo3-testnet",
+  "aa_contract": "<aa-core-hash160>",
+  "verifier_contract": "<recovery-verifier-hash160>",
+  "account_id_raw": "<raw-20-byte-account-id>",
+  "account_id": "<aa-account-id-text>",
+  "disposable_account": "<executor-hash160>",
+  "action_id": "aa_proxy:<derived-action-id>",
+  "expires_at": "1735689600",
+  "session_nonce": "7",
+  "encrypted_params": "<sealed payload>",
+  "callback_encoding": "neo_n3_action_v3"
+}
+```
+
+`session_nonce` defaults to decimal zero when omitted. An omitted `action_id` is
+derived; when either field is supplied, the action ID must equal the value
+derived from that nonce and the other AA fields. Foreign/free-form action IDs are
+rejected. `session_nonce` and `expires_at` use canonical unsigned decimal text.
+
+```text
+action_id = "aa_proxy:" + SHA256(
+  networkUtf8 || 0x1f || raw20(aa_contract) || 0x1f
+  || raw20(account_id_raw) || 0x1f || raw20(disposable_account) || 0x1f
+  || decimal(session_nonce) || 0x1f || decimal(expires_at)
+)
+```
+
+The action-v2 digest binds the raw account, AA core, verifier, textual account ID,
+executor, action, expiry and nullifier. `network` is the exact text stored by AA
+(for example `neo3-testnet`), not a Morpheus `mainnet`/`testnet` label or a network
+magic.
+
+```text
+SHA256(
+  "neodid-action-v2"
+  || lengthPrefixedUtf8(network)
+  || raw20(aa_contract)
+  || raw20(account_id_raw)
+  || raw20(verifier_contract)
+  || lengthPrefixedUtf8(account_id)
+  || raw20(disposable_account)
+  || lengthPrefixedUtf8(action_id)
+  || lengthPrefixedUtf8(decimal(expires_at))
+  || raw32(action_nullifier)
+)
+```
+
+The compact callback remains `neo_n3_action_v3`; its byte layout and the ticket
+response fields are unchanged.
+
+只有 `callback_encoding = neo_n3_action_v3` 使用上述 AA action v2。缺省/legacy
+和 `neo_n3_action_v1` 仍走原 NeoDIDRegistry v1，不改变请求结构、签名或 network
+magic。缺省 action ID 可派生，显式 action ID 必须与派生值完全一致。
+
 ## Recovery Ticket Schema / 恢复票据结构
 
 `neodid_recovery_ticket` returns a signed result shaped like:
@@ -95,7 +171,7 @@ This means AA recovery no longer needs a side-channel worker call. The preferred
   "recovery_nonce": "7",
   "expires_at": "1735689600",
   "provider": "github",
-  "action_id": "aa_recovery:<network>:<aa-contract>:<aa-account-id>:<new-owner>:<nonce>",
+  "action_id": "aa_recovery:<derived-raw-account-action-id>",
   "master_nullifier": "0x...",
   "action_nullifier": "0x...",
   "digest": "0x...",
@@ -119,13 +195,26 @@ This means AA recovery no longer needs a side-channel worker call. The preferred
 }
 ```
 
-The signing domain is `neodid-recovery-v2`: the digest includes `account_id_raw`
-and the AA core, so identical textual identities, addresses, factors, and action
-IDs cannot make one ticket valid for a different raw account. Direct submission
-also re-derives the recovery action ID from the raw account, new owner, and
-current recovery nonce. Compact result encoding remains v3, while tickets issued
-before raw-account binding are rejected by the upgraded verifier. A coordinated
-upgrade must drain or migrate in-flight requests rather than accept old signatures.
+The signing domain remains `neodid-recovery-v2`: the digest includes
+`account_id_raw` and the AA core, so identical textual identities, addresses,
+factors, and action IDs cannot make one ticket valid for a different raw account.
+After strictly parsing `account_id_raw` as hash160, the worker derives the action
+ID below. An explicitly supplied recovery action ID must equal that derived value;
+a foreign ID is rejected just as it is by AA direct submission.
+
+```text
+action_id = "aa_recovery:" + SHA256(
+  networkUtf8 || 0x1f || raw20(aa_contract) || 0x1f
+  || raw20(account_id_raw) || 0x1f || raw20(new_owner) || 0x1f
+  || decimal(recovery_nonce)
+)
+```
+
+Here `network` is text and `recovery_nonce` is canonical unsigned decimal text.
+The recovery digest domain and compact result encoding remain v2 and v3
+respectively. Tickets issued before raw-account binding are rejected by the
+upgraded verifier. A coordinated upgrade must drain or migrate in-flight requests
+rather than accept old signatures.
 
 ## What The Verifier Must Check / 验证器必须检查的内容
 

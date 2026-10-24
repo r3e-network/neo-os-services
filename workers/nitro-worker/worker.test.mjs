@@ -132,6 +132,9 @@ const { __resetNeoDidStateForTests } = await import('./src/neodid/index.js');
 const { __resetSigningCachesForTests } = await import('./src/chain/signing.js');
 const { __setCustodyTransportForTests, __resetCustodyTransportForTests } =
   await import('./src/platform/custody.js');
+const { createUpstashRestMock } = await import('./src/test-support/upstash-rest-mock.mjs');
+const { buildSponsorshipFixture, sponsorshipPayload, sponsorshipStorageKey } =
+  await import('./src/test-support/sponsorship-fixtures.mjs');
 const { __resetOracleFetchDispatchersForTests } = await import('./src/oracle/fetch.js');
 
 function authHeaders() {
@@ -344,6 +347,48 @@ const TESTNET_NEO_NETWORK_MAGIC = 894710606;
 function encodeLengthPrefixedAscii(value = '') {
   const body = Buffer.from(String(value || ''), 'utf8');
   return Buffer.concat([Buffer.from([body.length]), body]);
+}
+
+function aaActionV3Payload() {
+  return {
+    provider: 'twitter',
+    provider_uid: 'user-42',
+    network: 'neo3-testnet',
+    aa_contract: `0x${'11'.repeat(20)}`,
+    verifier_contract: `0x${'33'.repeat(20)}`,
+    account_id_raw: `0x${'22'.repeat(20)}`,
+    account_id: 'acct-1',
+    disposable_account: `0x${'44'.repeat(20)}`,
+    expires_at: '1735689600',
+    session_nonce: '7',
+    callback_encoding: 'neo_n3_action_v3',
+  };
+}
+
+function recoveryV3Payload() {
+  return {
+    provider: 'twitter',
+    provider_uid: 'user-42',
+    network: 'neo3-testnet',
+    aa_contract: `0x${'33'.repeat(20)}`,
+    account_id_raw: `0x${'66'.repeat(20)}`,
+    account_address: `0x${'44'.repeat(20)}`,
+    account_id: 'acct-1',
+    new_owner: `0x${'55'.repeat(20)}`,
+    recovery_nonce: '7',
+    expires_at: '1735689600',
+    callback_encoding: 'neo_n3_recovery_v3',
+  };
+}
+
+function issueNeoDidTicket(route, payload) {
+  return handler(
+    new Request(`http://local/neodid/${route}`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    })
+  );
 }
 
 async function encryptForOracle(publicKeyBase64, plaintext) {
@@ -1023,6 +1068,111 @@ test('neodid action-ticket accepts okex alias and normalizes to okx', async () =
   assert.ok(body.signature);
 });
 
+test('neodid action-ticket preserves the legacy v1 golden with default and explicit v1 encoding', async () => {
+  process.env.MORPHEUS_NEODID_ALLOW_UNVERIFIED_UID = 'true';
+  process.env.NEODID_SECRET_SALT = 'unit-test-salt-text';
+  delete process.env.MORPHEUS_NETWORK;
+  const legacy = {
+    provider: 'twitter',
+    provider_uid: 'user-42',
+    action_id: 'act-1',
+    disposable_account: `0x${'22'.repeat(20)}`,
+  };
+  for (const callbackEncoding of [undefined, 'neo_n3_action_v1']) {
+    const res = await issueNeoDidTicket('action-ticket', {
+      ...legacy,
+      ...(callbackEncoding ? { callback_encoding: callbackEncoding } : {}),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.action_id, 'act-1');
+    assert.equal(
+      body.action_nullifier,
+      '0x09991669650a654a54ace219dc7d0958330d2ff772f05117d949548c691a429d'
+    );
+    assert.equal(body.digest, '0xe1edd51a9b3fa5a1c3c62a947a72633b4a55a3ac487eb38cfbdcfb3c38953e53');
+  }
+});
+
+test('neodid action v3 matches the Rust golden and binds action id and digest to the raw account', async () => {
+  process.env.MORPHEUS_NEODID_ALLOW_UNVERIFIED_UID = 'true';
+  process.env.NEODID_SECRET_SALT = 'unit-test-salt-text';
+  const actionId = 'aa_proxy:ca0d3b5865caf8b07c0a2b2eb7ea05ded9b7f4eb81a657ed64316af587553557';
+  const res = await issueNeoDidTicket('action-ticket', aaActionV3Payload());
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.action_id, actionId);
+  assert.equal(
+    body.action_nullifier,
+    '0x41a081d59869e15b50c01d3143eeddbcf46c27e804240d83516c9c5325335d05'
+  );
+  assert.equal(body.digest, '0x6997b70a6dd9a8d54c56c9c5792ebec5c780ee884d73464ec4d9eed6b9b405ae');
+
+  const explicitRes = await issueNeoDidTicket('action-ticket', {
+    ...aaActionV3Payload(),
+    action_id: actionId,
+  });
+  assert.equal(explicitRes.status, 200);
+  assert.equal((await explicitRes.json()).digest, body.digest);
+
+  const defaultNoncePayload = aaActionV3Payload();
+  delete defaultNoncePayload.session_nonce;
+  const defaultNonceRes = await issueNeoDidTicket('action-ticket', defaultNoncePayload);
+  assert.equal(defaultNonceRes.status, 200);
+  const defaultNonce = await defaultNonceRes.json();
+  assert.equal(
+    defaultNonce.action_id,
+    'aa_proxy:23c9db0c12665b099e7e384173cd2474110a94c7d73b87a27b22b139650d66ae'
+  );
+  assert.equal(
+    defaultNonce.digest,
+    '0x7dec99dc9584272e21cd46e5780dd33667e70ff18ad8433cbab6ef1d05e5dadb'
+  );
+
+  const otherRawRes = await issueNeoDidTicket('action-ticket', {
+    ...aaActionV3Payload(),
+    account_id_raw: `0x${'55'.repeat(20)}`,
+  });
+  assert.equal(otherRawRes.status, 200);
+  const otherRaw = await otherRawRes.json();
+  assert.notEqual(otherRaw.action_id, body.action_id);
+  assert.notEqual(otherRaw.digest, body.digest);
+
+  const foreignRes = await issueNeoDidTicket('action-ticket', {
+    ...aaActionV3Payload(),
+    action_id: 'aa_proxy:foreign',
+  });
+  assert.equal(foreignRes.status, 400);
+  assert.match((await foreignRes.json()).error, /action_id.*derived AA action/);
+});
+
+test('neodid action v3 rejects missing context and non-decimal nonce or expiry', async () => {
+  process.env.MORPHEUS_NEODID_ALLOW_UNVERIFIED_UID = 'true';
+  for (const field of [
+    'network',
+    'aa_contract',
+    'verifier_contract',
+    'account_id_raw',
+    'account_id',
+    'disposable_account',
+    'expires_at',
+  ]) {
+    const payload = aaActionV3Payload();
+    delete payload[field];
+    const res = await issueNeoDidTicket('action-ticket', payload);
+    assert.equal(res.status, 400, field);
+    assert.match((await res.json()).error, new RegExp(field), field);
+  }
+  for (const field of ['session_nonce', 'expires_at']) {
+    const res = await issueNeoDidTicket('action-ticket', {
+      ...aaActionV3Payload(),
+      [field]: 'not-decimal',
+    });
+    assert.equal(res.status, 400, field);
+    assert.match((await res.json()).error, new RegExp(`${field} must be a decimal string`));
+  }
+});
+
 test('neodid recovery-ticket rejects an unverified provider_uid by default (E3 fail-closed)', async () => {
   const keyRes = await handler(
     new Request('http://local/oracle/public-key', { headers: authHeaders() })
@@ -1147,6 +1297,59 @@ test('neodid recovery-ticket supports confidential provider payloads and binds A
       process.env.MORPHEUS_NEODID_RECOVERY_ALLOW_UNVERIFIED_PROVIDERS = previousAllowlist;
     }
   }
+});
+
+test('neodid recovery action id matches the Rust golden and rejects foreign or cross-account bindings', async () => {
+  process.env.MORPHEUS_NEODID_RECOVERY_ALLOW_UNVERIFIED_PROVIDERS = 'twitter';
+  process.env.NEODID_SECRET_SALT = 'unit-test-salt-text';
+  const actionId = 'aa_recovery:a01b356e0ca61b0e9d44433ff86628e8d299bb045ae410a000e0bac5cfef80f8';
+  const res = await issueNeoDidTicket('recovery-ticket', recoveryV3Payload());
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.action_id, actionId);
+  assert.equal(body.callback_encoding, 'neo_n3_recovery_v3');
+  assert.equal(
+    body.action_nullifier,
+    '0x4751923c6caacd2506e954a94a46badfd16b49fbbc49fc56ebab154e4500cd2f'
+  );
+  assert.equal(body.digest, '0x052563ca766bef9e5fb108668d46e6f834a7099b06aea69e03dc334a96624f8a');
+
+  const explicitRes = await issueNeoDidTicket('recovery-ticket', {
+    ...recoveryV3Payload(),
+    action_id: actionId,
+  });
+  assert.equal(explicitRes.status, 200);
+  assert.equal((await explicitRes.json()).digest, body.digest);
+
+  const otherRawRes = await issueNeoDidTicket('recovery-ticket', {
+    ...recoveryV3Payload(),
+    account_id_raw: `0x${'67'.repeat(20)}`,
+  });
+  assert.equal(otherRawRes.status, 200);
+  const otherRaw = await otherRawRes.json();
+  assert.equal(otherRaw.account_id, body.account_id);
+  assert.notEqual(otherRaw.action_id, body.action_id);
+  assert.notEqual(otherRaw.digest, body.digest);
+
+  const foreignRes = await issueNeoDidTicket('recovery-ticket', {
+    ...recoveryV3Payload(),
+    action_id: 'aa_recovery:foreign',
+  });
+  assert.equal(foreignRes.status, 400);
+  assert.match((await foreignRes.json()).error, /action_id.*derived recovery action/);
+
+  const missingRaw = recoveryV3Payload();
+  delete missingRaw.account_id_raw;
+  const missingRawRes = await issueNeoDidTicket('recovery-ticket', missingRaw);
+  assert.equal(missingRawRes.status, 400);
+  assert.match((await missingRawRes.json()).error, /account_id_raw/);
+
+  const badNonceRes = await issueNeoDidTicket('recovery-ticket', {
+    ...recoveryV3Payload(),
+    recovery_nonce: 'n-1',
+  });
+  assert.equal(badNonceRes.status, 400);
+  assert.match((await badNonceRes.json()).error, /recovery_nonce must be a decimal string/);
 });
 
 test('neodid recovery-ticket accepts confidential web3auth id_token payloads', async () => {
@@ -2863,6 +3066,68 @@ test('paymaster authorize enforces network-specific policy', async () => {
     process.env.AA_CORE_HASH_TESTNET = snapshot.genericAaCoreHash;
     process.env.MORPHEUS_PAYMASTER_MAINNET_ENABLED = snapshot.mainnetEnabled;
   }
+});
+
+test('relay response idempotency replays a result without replaying its sponsorship approval', async () => {
+  const upstash = createUpstashRestMock();
+  upstash.install();
+  process.env.MORPHEUS_ALLOW_TRANSACTION_SPONSORSHIP = 'true';
+  process.env.MORPHEUS_UPSTASH_GUARDS_ENABLED = 'true';
+  process.env.MORPHEUS_UPSTASH_FAIL_CLOSED = 'true';
+  process.env.UPSTASH_REDIS_REST_URL = 'https://mock-upstash.example.com';
+  process.env.UPSTASH_REDIS_REST_TOKEN = 'token';
+  const fixture = buildSponsorshipFixture({ id: 'approval-response-idempotency' });
+  upstash.putJson(
+    sponsorshipStorageKey(fixture.approval.sponsorship_id),
+    fixture.approval
+  );
+  let signCalls = 0;
+  __setCustodyTransportForTests(async (method, pathname) => {
+    if (method === 'GET' && pathname === '/keys/key-updater') {
+      return {
+        allowed: true,
+        key_id: 'key-updater',
+        public_key: fixture.sponsorAccount.publicKey,
+        script_hash: `0x${fixture.sponsorAccount.scriptHash}`,
+        address: fixture.sponsorAccount.address,
+      };
+    }
+    if (method === 'POST' && pathname === '/sign/transaction') {
+      signCalls += 1;
+      return {
+        allowed: true,
+        key_id: 'key-updater',
+        address: fixture.sponsorAccount.address,
+        script_hash: `0x${fixture.sponsorAccount.scriptHash}`,
+        invocation_script: `0c40${'00'.repeat(64)}`,
+        verification_script: `0c21${fixture.sponsorAccount.publicKey}4156e7b327`,
+      };
+    }
+    return { allowed: false, code: 'unexpected', message: `${method} ${pathname}` };
+  });
+  const payload = sponsorshipPayload(fixture);
+  const request = (idempotencyKey) =>
+    new Request('http://local/relay/transaction', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'idempotency-key': idempotencyKey },
+      body: JSON.stringify(payload),
+    });
+
+  const first = await handler(request('sponsor-response-1'));
+  assert.equal(first.status, 200);
+  const firstBody = await first.json();
+  assert.equal(firstBody.sponsorship_id, fixture.approval.sponsorship_id);
+  assert.equal(signCalls, 1);
+
+  const cached = await handler(request('sponsor-response-1'));
+  assert.equal(cached.status, 200);
+  assert.deepEqual(await cached.json(), firstBody);
+  assert.equal(signCalls, 1, 'a cached response must not consume or sign again');
+
+  const approvalReplay = await handler(request('sponsor-response-2'));
+  assert.equal(approvalReplay.status, 400);
+  assert.match((await approvalReplay.json()).error, /already consumed/);
+  assert.equal(signCalls, 1, 'a new request must not replay the consumed approval');
 });
 
 test('paymaster authorize can consult AA hook allowlist state', async () => {

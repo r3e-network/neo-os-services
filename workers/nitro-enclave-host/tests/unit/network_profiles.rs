@@ -183,3 +183,55 @@ fn every_supported_payload_alias_is_bound_but_recovery_chain_family_is_not_a_net
         assert!(select_request("POST", "/mainnet/neodid/recovery-ticket", &headers, &body).is_ok());
     }
 }
+
+#[test]
+fn aa_v3_network_text_does_not_select_or_bypass_the_deployment_context() {
+    let headers = http::HeaderMap::new();
+    for (route, callback_encoding) in [
+        ("/neodid/action-ticket", "neo_n3_action_v3"),
+        ("/neodid/recovery-ticket", "neo_n3_recovery_v3"),
+    ] {
+        for deployment in ["mainnet", "testnet"] {
+            let payload = serde_json::json!({
+                "network": "neo3-testnet",
+                "callback_encoding": callback_encoding,
+            });
+            assert!(assert_payload_network(deployment, route, &payload).is_ok());
+            let selected = select_request(
+                "POST",
+                &format!("/{deployment}{route}"),
+                &headers,
+                &payload.to_string(),
+            )
+            .unwrap();
+            assert_eq!(selected.network, deployment);
+            assert_eq!(selected.raw_url, route);
+
+            let foreign = serde_json::json!({
+                "network": "neo3-testnet",
+                "callback_encoding": callback_encoding,
+                "environment": if deployment == "testnet" { "mainnet" } else { "testnet" },
+            });
+            assert!(assert_payload_network(deployment, route, &foreign).is_err());
+            let malformed = serde_json::json!({
+                "network": false,
+                "callback_encoding": callback_encoding,
+            });
+            assert!(assert_payload_network(deployment, route, &malformed).is_err());
+        }
+    }
+
+    for payload in [
+        serde_json::json!({"network":"neo3-testnet"}),
+        serde_json::json!({"network":"neo3-testnet","callback_encoding":"neo_n3_action_v1"}),
+        serde_json::json!({"network":"neo3-testnet","callback_encoding":"neo_n3_recovery_v3"}),
+    ] {
+        assert!(assert_payload_network("testnet", "/neodid/action-ticket", &payload).is_err());
+    }
+    assert!(assert_payload_network(
+        "testnet",
+        "/neodid/recovery-ticket",
+        &serde_json::json!({"network":"neo3-testnet"})
+    )
+    .is_err());
+}

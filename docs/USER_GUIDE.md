@@ -682,6 +682,11 @@ For large Web3Auth JWT payloads:
 
 ### Action ticket example
 
+This is the NeoDIDRegistry v1 request shape, used by an omitted/legacy callback
+encoding and by `neo_n3_action_v1`. AA `MorpheusSocialRecoveryVerifier` sessions
+must instead use the `neo_n3_action_v3` request and raw-account binding documented
+in [AA Social Recovery](AA_SOCIAL_RECOVERY.md#aa-action-ticket-schema--aa-操作票据结构).
+
 ```bash
 curl http://localhost:3000/api/neodid/action-ticket \
   -H 'content-type: application/json' \
@@ -703,6 +708,7 @@ curl http://localhost:3000/api/neodid/recovery-ticket \
     "network":"neo_n3",
     "aa_contract":"0x0268a387913b250166ddec032b03332690a1ef78",
     "verifier_contract":"0xfb3f605fc6bcd59d265d7c18230093d7dc24ac26",
+    "account_id_raw":"<raw-20-byte-account-id>",
     "account_id":"<aa-account-id>",
     "new_owner":"0x89b05cac00804648c666b47ecb1c57bc185821b7",
     "recovery_nonce":"7",

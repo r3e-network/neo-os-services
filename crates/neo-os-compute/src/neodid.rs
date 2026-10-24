@@ -35,6 +35,7 @@ const NEODID_BINDING_DOMAIN: &[u8] = b"neodid-binding-v1";
 const NEODID_CLAIM_COMMITMENT_DOMAIN: &[u8] = b"neodid-claim-secret-v1";
 const NEODID_BINDING_COMMITMENT_DOMAIN: &[u8] = b"neodid-claim-commitment-v1";
 const NEODID_ACTION_DOMAIN: &[u8] = b"neodid-action-v1";
+const NEODID_AA_ACTION_DOMAIN: &[u8] = b"neodid-action-v2";
 const NEODID_RECOVERY_DOMAIN: &[u8] = b"neodid-recovery-v2";
 const NEODID_ZKLOGIN_DOMAIN: &[u8] = b"neodid-zklogin-v1";
 
@@ -505,7 +506,7 @@ fn neo_n3_network_magic_le4(network: &str, env: EnvReader<'_>) -> Result<[u8; 4]
     ])
 }
 
-/// The network a bind or action ticket digest is bound to. The host signs the
+/// The network a bind or NeoDIDRegistry v1 action digest is bound to. The host signs the
 /// digest with its worker key, which exists only for the host's own network:
 /// its reviewed `MORPHEUS_NETWORK`, resolved as the host resolves its custody
 /// network (an empty value is the documented TestNet default, an unknown label
@@ -605,6 +606,34 @@ fn resolve_required_text(value: Option<&Json>, field_name: &str) -> Result<Strin
     finish_required_text(js_trim_string(value), field_name)
 }
 
+fn resolve_decimal_text(value: Option<&Json>, field_name: &str) -> Result<String, String> {
+    let text = resolve_required_text(value, field_name)?;
+    if !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(format!("{field_name} must be a decimal string"));
+    }
+    let canonical = text.trim_start_matches('0');
+    if canonical.is_empty() {
+        Ok("0".to_string())
+    } else {
+        Ok(canonical.to_string())
+    }
+}
+
+fn callback_encoding(payload: &Json) -> String {
+    js_trim_string(js_first_truthy(
+        payload,
+        &["callback_encoding", "result_encoding"],
+    ))
+}
+
+pub fn is_aa_action_v3_payload(payload: &Json) -> bool {
+    callback_encoding(payload) == "neo_n3_action_v3"
+}
+
+pub fn is_aa_recovery_v3_payload(payload: &Json) -> bool {
+    callback_encoding(payload) == "neo_n3_recovery_v3"
+}
+
 /// `resolveUint256Text` — validates through the BigInt(string) grammar but
 /// returns the (trimmed) text AS-IS: the on-chain decoder re-parses it.
 fn resolve_uint256_text(value: Option<&Json>, field_name: &str) -> Result<String, String> {
@@ -621,28 +650,64 @@ fn resolve_recovery_action_id(
     payload: &Json,
     network: &str,
     aa_contract: &str,
-    account_id: &str,
+    account_id_raw: &str,
     new_owner: &str,
     recovery_nonce: &str,
 ) -> Result<String, String> {
+    let mut material = Vec::new();
+    material.extend_from_slice(network.as_bytes());
+    material.push(0x1f);
+    material.extend_from_slice(&hex_bytes_0x(aa_contract));
+    material.push(0x1f);
+    material.extend_from_slice(&hex_bytes_0x(account_id_raw));
+    material.push(0x1f);
+    material.extend_from_slice(&hex_bytes_0x(new_owner));
+    material.push(0x1f);
+    material.extend_from_slice(recovery_nonce.as_bytes());
+    let derived = format!("aa_recovery:{}", sha256_hex(&material));
     let explicit = js_trim_string(js_first_truthy(
         payload,
         &["action_id", "recovery_action_id", "recovery_id", "intent"],
     ));
     if !explicit.is_empty() {
-        return finish_required_text(explicit, "action_id");
+        let explicit = finish_required_text(explicit, "action_id")?;
+        if explicit != derived {
+            return Err("action_id does not match the derived recovery action".to_string());
+        }
     }
-    let joined = [
-        "aa_recovery",
-        network,
-        aa_contract,
-        account_id,
-        new_owner,
-        recovery_nonce,
-    ]
-    .join("\u{1f}");
-    let digest = sha256_hex(joined.as_bytes());
-    finish_required_text(format!("aa_recovery:{digest}"), "action_id")
+    Ok(derived)
+}
+
+fn resolve_aa_proxy_action_id(
+    payload: &Json,
+    network: &str,
+    aa_contract: &str,
+    account_id_raw: &str,
+    disposable_account: &str,
+    session_nonce: &str,
+    expires_at: &str,
+) -> Result<String, String> {
+    let mut material = Vec::new();
+    material.extend_from_slice(network.as_bytes());
+    material.push(0x1f);
+    material.extend_from_slice(&hex_bytes_0x(aa_contract));
+    material.push(0x1f);
+    material.extend_from_slice(&hex_bytes_0x(account_id_raw));
+    material.push(0x1f);
+    material.extend_from_slice(&hex_bytes_0x(disposable_account));
+    material.push(0x1f);
+    material.extend_from_slice(session_nonce.as_bytes());
+    material.push(0x1f);
+    material.extend_from_slice(expires_at.as_bytes());
+    let derived = format!("aa_proxy:{}", sha256_hex(&material));
+    let explicit = js_trim_string(js_first_truthy(payload, &["action_id"]));
+    if !explicit.is_empty() {
+        let explicit = finish_required_text(explicit, "action_id")?;
+        if explicit != derived {
+            return Err("action_id does not match the derived AA action".to_string());
+        }
+    }
+    Ok(derived)
 }
 
 fn resolve_zklogin_action_id(payload: &Json, derived_parts: [&str; 7]) -> Result<String, String> {
@@ -722,6 +787,33 @@ fn build_action_digest_bytes(
     input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.action_id)?);
     input.extend_from_slice(&hex_decode_stop_at_invalid(&ticket.action_nullifier));
     input.extend_from_slice(&neo_n3_network_magic_le4(&ticket.network, env)?);
+    Ok(Sha256::digest(&input).into())
+}
+
+struct AaActionTicket {
+    network: String,
+    aa_contract: String,
+    account_id_raw: String,
+    verifier_contract: String,
+    account_id: String,
+    disposable_account: String,
+    action_id: String,
+    expires_at: String,
+    action_nullifier: String,
+}
+
+fn build_aa_action_digest_bytes(ticket: &AaActionTicket) -> Result<[u8; 32], String> {
+    let mut input = Vec::new();
+    input.extend_from_slice(NEODID_AA_ACTION_DOMAIN);
+    input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.network)?);
+    input.extend_from_slice(&hex_bytes_0x(&ticket.aa_contract));
+    input.extend_from_slice(&hex_bytes_0x(&ticket.account_id_raw));
+    input.extend_from_slice(&hex_bytes_0x(&ticket.verifier_contract));
+    input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.account_id)?);
+    input.extend_from_slice(&hex_bytes_0x(&ticket.disposable_account));
+    input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.action_id)?);
+    input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.expires_at)?);
+    input.extend_from_slice(&hex_decode_stop_at_invalid(&ticket.action_nullifier));
     Ok(Sha256::digest(&input).into())
 }
 
@@ -870,6 +962,65 @@ pub fn neodid_action_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Resul
         "bind",
     )?;
 
+    if is_aa_action_v3_payload(resolved_payload) {
+        let network = resolve_required_text(resolved_payload.get("network"), "network")?;
+        let aa_contract = resolve_hash160(resolved_payload.get("aa_contract"), "aa_contract")?;
+        let account_id_raw =
+            resolve_hash160(resolved_payload.get("account_id_raw"), "account_id_raw")?;
+        let verifier_contract = resolve_hash160(
+            resolved_payload.get("verifier_contract"),
+            "verifier_contract",
+        )?;
+        let account_id = resolve_required_text(resolved_payload.get("account_id"), "account_id")?;
+        let disposable_account = resolve_hash160(
+            js_first_truthy(
+                resolved_payload,
+                &["disposable_account", "disposable_script_hash"],
+            ),
+            "disposable_account",
+        )?;
+        let expires_at = resolve_decimal_text(resolved_payload.get("expires_at"), "expires_at")?;
+        let zero = json!("0");
+        let session_nonce = resolve_decimal_text(
+            Some(
+                resolved_payload
+                    .get("session_nonce")
+                    .filter(|value| !value.is_null())
+                    .unwrap_or(&zero),
+            ),
+            "session_nonce",
+        )?;
+        let action_id = resolve_aa_proxy_action_id(
+            resolved_payload,
+            &network,
+            &aa_contract,
+            &account_id_raw,
+            &disposable_account,
+            &session_nonce,
+            &expires_at,
+        )?;
+        let action_nullifier =
+            compute_action_nullifier(&provider, &provider_uid, &action_id, &salt_bytes);
+        let ticket = AaActionTicket {
+            network,
+            aa_contract,
+            account_id_raw,
+            verifier_contract,
+            account_id,
+            disposable_account,
+            action_id,
+            expires_at,
+            action_nullifier: action_nullifier.clone(),
+        };
+        let digest_bytes = build_aa_action_digest_bytes(&ticket)?;
+        return Ok(json!({
+            "disposable_account": ticket.disposable_account,
+            "action_id": ticket.action_id,
+            "action_nullifier": format!("0x{action_nullifier}"),
+            "digest": format!("0x{}", hex_encode(&digest_bytes)),
+        }));
+    }
+
     let action_id = js_trim_string(js_first_truthy(resolved_payload, &["action_id", "intent"]));
     if action_id.is_empty() {
         return Err("action_id is required".to_string());
@@ -957,7 +1108,7 @@ pub fn neodid_recovery_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Res
         ),
         "new_owner",
     )?;
-    let recovery_nonce = resolve_required_text(
+    let recovery_nonce = resolve_decimal_text(
         js_first_truthy(resolved_payload, &["recovery_nonce", "nonce"]),
         "recovery_nonce",
     )?;
@@ -973,7 +1124,7 @@ pub fn neodid_recovery_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Res
         resolved_payload,
         &network,
         &aa_contract,
-        &account_id,
+        &account_id_raw,
         &new_owner,
         &recovery_nonce,
     )?;
@@ -1145,12 +1296,22 @@ mod tests {
         "09991669650a654a54ace219dc7d0958330d2ff772f05117d949548c691a429d";
     const GOLDEN_ACT_DIGEST: &str =
         "f2f70b124e604b7ac3696ba62382d00b4748607e259ab6b56275ecbaa27c6640";
+    const GOLDEN_AA_ACTION_ID_DIGEST: &str =
+        "ca0d3b5865caf8b07c0a2b2eb7ea05ded9b7f4eb81a657ed64316af587553557";
+    const GOLDEN_AA_ACTION_NULL: &str =
+        "41a081d59869e15b50c01d3143eeddbcf46c27e804240d83516c9c5325335d05";
+    const GOLDEN_AA_ACTION_DIGEST: &str =
+        "6997b70a6dd9a8d54c56c9c5792ebec5c780ee884d73464ec4d9eed6b9b405ae";
+    const GOLDEN_AA_DEFAULT_NONCE_ACTION_ID_DIGEST: &str =
+        "23c9db0c12665b099e7e384173cd2474110a94c7d73b87a27b22b139650d66ae";
+    const GOLDEN_AA_DEFAULT_NONCE_DIGEST: &str =
+        "7dec99dc9584272e21cd46e5780dd33667e70ff18ad8433cbab6ef1d05e5dadb";
     const GOLDEN_REC_ACTION_ID_DIGEST: &str =
-        "78cf63a7df260126c76097a71f4d642ba6e4ed4a2a6bf8c8a8006ca2f4e8d00b";
+        "a01b356e0ca61b0e9d44433ff86628e8d299bb045ae410a000e0bac5cfef80f8";
     const GOLDEN_REC_NULL: &str =
-        "a9afb6ca26f963a5baaea94f92832bceb20ebba5ce029173d2b7162130d758fd";
+        "4751923c6caacd2506e954a94a46badfd16b49fbbc49fc56ebab154e4500cd2f";
     const GOLDEN_REC_DIGEST: &str =
-        "327bc26130bfc1cb3fe29dc54d77e72b0c806170553280ddb21143973df900a9";
+        "052563ca766bef9e5fb108668d46e6f834a7099b06aea69e03dc334a96624f8a";
     const GOLDEN_ZK_ACTION_ID_DIGEST: &str =
         "ba9ae2ee36d9ced6d1d848bf8b890a56b658804f48ac15aab21969adbfe1183b";
     const GOLDEN_ZK_NULL: &str = "1d1f3ef311785b4b021f9b4b25ebceffa801478117e25cfcce33812578cb7b7a";
@@ -1496,6 +1657,9 @@ mod tests {
         );
         // Mainnet fallback magic rides at the end of the preimage.
         assert_eq!(result["digest"], format!("0x{GOLDEN_ACT_DIGEST}"));
+        let mut explicit_v1 = payload.clone();
+        explicit_v1["callback_encoding"] = json!("neo_n3_action_v1");
+        assert_eq!(result, neodid_action_ticket(&io, &explicit_v1).unwrap());
     }
 
     fn ticket_payload(network: Option<&str>) -> Json {
@@ -1521,6 +1685,137 @@ mod tests {
             pairs.push(("MORPHEUS_NETWORK", network));
         }
         env_from(&pairs)
+    }
+
+    fn aa_action_v3_payload() -> Json {
+        json!({
+            "provider": "twitter",
+            "provider_uid": "user-42",
+            "network": "neo3-testnet",
+            "aa_contract": format!("0x{}", "11".repeat(20)),
+            "verifier_contract": format!("0x{}", "33".repeat(20)),
+            "account_id_raw": format!("0x{}", "22".repeat(20)),
+            "account_id": "acct-1",
+            "disposable_account": format!("0x{}", "44".repeat(20)),
+            "expires_at": "1735689600",
+            "session_nonce": "7",
+            "callback_encoding": "neo_n3_action_v3",
+        })
+    }
+
+    fn recovery_v3_payload() -> Json {
+        json!({
+            "provider": "twitter",
+            "provider_uid": "user-42",
+            "network": "neo3-testnet",
+            "aa_contract": format!("0x{}", "33".repeat(20)),
+            "account_id_raw": format!("0x{}", "66".repeat(20)),
+            "account_address": format!("0x{}", "44".repeat(20)),
+            "account_id": "acct-1",
+            "new_owner": format!("0x{}", "55".repeat(20)),
+            "recovery_nonce": "7",
+            "expires_at": "1735689600",
+            "callback_encoding": "neo_n3_recovery_v3",
+        })
+    }
+
+    fn recovery_env() -> impl Fn(&str) -> Option<String> {
+        env_from(&[
+            ("NEODID_SECRET_SALT", "unit-test-salt-text"),
+            (
+                "MORPHEUS_NEODID_RECOVERY_ALLOW_UNVERIFIED_PROVIDERS",
+                "twitter",
+            ),
+        ])
+    }
+
+    #[test]
+    fn aa_action_v2_matches_node_golden_and_binds_the_raw_account() {
+        let env = host_env(None);
+        let io = io_with(&env, unreachable_verify(), unreachable_derive());
+        let payload = aa_action_v3_payload();
+        let result = neodid_action_ticket(&io, &payload).unwrap();
+        assert_keys(
+            &result,
+            &[
+                "disposable_account",
+                "action_id",
+                "action_nullifier",
+                "digest",
+            ],
+        );
+        assert_eq!(
+            result["action_id"],
+            format!("aa_proxy:{GOLDEN_AA_ACTION_ID_DIGEST}")
+        );
+        assert_eq!(
+            result["action_nullifier"],
+            format!("0x{GOLDEN_AA_ACTION_NULL}")
+        );
+        assert_eq!(result["digest"], format!("0x{GOLDEN_AA_ACTION_DIGEST}"));
+
+        let mut explicit = payload.clone();
+        explicit["action_id"] = result["action_id"].clone();
+        assert_eq!(result, neodid_action_ticket(&io, &explicit).unwrap());
+
+        let mut default_nonce = payload.clone();
+        default_nonce
+            .as_object_mut()
+            .expect("payload object")
+            .remove("session_nonce");
+        let default_nonce = neodid_action_ticket(&io, &default_nonce).unwrap();
+        assert_eq!(
+            default_nonce["action_id"],
+            format!("aa_proxy:{GOLDEN_AA_DEFAULT_NONCE_ACTION_ID_DIGEST}")
+        );
+        assert_eq!(
+            default_nonce["digest"],
+            format!("0x{GOLDEN_AA_DEFAULT_NONCE_DIGEST}")
+        );
+
+        let mut other_raw = payload.clone();
+        other_raw["account_id_raw"] = json!(format!("0x{}", "55".repeat(20)));
+        let other_raw = neodid_action_ticket(&io, &other_raw).unwrap();
+        assert_ne!(other_raw["action_id"], result["action_id"]);
+        assert_ne!(other_raw["digest"], result["digest"]);
+
+        let mut foreign = payload;
+        foreign["action_id"] = json!("aa_proxy:foreign");
+        assert_eq!(
+            neodid_action_ticket(&io, &foreign).unwrap_err(),
+            "action_id does not match the derived AA action"
+        );
+    }
+
+    #[test]
+    fn aa_action_v3_rejects_missing_context_and_non_decimal_numbers() {
+        let env = host_env(None);
+        let io = io_with(&env, unreachable_verify(), unreachable_derive());
+        for field in [
+            "network",
+            "aa_contract",
+            "verifier_contract",
+            "account_id_raw",
+            "account_id",
+            "disposable_account",
+            "expires_at",
+        ] {
+            let mut payload = aa_action_v3_payload();
+            payload
+                .as_object_mut()
+                .expect("payload object")
+                .remove(field);
+            let error = neodid_action_ticket(&io, &payload).unwrap_err();
+            assert!(error.contains(field), "{field}: {error}");
+        }
+        for field in ["session_nonce", "expires_at"] {
+            let mut payload = aa_action_v3_payload();
+            payload[field] = json!("not-decimal");
+            assert_eq!(
+                neodid_action_ticket(&io, &payload).unwrap_err(),
+                format!("{field} must be a decimal string")
+            );
+        }
     }
 
     #[test]
@@ -1582,25 +1877,8 @@ mod tests {
 
     #[test]
     fn recovery_digest_matches_node_golden() {
-        let env = env_from(&[
-            ("NEODID_SECRET_SALT", "unit-test-salt-text"),
-            (
-                "MORPHEUS_NEODID_RECOVERY_ALLOW_UNVERIFIED_PROVIDERS",
-                "web3auth,twitter",
-            ),
-        ]);
-        let payload = json!({
-            "provider": "twitter",
-            "provider_uid": "user-42",
-            "network": "neo_n3",
-            "aa_contract": format!("0x{}", "33".repeat(20)),
-            "account_id_raw": format!("0x{}", "66".repeat(20)),
-            "account_address": format!("0x{}", "44".repeat(20)),
-            "account_id": "acct-1",
-            "new_owner": format!("0x{}", "55".repeat(20)),
-            "recovery_nonce": "n-1",
-            "expires_at": "2026-01-01T00:00:00Z",
-        });
+        let env = recovery_env();
+        let payload = recovery_v3_payload();
         let io = io_with(&env, unreachable_verify(), unreachable_derive());
         let result = neodid_recovery_ticket(&io, &payload).unwrap();
         assert_keys(
@@ -1622,7 +1900,7 @@ mod tests {
                 "digest",
             ],
         );
-        // Derived action id: sha256 of the \u001f-joined recovery parts.
+        // Derived action id binds the raw account and canonical recovery nonce.
         assert_eq!(
             result["action_id"],
             format!("aa_recovery:{GOLDEN_REC_ACTION_ID_DIGEST}")
@@ -1644,6 +1922,39 @@ mod tests {
             .remove("account_id_raw");
         let error = neodid_recovery_ticket(&io, &missing_raw).unwrap_err();
         assert!(error.contains("account_id_raw"), "{error}");
+    }
+
+    #[test]
+    fn recovery_action_id_rejects_foreign_and_cross_account_bindings() {
+        let env = recovery_env();
+        let io = io_with(&env, unreachable_verify(), unreachable_derive());
+        let payload = recovery_v3_payload();
+        let expected = neodid_recovery_ticket(&io, &payload).unwrap();
+
+        let mut explicit = payload.clone();
+        explicit["action_id"] = expected["action_id"].clone();
+        assert_eq!(expected, neodid_recovery_ticket(&io, &explicit).unwrap());
+
+        let mut other_raw_payload = payload.clone();
+        other_raw_payload["account_id_raw"] = json!(format!("0x{}", "67".repeat(20)));
+        let other_raw = neodid_recovery_ticket(&io, &other_raw_payload).unwrap();
+        assert_eq!(other_raw["account_id"], expected["account_id"]);
+        assert_ne!(other_raw["action_id"], expected["action_id"]);
+        assert_ne!(other_raw["digest"], expected["digest"]);
+
+        let mut foreign = payload.clone();
+        foreign["action_id"] = json!("aa_recovery:foreign");
+        assert_eq!(
+            neodid_recovery_ticket(&io, &foreign).unwrap_err(),
+            "action_id does not match the derived recovery action"
+        );
+
+        let mut bad_nonce = payload;
+        bad_nonce["recovery_nonce"] = json!("n-1");
+        assert_eq!(
+            neodid_recovery_ticket(&io, &bad_nonce).unwrap_err(),
+            "recovery_nonce must be a decimal string"
+        );
     }
 
     #[test]
@@ -1742,7 +2053,7 @@ mod tests {
             "aa_contract": format!("0x{}", "33".repeat(20)),
             "account_id": "acct-1",
             "new_owner": format!("0x{}", "55".repeat(20)),
-            "recovery_nonce": "n-1",
+            "recovery_nonce": "7",
             "expires_at": "2026-01-01T00:00:00Z",
         });
         let io = io_with(&salt, unreachable_verify(), unreachable_derive());
@@ -1770,7 +2081,7 @@ mod tests {
             "account_id_raw": format!("0x{}", "66".repeat(20)),
             "account_id": "acct-1",
             "new_owner": format!("0x{}", "55".repeat(20)),
-            "recovery_nonce": "n-1",
+            "recovery_nonce": "7",
             "expires_at": "2026-01-01T00:00:00Z",
         });
         let io = io_with(&env_allow, unreachable_verify(), unreachable_derive());
@@ -2099,21 +2410,7 @@ mod tests {
     }
 
     #[test]
-    fn action_id_resolvers_prefer_the_explicit_payload_fields() {
-        let payload = json!({ "recovery_action_id": "  explicit-id  " });
-        assert_eq!(
-            resolve_recovery_action_id(&payload, "neo_n3", "0xaa", "acct", "0xbb", "n-1").unwrap(),
-            "explicit-id"
-        );
-        // Falls through empty explicit fields to the derived digest.
-        let payload = json!({});
-        assert_eq!(
-            resolve_recovery_action_id(&payload, "n", "0xaa", "acct", "0xbb", "n-1").unwrap(),
-            format!(
-                "aa_recovery:{}",
-                sha256_hex("aa_recovery\u{1f}n\u{1f}0xaa\u{1f}acct\u{1f}0xbb\u{1f}n-1".as_bytes())
-            )
-        );
+    fn zklogin_action_id_resolver_prefers_the_explicit_payload_field() {
         let payload = json!({ "zklogin_action_id": "z-explicit" });
         assert_eq!(
             resolve_zklogin_action_id(&payload, ["0xa", "0xb", "0xc", "m", "0xd", "1", "2"])

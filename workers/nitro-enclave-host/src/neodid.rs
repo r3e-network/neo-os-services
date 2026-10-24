@@ -35,8 +35,8 @@ use base64::Engine;
 use neo_os_compute::core::{normalize_target_chain, sanitize_error_message, EnvReader};
 use neo_os_compute::js::{js_first_truthy, js_trim_string};
 use neo_os_compute::neodid::{
-    neodid_action_ticket, neodid_bind, neodid_recovery_ticket, neodid_zklogin_ticket, NeoDidIo,
-    Web3AuthVerifyRequest,
+    is_aa_action_v3_payload, is_aa_recovery_v3_payload, neodid_action_ticket, neodid_bind,
+    neodid_recovery_ticket, neodid_zklogin_ticket, NeoDidIo, Web3AuthVerifyRequest,
 };
 use neo_os_compute::stable_stringify::stable_stringify;
 
@@ -119,10 +119,10 @@ fn handle_ticket(
     let network = resolve_signing_network(state, mode, &resolved)?;
     // Confidential fields are assertions about the already-selected context,
     // never a second selector. Validate before provider verification or signing.
-    let route = if mode == "neodid_recovery_ticket" {
-        "/neodid/recovery-ticket"
-    } else {
-        "/neodid"
+    let route = match mode {
+        "neodid_recovery_ticket" => "/neodid/recovery-ticket",
+        "neodid_action_ticket" => "/neodid/action-ticket",
+        _ => "/neodid",
     };
     crate::network_profiles::assert_payload_network(&state.resolve_network()?, route, &resolved)?;
 
@@ -198,13 +198,10 @@ fn handle_ticket(
     Ok(serde_json::Value::Object(response))
 }
 
-/// The custody network a ticket is signed under. A recovery ticket names its
-/// chain family in `network` (`neodid_recovery_ticket` binds that label into
-/// the digest and defaults it to `neo_n3`); a supported target-chain label
-/// there is not a Morpheus network, so it selects the host's network exactly as
-/// an absent label does. Every other explicit label, on every ticket, goes
-/// through the host's strict `resolve_payload_network`, which refuses a label
-/// that is not a reviewed network instead of mapping it to one.
+/// The custody network a ticket is signed under. Recovery chain families and
+/// the opaque network text carried by AA v3 callbacks stay in the ticket digest;
+/// neither selects the custody deployment. Every deployment alias still goes
+/// through the host's strict `resolve_payload_network` assertion.
 fn resolve_signing_network(
     state: &AppState,
     mode: &str,
@@ -218,7 +215,10 @@ fn resolve_signing_network(
                 !label.trim().is_empty()
                     && normalize_target_chain(&serde_json::Value::String(label.to_string())).is_ok()
             });
-    if names_chain_family {
+    let is_aa_ticket_text = (mode == "neodid_recovery_ticket"
+        && is_aa_recovery_v3_payload(resolved))
+        || (mode == "neodid_action_ticket" && is_aa_action_v3_payload(resolved));
+    if names_chain_family || is_aa_ticket_text {
         let mut payload = resolved.clone();
         if let Some(object) = payload.as_object_mut() {
             object.remove("network");

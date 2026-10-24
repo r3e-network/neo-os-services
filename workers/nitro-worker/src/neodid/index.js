@@ -32,6 +32,7 @@ const NEODID_BINDING_DOMAIN = Buffer.from('neodid-binding-v1', 'utf8');
 const NEODID_CLAIM_COMMITMENT_DOMAIN = Buffer.from('neodid-claim-secret-v1', 'utf8');
 const NEODID_BINDING_COMMITMENT_DOMAIN = Buffer.from('neodid-claim-commitment-v1', 'utf8');
 const NEODID_ACTION_DOMAIN = Buffer.from('neodid-action-v1', 'utf8');
+const NEODID_AA_ACTION_DOMAIN = Buffer.from('neodid-action-v2', 'utf8');
 const NEODID_RECOVERY_DOMAIN = Buffer.from('neodid-recovery-v2', 'utf8');
 const NEODID_ZKLOGIN_DOMAIN = Buffer.from('neodid-zklogin-v1', 'utf8');
 
@@ -409,7 +410,7 @@ function neoN3NetworkMagicLe4(network) {
   return neoNetworkMagicLe4(magic);
 }
 
-// The network a bind or action ticket digest is bound to. The worker signs the
+// The network a bind or NeoDIDRegistry v1 action digest is bound to. The worker signs the
 // digest with its one custody key, which chain/signing.js binds to
 // MORPHEUS_NETWORK, so an absent payload label selects that network and an
 // explicit label must name it: a digest for any other network could never
@@ -466,6 +467,25 @@ function buildActionDigestBytes(ticket) {
         encodeLengthPrefixedAscii(ticket.action_id),
         Buffer.from(ticket.action_nullifier, 'hex'),
         neoN3NetworkMagicLe4(ticket.network),
+      ])
+    )
+    .digest();
+}
+
+function buildAaActionDigestBytes(ticket) {
+  return createHash('sha256')
+    .update(
+      Buffer.concat([
+        NEODID_AA_ACTION_DOMAIN,
+        encodeLengthPrefixedAscii(ticket.network),
+        Buffer.from(ticket.aa_contract.replace(/^0x/i, ''), 'hex'),
+        Buffer.from(ticket.account_id_raw.replace(/^0x/i, ''), 'hex'),
+        Buffer.from(ticket.verifier_contract.replace(/^0x/i, ''), 'hex'),
+        encodeLengthPrefixedAscii(ticket.account_id),
+        Buffer.from(ticket.disposable_account.replace(/^0x/i, ''), 'hex'),
+        encodeLengthPrefixedAscii(ticket.action_id),
+        encodeLengthPrefixedAscii(ticket.expires_at),
+        Buffer.from(ticket.action_nullifier, 'hex'),
       ])
     )
     .digest();
@@ -543,6 +563,18 @@ function resolveRequiredText(value, fieldName) {
   return text;
 }
 
+function resolveDecimalText(value, fieldName) {
+  const text = resolveRequiredText(value, fieldName);
+  if (!/^[0-9]+$/.test(text)) throw new Error(`${fieldName} must be a decimal string`);
+  return text.replace(/^0+(?=\d)/, '');
+}
+
+function isAaActionV3Payload(payload = {}) {
+  return (
+    trimString(payload.callback_encoding || payload.result_encoding || '') === 'neo_n3_action_v3'
+  );
+}
+
 function resolveUint256Text(value, fieldName) {
   const text = resolveRequiredText(value, fieldName);
   let parsed;
@@ -555,15 +587,67 @@ function resolveUint256Text(value, fieldName) {
   return text;
 }
 
-function resolveRecoveryActionId(payload, network, aaContract, accountId, newOwner, recoveryNonce) {
+function resolveAaProxyActionId(
+  payload,
+  network,
+  aaContract,
+  accountIdRaw,
+  disposableAccount,
+  sessionNonce,
+  expiresAt
+) {
+  const digest = sha256Hex(
+    Buffer.concat([
+      Buffer.from(network, 'utf8'),
+      Buffer.from([0x1f]),
+      Buffer.from(aaContract.replace(/^0x/i, ''), 'hex'),
+      Buffer.from([0x1f]),
+      Buffer.from(accountIdRaw.replace(/^0x/i, ''), 'hex'),
+      Buffer.from([0x1f]),
+      Buffer.from(disposableAccount.replace(/^0x/i, ''), 'hex'),
+      Buffer.from([0x1f]),
+      Buffer.from(sessionNonce, 'utf8'),
+      Buffer.from([0x1f]),
+      Buffer.from(expiresAt, 'utf8'),
+    ])
+  );
+  const derived = `aa_proxy:${digest}`;
+  const explicit = trimString(payload.action_id || '');
+  if (explicit && resolveRequiredText(explicit, 'action_id') !== derived) {
+    throw new Error('action_id does not match the derived AA action');
+  }
+  return derived;
+}
+
+function resolveRecoveryActionId(
+  payload,
+  network,
+  aaContract,
+  accountIdRaw,
+  newOwner,
+  recoveryNonce
+) {
+  const digest = sha256Hex(
+    Buffer.concat([
+      Buffer.from(network, 'utf8'),
+      Buffer.from([0x1f]),
+      Buffer.from(aaContract.replace(/^0x/i, ''), 'hex'),
+      Buffer.from([0x1f]),
+      Buffer.from(accountIdRaw.replace(/^0x/i, ''), 'hex'),
+      Buffer.from([0x1f]),
+      Buffer.from(newOwner.replace(/^0x/i, ''), 'hex'),
+      Buffer.from([0x1f]),
+      Buffer.from(recoveryNonce, 'utf8'),
+    ])
+  );
+  const derived = `aa_recovery:${digest}`;
   const explicit = trimString(
     payload.action_id || payload.recovery_action_id || payload.recovery_id || payload.intent || ''
   );
-  if (explicit) return resolveRequiredText(explicit, 'action_id');
-  const digest = sha256Hex(
-    ['aa_recovery', network, aaContract, accountId, newOwner, recoveryNonce].join('\u001f')
-  );
-  return resolveRequiredText(`aa_recovery:${digest}`, 'action_id');
+  if (explicit && resolveRequiredText(explicit, 'action_id') !== derived) {
+    throw new Error('action_id does not match the derived recovery action');
+  }
+  return derived;
 }
 
 function resolveZkLoginActionId(
@@ -731,20 +815,57 @@ export async function handleNeoDidActionTicket(payload = {}) {
   const saltBytes = await resolveNeoDidSalt();
   const provider = requireSupportedProvider(resolvedPayload.provider || 'twitter');
   const providerUid = await resolveVerifiedProviderUid(provider, resolvedPayload);
-  const actionId = trimString(resolvedPayload.action_id || resolvedPayload.intent || '');
-  if (!actionId) throw new Error('action_id is required');
-  const actionNullifier = computeActionNullifier(provider, providerUid, actionId, saltBytes);
-  const ticket = {
-    disposable_account: resolveHash160(
+  let ticket;
+  let digestBytes;
+  if (isAaActionV3Payload(resolvedPayload)) {
+    const network = resolveRequiredText(resolvedPayload.network, 'network');
+    const aaContract = resolveHash160(resolvedPayload.aa_contract, 'aa_contract');
+    const accountIdRaw = resolveHash160(resolvedPayload.account_id_raw, 'account_id_raw');
+    const verifierContract = resolveHash160(resolvedPayload.verifier_contract, 'verifier_contract');
+    const accountId = resolveRequiredText(resolvedPayload.account_id, 'account_id');
+    const disposableAccount = resolveHash160(
       resolvedPayload.disposable_account || resolvedPayload.disposable_script_hash,
       'disposable_account'
-    ),
-    action_id: actionId,
-    action_nullifier: actionNullifier,
-    // Bound into the digest to match the on-chain verifier (cross-network replay guard).
-    network: resolveTicketNetwork(resolvedPayload),
-  };
-  const digestBytes = buildActionDigestBytes(ticket);
+    );
+    const expiresAt = resolveDecimalText(resolvedPayload.expires_at, 'expires_at');
+    const sessionNonce = resolveDecimalText(resolvedPayload.session_nonce ?? '0', 'session_nonce');
+    const actionId = resolveAaProxyActionId(
+      resolvedPayload,
+      network,
+      aaContract,
+      accountIdRaw,
+      disposableAccount,
+      sessionNonce,
+      expiresAt
+    );
+    ticket = {
+      network,
+      aa_contract: aaContract,
+      account_id_raw: accountIdRaw,
+      verifier_contract: verifierContract,
+      account_id: accountId,
+      disposable_account: disposableAccount,
+      action_id: actionId,
+      expires_at: expiresAt,
+      action_nullifier: computeActionNullifier(provider, providerUid, actionId, saltBytes),
+    };
+    digestBytes = buildAaActionDigestBytes(ticket);
+  } else {
+    const actionId = trimString(resolvedPayload.action_id || resolvedPayload.intent || '');
+    if (!actionId) throw new Error('action_id is required');
+    const actionNullifier = computeActionNullifier(provider, providerUid, actionId, saltBytes);
+    ticket = {
+      disposable_account: resolveHash160(
+        resolvedPayload.disposable_account || resolvedPayload.disposable_script_hash,
+        'disposable_account'
+      ),
+      action_id: actionId,
+      action_nullifier: actionNullifier,
+      // Bound into the digest to match the on-chain verifier (cross-network replay guard).
+      network: resolveTicketNetwork(resolvedPayload),
+    };
+    digestBytes = buildActionDigestBytes(ticket);
+  }
   const signer = await signDigestBytes(digestBytes, resolvedPayload);
   const result = {
     disposable_account: ticket.disposable_account,
@@ -791,7 +912,7 @@ export async function handleNeoDidRecoveryTicket(payload = {}) {
     resolvedPayload.new_owner || resolvedPayload.recovery_address || resolvedPayload.target_owner,
     'new_owner'
   );
-  const recoveryNonce = resolveRequiredText(
+  const recoveryNonce = resolveDecimalText(
     resolvedPayload.recovery_nonce || resolvedPayload.nonce,
     'recovery_nonce'
   );
@@ -799,21 +920,20 @@ export async function handleNeoDidRecoveryTicket(payload = {}) {
     resolvedPayload.expires_at || resolvedPayload.expiry || resolvedPayload.ticket_expires_at,
     'expires_at'
   );
+  const accountIdRaw = resolveHash160(
+    resolvedPayload.account_id_raw || resolvedPayload.accountIdRaw,
+    'account_id_raw'
+  );
   const masterNullifier = computeMasterNullifier(provider, providerUid, saltBytes);
   const actionId = resolveRecoveryActionId(
     resolvedPayload,
     network,
     aaContract,
-    accountId,
+    accountIdRaw,
     newOwner,
     recoveryNonce
   );
   const actionNullifier = computeActionNullifier(provider, providerUid, actionId, saltBytes);
-
-  const accountIdRaw = resolveHash160(
-    resolvedPayload.account_id_raw || resolvedPayload.accountIdRaw,
-    'account_id_raw'
-  );
   const ticket = {
     network,
     aa_contract: aaContract,

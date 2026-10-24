@@ -211,8 +211,8 @@ const NETWORK_ALIASES: [&str; 4] = [
 
 /// All deployment aliases are assertions, including lower-priority aliases.
 /// Recovery and the two oracle message routes also historically use `network`
-/// for a chain family. Only those routes' existing family grammars are exempt;
-/// a family never selects a deployment or exempts another assertion.
+/// for a chain family; the AA v3 callbacks instead carry its opaque on-chain
+/// text. Neither form selects a deployment or exempts another assertion.
 pub(crate) fn assert_payload_network(
     network: &str,
     route: &str,
@@ -220,11 +220,17 @@ pub(crate) fn assert_payload_network(
 ) -> Result<(), RuntimeError> {
     for alias in NETWORK_ALIASES {
         if let Some(value) = payload.get(alias) {
+            let nonempty_text = value.as_str().is_some_and(|s| !s.trim().is_empty());
             let is_recovery_chain = alias == "network"
                 && route == "/neodid/recovery-ticket"
-                && value.as_str().is_some_and(|s| {
+                && nonempty_text
+                && (value.as_str().is_some_and(|s| {
                     matches!(s.trim().to_ascii_lowercase().as_str(), "neo_n3" | "neox")
-                });
+                }) || neo_os_compute::neodid::is_aa_recovery_v3_payload(payload));
+            let is_aa_action_chain = alias == "network"
+                && route == "/neodid/action-ticket"
+                && nonempty_text
+                && neo_os_compute::neodid::is_aa_action_v3_payload(payload);
             let is_oracle_chain = alias == "network"
                 && matches!(route, "/oracle/decrypt" | "/oracle/message-reveal")
                 && value.as_str().is_some_and(|s| {
@@ -232,7 +238,7 @@ pub(crate) fn assert_payload_network(
                         &neo_os_compute::js::js_trim(s).to_ascii_lowercase(),
                     )
                 });
-            if is_recovery_chain || is_oracle_chain {
+            if is_recovery_chain || is_aa_action_chain || is_oracle_chain {
                 continue;
             }
             if checked_label(
