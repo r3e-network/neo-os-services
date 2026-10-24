@@ -80,3 +80,39 @@ fn paymaster_validation_result_is_still_signed_and_caller_keys_are_refused() {
         .unwrap()
         .contains("caller-supplied signing key"));
 }
+
+#[test]
+fn compatibility_sponsorship_fails_closed_without_the_node_approval_store() {
+    let harness = test_state(
+        &[
+            ("MORPHEUS_NETWORK", TEST_NETWORK),
+            ("NITRO_API_TOKEN", "s3cret"),
+            ("MORPHEUS_PAYMASTER_TESTNET_ENABLED", "true"),
+            ("MORPHEUS_ALLOW_TRANSACTION_SPONSORSHIP", "true"),
+        ],
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::healthy(),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let outcome = dispatch(
+        &harness.state,
+        "POST",
+        "/paymaster/authorize",
+        &bearer("s3cret"),
+        &body_json(&json!({
+            "account_id": "0x1234567890abcdef1234567890abcdef12345678",
+            "target_contract": "0xabcdef1234567890abcdef1234567890abcdef12",
+            "method": "transfer",
+            "operation_hash": format!("0x{}", "00".repeat(31) + "01"),
+            "estimated_gas_units": 100,
+        })),
+    );
+
+    assert_eq!(outcome.status, 503, "{}", outcome.body);
+    assert!(outcome.body["error"]
+        .as_str()
+        .unwrap()
+        .contains("Node worker approval store"));
+    assert_eq!(harness.signer.sign_calls().len(), 0);
+}

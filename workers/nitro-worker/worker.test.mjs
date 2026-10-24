@@ -3077,10 +3077,7 @@ test('relay response idempotency replays a result without replaying its sponsors
   process.env.UPSTASH_REDIS_REST_URL = 'https://mock-upstash.example.com';
   process.env.UPSTASH_REDIS_REST_TOKEN = 'token';
   const fixture = buildSponsorshipFixture({ id: 'approval-response-idempotency' });
-  upstash.putJson(
-    sponsorshipStorageKey(fixture.approval.sponsorship_id),
-    fixture.approval
-  );
+  upstash.putJson(sponsorshipStorageKey(fixture.approval.sponsorship_id), fixture.approval);
   let signCalls = 0;
   __setCustodyTransportForTests(async (method, pathname) => {
     if (method === 'GET' && pathname === '/keys/key-updater') {

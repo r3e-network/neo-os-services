@@ -50,11 +50,48 @@ The returned payload includes:
 - `public_key`
 - `tee_attestation`
 
-This makes the response portable across:
+The signed response is portable for authorization verification across AA relay
+backends, first-party bundlers, and third-party sponsored execution gateways.
+It is not, by itself, a redeemable compatibility-relay approval: the relay also
+requires the server-side record described below.
 
-- AA relay backends
-- first-party bundlers
-- third-party sponsored execution gateways
+## Compatibility Sponsorship Relay
+
+`MORPHEUS_ALLOW_TRANSACTION_SPONSORSHIP` defaults to `false`. While it is off,
+`/paymaster/authorize` retains its signed authorize-only behavior and does not
+require an approval store. When it is on, use the Node `nitro-worker` lane with
+`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` configured:
+
+- every approved verdict is signed and its complete result is stored with
+  `SET NX PX`, expiring with `expires_at`, before the response is returned;
+  denied verdicts are not stored;
+- missing configuration, a Redis error, an ID collision, or malformed stored
+  data fails closed instead of returning or redeeming an approval;
+- the Rust `nitro-enclave-host` remains an authorize-only issuer. It answers
+  `503` before signing when this compatibility switch is on, because it does not
+  have the shared approval store. Do not route enabled compatibility traffic to
+  that host and assume the Node persistence covers it.
+
+The relay request carries `sponsorship_id` and may carry the other approved
+fields. Every supplied field must match the stored verdict. The relay validates
+the digest, expiry, network, account/user signer, dapp, transaction, target,
+method, and fee before asking custody for a sponsor signature. `account_id` must
+name the user address or script hash in the transaction.
+
+For this relay, `estimated_gas_units` is the approved Neo N3 **network-fee amount
+in GAS fixed-8 raw units** (`100000000` units = 1 GAS). After adding the final
+sponsor signer and computing the final network fee, the worker recomputes the
+unsigned transaction hash and requires it to equal `operation_hash`. The fee
+must not exceed either `estimated_gas_units` or `MORPHEUS_MAX_SPONSOR_FEE_GAS`
+(default 10 GAS).
+
+Approval redemption reads the record, performs those checks, then uses an
+atomic Lua get-and-delete. The deleted record must be identical to the complete
+record already verified. Concurrent relays therefore produce at most one custody
+signature. A signature or broadcast failure after deletion does not restore the
+approval. This is separate from response idempotency: an exact request with the
+same idempotency key may replay its cached response, but a new request cannot
+redeem the same `sponsorship_id`.
 
 ## Environment Variables
 
@@ -118,14 +155,15 @@ Call `paymaster/authorize` just before relay submission.
 
 Recommended order:
 
-1. simulate the AA invocation
-2. estimate gas units
+1. simulate the AA invocation and estimate its network fee
+2. add the expected sponsor signer, fix the final network fee, and compute the
+   unsigned transaction's `operation_hash`
 3. call Morpheus Paymaster with normalized operation metadata
-4. submit only if `approved === true`
+4. submit through the one-time compatibility relay only if `approved === true`
 
 ### 2. Third-Party Bundler
 
-The bundler can use the signed authorization as a sponsorship ticket and verify:
+The bundler can verify the signed authorization and its attestation metadata:
 
 - signature
 - `policy_id`

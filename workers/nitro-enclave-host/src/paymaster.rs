@@ -1,6 +1,9 @@
 //! The `/paymaster/authorize` fold. Policy evaluation and optional Neo N3 AA
 //! hook reads execute through the Rust compute core; the verdict is then
 //! custody-signed with the same D5 envelope as every other sensitive lane.
+//! This host has no shared approval store, so the compatibility sponsorship
+//! switch fails closed here instead of issuing an approval the Node relay could
+//! not consume exactly once.
 
 use neo_os_compute::core::EnvReader;
 use neo_os_compute::paymaster::{evaluate_paymaster_authorization, PaymasterEvaluation};
@@ -19,6 +22,20 @@ pub fn handle_paymaster_authorize(
     reject_caller_supplied_signing_key(payload)?;
 
     let overlay = state.overlay.read().expect("overlay lock").merged_map();
+    let compatibility_sponsorship = overlay
+        .get("MORPHEUS_ALLOW_TRANSACTION_SPONSORSHIP")
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        });
+    if compatibility_sponsorship {
+        return Err(crate::http_error(
+            503,
+            "compatibility sponsorship requires the Node worker approval store; the Rust enclave-host authorize-only lane cannot issue consumable approvals",
+        ));
+    }
     let env: EnvReader<'_> = &|name: &str| overlay.get(name).cloned();
     let http = |request: &neo_os_compute::transport::HttpRequest| state.oracle_io.fetch(request);
     let now_ms = std::time::SystemTime::now()

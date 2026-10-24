@@ -20,6 +20,12 @@ import {
   toNeoContractParam,
 } from '../platform/allowlist.js';
 import { custodyKeyId, custodyKeyInfo, custodySignTransaction } from '../platform/custody.js';
+import {
+  assertSuppliedSponsorshipFields,
+  consumeSponsorshipApproval,
+  readSponsorshipApproval,
+  resolveSponsorshipId,
+} from '../paymaster/approvals.js';
 import { forgetRequestId, rememberRequestId, rejectCallerSuppliedSigningKey } from './signing.js';
 import { sleep } from '../platform/core.js';
 import { env } from '../platform/core.js';
@@ -411,20 +417,33 @@ export async function sponsorNeoN3Transaction(payload) {
       'transaction sponsorship is disabled; set MORPHEUS_ALLOW_TRANSACTION_SPONSORSHIP=true after policy review'
     );
   }
-  const context = await loadNeoN3Context(payload, { required: true, requireRpc: false });
   const txBase64 = trimString(payload.tx_base64 || payload.txBase64);
   const userAddress = trimString(payload.user_address || payload.userAddress);
   if (!txBase64 || !userAddress) {
     throw new Error('tx_base64 and user_address are required for Neo N3 sponsorship relay');
   }
+  const sponsorshipId = resolveSponsorshipId(payload);
+  const context = await loadNeoN3Context(payload, { required: false, requireRpc: false });
+  const approval = await readSponsorshipApproval(sponsorshipId, context.network);
+  assertSuppliedSponsorshipFields(payload, approval);
+
+  const transaction = tx.Transaction.deserialize(txBase64);
+  const userSigner = transaction.signers.find(
+    (signer) => neoWallet.getAddressFromScriptHash(String(signer.account)) === userAddress
+  );
+  if (!userSigner) throw new Error('transaction does not belong to the supplied user_address');
+  const userScriptHash = strip0x(String(userSigner.account)).toLowerCase();
+  const approvedAccounts = new Set([
+    userAddress.toLowerCase(),
+    userScriptHash,
+    `0x${userScriptHash}`,
+  ]);
+  if (!approvedAccounts.has(trimString(approval.account_id).toLowerCase())) {
+    throw new Error('sponsorship approval account_id does not match user_address');
+  }
 
   const identity = await context.resolveSigningIdentity();
   const sponsorAccount = identity.account;
-  const transaction = tx.Transaction.deserialize(txBase64);
-  const hasUserSigner = transaction.signers.some(
-    (signer) => neoWallet.getAddressFromScriptHash(String(signer.account)) === userAddress
-  );
-  if (!hasUserSigner) throw new Error('transaction does not belong to the supplied user_address');
   const sponsorScriptHash = sponsorAccount.scriptHash;
   assertSponsorWitnesses(transaction, sponsorScriptHash, userAddress);
   const hasSponsorSigner = transaction.signers.some(
@@ -436,8 +455,16 @@ export async function sponsorNeoN3Transaction(payload) {
     );
   }
 
-  const feePerByte = Number(payload.fee_per_byte || payload.feePerByte || 1000);
-  const priorityFee = Number(payload.priority_fee || payload.priorityFee || 100000);
+  const feePerByte = Number(payload.fee_per_byte ?? payload.feePerByte ?? 1000);
+  const priorityFee = Number(payload.priority_fee ?? payload.priorityFee ?? 100000);
+  if (
+    !Number.isSafeInteger(feePerByte) ||
+    feePerByte < 0 ||
+    !Number.isSafeInteger(priorityFee) ||
+    priorityFee < 0
+  ) {
+    throw new Error('sponsor fee_per_byte and priority_fee must be non-negative safe integers');
+  }
   const sponsorPlaceholder = placeholderWitness(sponsorAccount.publicKey);
   const dummySignatures = transaction.signers.map((signer) => {
     if (String(signer.account) === sponsorAccount.scriptHash) {
@@ -450,14 +477,23 @@ export async function sponsorNeoN3Transaction(payload) {
     transaction.serialize().length / 2 +
     dummySignatures.reduce((sum, witness) => sum + witness.serialize().length / 2, 0);
   const calculatedFee = size * feePerByte + priorityFee;
+  if (!Number.isSafeInteger(calculatedFee) || calculatedFee < 0) {
+    throw new Error('sponsor network fee is outside the supported integer range');
+  }
+  if (calculatedFee > Number(approval.estimated_gas_units)) {
+    throw new Error('sponsor network fee exceeds approved estimated_gas_units');
+  }
   const maxFeeGas = Number(env('MORPHEUS_MAX_SPONSOR_FEE_GAS') || 10);
-  if (calculatedFee > maxFeeGas * 100_000_000) {
+  const maxFee = maxFeeGas * 100_000_000;
+  if (!Number.isFinite(maxFee) || maxFee < 0 || calculatedFee > maxFee) {
     throw new Error(
       `sponsor network fee (${calculatedFee}) exceeds cap (${maxFeeGas} GAS); set MORPHEUS_MAX_SPONSOR_FEE_GAS to increase`
     );
   }
-  transaction.networkFee = u.BigInteger.fromNumber(Math.floor(calculatedFee));
-  validateSponsorOperation(transaction, payload);
+  transaction.networkFee = u.BigInteger.fromNumber(calculatedFee);
+  const operation = validateSponsorOperation(transaction, approval);
+  await consumeSponsorshipApproval(sponsorshipId, context.network, approval);
+
   if (identity.keyId) {
     transaction.witnesses.push(await custodySignRelayWitness(identity, transaction));
   } else {
@@ -467,6 +503,9 @@ export async function sponsorNeoN3Transaction(payload) {
   const sponsoredTx = transaction.serialize(true);
   const result = {
     target_chain: 'neo_n3',
+    sponsorship_id: sponsorshipId,
+    approval_digest: approval.approval_digest,
+    operation_hash: operation.operation_hash,
     sponsor_address: sponsorAccount.address,
     sponsor_public_key: sponsorAccount.publicKey,
     network_fee: transaction.networkFee.toString(),

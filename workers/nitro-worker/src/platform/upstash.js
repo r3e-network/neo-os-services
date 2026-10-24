@@ -156,3 +156,58 @@ export async function releaseIdempotencyLock(key, ownerToken) {
     return Number(parsePipelineResult(result) || 0) === 1;
   }, false);
 }
+
+async function requiredPipeline(commands) {
+  if (!resolveConfig().enabled) {
+    throw new Error('Upstash Redis REST configuration is required for transaction sponsorship');
+  }
+  const payload = await upstashRequest('/pipeline', {
+    method: 'POST',
+    body: commands,
+  });
+  if (!Array.isArray(payload) || payload.length !== commands.length) {
+    throw new Error('Upstash returned an incomplete sponsorship response');
+  }
+  for (const entry of payload) {
+    if (entry?.error) throw new Error(`Upstash sponsorship command failed: ${entry.error}`);
+  }
+  return payload;
+}
+
+function parseRequiredJson(result) {
+  if (result === null || result === undefined) return null;
+  try {
+    return JSON.parse(result);
+  } catch {
+    throw new Error('Upstash returned a malformed sponsorship approval');
+  }
+}
+
+export async function upstashGetJsonRequired(key) {
+  const [entry] = await requiredPipeline([['GET', key]]);
+  return parseRequiredJson(parsePipelineResult(entry));
+}
+
+export async function upstashSetJsonOnceRequired(key, value, ttlMs) {
+  const ttl = Math.floor(Number(ttlMs));
+  if (!Number.isSafeInteger(ttl) || ttl <= 0) {
+    throw new Error('sponsorship approval TTL must be a positive integer');
+  }
+  const [entry] = await requiredPipeline([
+    ['SET', key, stableStringify(value), 'NX', 'PX', String(ttl)],
+  ]);
+  return parsePipelineResult(entry) === 'OK';
+}
+
+export async function upstashTakeJsonRequired(key) {
+  const script = [
+    "local value = redis.call('GET', KEYS[1])",
+    'if not value then',
+    '  return nil',
+    'end',
+    "redis.call('DEL', KEYS[1])",
+    'return value',
+  ].join('\n');
+  const [entry] = await requiredPipeline([['EVAL', script, '1', key]]);
+  return parseRequiredJson(parsePipelineResult(entry));
+}

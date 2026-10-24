@@ -11,9 +11,13 @@ import {
   parseDurationMs,
   requireHttpsRpcUrl,
   resolvePayloadNetwork,
-  sha256Hex,
   trimString,
 } from '../platform/core.js';
+import {
+  persistSponsorshipApproval,
+  sponsorshipApprovalDigest,
+  transactionSponsorshipEnabled,
+} from './approvals.js';
 
 function parseCsv(value) {
   const raw = trimString(value);
@@ -324,17 +328,10 @@ async function evaluatePaymasterAuthorization(payload = {}) {
     userop_method: normalized.userop_method,
     estimated_gas_units: normalized.estimated_gas_units,
     operation_hash: normalized.operation_hash,
-    approval_digest: sha256Hex({
+    approval_digest: sponsorshipApprovalDigest({
+      ...normalized,
       network: policy.network,
       policy_id: policy.policyId,
-      account_id: normalized.account_id,
-      dapp_id: normalized.dapp_id,
-      target_contract: normalized.target_contract,
-      method: normalized.method,
-      userop_target_contract: normalized.userop_target_contract,
-      userop_method: normalized.userop_method,
-      estimated_gas_units: normalized.estimated_gas_units,
-      operation_hash: normalized.operation_hash,
     }),
     expires_at: new Date(Date.now() + policy.ttlMs).toISOString(),
     policy: {
@@ -354,14 +351,18 @@ export async function handlePaymasterAuthorize(payload = {}) {
   try {
     const result = await evaluatePaymasterAuthorization(payload);
     const signed = await buildSignedResultEnvelope(result, payload);
-    // signed.tee_attestation already binds sha256(stableStringify(result)) via output_hash;
-    // reuse it rather than re-calling the 8787 /attestation endpoint with the same report_data.
-    return json(200, {
+    const response = {
       ...result,
       // D5 canonical signed-result envelope — single-sourced.
       ...buildLaneSignedEnvelope(signed),
-    });
+    };
+    if (result.approved === true && transactionSponsorshipEnabled()) {
+      await persistSponsorshipApproval(result);
+    }
+    // signed.tee_attestation already binds sha256(stableStringify(result)) via output_hash;
+    // reuse it rather than re-calling the 8787 /attestation endpoint with the same report_data.
+    return json(200, response);
   } catch (error) {
-    return jsonError(400, error);
+    return jsonError(Number(error?.status) > 0 ? Number(error.status) : 400, error);
   }
 }

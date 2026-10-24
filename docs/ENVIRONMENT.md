@@ -716,16 +716,16 @@ rename them. Format: default + one-line semantics.
   中文：默认 false。开启后才允许广播原始已签名交易。
 
 - `MORPHEUS_ALLOW_GLOBAL_SCOPE`
-  English: Default false. Allows Global witness scope in sponsored transactions instead of CalledByEntry.
-  中文：默认 false。允许代付交易使用 Global witness scope，而不是 CalledByEntry。
+  English: Default false. Allows Global witness scope for operator relay invocations instead of CalledByEntry. It never permits a Global user signer in compatibility sponsorship.
+  中文：默认 false。允许运营方 relay invocation 使用 Global witness scope，而不是 CalledByEntry；兼容代付中的用户 signer 仍禁止 Global。
 
 - `MORPHEUS_MAX_SPONSOR_FEE_GAS`
-  English: Default 10. Cap (in GAS) on the network fee the sponsor lane will pay per transaction.
-  中文：默认 10。代付通道单笔交易愿意承担的网络费上限（GAS）。
+  English: Default 10. Cap (in GAS) on the final network fee per sponsored transaction. The fee is calculated in fixed-8 raw units and must also fit the approval's `estimated_gas_units`.
+  中文：默认 10。单笔代付交易最终网络费的上限（GAS）。网络费以 fixed-8 原始单位计算，且不得超过审批中的 `estimated_gas_units`。
 
 - `MORPHEUS_ALLOW_TRANSACTION_SPONSORSHIP`
-  English: Default false. The raw `/relay/transaction` sponsorship path stays disabled until this explicit runtime gate is enabled. Enabled requests must also provide an unsigned-transaction `operation_hash`, target contract, and method that match the transaction script.
-  中文：默认 false。原始 `/relay/transaction` 代付路径保持关闭；只有显式开启此运行时开关，且请求提供与交易脚本一致的 unsigned `operation_hash`、目标合约和方法时才会处理。
+  English: Default false. Enable only on the Node `nitro-worker` with `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. Approved signed verdicts are then persisted with `SET NX PX`; relay validates the complete approval and consumes it once with an atomic Lua get-and-delete before custody signing. Missing storage or storage errors fail closed. The final sponsor signer and network fee must reproduce `operation_hash`. The Rust `nitro-enclave-host` answers `503` instead of issuing approvals while this switch is on. With the switch off, `/paymaster/authorize` remains signed authorize-only and needs no approval store.
+  中文：默认 false。只能在配置 `UPSTASH_REDIS_REST_URL` 和 `UPSTASH_REDIS_REST_TOKEN` 的 Node `nitro-worker` 上开启。开启后，批准的签名结果通过 `SET NX PX` 持久化；relay 校验完整审批，并在 custody 签名前通过 Lua 原子读取删除实现一次性消费。存储缺失或故障均拒绝。最终 sponsor signer 与网络费必须复现 `operation_hash`。此开关开启时，Rust `nitro-enclave-host` 返回 `503`，不会签发无法消费的审批；关闭时，`/paymaster/authorize` 保持签名 authorize-only，不需要审批存储。
 
 ### Paymaster (Testnet Lane) / Paymaster（testnet 通道）
 

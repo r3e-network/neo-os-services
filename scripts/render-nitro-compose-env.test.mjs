@@ -77,7 +77,12 @@ test('render-nitro-compose-env omits archived Neo X fields from generated output
     {
       cwd: repoRoot,
       encoding: 'utf8',
-      env: { ...process.env, ...buildTestSignerEnv() },
+      env: {
+        ...process.env,
+        ...buildTestSignerEnv(),
+        MORPHEUS_ALLOW_TRANSACTION_SPONSORSHIP: 'true',
+        MORPHEUS_MAX_SPONSOR_FEE_GAS: '2.5',
+      },
     }
   );
 
@@ -150,6 +155,10 @@ test('render-nitro-compose-env omits archived Neo X fields from generated output
   );
   assert.equal(lineValue('SIGNER_ROLE_NEOX_VERIFIER_KEY_ID'), '');
   assert.equal(lineValue('MORPHEUS_RELAYER_NEOX_FEED_GAS_LIMIT'), '2000000');
+  assert.equal(lineValue('MORPHEUS_ALLOW_TRANSACTION_SPONSORSHIP'), 'true');
+  assert.equal(lineValue('MORPHEUS_MAX_SPONSOR_FEE_GAS'), '2.5');
+  assert.equal(runtimeConfig.MORPHEUS_ALLOW_TRANSACTION_SPONSORSHIP, 'true');
+  assert.equal(runtimeConfig.MORPHEUS_MAX_SPONSOR_FEE_GAS, '2.5');
 
   assert.ok(renderedKeys.has('NITRO_USE_DERIVED_KEYS'), 'missing NITRO_USE_DERIVED_KEYS line');
   assert.equal(
