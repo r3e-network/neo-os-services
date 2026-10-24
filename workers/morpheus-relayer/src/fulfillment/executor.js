@@ -3,7 +3,6 @@ import { callNitro } from '../nitro.js';
 import {
   assertSmartFetchUrlAllowed,
   buildWorkerPayload,
-  decodePayloadText,
   encodeFulfillmentResult,
   isOperatorOnlyRequestType,
   resolveKernelIntent,
@@ -17,7 +16,7 @@ import {
 } from '../automation.js';
 import { buildUpkeepDispatch } from '../automation-supervisor.js';
 import { normalizeRequestType } from '../lib/strings.js';
-import { resolveEventPayload } from '../lib/payload.js';
+import { decodeJsonObjectPayload, resolveEventPayload } from '../lib/payload.js';
 import { trimString } from '@r3e-network/neo-os-services-shared/utils';
 import {
   resolveExpectedPcr0,
@@ -196,8 +195,13 @@ export function buildDecryptBindingRequest(config, event = {}, payload = {}, env
 export async function prepareOracleFulfillment(config, event, logger = null) {
   assertEventIdentifiersClean(event);
   resolveEventPayload(event);
-  const payload = enrichAutomationExecutionPayload(event, decodePayloadText(event.payloadText));
   const kernelIntent = resolveKernelIntent(event.requestType);
+  const payload = enrichAutomationExecutionPayload(
+    event,
+    decodeJsonObjectPayload(event.payloadText, {
+      allowNonObject: kernelIntent.moduleId === 'confidential.decrypt',
+    })
+  );
   const fulfillmentContext = resolveEventFulfillmentContext(event, kernelIntent);
 
   if (isAutomationControlRequestType(event.requestType)) {

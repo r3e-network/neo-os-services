@@ -1033,12 +1033,15 @@ where
     let payload_bytes = hex::decode(strip_hex_prefix(&payload_hex))
         .map_err(|_| "oracle request event has invalid payloadHex".to_string())?;
     let trimmed_payload_text = payload_text.trim();
+    let confidential = neo_os_core::kernel::resolve_kernel_intent(&request_type).module_id
+        == "confidential.decrypt";
     let payload = if trimmed_payload_text.is_empty() {
         json!({})
     } else {
         match serde_json::from_str::<Value>(trimmed_payload_text) {
             Ok(value @ Value::Object(_)) => value,
-            Ok(_) => json!({}),
+            Ok(_) if confidential => json!({}),
+            Ok(_) => return Err("oracle request payload must be a JSON object".to_string()),
             Err(_) => json!({ "raw_payload": trimmed_payload_text }),
         }
     };
@@ -2012,6 +2015,26 @@ mod tests {
                     .expect_err("missing raw payload");
             assert!(error.contains("payloadHex is required"), "{error}");
             assert!(transport.calls.lock().unwrap().is_empty(), "{chain}");
+        }
+    }
+
+    #[test]
+    fn non_object_json_is_refused_before_any_http_on_both_chains() {
+        for chain in ["neo_n3", "neox"] {
+            for text in ["[]", "null", "\"text\"", "42", "true"] {
+                let config = config();
+                let nitro = config.raw["nitro"].as_object().unwrap().clone();
+                let mut event = event();
+                let object = event.as_object_mut().expect("event object");
+                object.set("payload", JsValue::Str(text.to_string()));
+                object.set("payloadHex", JsValue::Str(hex::encode(text.as_bytes())));
+                let transport = ScriptedTransport::new(vec![]);
+                let error =
+                    prepare_in_enclave(&config, chain, &event, &nitro, &transport, &FixedNonce(7))
+                        .expect_err("non-object JSON");
+                assert!(error.contains("must be a JSON object"), "{error}");
+                assert!(transport.calls.lock().unwrap().is_empty(), "{chain}");
+            }
         }
     }
 

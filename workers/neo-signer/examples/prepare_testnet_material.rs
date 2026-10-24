@@ -1018,6 +1018,28 @@ mod tool {
 
         #[test]
         fn private_file_is_durable_and_closed_before_any_child() {
+            const CHILD: &str = "NEOOS_SYNTHETIC_PRIVATE_FILE_CHILD";
+            if std::env::var_os(CHILD).is_none() {
+                // A closed descriptor number may be reused by another test running in
+                // this process, and the intentional CLOEXEC leak test must not share
+                // its address space. Run the actual assertions in an isolated process.
+                let output = Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "tool::tests::private_file_is_durable_and_closed_before_any_child",
+                        "--nocapture",
+                    ])
+                    .env_clear()
+                    .env(CHILD, "1")
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "isolated private-file test failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                return;
+            }
             let (_, _, bundle, public) = fixture();
             let d = directory();
             let dir = canonical(&d);

@@ -2,7 +2,6 @@ import crypto from 'node:crypto';
 import { callNitro } from '../nitro.js';
 import {
   buildFulfillmentDigestBytes,
-  decodePayloadText,
   TRUST_TIER_ENCLAVE_ATTESTED,
   TRUST_TIER_HOST_UNATTESTED,
 } from '../router.js';
@@ -16,7 +15,7 @@ import {
 } from '../attestation.js';
 import { buildTransientWorkerError, isTransientWorkerStatus } from './classifier.js';
 import { resolveDigestBinding, resolveFulfillmentSigningContext } from './signer.js';
-import { resolveEventPayload } from '../lib/payload.js';
+import { decodeJsonObjectPayload, resolveEventPayload } from '../lib/payload.js';
 
 /**
  * Compute-in-enclave fulfillment helpers (POST /oracle/fulfill). Flag-gated:
@@ -120,11 +119,9 @@ export async function callEnclaveFulfill(
   ) {
     throw new Error(`unsupported measured fulfillment domain: ${chain} -> ${signingChain}`);
   }
-  const decodedPayload = decodePayloadText(eventPayload.payloadText);
-  const basePayload =
-    decodedPayload && typeof decodedPayload === 'object' && !Array.isArray(decodedPayload)
-      ? decodedPayload
-      : {};
+  const basePayload = decodeJsonObjectPayload(eventPayload.payloadText, {
+    allowNonObject: _kernelIntent.moduleId === 'confidential.decrypt',
+  });
   const requestNonce = crypto.randomBytes(16).toString('hex');
   const enclavePayload = {
     chain: signingChain,

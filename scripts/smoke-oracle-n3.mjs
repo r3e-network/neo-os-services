@@ -11,6 +11,7 @@ import {
   resolveFulfillmentSigningContext,
 } from './lib-smoke-oracle-signing.mjs';
 import { buildOnchainResultEnvelope } from '../workers/morpheus-relayer/src/router.js';
+import { requireRawPayloadHex } from '../workers/morpheus-relayer/src/lib/payload.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -176,6 +177,22 @@ function parseStackItem(item) {
     default:
       return item.value ?? null;
   }
+}
+
+function rawStackPayloadHex(item) {
+  if (!item || typeof item !== 'object') throw new Error('request payload stack item is missing');
+  const type = trimString(item.type).toLowerCase();
+  if (type !== 'bytestring' && type !== 'bytearray') {
+    throw new Error('request payload must be a ByteString');
+  }
+  if (typeof item.value !== 'string') throw new Error('request payload ByteString is missing');
+  const raw = item.value.trim();
+  if (!raw) return '0x';
+  const bytes = Buffer.from(raw, 'base64');
+  if (bytes.toString('base64') !== raw) {
+    throw new Error('request payload ByteString is not canonical base64');
+  }
+  return bytes.toString('hex');
 }
 
 async function invokeRead(rpcClient, contractHash, method, params = []) {
@@ -380,6 +397,7 @@ async function fetchRequestRecord(rpcClient, oracleHash, requestId) {
     throw new Error(response.exception || `getRequest faulted for ${requestId}`);
   }
   const decoded = parseStackItem(response.stack?.[0]);
+  const rawFields = response.stack?.[0]?.value;
   if (!Array.isArray(decoded)) return null;
   if (decoded.length >= 14) {
     return {
@@ -389,6 +407,7 @@ async function fetchRequestRecord(rpcClient, oracleHash, requestId) {
       module_id: String(decoded[2] ?? ''),
       operation: String(decoded[3] ?? ''),
       payload_text: String(decoded[4] ?? ''),
+      payload_hex: rawStackPayloadHex(rawFields?.[4]),
       requester: String(decoded[5] ?? ''),
       sponsor: String(decoded[6] ?? ''),
       callback_contract: String(decoded[7] ?? ''),
@@ -406,6 +425,7 @@ async function fetchRequestRecord(rpcClient, oracleHash, requestId) {
       request_id: String(decoded[0] ?? requestId),
       request_type: String(decoded[1] ?? ''),
       payload_text: String(decoded[2] ?? ''),
+      payload_hex: rawStackPayloadHex(rawFields?.[2]),
       callback_contract: String(decoded[3] ?? ''),
       callback_method: String(decoded[4] ?? ''),
       requester: String(decoded[5] ?? ''),
@@ -665,11 +685,15 @@ console.error(`Neo N3 smoke request txid: ${txid}`);
 
 const requestId = await waitForRequestId(rpcClient, txid, requestTimeoutMs);
 const requestRecord = await fetchRequestRecord(rpcClient, oracleHash, requestId);
-const fallbackSigningContext = resolveFulfillmentSigningContext({
-  requestRecord,
-  contractScriptHash: oracleHash,
-  networkMagic,
-});
+const fallbackSigningContext = {
+  ...resolveFulfillmentSigningContext({
+    requestRecord,
+    contractScriptHash: oracleHash,
+    networkMagic,
+  }),
+  payloadText: requestRecord?.payload_text ?? '',
+  payloadHex: requireRawPayloadHex(requestRecord, 'payload_hex'),
+};
 const callback = await resolveCallbackWithLocalFallback({
   requestId,
   callbackTimeoutMs,

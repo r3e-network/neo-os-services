@@ -250,15 +250,19 @@ fn uint256_hex_to_decimal(value: &str) -> String {
         .collect()
 }
 
-fn base_payload_from_text(text: &str) -> serde_json::Value {
+fn base_payload_from_text(
+    text: &str,
+    confidential: bool,
+) -> Result<serde_json::Value, RuntimeError> {
     let trimmed = js_trim(text);
     if trimmed.is_empty() {
-        return serde_json::json!({});
+        return Ok(serde_json::json!({}));
     }
     match serde_json::from_str::<serde_json::Value>(trimmed) {
-        Ok(value @ serde_json::Value::Object(_)) => value,
-        Ok(_) => serde_json::json!({}),
-        Err(_) => serde_json::json!({ "raw_payload": trimmed }),
+        Ok(value @ serde_json::Value::Object(_)) => Ok(value),
+        Ok(_) if confidential => Ok(serde_json::json!({})),
+        Ok(_) => Err(http_error(400, "request payload must be a JSON object")),
+        Err(_) => Ok(serde_json::json!({ "raw_payload": trimmed })),
     }
 }
 
@@ -311,7 +315,7 @@ fn derive_request_payload(
         ));
     }
 
-    let expected_payload = base_payload_from_text(&derived_text);
+    let expected_payload = base_payload_from_text(&derived_text, confidential)?;
     if !confidential && supplied_payload != &expected_payload {
         return Err(http_error(
             400,

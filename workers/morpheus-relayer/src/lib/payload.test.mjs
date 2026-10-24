@@ -5,7 +5,7 @@ import { buildFulfillmentDigestBytes } from '../router.js';
 import { buildNeoXDigest } from '../neox.js';
 import { signFulfillmentPayload } from '../fulfillment/signer.js';
 import { deliverPreparedFulfillment } from '../fulfillment/delivery.js';
-import { requireRawPayloadHex, resolveEventPayload } from './payload.js';
+import { decodeJsonObjectPayload, requireRawPayloadHex, resolveEventPayload } from './payload.js';
 
 const NEOX_CONFIG = {
   neox: {
@@ -27,6 +27,24 @@ test('raw payload validation distinguishes explicit empty bytes from missing inp
     assert.throws(() => requireRawPayloadHex({ payloadHex }), /payloadHex/);
   }
   assert.throws(() => requireRawPayloadHex({}), /payloadHex is required/);
+  assert.deepEqual(resolveEventPayload({ payloadHex: 'ff', payload_hex: 'ff' }), {
+    payloadText: '',
+    payloadHex: 'ff',
+  });
+  assert.throws(
+    () => resolveEventPayload({ payloadHex: 'ff', payload_hex: '00' }),
+    /aliases disagree/
+  );
+});
+
+test('JSON object decoding rejects typed non-objects without rejecting raw text', () => {
+  assert.deepEqual(decodeJsonObjectPayload(''), {});
+  assert.deepEqual(decodeJsonObjectPayload('{"op":"add"}'), { op: 'add' });
+  assert.deepEqual(decodeJsonObjectPayload('not-json'), { raw_payload: 'not-json' });
+  for (const text of ['[]', 'null', '"text"', '42', 'true']) {
+    assert.throws(() => decodeJsonObjectPayload(text), /must be a JSON object/);
+    assert.deepEqual(decodeJsonObjectPayload(text, { allowNonObject: true }), {});
+  }
 });
 
 test('v2 digest builders never reconstruct missing raw payload from text', () => {

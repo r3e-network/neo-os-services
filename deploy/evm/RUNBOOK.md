@@ -82,12 +82,18 @@ these steps:
    chain ID, registration state and a non-production request before opening
    production traffic. Keep any intentionally retained v1 writer on an explicit
    v1 configuration; never mix a v2 signer/relayer with the frozen v1 digest.
-4. Rescan chain requests so every durable job carries the original `payloadHex`.
-   Prepared journals written before payload binding may lack `payload` and are
-   rejected rather than re-signed or backfilled from `payloadText`. Discard only
-   that prepared stage and regenerate it from the raw chain event; an already
-   signed stage may only resume its identical signed transaction, never a
-   rewritten payload.
+4. Rebuild every prepared stage written by the `4adc` payload-binding change
+   from the raw chain event, not only records missing the `payload` field. Do not
+   re-sign or backfill any of those stages from `payloadText`. A signed stage may
+   only resume its identical signed transaction, never a rewritten payload.
+5. Perform a separate, one-time durable-job migration before resuming writers.
+   Rescanning alone does not upgrade existing rows. Jobs whose `payload_digest`
+   predates raw-payload coverage must be enumerated, rebuilt from chain data with
+   a newly computed raw-bound digest, and explicitly replaced, removed or
+   quarantined so the old row cannot be reused or collide with the rebuilt job.
+   Resume scanning only after every retained job has verified `payloadHex` and
+   the new digest. Never treat an old prepared stage as migration-complete just
+   because deserialization happens to succeed.
 
 ## Fulfilment: Rust production relayer (fresh v2)
 

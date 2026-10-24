@@ -1,6 +1,7 @@
 import { wallet } from '@cityofzion/neon-js';
 import { buildFulfillmentDigestBytes } from '../workers/morpheus-relayer/src/router.js';
 import { trimString } from './lib-strings.mjs';
+import { requireRawPayloadHex } from '../workers/morpheus-relayer/src/lib/payload.js';
 
 export function resolveFulfillmentSigningContext({
   requestRecord,
@@ -49,7 +50,10 @@ export function buildFulfillmentDigestHex({
   operation = '',
   contractScriptHash = '',
   networkMagic,
+  payloadText = '',
+  payloadHex,
 } = {}) {
+  const rawPayloadHex = requireRawPayloadHex({ payloadHex });
   return buildFulfillmentDigestBytes(
     requestId,
     requestType,
@@ -62,6 +66,8 @@ export function buildFulfillmentDigestHex({
       appId,
       moduleId,
       operation,
+      payloadText,
+      payloadHex: rawPayloadHex,
       contractScriptHash,
       networkMagic,
     }
@@ -82,6 +88,8 @@ export function buildFulfillmentVerificationSignature({
   operation = '',
   contractScriptHash = '',
   networkMagic,
+  payloadText = '',
+  payloadHex,
 } = {}) {
   if (!signerPrivateKey) {
     throw new Error('signerPrivateKey is required');
@@ -99,6 +107,8 @@ export function buildFulfillmentVerificationSignature({
     operation,
     contractScriptHash,
     networkMagic,
+    payloadText,
+    payloadHex,
   });
   return wallet.sign(digestHex, signerPrivateKey);
 }

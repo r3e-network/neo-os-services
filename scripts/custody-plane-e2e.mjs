@@ -362,11 +362,15 @@ async function main() {
     );
 
     // The live lane: compute in the host, sign the host's own digest in custody.
+    const fulfillPayloadText = JSON.stringify({ function: 'hash.sha256', input: { z: 1 } });
     const fulfillRequest = {
       chain: 'neo_n3',
       request_type: 'compute',
       request_id: '4242',
       payload: { function: 'hash.sha256', input: { z: 1 } },
+      payload_text: fulfillPayloadText,
+      payload_hex: Buffer.from(fulfillPayloadText).toString('hex'),
+      request_context: {},
       fulfillment_context: { app_id: 'custody-plane-e2e' },
       nonce: 'cafe',
     };
@@ -419,6 +423,7 @@ async function main() {
           appId: expectedEnvelope.app_id,
           moduleId: expectedEnvelope.module_id,
           operation: expectedEnvelope.operation,
+          payloadHex: fulfillRequest.payload_hex,
           contractScriptHash: N3_TESTNET_ORACLE_CONTRACT,
           networkMagic: N3_TESTNET_MAGIC,
         }
@@ -475,6 +480,24 @@ async function main() {
       rawSigned.some((row) => row.key_id === roleKeys.oracle_verifier.key_id),
       'the fulfillment signature is audited under the oracle_verifier key',
       rawSigned.map((row) => row.key_id)
+    );
+
+    const nonObject = await postJson(`${enclave}/oracle/fulfill`, hostToken, {
+      ...fulfillRequest,
+      payload: [],
+      payload_text: '[]',
+      payload_hex: Buffer.from('[]').toString('hex'),
+    });
+    check(
+      nonObject.status === 400 && /must be a JSON object/.test(nonObject.body?.error || ''),
+      'non-object JSON is refused before compute and custody signing',
+      nonObject
+    );
+    const nonObjectAudit = await custodyApi('GET', '/audit?limit=500', adminToken);
+    check(
+      (nonObjectAudit.body?.entries || []).filter((row) => row.action === 'signer-raw-signed')
+        .length === rawSigned.length,
+      'the non-object refusal adds no custody signature'
     );
 
     // -- 7. deterministic compute executes in the Rust host -----------------

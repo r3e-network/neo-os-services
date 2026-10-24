@@ -37,6 +37,12 @@
 import http from 'node:http';
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { ethers } from 'ethers';
+import {
+  decodeJsonObjectPayload,
+  requireRawPayloadHex,
+} from '../../workers/morpheus-relayer/src/lib/payload.js';
 
 // Canonical compute reuse — the worker's default export `handler(Request)=>Response`.
 import workerHandler from '../../workers/nitro-worker/src/worker.js';
@@ -666,6 +672,116 @@ function isHostUnattestedLane(kernelIntent, payload) {
   return Boolean(trimString(payload?.url || ''));
 }
 
+function requestRawPayload(requestBody) {
+  const hasSnake = requestBody?.payload_hex !== undefined && requestBody?.payload_hex !== null;
+  const hasCamel = requestBody?.payloadHex !== undefined && requestBody?.payloadHex !== null;
+  const field = hasSnake ? 'payload_hex' : 'payloadHex';
+  const value = hasSnake ? requestBody.payload_hex : requestBody?.payloadHex;
+  let payloadHex;
+  try {
+    payloadHex = requireRawPayloadHex({ [field]: value }, field);
+    if (hasSnake && hasCamel) {
+      const camel = requireRawPayloadHex({ payloadHex: requestBody.payloadHex });
+      if (camel !== payloadHex) throw new Error('payloadHex aliases disagree');
+    }
+  } catch (error) {
+    throw httpError(400, error instanceof Error ? error.message : String(error));
+  }
+  return { payloadHex, bytes: Buffer.from(payloadHex.replace(/^0x/i, ''), 'hex') };
+}
+
+function decodeUtf8Payload(bytes) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw httpError(400, 'request payload is not valid UTF-8 for this lane');
+  }
+}
+
+function decodeConfidentialPayload(payloadHex, bytes) {
+  try {
+    const [messageId, envelopeBytes] = ethers.AbiCoder.defaultAbiCoder().decode(
+      ['uint256', 'bytes'],
+      ethers.getBytes(payloadHex.startsWith('0x') ? payloadHex : `0x${payloadHex}`)
+    );
+    return {
+      messageId: messageId.toString(),
+      envelope: ethers.toUtf8String(envelopeBytes),
+    };
+  } catch {
+    return { messageId: null, envelope: decodeUtf8Payload(bytes) };
+  }
+}
+
+function deriveRequestPayload(requestBody, chain, kernelIntent) {
+  const { payloadHex, bytes } = requestRawPayload(requestBody);
+  const confidential = kernelIntent.moduleId === 'confidential.decrypt';
+  const decoded =
+    confidential && chain === 'neox'
+      ? decodeConfidentialPayload(payloadHex, bytes)
+      : { messageId: null, envelope: decodeUtf8Payload(bytes) };
+  const suppliedPayload =
+    requestBody?.payload &&
+    typeof requestBody.payload === 'object' &&
+    !Array.isArray(requestBody.payload)
+      ? requestBody.payload
+      : {};
+  const payloadText = decoded.envelope;
+  const suppliedText =
+    requestBody?.payload_text ?? suppliedPayload.payload_text ?? suppliedPayload.envelope;
+  if (typeof suppliedText !== 'string') {
+    throw httpError(400, 'payload_text is required and must be a string');
+  }
+  if (suppliedText !== payloadText) {
+    throw httpError(400, "payload_text does not match the lane's original payload encoding");
+  }
+
+  let expectedPayload;
+  try {
+    expectedPayload = decodeJsonObjectPayload(payloadText, { allowNonObject: confidential });
+  } catch (error) {
+    throw httpError(400, error instanceof Error ? error.message : String(error));
+  }
+  if (!confidential && !isDeepStrictEqual(suppliedPayload, expectedPayload)) {
+    throw httpError(400, 'payload object does not match the original payload bytes');
+  }
+  if (confidential) {
+    const legacyEnvelope =
+      Object.keys(suppliedPayload).length === 1 && suppliedPayload.envelope === payloadText;
+    if (!isDeepStrictEqual(suppliedPayload, expectedPayload) && !legacyEnvelope) {
+      throw httpError(400, 'confidential payload object does not match the original envelope');
+    }
+  }
+
+  const requestContext =
+    requestBody?.request_context &&
+    typeof requestBody.request_context === 'object' &&
+    !Array.isArray(requestBody.request_context)
+      ? requestBody.request_context
+      : {};
+  const payload = { ...expectedPayload };
+  for (const [field, aliases] of [
+    ['requester', ['requester']],
+    ['callback_contract', ['callback_contract', 'callbackContract']],
+    ['callback_method', ['callback_method', 'callbackMethod']],
+  ]) {
+    const value = aliases.map((alias) => requestContext[alias]).find((value) => value != null);
+    payload[field] = trimString(value || '');
+  }
+  const fulfillmentContext = requestBody?.fulfillment_context || {};
+  const contract =
+    trimString(requestContext.contract || requestContext.contract_address || '') ||
+    trimString(fulfillmentContext.oracle_contract || fulfillmentContext.oracleContract || '');
+  return {
+    payload,
+    payloadText,
+    payloadHex,
+    confidential: confidential
+      ? { envelope: payloadText, messageId: decoded.messageId, contract }
+      : null,
+  };
+}
+
 // Build the {ok, status, body} workerResponse for the request, computing in-process.
 // Mirrors prepareOracleFulfillment's lane selection:
 //   - confidential.decrypt -> /oracle/decrypt with {envelope: payloadText}
@@ -682,8 +798,14 @@ async function computeWorkerResponse(
   context
 ) {
   if (kernelIntent.moduleId === 'confidential.decrypt') {
-    const envelope = trimString(context.payloadText || payload?.envelope || '');
-    return computeViaWorker('/oracle/decrypt', { ...payload, envelope });
+    const confidential = context.confidential;
+    const decryptPayload = { envelope: trimString(confidential.envelope) };
+    if (confidential.messageId !== null) {
+      decryptPayload.message_id = confidential.messageId;
+      decryptPayload.chain = 'neox';
+      if (confidential.contract) decryptPayload.contract = confidential.contract;
+    }
+    return computeViaWorker('/oracle/decrypt', decryptPayload);
   }
   const route = resolveWorkerRoute(requestType, payload);
   const workerPayload = buildWorkerPayload(chain, requestType, payload, requestId, {
@@ -701,12 +823,6 @@ export async function handleOracleFulfill(requestBody) {
   if (chain !== 'neox') throw neoN3SignerRetired('/oracle/fulfill');
   const requestType = trimString(requestBody?.request_type || requestBody?.requestType || '');
   const requestId = trimString(requestBody?.request_id ?? requestBody?.requestId ?? '');
-  const payload =
-    requestBody?.payload &&
-    typeof requestBody.payload === 'object' &&
-    !Array.isArray(requestBody.payload)
-      ? requestBody.payload
-      : {};
   const fulfillmentContext =
     requestBody?.fulfillment_context && typeof requestBody.fulfillment_context === 'object'
       ? requestBody.fulfillment_context
@@ -717,6 +833,8 @@ export async function handleOracleFulfill(requestBody) {
   if (!requestId) throw httpError(400, 'request_id is required');
 
   const kernelIntent = resolveKernelIntent(requestType);
+  const derived = deriveRequestPayload(requestBody, chain, kernelIntent);
+  const payload = derived.payload;
 
   // Kernel envelope fields the digest binds (verbatim — matches the relayer's
   // resolveEventFulfillmentContext: prefer the on-chain identifiers, fall back to
@@ -747,7 +865,8 @@ export async function handleOracleFulfill(requestBody) {
     requester: trimString(payload.requester || ''),
     callbackContract: trimString(payload.callback_contract || ''),
     callbackMethod: trimString(payload.callback_method || ''),
-    payloadText: requestBody?.payload_text ?? payload?.payload_text ?? payload?.envelope ?? '',
+    payloadText: derived.payloadText,
+    confidential: derived.confidential,
   };
 
   // (a)+(b) COMPUTE in-process.
@@ -777,12 +896,8 @@ export async function handleOracleFulfill(requestBody) {
     appId,
     moduleId,
     operation,
-    payloadText: String(context.payloadText ?? ''),
-    payloadHex:
-      requestBody?.payload_hex ??
-      requestBody?.payloadHex ??
-      payload?.payload_hex ??
-      payload?.payloadHex,
+    payloadText: derived.payloadText,
+    payloadHex: derived.payloadHex,
     success,
     result,
     result_bytes_base64: resultBytesBase64,

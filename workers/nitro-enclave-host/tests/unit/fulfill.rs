@@ -701,6 +701,48 @@ fn substituted_execution_object_is_refused_even_when_text_and_hex_stay_unchanged
 }
 
 #[test]
+fn non_object_json_is_refused_before_compute_and_all_signing_surfaces() {
+    for text in ["[]", "null", "\"text\"", "42", "true"] {
+        let harness = fulfill_harness(price_reply());
+        let body = body_with_json_payload(text);
+        let error = handle_oracle_fulfill(&harness.state, &body).expect_err("non-object JSON");
+        assert_eq!(error.status, 400);
+        assert!(error.message.contains("must be a JSON object"));
+        assert!(harness.bridge.forwards().is_empty(), "{text}");
+        assert!(harness.signer.sign_calls().is_empty(), "{text}");
+        assert!(harness.signer.eip191_calls().is_empty(), "{text}");
+    }
+}
+
+#[test]
+fn vrf_raw_non_json_bytes_keep_their_existing_lane_behavior() {
+    let mut harness = fulfill_harness(vrf_reply());
+    use_production_compute(&mut harness);
+    harness
+        .state
+        .overlay
+        .write()
+        .expect("overlay lock")
+        .set_game_secret_root(&"11".repeat(32));
+    let bytes = [0u8, 1, 2, 127];
+    let text = String::from_utf8(bytes.to_vec()).expect("UTF-8 control bytes");
+    let body = json!({
+        "chain": "neo_n3",
+        "request_type": "random",
+        "request_id": "103",
+        "payload_text": text,
+        "payload": { "raw_payload": text },
+        "payload_hex": hex::encode(bytes),
+        "fulfillment_context": {
+            "contract_script_hash": N3_TESTNET_ORACLE_CONTRACT,
+            "network_magic": 894710606,
+        },
+    });
+    let response = handle_oracle_fulfill(&harness.state, &body).expect("raw VRF payload");
+    assert_eq!(response["success"], true);
+}
+
+#[test]
 fn missing_empty_and_non_utf8_raw_payloads_fail_closed_but_explicit_empty_works() {
     let valid = body_with_json_payload("{\"op\":\"add\"}");
     let mut missing = valid.clone();

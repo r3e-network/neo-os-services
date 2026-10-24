@@ -186,13 +186,26 @@ function jsonResponse(status, body) {
   });
 }
 
+function withRawPayload(request) {
+  const payloadText = request.payload_text ?? JSON.stringify(request.payload ?? {});
+  return {
+    ...request,
+    payload_text: payloadText,
+    payload_hex: request.payload_hex ?? Buffer.from(payloadText).toString('hex'),
+    request_context: request.request_context || {},
+  };
+}
+
 let workerCalls = [];
+let workerPayloads = [];
 
 function installDeterministicWorker() {
   workerCalls = [];
+  workerPayloads = [];
   __setWorkerHandlerForTests(async (request) => {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/$/, '');
+    workerPayloads.push({ path, payload: await request.json() });
     workerCalls.push(path);
     if (path.endsWith('/vrf/random')) {
       return jsonResponse(200, { request_id: '1', randomness: FIXED_VRF_RANDOMNESS });
@@ -270,9 +283,9 @@ function expectedWorkerResponse(requestType) {
 // change here is a change to what the on-chain verifier checks — regenerate only
 // together with the Rust vectors (scripts/export-rust-vectors.mjs).
 const GOLDEN = Object.freeze({
-  appIdDigest: '3537ff17cf6b308ca0135246b2bb810774dcdac4c19330b3dcde54e8ef51bbe3',
+  appIdDigest: 'a2149d434c63cfbc21efd854f761b6975ca7f0309755146e14a40f389ccfad45',
   legacyDigest: '9c91d9ccdca6f0207099205969760e9ae92567d1eca31b74cf44b1c6de1b529b',
-  vrfDigest: '29ff6f4694ec2e40ea4f8221f44864a11d232692870bebb849af55c8f8e0e8e9',
+  vrfDigest: '0fe3db94c8c7bd7207410d167e7b932aa7d1301d994285cef88a2cf47c55b83f',
   // sha256 of the encoded on-chain `result` string (the result envelope JSON).
   priceResultSha256: '2c4c4a3c0f486d6a76a917cc8e26c97886d52be1ce6bc05607f35eccd424accb',
 });
@@ -290,7 +303,7 @@ test('neo_n3 (with appId): lane answers 410; digest + envelope bytes pinned via 
   const moduleId = resolveKernelIntent(requestType).moduleId;
   const operation = resolveKernelIntent(requestType).operation;
 
-  const req = {
+  const req = withRawPayload({
     chain: 'neo_n3',
     request_type: requestType,
     request_id: requestId,
@@ -303,7 +316,7 @@ test('neo_n3 (with appId): lane answers 410; digest + envelope bytes pinned via 
       network_magic: networkMagic,
     },
     nonce: 'deadbeef',
-  };
+  });
 
   const tripwires = installTripwires();
   try {
@@ -342,7 +355,15 @@ test('neo_n3 (with appId): lane answers 410; digest + envelope bytes pinned via 
     fulfillment.result || '',
     fulfillment.error || '',
     fulfillment.result_bytes_base64 || '',
-    { chain: 'neo_n3', appId, moduleId, operation, contractScriptHash, networkMagic }
+    {
+      chain: 'neo_n3',
+      appId,
+      moduleId,
+      operation,
+      payloadHex: req.payload_hex,
+      contractScriptHash,
+      networkMagic,
+    }
   ).toString('hex');
   assert.equal(digest, GOLDEN.appIdDigest, 'fulfillment digest must be byte-exact');
 
@@ -355,7 +376,7 @@ test('neo_n3 (with appId): lane answers 410; digest + envelope bytes pinned via 
     fulfillment.result || '',
     fulfillment.error || '',
     fulfillment.result_bytes_base64 || '',
-    { chain: 'neo_n3', appId, moduleId, operation } // no contractScriptHash/networkMagic
+    { chain: 'neo_n3', appId, moduleId, operation, payloadHex: req.payload_hex } // no contractScriptHash/networkMagic
   ).toString('hex');
   assert.notEqual(digest, digestNoBinding, 'digest must include the deployment binding');
   const digestMainnetMagic = buildFulfillmentDigestBytes(
@@ -365,7 +386,15 @@ test('neo_n3 (with appId): lane answers 410; digest + envelope bytes pinned via 
     fulfillment.result || '',
     fulfillment.error || '',
     fulfillment.result_bytes_base64 || '',
-    { chain: 'neo_n3', appId, moduleId, operation, contractScriptHash, networkMagic: 860833102 }
+    {
+      chain: 'neo_n3',
+      appId,
+      moduleId,
+      operation,
+      payloadHex: req.payload_hex,
+      contractScriptHash,
+      networkMagic: 860833102,
+    }
   ).toString('hex');
   assert.notEqual(digest, digestMainnetMagic, 'digest must bind the network magic');
 });
@@ -378,14 +407,14 @@ test('legacy neo_n3 (no appId): lane answers 410; legacy digest pinned via the b
   const requestType = 'oracle_query';
   const requestId = '7';
 
-  const req = {
+  const req = withRawPayload({
     chain: 'legacy',
     request_type: requestType,
     request_id: requestId,
     payload: { symbol: 'BTC/USD' },
     fulfillment_context: {}, // no appId -> legacy domain
     nonce: '',
-  };
+  });
 
   assertRetired(
     await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(req)),
@@ -402,7 +431,7 @@ test('legacy neo_n3 (no appId): lane answers 410; legacy digest pinned via the b
     fulfillment.result || '',
     fulfillment.error || '',
     fulfillment.result_bytes_base64 || '',
-    { chain: 'legacy', appId: '', moduleId: '', operation: '' }
+    { chain: 'legacy', appId: '', moduleId: '', operation: '', payloadHex: req.payload_hex }
   ).toString('hex');
   assert.equal(digest, GOLDEN.legacyDigest, 'legacy digest must be byte-exact');
   // Domain separation: the same request under the kernel (appId) domain differs.
@@ -422,7 +451,7 @@ test('neo_n3 vrf (fixed randomness): lane answers 410; compact callback bytes + 
   const contractScriptHash = '0x' + '2c'.repeat(20);
   const networkMagic = 894710606;
 
-  const req = {
+  const req = withRawPayload({
     chain: 'neo_n3',
     request_type: requestType,
     request_id: requestId,
@@ -434,7 +463,7 @@ test('neo_n3 vrf (fixed randomness): lane answers 410; compact callback bytes + 
       contract_script_hash: contractScriptHash,
       network_magic: networkMagic,
     },
-  };
+  });
 
   assertRetired(
     await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(req)),
@@ -461,7 +490,15 @@ test('neo_n3 vrf (fixed randomness): lane answers 410; compact callback bytes + 
     fulfillment.result || '',
     fulfillment.error || '',
     fulfillment.result_bytes_base64 || '',
-    { chain: 'neo_n3', appId, moduleId, operation, contractScriptHash, networkMagic }
+    {
+      chain: 'neo_n3',
+      appId,
+      moduleId,
+      operation,
+      payloadHex: req.payload_hex,
+      contractScriptHash,
+      networkMagic,
+    }
   ).toString('hex');
   assert.equal(digest, GOLDEN.vrfDigest, 'vrf digest must be byte-exact');
 });
@@ -479,7 +516,7 @@ test('neox: keccak digest + envelope + EIP-191 signature byte-exact', async () =
   const chainId = 12227332; // Neo X testnet
   const oracleContract = '0xeCFC1C652B5cCdBfe3E9314a83156787D92a3fD2';
 
-  const req = {
+  const req = withRawPayload({
     chain: 'neox',
     request_type: requestType,
     request_id: requestId,
@@ -491,7 +528,7 @@ test('neox: keccak digest + envelope + EIP-191 signature byte-exact', async () =
       chain_id: chainId,
       oracle_contract: oracleContract,
     },
-  };
+  });
 
   const { status, body } = await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(req));
   assert.equal(status, 200, `dispatch failed: ${JSON.stringify(body)}`);
@@ -507,6 +544,8 @@ test('neox: keccak digest + envelope + EIP-191 signature byte-exact', async () =
     appId,
     moduleId,
     operation,
+    payloadText: req.payload_text,
+    payloadHex: req.payload_hex,
     success: fulfillment.success,
     result: fulfillment.result || '',
     result_bytes_base64: fulfillment.result_bytes_base64 || '',
@@ -541,6 +580,111 @@ test('neox: keccak digest + envelope + EIP-191 signature byte-exact', async () =
   );
 });
 
+function validNeoXPayloadRequest() {
+  return withRawPayload({
+    chain: 'neox',
+    request_type: 'oracle_query',
+    request_id: '9001',
+    payload: { symbol: 'BTC/USD' },
+    fulfillment_context: {
+      app_id: 'evm.app',
+      module_id: 'oracle.fetch',
+      operation: 'oracle_query',
+      chain_id: 12227332,
+      oracle_contract: '0xeCFC1C652B5cCdBfe3E9314a83156787D92a3fD2',
+    },
+  });
+}
+
+test('fulfill rejects a substituted execution object before compute or signing', async () => {
+  const request = validNeoXPayloadRequest();
+  request.payload = { symbol: 'EVIL/USD' };
+  await assert.rejects(enclave.handleOracleFulfill(request), /payload object does not match/);
+  assert.deepEqual(workerCalls, []);
+});
+
+test('fulfill rejects every non-object JSON type before compute or signing', async () => {
+  for (const payloadText of ['[]', 'null', '"text"', '42', 'true']) {
+    const request = validNeoXPayloadRequest();
+    request.payload = {};
+    request.payload_text = payloadText;
+    request.payload_hex = Buffer.from(payloadText).toString('hex');
+    await assert.rejects(enclave.handleOracleFulfill(request), /must be a JSON object/);
+  }
+  assert.deepEqual(workerCalls, []);
+});
+
+test('fulfill requires raw payload and rejects conflicting aliases before compute', async () => {
+  const missing = validNeoXPayloadRequest();
+  delete missing.payload_hex;
+  await assert.rejects(enclave.handleOracleFulfill(missing), /payloadHex is required/);
+
+  const conflict = validNeoXPayloadRequest();
+  conflict.payloadHex = '00';
+  await assert.rejects(enclave.handleOracleFulfill(conflict), /aliases disagree/);
+  assert.deepEqual(workerCalls, []);
+});
+
+test('fulfill derives worker context from request_context instead of payload', async () => {
+  const requester = '0x' + 'aa'.repeat(20);
+  const callbackContract = '0x' + 'bb'.repeat(20);
+  const request = validNeoXPayloadRequest();
+  request.request_context = {
+    requester,
+    callback_contract: callbackContract,
+    callback_method: 'onOracleResult',
+  };
+  await enclave.handleOracleFulfill(request);
+  const worker = workerPayloads.at(-1);
+  assert.equal(worker.path, '/oracle/smart-fetch');
+  assert.equal(worker.payload.requester, requester);
+  assert.equal(worker.payload.callback_contract, callbackContract);
+  assert.equal(worker.payload.callback_method, 'onOracleResult');
+  assert.equal(worker.payload.symbol, 'BTC/USD');
+});
+
+test('fulfill derives NeoX confidential envelope and message binding from raw ABI', async () => {
+  const envelope = 'sealed-envelope-bytes';
+  const abiPayload = ethers.AbiCoder.defaultAbiCoder().encode(
+    ['uint256', 'bytes'],
+    [42, ethers.toUtf8Bytes(envelope)]
+  );
+  const oracleContract = '0xeCFC1C652B5cCdBfe3E9314a83156787D92a3fD2';
+  const request = {
+    chain: 'neox',
+    request_type: 'decrypt',
+    request_id: '9002',
+    payload: { raw_payload: envelope },
+    payload_text: envelope,
+    payload_hex: abiPayload,
+    request_context: { contract: oracleContract },
+    fulfillment_context: {
+      app_id: 'evm.app',
+      module_id: 'confidential.decrypt',
+      operation: 'decrypt',
+      chain_id: 12227332,
+      oracle_contract: oracleContract,
+    },
+  };
+  await enclave.handleOracleFulfill(request);
+  const worker = workerPayloads.at(-1);
+  assert.equal(worker.path, '/oracle/decrypt');
+  assert.deepEqual(worker.payload, {
+    envelope,
+    message_id: '42',
+    chain: 'neox',
+    contract: oracleContract,
+  });
+
+  const before = workerCalls.length;
+  request.payload = { envelope: 'attacker-controlled-envelope' };
+  await assert.rejects(
+    enclave.handleOracleFulfill(request),
+    /confidential payload object does not match/
+  );
+  assert.equal(workerCalls.length, before);
+});
+
 // ---------------------------------------------------------------------------
 // Host-unattested lane: arbitrary-URL smart-fetch is NOT signed in-enclave.
 // ---------------------------------------------------------------------------
@@ -549,13 +693,13 @@ test('arbitrary-url smart-fetch: host-unattested on neox; the retired neo_n3 lan
   // smart-fetch is the host-tier lane.
   assert.equal(resolveKernelIntent('privacy_oracle').workerRoute, '/oracle/smart-fetch');
 
-  const neox = {
+  const neox = withRawPayload({
     chain: 'neox',
     request_type: 'privacy_oracle', // -> oracle.fetch -> /oracle/smart-fetch
     request_id: '5',
     payload: { url: 'https://example.com/data' },
     fulfillment_context: { app_id: 'x' },
-  };
+  });
   const { status, body } = await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(neox));
   assert.equal(status, 200);
   assert.equal(body.trust_tier, 'host-unattested');
@@ -1320,7 +1464,7 @@ function buildFakeAttestationDoc({ userDataHex, pcr0Hex }) {
 
 function neoxFulfillRequest(requestId, nonce) {
   const requestType = 'oracle_query';
-  return {
+  return withRawPayload({
     chain: 'neox',
     request_type: requestType,
     request_id: requestId,
@@ -1333,7 +1477,7 @@ function neoxFulfillRequest(requestId, nonce) {
       oracle_contract: '0xeCFC1C652B5cCdBfe3E9314a83156787D92a3fD2',
     },
     ...(nonce ? { nonce } : {}),
-  };
+  });
 }
 
 test('C1: the neo_n3 fulfill lane answers 410 without attesting; the attestation binding holds for its digest and for neox', async () => {
@@ -1354,7 +1498,7 @@ test('C1: the neo_n3 fulfill lane answers 410 without attesting; the attestation
     const networkMagic = 894710606;
     const moduleId = resolveKernelIntent(requestType).moduleId;
     const operation = resolveKernelIntent(requestType).operation;
-    const n3 = {
+    const n3 = withRawPayload({
       chain: 'neo_n3',
       request_type: requestType,
       request_id: '5150',
@@ -1367,7 +1511,7 @@ test('C1: the neo_n3 fulfill lane answers 410 without attesting; the attestation
         network_magic: networkMagic,
       },
       nonce: 'cafebabe',
-    };
+    });
     assertRetired(
       await dispatch('POST', '/oracle/fulfill', AUTH, JSON.stringify(n3)),
       '/oracle/fulfill'
@@ -1388,6 +1532,7 @@ test('C1: the neo_n3 fulfill lane answers 410 without attesting; the attestation
         appId: 'attest.app',
         moduleId,
         operation,
+        payloadHex: n3.payload_hex,
         contractScriptHash,
         networkMagic,
       }
@@ -1443,17 +1588,19 @@ test('C1 best-effort: neo_n3 answers 410; neox still signs when attestation is u
         'POST',
         '/oracle/fulfill',
         AUTH,
-        JSON.stringify({
-          chain: 'neo_n3',
-          request_type: requestType,
-          request_id: '5151',
-          payload: { symbol: 'BTC/USD' },
-          fulfillment_context: {
-            app_id: 'a',
-            module_id: resolveKernelIntent(requestType).moduleId,
-            operation: resolveKernelIntent(requestType).operation,
-          },
-        })
+        JSON.stringify(
+          withRawPayload({
+            chain: 'neo_n3',
+            request_type: requestType,
+            request_id: '5151',
+            payload: { symbol: 'BTC/USD' },
+            fulfillment_context: {
+              app_id: 'a',
+              module_id: resolveKernelIntent(requestType).moduleId,
+              operation: resolveKernelIntent(requestType).operation,
+            },
+          })
+        )
       ),
       '/oracle/fulfill'
     );
@@ -1510,7 +1657,7 @@ test('missing request_type / request_id: 400 on neox; neo_n3 answers 410 before 
     'POST',
     '/oracle/fulfill',
     AUTH,
-    JSON.stringify({ chain: 'neox', request_id: '1' })
+    JSON.stringify(withRawPayload({ chain: 'neox', request_id: '1', payload: {} }))
   );
   assert.equal(noType.status, 400);
   assert.match(noType.body.error, /request_type/);
@@ -1519,7 +1666,7 @@ test('missing request_type / request_id: 400 on neox; neo_n3 answers 410 before 
     'POST',
     '/oracle/fulfill',
     AUTH,
-    JSON.stringify({ chain: 'neox', request_type: 'oracle_query' })
+    JSON.stringify(withRawPayload({ chain: 'neox', request_type: 'oracle_query', payload: {} }))
   );
   assert.equal(noId.status, 400);
   assert.match(noId.body.error, /request_id/);

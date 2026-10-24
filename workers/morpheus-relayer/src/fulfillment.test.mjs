@@ -2201,6 +2201,46 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
       ]);
     });
   });
+
+  it('rejects non-object JSON before any worker, enclave, custody or delivery call', async () => {
+    const originalFetch = global.fetch;
+    const calls = [];
+    let submissions = 0;
+    global.fetch = async (...args) => {
+      calls.push(args);
+      throw new Error('no network call is allowed for non-object JSON');
+    };
+    const config = baseConfig({
+      hooks: {
+        fulfillNeoRequest: async () => {
+          submissions += 1;
+          return { tx_hash: '0xmust-not-happen', vm_state: 'HALT' };
+        },
+      },
+    });
+    try {
+      for (const payloadText of ['[]', 'null', '"text"', '42', 'true']) {
+        const event = {
+          chain: 'neo_n3',
+          requestId: '9300',
+          requestType: 'compute',
+          appId: 'miniapp-os',
+          moduleId: 'compute.run',
+          operation: 'compute',
+          payloadText,
+          payloadHex: Buffer.from(payloadText).toString('hex'),
+        };
+        await assert.rejects(
+          prepareOracleFulfillment(config, event),
+          /request payload must be a JSON object/
+        );
+      }
+    } finally {
+      global.fetch = originalFetch;
+    }
+    assert.equal(calls.length, 0);
+    assert.equal(submissions, 0);
+  });
 });
 
 // ===================================================================

@@ -16,6 +16,7 @@ describe('buildFulfillmentVerificationSignature', () => {
       requestType: 'privacy_oracle',
       success: true,
       resultText: JSON.stringify({ provider: 'twelvedata', symbol: 'NEO-USD', price: '0' }),
+      payloadHex: '0x',
     };
 
     const digestHex = buildFulfillmentDigestHex(input);
@@ -35,6 +36,7 @@ describe('buildFulfillmentVerificationSignature', () => {
       success: true,
       resultText: JSON.stringify({ provider: 'twelvedata', symbol: 'NEO-USD', price: '0' }),
       chain: 'legacy',
+      payloadHex: '0x',
     };
 
     assert.equal(
@@ -46,7 +48,7 @@ describe('buildFulfillmentVerificationSignature', () => {
         input.resultText,
         '',
         '',
-        { chain: 'legacy' }
+        { chain: 'legacy', payloadHex: '0x' }
       ).toString('hex')
     );
   });
@@ -62,6 +64,7 @@ describe('buildFulfillmentVerificationSignature', () => {
       operation: 'privacy_oracle',
       contractScriptHash: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
       networkMagic: 894710606,
+      payloadHex: '0x',
     };
 
     assert.equal(
@@ -78,10 +81,18 @@ describe('buildFulfillmentVerificationSignature', () => {
           appId: input.appId,
           moduleId: input.moduleId,
           operation: input.operation,
+          payloadHex: '0x',
           contractScriptHash: input.contractScriptHash,
           networkMagic: input.networkMagic,
         }
       ).toString('hex')
+    );
+  });
+
+  it('rejects signing inputs that omit raw payload bytes', () => {
+    assert.throws(
+      () => buildFulfillmentDigestHex({ requestId: 4451, requestType: 'privacy_oracle' }),
+      /payloadHex is required/
     );
   });
 });
