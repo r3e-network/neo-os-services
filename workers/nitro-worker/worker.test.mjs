@@ -336,7 +336,7 @@ const TEST_ORACLE_ENCRYPTION_INFO = 'morpheus-confidential-payload-v2';
 const AES_GCM_TAG_LENGTH_BYTES = 16;
 const NEODID_BINDING_DOMAIN = Buffer.from('neodid-binding-v1', 'utf8');
 const NEODID_ACTION_DOMAIN = Buffer.from('neodid-action-v1', 'utf8');
-const NEODID_RECOVERY_DOMAIN = Buffer.from('neodid-recovery-v1', 'utf8');
+const NEODID_RECOVERY_DOMAIN = Buffer.from('neodid-recovery-v2', 'utf8');
 const NEODID_ZKLOGIN_DOMAIN = Buffer.from('neodid-zklogin-v1', 'utf8');
 // Matches the worker default network (testnet) and NeoDIDRegistry.NetworkMagicLe4().
 const TESTNET_NEO_NETWORK_MAGIC = 894710606;
@@ -1040,6 +1040,7 @@ test('neodid recovery-ticket rejects an unverified provider_uid by default (E3 f
       body: JSON.stringify({
         provider: 'github',
         aa_contract: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+        account_id_raw: '0x0268a387913b250166ddec032b03332690a1ef78',
         account_id: 'aa-social-recovery-demo',
         new_owner: '0x89b05cac00804648c666b47ecb1c57bc185821b7',
         recovery_nonce: '7',
@@ -1076,6 +1077,7 @@ test('neodid recovery-ticket supports confidential provider payloads and binds A
         body: JSON.stringify({
           provider: 'github',
           aa_contract: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+          account_id_raw: '0x0268a387913b250166ddec032b03332690a1ef78',
           verifier_contract: '0x03013f49c42a14546c8bbe58f9d434c3517fccab',
           account_address: '0x6d0656f6dd91469db1c90cc1e574380613f43738',
           account_id: 'aa-social-recovery-demo',
@@ -1104,6 +1106,7 @@ test('neodid recovery-ticket supports confidential provider payloads and binds A
           NEODID_RECOVERY_DOMAIN,
           encodeLengthPrefixedAscii('neo_n3'),
           Buffer.from('0xf54d8584ef82315c1800373272ab08ae0db2d5ef'.replace(/^0x/, ''), 'hex'),
+          Buffer.from('0x0268a387913b250166ddec032b03332690a1ef78'.replace(/^0x/, ''), 'hex'),
           Buffer.from('0x03013f49c42a14546c8bbe58f9d434c3517fccab'.replace(/^0x/, ''), 'hex'),
           Buffer.from('0x6d0656f6dd91469db1c90cc1e574380613f43738'.replace(/^0x/, ''), 'hex'),
           encodeLengthPrefixedAscii('aa-social-recovery-demo'),
@@ -1125,6 +1128,7 @@ test('neodid recovery-ticket supports confidential provider payloads and binds A
         body: JSON.stringify({
           provider: 'github',
           aa_contract: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+          account_id_raw: '0x0268a387913b250166ddec032b03332690a1ef78',
           account_id: 'aa-social-recovery-demo',
           new_owner: '0x89b05cac00804648c666b47ecb1c57bc185821b7',
           recovery_nonce: '8',
@@ -1179,6 +1183,7 @@ test('neodid recovery-ticket accepts confidential web3auth id_token payloads', a
       body: JSON.stringify({
         provider: 'web3auth',
         aa_contract: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+        account_id_raw: '0x0268a387913b250166ddec032b03332690a1ef78',
         verifier_contract: '0x03013f49c42a14546c8bbe58f9d434c3517fccab',
         account_address: '0x6d0656f6dd91469db1c90cc1e574380613f43738',
         account_id: 'aa-social-recovery-demo',
@@ -1251,6 +1256,7 @@ test('neodid recovery-ticket resolves encrypted_params_ref under the worker netw
     provider: 'web3auth',
     network: 'neo_n3',
     aa_contract: '0xf54d8584ef82315c1800373272ab08ae0db2d5ef',
+    account_id_raw: '0x0268a387913b250166ddec032b03332690a1ef78',
     verifier_contract: '0x03013f49c42a14546c8bbe58f9d434c3517fccab',
     account_id: 'aa-social-recovery-demo',
     new_owner: '0x89b05cac00804648c666b47ecb1c57bc185821b7',

@@ -35,7 +35,7 @@ const NEODID_BINDING_DOMAIN: &[u8] = b"neodid-binding-v1";
 const NEODID_CLAIM_COMMITMENT_DOMAIN: &[u8] = b"neodid-claim-secret-v1";
 const NEODID_BINDING_COMMITMENT_DOMAIN: &[u8] = b"neodid-claim-commitment-v1";
 const NEODID_ACTION_DOMAIN: &[u8] = b"neodid-action-v1";
-const NEODID_RECOVERY_DOMAIN: &[u8] = b"neodid-recovery-v1";
+const NEODID_RECOVERY_DOMAIN: &[u8] = b"neodid-recovery-v2";
 const NEODID_ZKLOGIN_DOMAIN: &[u8] = b"neodid-zklogin-v1";
 
 const WEB3AUTH_DEFAULT_JWKS_URL: &str = "https://api-auth.web3auth.io/.well-known/jwks.json";
@@ -728,6 +728,7 @@ fn build_action_digest_bytes(
 struct RecoveryTicket {
     network: String,
     aa_contract: String,
+    account_id_raw: String,
     verifier_contract: Option<String>,
     account_address: Option<String>,
     account_id: String,
@@ -744,6 +745,7 @@ fn build_recovery_digest_bytes(ticket: &RecoveryTicket) -> Result<[u8; 32], Stri
     input.extend_from_slice(NEODID_RECOVERY_DOMAIN);
     input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.network)?);
     input.extend_from_slice(&hex_bytes_0x(&ticket.aa_contract));
+    input.extend_from_slice(&hex_bytes_0x(&ticket.account_id_raw));
     input.extend_from_slice(&encode_hash160_or_zero(ticket.verifier_contract.as_deref()));
     input.extend_from_slice(&encode_hash160_or_zero(ticket.account_address.as_deref()));
     input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.account_id)?);
@@ -940,6 +942,10 @@ pub fn neodid_recovery_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Res
         ),
         "account_address",
     )?;
+    let account_id_raw = resolve_hash160(
+        js_first_truthy(resolved_payload, &["account_id_raw", "accountIdRaw"]),
+        "account_id_raw",
+    )?;
     let account_id = resolve_required_text(
         js_first_truthy(resolved_payload, &["account_id", "accountId", "wallet_id"]),
         "account_id",
@@ -977,6 +983,7 @@ pub fn neodid_recovery_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Res
     let ticket = RecoveryTicket {
         network: network.clone(),
         aa_contract: aa_contract.clone(),
+        account_id_raw: account_id_raw.clone(),
         verifier_contract: verifier_contract.clone(),
         account_address: account_address.clone(),
         account_id: account_id.clone(),
@@ -991,6 +998,7 @@ pub fn neodid_recovery_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Res
     Ok(json!({
         "network": ticket.network,
         "aa_contract": ticket.aa_contract,
+        "account_id_raw": ticket.account_id_raw,
         "verifier_contract": ticket.verifier_contract,
         "account_address": ticket.account_address,
         "account_id": ticket.account_id,
@@ -1142,7 +1150,7 @@ mod tests {
     const GOLDEN_REC_NULL: &str =
         "a9afb6ca26f963a5baaea94f92832bceb20ebba5ce029173d2b7162130d758fd";
     const GOLDEN_REC_DIGEST: &str =
-        "370fa690c70018e76865aea2c64a9c7c9047c9f1967d9a25a9c4e56a8729f6a8";
+        "327bc26130bfc1cb3fe29dc54d77e72b0c806170553280ddb21143973df900a9";
     const GOLDEN_ZK_ACTION_ID_DIGEST: &str =
         "ba9ae2ee36d9ced6d1d848bf8b890a56b658804f48ac15aab21969adbfe1183b";
     const GOLDEN_ZK_NULL: &str = "1d1f3ef311785b4b021f9b4b25ebceffa801478117e25cfcce33812578cb7b7a";
@@ -1586,6 +1594,7 @@ mod tests {
             "provider_uid": "user-42",
             "network": "neo_n3",
             "aa_contract": format!("0x{}", "33".repeat(20)),
+            "account_id_raw": format!("0x{}", "66".repeat(20)),
             "account_address": format!("0x{}", "44".repeat(20)),
             "account_id": "acct-1",
             "new_owner": format!("0x{}", "55".repeat(20)),
@@ -1599,6 +1608,7 @@ mod tests {
             &[
                 "network",
                 "aa_contract",
+                "account_id_raw",
                 "verifier_contract",
                 "account_address",
                 "account_id",
@@ -1626,6 +1636,14 @@ mod tests {
         assert!(result["verifier_contract"].is_null());
         // …and the digest folded 20 zero bytes in its slot (Node golden).
         assert_eq!(result["digest"], format!("0x{GOLDEN_REC_DIGEST}"));
+
+        let mut missing_raw = payload.clone();
+        missing_raw
+            .as_object_mut()
+            .expect("payload object")
+            .remove("account_id_raw");
+        let error = neodid_recovery_ticket(&io, &missing_raw).unwrap_err();
+        assert!(error.contains("account_id_raw"), "{error}");
     }
 
     #[test]
@@ -1749,6 +1767,7 @@ mod tests {
             "provider_uid": "user-42",
             "network": "neo_n3",
             "aa_contract": format!("0x{}", "33".repeat(20)),
+            "account_id_raw": format!("0x{}", "66".repeat(20)),
             "account_id": "acct-1",
             "new_owner": format!("0x{}", "55".repeat(20)),
             "recovery_nonce": "n-1",

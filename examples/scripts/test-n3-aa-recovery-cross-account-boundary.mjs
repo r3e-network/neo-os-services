@@ -616,6 +616,12 @@ async function main() {
     const ownerHash = requesterHash;
     const accountIdA = 'aa-social-recovery-cross-a';
     const accountIdB = 'aa-social-recovery-cross-b';
+    const accountIdRawA = normalizeHash160(
+      process.env.AA_RECOVERY_BOUNDARY_ACCOUNT_ID_RAW_A || `0x${new wallet.Account().scriptHash}`
+    );
+    const accountIdRawB = normalizeHash160(
+      process.env.AA_RECOVERY_BOUNDARY_ACCOUNT_ID_RAW_B || `0x${new wallet.Account().scriptHash}`
+    );
     const accountAddressA = normalizeHash160(
       process.env.AA_RECOVERY_BOUNDARY_ACCOUNT_A || `0x${new wallet.Account().scriptHash}`
     );
@@ -646,8 +652,8 @@ async function main() {
       new tx.Signer({ account: account.scriptHash, scopes: tx.WitnessScope.Global }),
     ];
 
-    const setupParams = (accountIdText, accountAddress) => [
-      utf8ByteArrayParam(accountIdText),
+    const setupParams = (accountIdText, accountAddress, accountIdRaw) => [
+      sc.ContractParam.hash160(accountIdRaw),
       sc.ContractParam.string(accountIdText),
       sc.ContractParam.string('neo_n3'),
       sc.ContractParam.hash160(ownerHash),
@@ -662,12 +668,12 @@ async function main() {
 
     const setupATx = await verifierContract.invoke(
       'setupRecovery',
-      setupParams(accountIdA, accountAddressA),
+      setupParams(accountIdA, accountAddressA, accountIdRawA),
       signers
     );
     const setupBTx = await verifierContract.invoke(
       'setupRecovery',
-      setupParams(accountIdB, accountAddressB),
+      setupParams(accountIdB, accountAddressB, accountIdRawB),
       signers
     );
     await waitForApplicationLog(rpcClient, setupATx);
@@ -681,11 +687,14 @@ async function main() {
       recoveryNonceText,
     });
 
+    const accountIdRawAInternal = toNeoInternalHex(accountIdRawA);
+    const accountIdRawBInternal = toNeoInternalHex(accountIdRawB);
     const recoveryPayloadA = {
       provider: 'github',
       provider_uid: providerUid,
       network: 'neo_n3',
       aa_contract: aaCoreHashInternal,
+      account_id_raw: accountIdRawAInternal,
       verifier_contract: verifierHashInternal,
       account_address: accountAddressAInternal,
       account_id: accountIdA,
@@ -722,7 +731,7 @@ async function main() {
     const submitATx = await verifierContract.invoke(
       'submitRecoveryTicket',
       [
-        utf8ByteArrayParam(accountIdA),
+        sc.ContractParam.hash160(accountIdRawA),
         sc.ContractParam.hash160(newOwnerA),
         sc.ContractParam.string(recoveryNonceText),
         sc.ContractParam.string(expiresAtText),
@@ -736,14 +745,21 @@ async function main() {
     const submitALog = await waitForApplicationLog(rpcClient, submitATx);
     assertHalt(submitALog, 'submitRecoveryTicket A');
 
+    const recoveryActionIdB = computeRecoveryActionId({
+      network: 'neo_n3',
+      aaContract: aaCoreHashInternal,
+      accountIdText: accountIdB,
+      newOwner: newOwnerAInternal,
+      recoveryNonceText,
+    });
     const wrongAccountTest = await verifierContract.testInvoke(
       'submitRecoveryTicket',
       [
-        utf8ByteArrayParam(accountIdB),
+        sc.ContractParam.hash160(accountIdRawB),
         sc.ContractParam.hash160(newOwnerA),
         sc.ContractParam.string(recoveryNonceText),
         sc.ContractParam.string(expiresAtText),
-        sc.ContractParam.string(recoveryActionIdA),
+        sc.ContractParam.string(recoveryActionIdB),
         hexByteArrayParam(compact.master_nullifier),
         hexByteArrayParam(compact.action_nullifier),
         hexByteArrayParam(compact.signature),
@@ -751,11 +767,21 @@ async function main() {
       signers
     );
 
+    assertCondition(
+      wrongAccountTest.state !== 'HALT',
+      'cross-account recovery ticket replay must be rejected'
+    );
     const pendingA = await invokeReadRaw(rpcClient, verifier.hash, 'getPendingRecovery', [
-      { type: 'ByteArray', value: Buffer.from(accountIdA, 'utf8').toString('base64') },
+      {
+        type: 'ByteArray',
+        value: Buffer.from(accountIdRawAInternal.replace(/^0x/i, ''), 'hex').toString('base64'),
+      },
     ]);
     const pendingB = await invokeReadRaw(rpcClient, verifier.hash, 'getPendingRecovery', [
-      { type: 'ByteArray', value: Buffer.from(accountIdB, 'utf8').toString('base64') },
+      {
+        type: 'ByteArray',
+        value: Buffer.from(accountIdRawBInternal.replace(/^0x/i, ''), 'hex').toString('base64'),
+      },
     ]);
 
     const generatedAt = new Date().toISOString();
@@ -774,6 +800,8 @@ async function main() {
       setup: {
         account_id_a: accountIdA,
         account_id_b: accountIdB,
+        account_id_raw_a: accountIdRawA,
+        account_id_raw_b: accountIdRawB,
         account_address_a: accountAddressA,
         account_address_b: accountAddressB,
         owner_hash: ownerHash,

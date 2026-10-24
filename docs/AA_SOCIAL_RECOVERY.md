@@ -87,6 +87,7 @@ This means AA recovery no longer needs a side-channel worker call. The preferred
   "mode": "neodid_recovery_ticket",
   "network": "neo_n3",
   "aa_contract": "0x711c1899a3b7fa0e055ae0d17c9acfcd1bef6423",
+  "account_id_raw": "<raw-20-byte-account-id>",
   "verifier_contract": "<aa-recovery-verifier-contract-hash>",
   "account_address": "0x6d0656f6dd91469db1c90cc1e574380613f43738",
   "account_id": "<aa-account-id>",
@@ -118,6 +119,14 @@ This means AA recovery no longer needs a side-channel worker call. The preferred
 }
 ```
 
+The signing domain is `neodid-recovery-v2`: the digest includes `account_id_raw`
+and the AA core, so identical textual identities, addresses, factors, and action
+IDs cannot make one ticket valid for a different raw account. Direct submission
+also re-derives the recovery action ID from the raw account, new owner, and
+current recovery nonce. Compact result encoding remains v3, while tickets issued
+before raw-account binding are rejected by the upgraded verifier. A coordinated
+upgrade must drain or migrate in-flight requests rather than accept old signatures.
+
 ## What The Verifier Must Check / 验证器必须检查的内容
 
 The AA recovery verifier should verify:
@@ -126,6 +135,7 @@ The AA recovery verifier should verify:
 - signer public key matches the configured NeoDID/Morpheus verifier key
 - `expires_at` has not passed
 - `aa_contract` matches the configured AA master contract
+- `account_id_raw` matches the raw 20-byte account ID, not merely a proxy address or shared textual identity
 - `account_id` matches the account being recovered
 - `new_owner` matches the pending recovery target
 - `recovery_nonce` matches the current recovery round
@@ -138,6 +148,7 @@ AA 恢复验证器应验证：
 - 签名公钥等于预配置的 NeoDID/Morpheus verifier key
 - `expires_at` 未过期
 - `aa_contract` 与当前 AA 主合约一致
+- `account_id_raw` 与原始 20 字节账户 ID 一致，而不是仅凭 proxy 地址或共享文本身份
 - `account_id` 与被恢复账户一致
 - `new_owner` 与本次待恢复的新地址一致
 - `recovery_nonce` 与当前恢复轮次一致
@@ -168,6 +179,7 @@ Example on-chain request payload:
   "provider": "web3auth",
   "network": "neo_n3",
   "aa_contract": "0x711c1899a3b7fa0e055ae0d17c9acfcd1bef6423",
+  "account_id_raw": "<raw-20-byte-account-id>",
   "verifier_contract": "<aa-recovery-verifier-contract-hash>",
   "account_id": "<aa-account-id>",
   "new_owner": "0x89b05cac00804648c666b47ecb1c57bc185821b7",
@@ -184,6 +196,7 @@ Large-JWT alternative:
   "provider": "web3auth",
   "network": "neo_n3",
   "aa_contract": "0x711c1899a3b7fa0e055ae0d17c9acfcd1bef6423",
+  "account_id_raw": "<raw-20-byte-account-id>",
   "verifier_contract": "<aa-recovery-verifier-contract-hash>",
   "account_id": "<aa-account-id>",
   "new_owner": "0x89b05cac00804648c666b47ecb1c57bc185821b7",

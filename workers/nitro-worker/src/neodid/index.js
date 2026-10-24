@@ -32,7 +32,7 @@ const NEODID_BINDING_DOMAIN = Buffer.from('neodid-binding-v1', 'utf8');
 const NEODID_CLAIM_COMMITMENT_DOMAIN = Buffer.from('neodid-claim-secret-v1', 'utf8');
 const NEODID_BINDING_COMMITMENT_DOMAIN = Buffer.from('neodid-claim-commitment-v1', 'utf8');
 const NEODID_ACTION_DOMAIN = Buffer.from('neodid-action-v1', 'utf8');
-const NEODID_RECOVERY_DOMAIN = Buffer.from('neodid-recovery-v1', 'utf8');
+const NEODID_RECOVERY_DOMAIN = Buffer.from('neodid-recovery-v2', 'utf8');
 const NEODID_ZKLOGIN_DOMAIN = Buffer.from('neodid-zklogin-v1', 'utf8');
 
 // `derives_provider_uid_in_tee` (E3): true means the worker derives the
@@ -478,6 +478,7 @@ function buildRecoveryDigestBytes(ticket) {
         NEODID_RECOVERY_DOMAIN,
         encodeLengthPrefixedAscii(ticket.network),
         Buffer.from(ticket.aa_contract.replace(/^0x/i, ''), 'hex'),
+        Buffer.from(ticket.account_id_raw.replace(/^0x/i, ''), 'hex'),
         encodeHash160OrZero(ticket.verifier_contract),
         encodeHash160OrZero(ticket.account_address),
         encodeLengthPrefixedAscii(ticket.account_id),
@@ -809,9 +810,14 @@ export async function handleNeoDidRecoveryTicket(payload = {}) {
   );
   const actionNullifier = computeActionNullifier(provider, providerUid, actionId, saltBytes);
 
+  const accountIdRaw = resolveHash160(
+    resolvedPayload.account_id_raw || resolvedPayload.accountIdRaw,
+    'account_id_raw'
+  );
   const ticket = {
     network,
     aa_contract: aaContract,
+    account_id_raw: accountIdRaw,
     verifier_contract: verifierContract,
     account_address: accountAddress,
     account_id: accountId,
@@ -827,6 +833,7 @@ export async function handleNeoDidRecoveryTicket(payload = {}) {
   const result = {
     network: ticket.network,
     aa_contract: ticket.aa_contract,
+    account_id_raw: ticket.account_id_raw,
     verifier_contract: ticket.verifier_contract,
     account_address: ticket.account_address,
     account_id: ticket.account_id,
