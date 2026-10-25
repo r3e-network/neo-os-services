@@ -159,26 +159,82 @@ for (const defaultBranch of ['main', 'trunk', 'Release/V1']) {
   }
 }
 // Environment values remain data even if they contain Python/shell-looking text.
-for (const branch of ["main'; raise RuntimeError('interpolated') #", '$(exit 99)', '']) {
-  cases.push({
-    event_name: 'push',
-    ref: `refs/heads/${branch}`,
-    event: { repository: { private: true, default_branch: branch } },
+for (const eventName of ['push', 'workflow_dispatch']) {
+  for (const branch of ["main'; raise RuntimeError('interpolated') #", '$(exit 99)', '']) {
+    cases.push({
+      event_name: eventName,
+      ref: `refs/heads/${branch}`,
+      event: { repository: { private: true, default_branch: branch } },
+    });
+  }
+}
+
+const literalAdmissionCases = [];
+for (const eventName of ['workflow_dispatch', 'push']) {
+  const github = (ref, defaultBranch = 'main') => ({
+    event_name: eventName,
+    ref,
+    event: { repository: { private: true, default_branch: defaultBranch } },
   });
+  literalAdmissionCases.push(
+    {
+      name: 'exact default branch',
+      github: github('refs/heads/main'),
+      runner: 'neoos-isolated-linux',
+      onDefaultBranch: 'true',
+    },
+    {
+      name: 'feature branch',
+      github: github('refs/heads/feature'),
+      runner: 'ubuntu-latest',
+      onDefaultBranch: 'false',
+    },
+    {
+      name: 'tag',
+      github: github('refs/tags/v1'),
+      runner: 'ubuntu-latest',
+      onDefaultBranch: 'false',
+    },
+    {
+      name: 'case-variant branch',
+      github: github('refs/heads/MAIN'),
+      runner: 'ubuntu-latest',
+      onDefaultBranch: 'false',
+    },
+    {
+      name: 'different default branch',
+      github: github('refs/heads/main', 'trunk'),
+      runner: 'ubuntu-latest',
+      onDefaultBranch: 'false',
+    },
+    {
+      name: 'empty default branch',
+      github: github('refs/heads/', ''),
+      runner: 'ubuntu-latest',
+      onDefaultBranch: 'false',
+    }
+  );
+}
+cases.push(...literalAdmissionCases.map((scenario) => scenario.github));
+
+function onDefaultBranch(github) {
+  const repository = github.event.repository;
+  return (
+    typeof repository.default_branch === 'string' &&
+    repository.default_branch !== '' &&
+    github.ref === `refs/heads/${repository.default_branch}`
+  );
 }
 function expected(github) {
   const repository = github.event.repository;
-  return repository.private === true &&
-    (github.event_name === 'workflow_dispatch' ||
-      (github.event_name === 'push' &&
-        repository.default_branch !== '' &&
-        github.ref === `refs/heads/${repository.default_branch}`))
+  const eligibleEvent = github.event_name === 'workflow_dispatch' || github.event_name === 'push';
+  return repository.private === true && eligibleEvent && onDefaultBranch(github)
     ? 'neoos-isolated-linux'
     : 'ubuntu-latest';
 }
 
 let selected;
-function selectedRunners() {
+function selectedOutputs() {
   if (selected) return selected;
   const environments = cases.map((github) =>
     Object.fromEntries(
@@ -212,22 +268,41 @@ print(json.dumps(results))
   });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   selected = JSON.parse(result.stdout).map((output) => {
-    assert.match(output, /^runner=(ubuntu-latest|neoos-isolated-linux)\n$/);
-    const runner = output.slice(7).trim();
-    const jobOutput = actionsValue(selectionJob.outputs.runner, {
-      steps: { select: { outputs: { runner } } },
-    });
-    return actionsValue(selector.on.workflow_call.outputs.runner.value, {
-      jobs: { select: { outputs: { runner: jobOutput } } },
-    });
+    const match =
+      /^runner=(ubuntu-latest|neoos-isolated-linux)\non_default_branch=(true|false)\n$/.exec(
+        output
+      );
+    assert.ok(match, `unexpected selector output: ${JSON.stringify(output)}`);
+    const stepOutputs = { runner: match[1], on_default_branch: match[2] };
+    const jobOutputs = Object.fromEntries(
+      Object.entries(selectionJob.outputs).map(([name, expression]) => [
+        name,
+        actionsValue(expression, { steps: { select: { outputs: stepOutputs } } }),
+      ])
+    );
+    const workflowOutputs = Object.fromEntries(
+      Object.entries(selector.on.workflow_call.outputs).map(([name, output]) => [
+        name,
+        actionsValue(output.value, { jobs: { select: { outputs: jobOutputs } } }),
+      ])
+    );
+    return { runner: workflowOutputs.runner, onDefaultBranch: workflowOutputs.on_default_branch };
   });
   assert.equal(selected.length, cases.length);
   return selected;
+}
+function selectedRunners() {
+  return selectedOutputs().map((output) => output.runner);
 }
 
 test('hosted selector is credential-free, bounded, and reads only caller event metadata', () => {
   assert.deepEqual(Object.keys(selector.on), ['workflow_call']);
   assert.deepEqual(Object.keys(selector.on.workflow_call), ['outputs']);
+  assert.deepEqual(Object.keys(selector.on.workflow_call.outputs).sort(), [
+    'on_default_branch',
+    'runner',
+  ]);
+  assert.deepEqual(Object.keys(selectionJob.outputs).sort(), ['on_default_branch', 'runner']);
   assert.deepEqual(selector.permissions, {});
   assert.deepEqual(selectionJob.permissions, {});
   assert.equal(selectionJob['runs-on'], 'ubuntu-latest');
@@ -248,9 +323,25 @@ test('hosted selector is credential-free, bounded, and reads only caller event m
     DEFAULT_BRANCH: '${{ github.event.repository.default_branch }}',
   });
   assert.ok(!selectionStep.run.includes('${{'), 'event data must never be interpolated into code');
-  selectedRunners().forEach((runner, i) =>
-    assert.equal(runner, expected(cases[i]), JSON.stringify(cases[i]))
-  );
+  selectedOutputs().forEach((output, i) => {
+    assert.equal(output.runner, expected(cases[i]), JSON.stringify(cases[i]));
+    assert.equal(
+      output.onDefaultBranch,
+      onDefaultBranch(cases[i]) ? 'true' : 'false',
+      JSON.stringify(cases[i])
+    );
+  });
+});
+
+test('private dispatch and push admit only exact nonempty default refs to isolated runners', () => {
+  const outputs = selectedOutputs();
+  const offset = cases.length - literalAdmissionCases.length;
+  literalAdmissionCases.forEach((scenario, i) => {
+    const output = outputs[offset + i];
+    const label = `${scenario.github.event_name} ${scenario.name}`;
+    assert.equal(output.runner, scenario.runner, label);
+    assert.equal(output.onDefaultBranch, scenario.onDefaultBranch, label);
+  });
 });
 
 test('runner policy discovers workflow jobs', () => {
@@ -272,7 +363,7 @@ for (const file of workflows) {
       });
       continue;
     }
-    test(`${name}: only private manual or exact default-branch pushes may use isolated runners`, () => {
+    test(`${name}: only private exact default-branch dispatch or pushes may use isolated runners`, () => {
       if (hostedOnly.has(name)) {
         assert.equal(job['runs-on'], hostedOnly.get(name));
         return;

@@ -530,6 +530,7 @@ export function checkPublishWorkflow(source) {
   }
   const expectedHeader = [
     '    needs: [runner, test]',
+    "    if: ${{ needs.runner.outputs.on_default_branch == 'true' }}",
     "    runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}",
     '    permissions:',
     '      contents: read',

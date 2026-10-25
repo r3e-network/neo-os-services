@@ -93,6 +93,30 @@ test('generic publish rejects custody images without dropping its dedicated reci
   }
 });
 
+test('publish action refuses missing or substituted default-branch admission', async () => {
+  const source = await fs.readFile(
+    new URL('../.github/workflows/publish-images.yml', import.meta.url),
+    'utf8'
+  );
+  const gate = "    if: ${{ needs.runner.outputs.on_default_branch == 'true' }}\n";
+  assert.ok(source.includes(gate));
+  for (const [name, replacement] of [
+    ['missing', ''],
+    ['runner name only', "    if: ${{ needs.runner.outputs.runner == 'neoos-isolated-linux' }}\n"],
+    ['status function', '    if: ${{ always() }}\n'],
+    ['case-insensitive ref only', "    if: ${{ github.ref == 'refs/heads/main' }}\n"],
+  ]) {
+    const mutant = source.replace(gate, replacement);
+    assert.notEqual(mutant, source, name);
+    assert.ok(
+      checkPublishWorkflow(mutant).includes(
+        'Publish build action requires the reviewed matrix job shape'
+      ),
+      name
+    );
+  }
+});
+
 for (const recipe of ['Dockerfile.signer', 'Dockerfile.signer-legacy']) {
   test(`publish action rejects direct ${recipe} override despite a valid matrix`, async () => {
     const source = await fs.readFile(

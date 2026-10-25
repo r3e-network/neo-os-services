@@ -36,6 +36,101 @@ function hasDependencyCache(source) {
   );
 }
 
+function evaluateReleaseCondition(condition, context) {
+  assert.ok(
+    condition.startsWith('${{') && condition.endsWith('}}'),
+    `unsupported release condition: ${condition}`
+  );
+  const clauses = condition
+    .slice(3, -2)
+    .trim()
+    .split('&&')
+    .map((clause) => clause.trim());
+  return clauses.every((clause) => {
+    switch (clause) {
+      case "needs.preflight.outputs.ready == 'true'":
+        return context.ready === 'true';
+      case "needs.runner.outputs.on_default_branch == 'true'":
+        return context.onDefaultBranch === 'true';
+      default:
+        assert.fail(`unsupported release condition clause: ${clause}`);
+    }
+  });
+}
+
+const releaseRefCases = [
+  {
+    name: 'default branch',
+    ref: 'refs/heads/main',
+    defaultBranch: 'main',
+    onDefaultBranch: 'true',
+    admitted: true,
+  },
+  {
+    name: 'feature branch',
+    ref: 'refs/heads/feature',
+    defaultBranch: 'main',
+    onDefaultBranch: 'false',
+    admitted: false,
+  },
+  {
+    name: 'tag',
+    ref: 'refs/tags/v1',
+    defaultBranch: 'main',
+    onDefaultBranch: 'false',
+    admitted: false,
+  },
+  {
+    name: 'case-variant branch',
+    ref: 'refs/heads/MAIN',
+    defaultBranch: 'main',
+    onDefaultBranch: 'false',
+    admitted: false,
+  },
+  {
+    name: 'empty default branch',
+    ref: 'refs/heads/',
+    defaultBranch: '',
+    onDefaultBranch: 'false',
+    admitted: false,
+  },
+];
+
+for (const [file, jobName, requiresPreflight] of [
+  ['deploy-web.yml', 'deploy', true],
+  ['publish-images.yml', 'build-and-push', false],
+]) {
+  test(`${file}/${jobName} admits private manual releases only on the exact default ref`, async () => {
+    const source = await fs.readFile(path.join(workflowDir, file), 'utf8');
+    const release = parseWorkflowJobs(source).find((job) => job.name === jobName);
+    assert.ok(release, `${file} no longer defines ${jobName}`);
+    assert.ok(release.needs.includes('runner'), `${jobName} no longer needs the exact selector`);
+    for (const scenario of releaseRefCases) {
+      const admitted = evaluateReleaseCondition(release.condition, {
+        ready: 'true',
+        onDefaultBranch: scenario.onDefaultBranch,
+      });
+      assert.equal(
+        admitted,
+        scenario.admitted,
+        `${scenario.name}: ref=${scenario.ref}, default_branch=${scenario.defaultBranch}`
+      );
+    }
+    assert.equal(
+      evaluateReleaseCondition(release.condition, { ready: 'true', onDefaultBranch: '' }),
+      false,
+      'a missing selector output must fail closed'
+    );
+    if (requiresPreflight) {
+      assert.equal(
+        evaluateReleaseCondition(release.condition, { ready: 'false', onDefaultBranch: 'true' }),
+        false,
+        'the default-branch gate must not replace the secrets preflight'
+      );
+    }
+  });
+}
+
 test('every workflow in this repo parses into a job graph', async () => {
   for (const { name, source } of await readWorkflows()) {
     const jobs = parseWorkflowJobs(source);

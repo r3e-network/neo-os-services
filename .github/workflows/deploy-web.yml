@@ -71,7 +71,7 @@ jobs:
 
   deploy:
     needs: [runner, preflight, test]
-    if: ${{ needs.preflight.outputs.ready == 'true' }}
+    if: ${{ needs.preflight.outputs.ready == 'true' && needs.runner.outputs.on_default_branch == 'true' }}
     runs-on: ${{ needs.runner.outputs.runner || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
