@@ -145,6 +145,134 @@
       }
     },
     {
+      "consumer": "worker-relayer-signer-and-custody",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "These production/test worker inputs implement signed oracle fulfillment, durable delivery, sponsorship budgets, custody and NeoDID protocols. Random UUID/CSPRNG values identify requests, transactions, keys or oracle random results; no operator-controlled or random winner, payee, payout or settlement is selected. Per-job fees, approval ceilings, custody and identity remain separate boundaries. This exact-file classification is limited to random-output economics and grants no deployment, custody, identity, secret-handling or overall security approval.",
+      "inputs": {
+        "workers/morpheus-relayer/package.json": {
+          "sha256": "b56cec3e16cba5a3612288faaf023bfc8b9eea2a1a5759b2885db5fddb0dd7fb"
+        },
+        "workers/morpheus-relayer/src/automation-queue-lane.test.mjs": {
+          "sha256": "05e57f7efc6dfa9fbec1d7cb8c1b672eb0bec59da0fdec45fcdd9452104bba87"
+        },
+        "workers/morpheus-relayer/src/automation.js": {
+          "sha256": "f4337cb2be0138b20e8fd27876b7a198d364528020e4fe794d1bf9160e7b1687"
+        },
+        "workers/morpheus-relayer/src/fulfillment/delivery.js": {
+          "sha256": "6162d5064d83eb9def6083a0b1a2a76ca86ba40fe322bf70745c19f962982401"
+        },
+        "workers/morpheus-relayer/src/fulfillment/signer.js": {
+          "sha256": "9fd16266d3eebb9b7d654a9b1ca7b1a5650354bbd5fd6155b9eb316cf77804c4"
+        },
+        "workers/morpheus-relayer/src/game-session-router.test.mjs": {
+          "sha256": "d5d042e7885c994780244e78cf280ca63a9da40a1b63011161170899c92d9ed4"
+        },
+        "workers/morpheus-relayer/src/lib/payload.js": {
+          "sha256": "2831f73e5458f92066e3579ed72ceae54c5759e01ccde21a5ed149782e061fc0"
+        },
+        "workers/morpheus-relayer/src/lib/payload.test.mjs": {
+          "sha256": "773fee918dee26f4cbf6ba73208a33bd471334f10e1712538de6779b021077ce"
+        },
+        "workers/morpheus-relayer/src/neo-n3.js": {
+          "sha256": "1ef793ef9eb3b4f9eb4e5d38c1c0140ebc5f897374dd9d738d3013b0fbfc3bc7"
+        },
+        "workers/morpheus-relayer/src/neo-n3.test.mjs": {
+          "sha256": "79ed0a981c99990ada49b297f30f108cc05d6b47f20a8ded42ce6703680c3f7e"
+        },
+        "workers/morpheus-relayer/src/relayer-schema.test.mjs": {
+          "sha256": "a4151162540ff909c19ba2e73bf2d17d9472ab4ac112ff06a837c9fbae2082cd"
+        },
+        "workers/neo-os-relayer/src/cli.rs": {
+          "sha256": "d3b210e0583a2ff46d0ef593eb05e8deb4a532305bf0ed0badedda301e16a80b"
+        },
+        "workers/neo-os-relayer/src/lib.rs": {
+          "sha256": "bd97553f0e0fc5e3786d68cac1b3c9613bab66ab304dd5ad9ce30f526d775896"
+        },
+        "workers/neo-os-relayer/src/sponsor.rs": {
+          "sha256": "3d925b8f2fcbce7c957211769ce5fce2635b36840831e9ab3558dbc4ddc19e41"
+        },
+        "workers/neo-os-relayer/src/sponsor_api.rs": {
+          "sha256": "46f6a3f2d748615f9f538ce669834d5714503db9998cd5aed5275c2100c30188"
+        },
+        "workers/neo-os-relayer/src/sponsor_submit.rs": {
+          "sha256": "3262ae31255cb8cfc0c4d3e6989debef1abc6928723a0c33ddaf0bbae600a4cd"
+        },
+        "workers/neo-os-relayer/tests/sponsor_api.rs": {
+          "sha256": "61b7878e909424acfb93cc16d116dcbd4bda10a91377d05748e344bd83027577"
+        },
+        "workers/neo-os-relayer/tests/sponsor_serve_boot.rs": {
+          "sha256": "cb04028dafb9bc21e9825bf6a0d4e1fbaeff1e4b90557ffbd63576129080af39"
+        },
+        "workers/neo-signer/Cargo.toml": {
+          "sha256": "111a9c9220c73b70a319d983d5e360111824971c834f713e0ee73c52799fb4cb"
+        },
+        "workers/neo-signer/src/evm_tx.rs": {
+          "sha256": "9e61382cf79ee46301a832bc1c65e93eb6a637718c399215abad7fc443f91a45"
+        },
+        "workers/neo-signer/src/policy.rs": {
+          "sha256": "30584b6971fa7682dc714c7af96ceb3b42149f7c83644fbffc0ad5e6edb1db78"
+        },
+        "workers/neo-signer/tests/unit/policy.rs": {
+          "sha256": "1bef64db44f00d2fd4e328abe4c8ea3c05197fb285a75f07710a4b81b8ff4204"
+        },
+        "workers/neo-signer/tests/unit/service.rs": {
+          "sha256": "7965dcf4bd82d4b2a477d34058c2a4d68c37d310e75203c4d10c5e1306d77e88"
+        },
+        "workers/nitro-enclave-host/src/custody.rs": {
+          "sha256": "2e918e4a8d281c4ea01b158c9091fc49f24b7bb5b6f87bb765e71db0c347bd1b"
+        },
+        "workers/nitro-enclave-host/src/kms_release.rs": {
+          "sha256": "e9351ec0398259829232f5f017189129b48ef21ff7516656c7c546b590a943b7"
+        },
+        "workers/nitro-enclave-host/tests/unit/paymaster.rs": {
+          "sha256": "1f2f583923bb1c45e6d79ba183f0763cfa1596ba39aaeb33db973bea729e4318"
+        },
+        "workers/nitro-worker/package.json": {
+          "sha256": "aae98a736052d84129b032370bc4dc3cb127f552a01bd949f8fd331012ad5776"
+        },
+        "workers/nitro-worker/src/chain/neo-n3.js": {
+          "sha256": "dbe9a299dabc543e781a8172fec1e145e8a2bc41cf3f36a5bf18aa6c91c6cd3c"
+        },
+        "workers/nitro-worker/src/chain/neo-n3.shared-worker.test.mjs": {
+          "sha256": "0cc6fb5840a501eb280f9c877c5967bc6c511232e42eebb3566729414e2e125d"
+        },
+        "workers/nitro-worker/src/neodid/index.js": {
+          "sha256": "fc5322c4b86b459f6d703bac23918ec230715264055fc620296237e52a6b339e"
+        },
+        "workers/nitro-worker/src/paymaster/approvals.js": {
+          "sha256": "1a4ca73986f272b8f4f292d2112a95157d4221bacef7faa206ddf1fa00cbc19a"
+        },
+        "workers/nitro-worker/src/paymaster/approvals.test.mjs": {
+          "sha256": "c70a74f6fe4b81e8f1426034ccb7c39f0dca8ca98eef6c9a904cad1594f8ebbb"
+        },
+        "workers/nitro-worker/src/paymaster/index.js": {
+          "sha256": "31c8ede70056dd7eb7ed9ada7046e26c29fd6f9c067e2b68910bd62d3d462e66"
+        },
+        "workers/nitro-worker/src/platform/allowlist.js": {
+          "sha256": "a700dfaadfb44db20087945bf862f7a8e3ab13fb5cd82f22a3bedda5ead0f8ee"
+        },
+        "workers/nitro-worker/src/platform/ssrf.js": {
+          "sha256": "3b4f9be2e272a4e09001e2a99c883f6121539c6924f7486b29ab00126d424fff"
+        },
+        "workers/nitro-worker/src/platform/ssrf.test.mjs": {
+          "sha256": "60b113cc1de51d16ec614d18aa4584a9b8f92572b6444b0efd2518828ec87fc4"
+        },
+        "workers/nitro-worker/src/platform/upstash.js": {
+          "sha256": "1ee522dae04071fe088f2b75a468cc64dc1692acebdbdcfdb92c13f21d6173f5"
+        },
+        "workers/nitro-worker/src/test-support/sponsorship-fixtures.mjs": {
+          "sha256": "7212c2f3e624bdc2bbecc0703d4eaee658d5316c87f8d96501f395c674fbbf62"
+        },
+        "workers/nitro-worker/src/test-support/upstash-rest-mock.mjs": {
+          "sha256": "a70085818e1c75aeab890b1c4aa665bf6e356f2bc11e9cce4272465428660a24"
+        },
+        "workers/nitro-worker/worker.test.mjs": {
+          "sha256": "9aeb04e8719ccbcaabe51a5ade1de0c7643fce9ad05ffdc1eb4de1c5750643a0"
+        }
+      }
+    },
+    {
       "consumer": "api-automation-and-control-plane-types",
       "classification": "non-value",
       "owner": "services lead",
