@@ -359,10 +359,10 @@
       "consumer": "package-lock.json",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Locked development dependency metadata adds the TOML parser used by the crypto-ownership gate, with its exact version and integrity. It defines no random-output economic allocation. This classification covers the lock metadata only, not the security of all resolved implementations or permission to deploy them. Development advisory update: the lock is bound to independent four-file source review of b1d421a9ad1729cc0b561ce60d1dd816890807cf, review SHA256 9363f60d2a898ad08a002e0c8754e4779a408ea4eb96ed1f0354b0591a94992b. All 428 production downloadable entries remain identical; the changed development dependency closure and version-floor tests grant no runtime package certification or deployment approval.",
+      "justification": "Locked dependency metadata resolves Next 15.5.28, @sentry/nextjs 10.75.2, undici 8.12.2, zod 4.6.7 and fast-uri 3.1.9, while retaining Sentry webpack plugin 5.3.0 and Rollup 4.62.2 for the declared Node range. It defines no random-output economic allocation. This classification covers lock metadata only, not the security of all resolved implementations or permission to deploy them. The non-value classification is unchanged; local npm 10.9.2 installation, production audit and focused runtime gates grant no runtime package certification or deployment approval.",
       "inputs": {
         "package-lock.json": {
-          "sha256": "8947b730c4e2ac795c7ddab4a9e9baa0afe839d76608dd32d1d4a10fc56e1269"
+          "sha256": "7b1927392e7dc73124ec668835e2f6bb8b79f6f2e094fb0eabad2138be5dd976"
         }
       }
     },
@@ -614,7 +614,7 @@
           "sha256": "2f128b0bec7fdf34a76c7a80ed40eba6e541a58107a09f839993591409600b50"
         },
         "package.json": {
-          "sha256": "ab631e381bc5b0309683a01ba89a4e7400b173a9fd53398fab880d67aef53c3f"
+          "sha256": "1b799dd77f2318cda0b48d1400e5e88050fd10ab94ff0cd09c9a3ee073d0d693"
         }
       }
     },
@@ -1497,16 +1497,16 @@
       "consumer": "reviewed-development-advisory-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These exact Web development manifest and dependency-floor regression tests are bound to independent source review of b1d421a9ad1729cc0b561ce60d1dd816890807cf, review SHA256 9363f60d2a898ad08a002e0c8754e4779a408ea4eb96ed1f0354b0591a94992b. Only the Vitest development floor and tests for reviewed package versions change. They do not consume VRF output or authorize economic actions. This classifies metadata and assertions only, not every dependency implementation, production runtime or publication permission.",
+      "justification": "These exact Web manifest and dependency-floor regression tests cover the Next, Sentry and Zod production remediations alongside the existing development floors. They do not consume VRF output or authorize economic actions. This classifies metadata and assertions only, not every dependency implementation, production runtime or publication permission.",
       "inputs": {
         "apps/web/package.json": {
-          "sha256": "cf9e6ab4314567fbd9ee506c4e12b5fbc4dcedb31255e84e24b9f2afe5f19fce"
+          "sha256": "8e0e655857a9079ceae9fbd1480085539f3bfb1d08cd169569759d40e72d483d"
         },
         "scripts/dependency-audit-regressions.test.mjs": {
           "sha256": "b37145130e8462ff25b23b0411a7bc0c9c4b3e95a78360469245b8fcc4518937"
         },
         "scripts/dependency-security.test.mjs": {
-          "sha256": "69d10a54f032753f161171aa3d2252423bcf3662f7d2df3d758269e9c1f7d111"
+          "sha256": "341d6104377b05d5cd91e7f6e21ab3f3c047b7fd10e75395f47a4f6b42c0657d"
         }
       }
     },

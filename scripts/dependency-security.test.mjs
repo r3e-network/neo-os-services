@@ -127,15 +127,17 @@ test('the declared Node range is one every installed package supports', () => {
 });
 
 test('the apps/web closure resolves to patched versions', () => {
-  assert.equal(webManifest.dependencies?.next, '^15.5.27');
+  assert.equal(webManifest.dependencies?.next, '^15.5.28');
+  assert.equal(webManifest.dependencies?.['@sentry/nextjs'], '10.75.2');
+  assert.equal(webManifest.dependencies?.zod, '^4.6.7');
   assert.equal(webManifest.devDependencies?.['eslint-config-next'], '^15.5.26');
   assert.equal(webManifest.devDependencies?.vitest, '^4.1.12');
-  assert.equal(rootManifest.overrides?.['fast-uri'], '3.1.6');
+  assert.equal(rootManifest.overrides?.['fast-uri'], '3.1.9');
   assert.equal(rootManifest.overrides?.sharp, '0.35.5');
   assert.equal(rootManifest.overrides?.['source-map-js'], '1.2.2');
-  // next 15.5.27 clears GHSA-4jqv-mc3x-m676 and GHSA-mcj8-r9mp-w47p; the nested self-key is
-  // npm's way to pin a package's own version under overrides (the h3 form).
-  assert.equal(rootManifest.overrides?.next?.['.'], '15.5.27');
+  // next 15.5.28 retains the earlier fixes and clears GHSA-2464-fhr4-w9xw and
+  // GHSA-p3m5-59mp-jv5r; the nested self-key pins a package under overrides (the h3 form).
+  assert.equal(rootManifest.overrides?.next?.['.'], '15.5.28');
   assert.equal(rootManifest.overrides?.next?.postcss, '8.5.26');
   // argparse 2.0.1 drops the sprintf-js dependency that GHSA-hp3w-g68c-fv3c rides in on, and it
   // is the release js-yaml 4 pairs with. Forced here because js-yaml 3 declares argparse ^1.0.7
@@ -145,11 +147,13 @@ test('the apps/web closure resolves to patched versions', () => {
   assert.equal(rootManifest.overrides?.argparse, '2.0.1');
 
   const floors = {
-    next: '15.5.27',
+    next: '15.5.28',
+    '@sentry/nextjs': '10.75.2',
+    zod: '4.6.7',
     'eslint-config-next': '15.5.24',
     vitest: '4.1.11',
     '@vitest/mocker': '4.1.11',
-    'fast-uri': '3.1.6',
+    'fast-uri': '3.1.9',
     browserslist: '4.28.7',
     'baseline-browser-mapping': '2.11.0',
     sharp: '0.35.5',
@@ -169,6 +173,8 @@ test('the apps/web closure resolves to patched versions', () => {
   // The floors above must bind to something: apps/web really resolves these.
   for (const name of [
     'next',
+    '@sentry/nextjs',
+    'zod',
     'eslint-config-next',
     'vitest',
     '@vitest/mocker',
@@ -222,7 +228,7 @@ test('high severity transitive advisories stay above their remediation floors', 
       '5.': '5.0.12',
     },
     undici: {
-      '8.': '8.10.2',
+      '8.': '8.12.2',
     },
     // GHSA-68fv-2mgg-jv7q: event-loop denial of service through indexed
     // source-map section offsets, high, affects 1.0.0 - 1.2.1. Transitive via
