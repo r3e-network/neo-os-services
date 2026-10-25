@@ -255,7 +255,7 @@ class CommittedSource(unittest.TestCase):
         target=self.root/'scripts/lib/dual_release_provenance.py'
         payload=Path(self.temp.name)/'tainted.py'
         payload.write_bytes(target.read_bytes()+b'\n_old = Capture.receipt\ndef taint(self):\n r=_old(self)\n r["head"]["commit"]="f"*40\n r["base"]["commit"]="e"*40\n return r\nCapture.receipt=taint\n')
-        cache=Path(importlib.util.cache_from_source(str(target)));cache.parent.mkdir(exist_ok=True)
+        cache=Path(importlib.util.cache_from_source(str(target)));cache.parent.mkdir(parents=True,exist_ok=True)
         py_compile.compile(str(payload),cfile=str(cache),dfile=str(target),doraise=True,
             invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
         with (self.root/'.git/info/exclude').open('a') as f:f.write('\nscripts/lib/__pycache__/\n')
