@@ -60,7 +60,12 @@ fails the gate with the reason. A valid report is final, findings included, and 
 }
 ```
 
-## Current exception
+## Retired exception (historical)
+
+The GHSA-vfj7-8cjw-p6xm exception was retired on 2026-10-25 after both the production
+and full-tree audits reported no vulnerabilities. `config/npm-audit-exceptions.json` now
+contains no entries. The entry below is retained only as the original analysis and must
+not be reused to excuse a new finding.
 
 | Field         | Value                                                                                                                                                                                                                                |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

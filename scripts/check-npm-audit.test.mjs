@@ -560,25 +560,11 @@ test('a dependency cycle in the via chains terminates', async () => {
 // The committed exception file
 // ---------------------------------------------------------------------------------------------
 
-test('the committed exception file is the delegated, dated, dev-only record for braces', async () => {
+test('the committed exception file contains no stale exceptions when the audit is clear', async () => {
   const committed = JSON.parse(
     readFileSync(join(repoRoot, 'config', 'npm-audit-exceptions.json'), 'utf8')
   );
-  assert.equal(committed.version, 1);
-  assert.equal(committed.exceptions.length, 1);
-  const [only] = committed.exceptions;
-  assert.equal(only.advisory, 'GHSA-vfj7-8cjw-p6xm');
-  assert.equal(only.package, 'braces');
-  assert.equal(only.owner, OWNER);
-  assert.equal(only.expiresOn, '2026-11-05');
-  assert.match(only.reason, /dev-only/i);
-  assert.match(only.reason, /eslint-config-next/);
-  assert.match(only.reason, /--omit=dev/);
-
-  const accepted = await evaluate({ exceptions: committed, today: TODAY });
-  assert.deepEqual(accepted.problems, []);
-  const lapsed = await evaluate({ exceptions: committed, today: '2026-11-05' });
-  assert.match(messages(lapsed), /exception GHSA-vfj7-8cjw-p6xm \(braces\) expired on 2026-11-05/);
+  assert.deepEqual(committed, { version: 1, exceptions: [] });
 });
 
 // ---------------------------------------------------------------------------------------------

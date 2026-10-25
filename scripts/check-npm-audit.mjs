@@ -1,8 +1,8 @@
 // Blocking npm audit gate of ci.yml lint-and-format.
 //
-// It replaces the blanket `npm audit --audit-level=moderate`, which failed on a dev-only advisory
-// that has no upstream fix (GHSA-vfj7-8cjw-p6xm, braces behind eslint-config-next) and, because a
-// job stops at its first red step, kept every later gate of the job from ever running (SVC-V02).
+// It replaces the blanket `npm audit --audit-level=moderate`, which can fail on dev-only advisories
+// with no upstream fix and, because a job stops at its first red step, keep every later gate of the
+// job from ever running (SVC-V02).
 //
 // Policy:
 //   1. Production scope (`npm audit --omit=dev`): no advisory at or above BLOCKING_SEVERITY.
