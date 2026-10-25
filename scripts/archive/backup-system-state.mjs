@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 
 import { loadDotEnv, parseDotEnv } from '../lib-env.mjs';
+import { createSecureBackupDir, writeSecureBackupFile } from '../lib-secure-backup.mjs';
 import { trimString } from '../lib-strings.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -28,7 +29,7 @@ async function readEnvFile(filePath) {
 }
 
 async function ensureBackupDir(baseDir) {
-  await fs.mkdir(baseDir, { recursive: true });
+  await createSecureBackupDir(baseDir, path.resolve(process.cwd(), 'private-backups'));
 }
 
 // DEPRECATED: targets the legacy Phala CVM via the 'phala' CLI. The Nitro deployment
@@ -43,7 +44,7 @@ async function fetchRuntimeConfig(appId, apiToken) {
   return JSON.parse(stdout);
 }
 
-async function backupOracleKeystore(appId, apiToken, destination) {
+async function backupOracleKeystore(appId, apiToken, backupDir) {
   const candidateContainers = ['morpheus-nitro-worker', 'nitro-worker'];
 
   let lastError = null;
@@ -65,8 +66,9 @@ async function backupOracleKeystore(appId, apiToken, destination) {
         ],
         { maxBuffer: 10 * 1024 * 1024 }
       );
-      await fs.writeFile(destination, stdout, 'utf8');
-      return JSON.parse(stdout);
+      const oracleKeystore = JSON.parse(stdout);
+      await writeSecureBackupFile(backupDir, 'oracle-key.json', stdout);
+      return oracleKeystore;
     } catch (error) {
       lastError = error;
     }
@@ -125,21 +127,29 @@ const backupNetwork =
   trimString(process.env.MORPHEUS_NETWORK || process.env.NITRO_ENV_NETWORK || 'mainnet') ||
   'mainnet';
 const nitroEnvPath = path.resolve(process.cwd(), `deploy/nitro/morpheus.${backupNetwork}.env`);
-const keystoreBackupPath = path.join(backupRoot, 'oracle-key.json');
-const runtimeConfigPath = path.join(backupRoot, 'runtime-config.json');
-const localEnvBackupPath = path.join(backupRoot, '.env.snapshot.json');
-const nitroEnvBackupPath = path.join(backupRoot, `morpheus.${backupNetwork}.env.snapshot.json`);
 
 const [localEnvRaw, nitroEnvRaw, runtimeConfig, oracleKeystore] = await Promise.all([
   readEnvFile(localEnvPath),
   readEnvFile(nitroEnvPath),
   fetchRuntimeConfig(appId, apiToken),
-  backupOracleKeystore(appId, apiToken, keystoreBackupPath),
+  backupOracleKeystore(appId, apiToken, backupRoot),
 ]);
 
-await fs.writeFile(localEnvBackupPath, JSON.stringify(localEnvRaw, null, 2) + '\n', 'utf8');
-await fs.writeFile(nitroEnvBackupPath, JSON.stringify(nitroEnvRaw, null, 2) + '\n', 'utf8');
-await fs.writeFile(runtimeConfigPath, JSON.stringify(runtimeConfig, null, 2) + '\n', 'utf8');
+await writeSecureBackupFile(
+  backupRoot,
+  '.env.snapshot.json',
+  JSON.stringify(localEnvRaw, null, 2) + '\n'
+);
+await writeSecureBackupFile(
+  backupRoot,
+  `morpheus.${backupNetwork}.env.snapshot.json`,
+  JSON.stringify(nitroEnvRaw, null, 2) + '\n'
+);
+await writeSecureBackupFile(
+  backupRoot,
+  'runtime-config.json',
+  JSON.stringify(runtimeConfig, null, 2) + '\n'
+);
 
 const rows = [
   {
