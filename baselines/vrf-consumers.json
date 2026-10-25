@@ -13,13 +13,63 @@
       }
     },
     {
+      "consumer": ".github/dependabot.yml",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Dependabot scheduling and grouped update PR configuration only, including root Cargo updates for the signer, enclave host and relayer workspace. It has no auto-merge and consumes no random output for economic allocation. Cargo.lock remains a measured build input: ci.yml requires a new measurement manifest for PR changes and human merge review remains necessary. This exact configuration review does not approve dependency updates, deployment, custody, runtime admission or downstream economic consumers.",
+      "inputs": {
+        ".github/dependabot.yml": {
+          "sha256": "0f5c141ea11b29c434a879fbfd85142ebc340e08850ff634bdcab5cf05622aba"
+        }
+      }
+    },
+    {
+      "consumer": ".github/workflows/randomized-inputs.yml",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Hosted CI orchestration builds and runs fixed-seed synthetic randomized-input suites with contents:read, persist-credentials:false and no deployment or signer credentials. Random denotes reproducible test inputs, not VRF output used to select winners, recipients, payouts or settlement. This exact workflow review classifies no production sponsor, price, custody or settlement logic and grants no measurement, deployment, publication or runtime admission approval.",
+      "inputs": {
+        ".github/workflows/randomized-inputs.yml": {
+          "sha256": "fd0d2415d9290b094ce9be5e255a1e796dea1dcdc3de8509b821e292db6eb5ff"
+        }
+      }
+    },
+    {
+      "consumer": ".gitignore",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Root and Web version-control path filtering for secret, generated-artifact and tool-state paths. The reviewed exceptions retain root and nested Web env examples, Rust src/bin sources and only the explicitly public AWS Nitro root certificate. Five local checks cover representative ignored paths and tracked-source visibility; they do not certify the contents of unignored files. No random-output economic allocation exists; this exact-path review grants no production configuration, measurement, deployment or runtime approval.",
+      "inputs": {
+        ".gitignore": {
+          "sha256": "940492b9b524c86c77674ec22da931a3f0db1414585fb495ed78fc8214df72f5"
+        },
+        "apps/web/.gitignore": {
+          "sha256": "a0c46e4255f806dd05c31228be4384d200e684ab976a2eb23fdcb62c5b461c5b"
+        }
+      }
+    },
+    {
+      "consumer": ".nvmrc",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Selects the Node 22 LTS Jod line for CI and local tooling so current 22.x satisfies the locked undici >=22.19.0 floor within the declared ^22.19.0 || ^24.0.0 engine range. Toolchain selection defines no random-output economic decision. Human review covers this exact alias only; it does not certify build compatibility, artifact measurement, deployment, publication or runtime admission.",
+      "inputs": {
+        ".nvmrc": {
+          "sha256": "3864c46a0fe6c384290d8b063ef2083f44b7bde1dfd74415b53ea8bd0acf1bcc"
+        }
+      }
+    },
+    {
       "consumer": "isolated-regression-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Test harnesses, vectors and generators exercise request routing, signatures and byte formats with synthetic inputs; their assertions do not award economic value to users. Current network-context, scoped-state, sponsor-projection and raw-payload-v2 fixtures preserve this boundary, with exact payload bytes covered by the same JS/Rust/C# vector checks rather than reconstructed from display text. Tests of signing or game results do not classify the production signing authority, game engines or settlement consumers as non-value. Review covers these exact files only, not future tests or live deployments.",
+      "justification": "Test harnesses, vectors and generators exercise request routing, signatures and byte formats with synthetic inputs; their assertions do not award economic value to users. Current network-context, scoped-state, sponsor-projection and raw-payload-v2 fixtures preserve this boundary, with exact payload bytes covered by the same JS/Rust/C# vector checks rather than reconstructed from display text. The Web custody-relay regression uses stubbed fetch/RPC responses to verify network identity, execution-lane selection and absence of signer fields; it does not broadcast or downgrade production relay authority. Tests of signing or game results do not classify the production signing authority, game engines or settlement consumers as non-value. Review covers these exact files only, not future tests or live deployments.",
       "inputs": {
         "apps/web/__tests__/control-plane.test.ts": {
           "sha256": "6de119dd0f5ebda3a3cc046514d1130c5070b2ad9847a6220e50d4dbecac9435"
+        },
+        "apps/web/__tests__/control-plane-relay.test.ts": {
+          "sha256": "41ae81efcafedcd15afb4ab6224180a2f7043102dc133a2fa0af4439c568a9d6"
         },
         "apps/web/__tests__/request-network.test.ts": {
           "sha256": "56c1b759a81b740190cf2217ce1b8edba7d9fda593a41b51d4b705a54e097013"
@@ -1339,13 +1389,13 @@
       "consumer": "reviewed-ci-runner-policy-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These exact CI workflow and regression-test inputs were independently source-reviewed in R2 at c6247624ef4dd6bebbc49c8f27d843c062243caf. They govern runner selection, workflow validation and existing deployment or publication orchestration; they do not draw VRF output, select economic winners, award value or authorize settlement. This exact-source classification does not establish full CI or runtime readiness, authorize deployment or publication, replace artifact measurements, or approve downstream economic consumers.",
+      "justification": "These exact CI workflow and regression-test inputs govern runner selection, workflow validation and existing deployment or publication orchestration. Earlier inputs were independently source-reviewed in R2 at c6247624ef4dd6bebbc49c8f27d843c062243caf. The 2026-10-25 remediation requires an exact nonempty default-branch ref for both private workflow_dispatch and push before isolated runner selection, exposes that decision as on_default_branch, and requires it for Vercel and GHCR release jobs in addition to their existing preflight and test gates. Literal feature, tag, case-variant and empty-default negative cases execute the real Python selector and inspect actual job conditions. These inputs do not draw VRF output, select economic winners, award value or authorize settlement. This exact-source classification does not establish full CI or runtime readiness, authorize deployment or publication, replace artifact measurements or human review, or approve downstream economic consumers.",
       "inputs": {
         ".github/workflows/dependabot-config.yml": {
           "sha256": "7afa71929f74df54d1bbd887dbe4fe912e487cf26241cd6f1946ae1924f085d2"
         },
         ".github/workflows/deploy-web.yml": {
-          "sha256": "e239f7b8ccee744b891a616646d3d78743ce832912deceb7cc4a0d0837e635eb"
+          "sha256": "7fe32c18f352870c781fd7ebe155c8f479edf87dd4097a223152a404a6451425"
         },
         ".github/workflows/env-check.yml": {
           "sha256": "d978ded761012594184b523d637cf717ef3a6728d912c75ff35d6c9a6d0dc6fe"
@@ -1354,10 +1404,10 @@
           "sha256": "192e46308e749c428bcf261ab50faf9f2e1855b4d9ea789d839c70b1a7be5f8c"
         },
         ".github/workflows/publish-images.yml": {
-          "sha256": "bb7d0da3eb6ed70882966e8314f76616fa6dc9e94932f8d9c3a039e5d58e5651"
+          "sha256": "3ba847eba4c0e56528907fbe08be2a3a66a39ddca9d1be4ddefc941a48f3a792"
         },
         ".github/workflows/runner-policy.yml": {
-          "sha256": "e806782cbb933586363dc90c3f6917b13dc46fbf4d085e591db5921bc3deec5d"
+          "sha256": "a85350090681c2f7d4504eede3559ba0245950a73bfcd3415f6aa77e6798fa4b"
         },
         "scripts/ci-test-coverage.test.mjs": {
           "sha256": "8b5161298f23d2f24c822a5dab0d56bc8eab8db3c869dc51011a998b83cb54cf"
@@ -1366,7 +1416,7 @@
           "sha256": "02d856586a67ae822af09e91e9c47ca4dc7f79707214e2d790dc3007846aa56b"
         },
         "scripts/runner-policy.test.mjs": {
-          "sha256": "b54adc667307f2f91b719843866c93c550c8ee92519dea9fde2108a0bdbaf657"
+          "sha256": "c307e05b8d6a5c64b4126aa7c0f97380b6de7c0620c18c4bfa5b8dacb464f876"
         }
       }
     },
@@ -1422,16 +1472,16 @@
       "consumer": "reviewed-publication-topology-policy-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These exact topology-audit and release/topology regression-test inputs inspect repository deployment/publication configuration and fail-closed gates; they do not draw VRF output, select economic winners, award value or authorize settlement. The 2026-10-25 repair canonicalizes CLI real paths so the existing preflight executes through /var symlinked paths, and the linked-root/FIFO tests prove refusal before deployment content reads. This classification does not approve runtime consumers, renew topology exceptions or economic debt, authorize publication/deployment, establish full CI, or replace custody inputs, measured artifacts and release admission.",
+      "justification": "These exact topology-audit and release/topology regression-test inputs inspect repository deployment/publication configuration and fail-closed gates; they do not draw VRF output, select economic winners, award value or authorize settlement. The 2026-10-25 repair canonicalizes CLI real paths so the existing preflight executes through /var symlinked paths, and the linked-root/FIFO tests prove refusal before deployment content reads. The release-gating update evaluates actual Vercel and GHCR YAML conditions against literal default, feature, tag, case-variant and empty-default selector outcomes, retains ready=true and rejects missing selector output. The production topology contract requires that exact admission line in the packages:write job, and mutations refuse its removal or substitution. This classification does not approve runtime consumers, renew topology exceptions or economic debt, authorize publication/deployment, establish full CI, or replace custody inputs, measured artifacts, human review and release admission.",
       "inputs": {
         "scripts/check-rust-production-topology.mjs": {
-          "sha256": "0813aa17a84b7e27db809aa0205b14b17a9c7b9409841c2941cefa61b70f7223"
+          "sha256": "c9d23e65f13d3299ecccc7094ca7cc4497efe0c06c55d16a8ab32022ce6121e8"
         },
         "scripts/check-rust-production-topology.test.mjs": {
-          "sha256": "a56749a43f25fa962542c3d95e03a7313434541ade9ad37078de322b3a16b24d"
+          "sha256": "cf99bee432a319fb915a6de987d15c2a43d7680c952d0c6fdb0f2d6ddf6f1c36"
         },
         "scripts/release-gating.test.mjs": {
-          "sha256": "f6c1d2221db4d852087bdb4b093cfaa64cfd5184d38c10540c8e12a6841f9878"
+          "sha256": "fda7238df3c2c007fae55865aedfbfcfe66fe9438b30c3a936dcc49f279460b9"
         }
       }
     },
