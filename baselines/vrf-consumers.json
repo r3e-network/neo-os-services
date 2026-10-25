@@ -2,6 +2,17 @@
   "version": 1,
   "reviews": [
     {
+      "consumer": ".eslintrc.json",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Static ESLint parser, rule and ignore-path configuration only. The reviewed change replaces the obsolete supabase/** ignore path with db/**; it does not execute signing, networking, deployment or reward allocation. This exact-file classification does not authorize deployment or exempt runtime, custody, identity or downstream economic consumers.",
+      "inputs": {
+        ".eslintrc.json": {
+          "sha256": "079fcee4b208f271b64a9f5a6603decf5289212f3a0db878a86af2dee83ee48d"
+        }
+      }
+    },
+    {
       "consumer": "isolated-regression-inputs",
       "classification": "non-value",
       "owner": "services lead",
@@ -882,10 +893,10 @@
       "consumer": "vendor/neo-os-did.pin.json",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Pins17 explicit source-to-destination mappings to canonical DID02cc6bd0df2b2d475aceab54e388139c3309260a with SHA256 digests, including the AA action/recovery payload binding fixes, current resolver/common/host/docs and unchanged contract artifacts. Provenance metadata identifies trusted identity implementation bytes; it does not implement reward allocation. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "justification": "Pins17 explicit source-to-destination mappings to canonical DID92dceebd102c0228b4ff0e80d58753ae04ecc86d with SHA256 digests, including the AA action/recovery payload binding fixes, current resolver/common/host/docs and unchanged contract artifacts. Provenance metadata identifies trusted identity implementation bytes; it does not implement reward allocation. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "vendor/neo-os-did.pin.json": {
-          "sha256": "ab3373bcd31c63ff1512ba8ead64a874205e581d4e6138ebd4004f0e3cef1a75"
+          "sha256": "d4fc2ace692f1ea7696fb3d3606d3a032c9bb077b3e7613508d8a2a71b1b9aca"
         }
       }
     },

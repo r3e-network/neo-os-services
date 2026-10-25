@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "repository": "https://github.com/r3e-network/neo-os-did.git",
-  "commit": "02cc6bd0df2b2d475aceab54e388139c3309260a",
+  "commit": "92dceebd102c0228b4ff0e80d58753ae04ecc86d",
   "files": [
     {
       "source": "runtime/nitro-worker/src/neodid/index.js",
