@@ -1096,10 +1096,10 @@
       "consumer": "Cargo.lock",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Combines host embedded-signer/test dependencies with exact quinn-proto/rustls security patch package blocks. Dependency resolution metadata does not use random outputs for rewards. Security properties of resolved implementations still matter. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "justification": "Locks the existing Rust dependency graph, including nitro-attest's direct generic-array dependency with its existing zeroize feature enabled for CBC plaintext cleanup. Dependency resolution metadata does not use random outputs for economic allocation. Security properties of resolved implementations still matter. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "Cargo.lock": {
-          "sha256": "202bd09c6b8912b34aa5ae0f4d0458b48e1a597049da811f045c3e90dc31e4d4"
+          "sha256": "47f4c219bbc496fe59daa5a878f6d091c529a33111aee314a957e9216ffc13ab"
         }
       }
     },
@@ -2070,6 +2070,283 @@
       "inputs": {
         "workers/neo-signer/examples/prepare_testnet_material.rs": {
           "sha256": "49dd5afe04c9c21c0085733a02551f7259a225049341bf476e8326351865887b"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-rust-oracle-relay-and-compute-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Exact-file economic-randomness review of the listed Rust implementation, test and vector inputs. The Oracle changes bind exact raw payloads into fulfillment digests; relayer delivery and sponsor/N3 construction use deterministic state, fee and consent rules. Injected random units support compute noise and randomized regression inputs, not selection of an economic winner, payee, payout or settlement. Test randomness and synthetic Oracle payloads do not establish an economic allocation mechanism. This narrow non-value classification does not approve deployment, custody, signing, transport security, runtime admission or downstream economic consumers.",
+      "inputs": {
+        "crates/neo-os-chain-evm/src/fulfill.rs": {
+          "sha256": "33eba803a890c38d78f968144b37880f50516a66fe85fdce93260e824feb0b6c"
+        },
+        "crates/neo-os-chain-evm/src/scan.rs": {
+          "sha256": "24524d63b8e43ae9562b18d61fd02b1c4da2e6aa5c992c0d8fef8ab74b28190c"
+        },
+        "crates/neo-os-chain-evm/tests/neox_parity.rs": {
+          "sha256": "2b39e25ecc4d6bac0731f940ae629ffd692d16c50b79aba469b0a4752522c10c"
+        },
+        "crates/neo-os-chain-n3/src/ssrf.rs": {
+          "sha256": "62bc5feffaa621392557970643ea485ffeb8187fb7e55d8c79b5f11a7bc21255"
+        },
+        "crates/neo-os-compute/Cargo.toml": {
+          "sha256": "55682dd77616e4a2ee2eec97088aedda221763bbc122ec6555417ab58cf34d31"
+        },
+        "crates/neo-os-compute/src/compute.rs": {
+          "sha256": "e2aebb7561ecd42c11c63b79eabf5a93c7e775d1a69fad3b41c142a074c7e899"
+        },
+        "crates/neo-os-compute/src/js.rs": {
+          "sha256": "019756cc5be7f9fd1c0f9d18a13650565390043028c00f2ee83a986d3a296854"
+        },
+        "crates/neo-os-compute/src/neodid.rs": {
+          "sha256": "2cb9da0f6c1347fd438d2e1f04c08974f36497573ac444c72803a45d9d05d9b7"
+        },
+        "crates/neo-os-compute/src/oracle/decimal.rs": {
+          "sha256": "1edb59dfab0341a1c20713b211bac8b82147812a3a41081fa8cc790c12d92d71"
+        },
+        "crates/neo-os-compute/src/ssrf.rs": {
+          "sha256": "3ffb4a116df543ec46ab166e774657ab45e80d0b206c8973003547be29e41d8f"
+        },
+        "crates/neo-os-compute/tests/randomized_inputs.rs": {
+          "sha256": "3050715510375d011c53ebadd022aae6b3f82e599b4a1b3a18ae78c6518a0add"
+        },
+        "crates/neo-os-core/Cargo.toml": {
+          "sha256": "f717b21bfc5a96aaa94c18bef3bf023aebea3b737144f4d8a0ff8a4ee901603f"
+        },
+        "crates/neo-os-core/src/digest.rs": {
+          "sha256": "58f79c287043ce0c58956ad8e248700685d13f8292b94e99d373475a06f8bbdd"
+        },
+        "crates/neo-os-core/src/js_number.rs": {
+          "sha256": "9c53b9a565b4aed977954ef3e9224ffe4e2764831bde0cf8cb205abe16fa64df"
+        },
+        "crates/neo-os-core/src/js_value.rs": {
+          "sha256": "a195c541e314539cd2cf3b15ef9222125ed0e69dedbc4d79a95c0d7d6e130791"
+        },
+        "crates/neo-os-core/src/lib.rs": {
+          "sha256": "410d7e38ee1a94ac46d7975b614ceb4959a5e97d5d9cbe19d2b11df4784044e9"
+        },
+        "crates/neo-os-core/src/n3_tx.rs": {
+          "sha256": "78ad9dfd81d4e11dfa7f24728ba69020aa84620fea26d0f73657dac99d4d8505"
+        },
+        "crates/neo-os-core/src/sponsor_intent.rs": {
+          "sha256": "68ef2b18c2314c6dfa0743b9d869f15081a592a6d6a62e2835841eb52c7977db"
+        },
+        "crates/neo-os-core/tests/fulfillment_digest.rs": {
+          "sha256": "8adbd444468c189d04a45676bd5ac95fa3982cd1755937d840daa886e4ee74c5"
+        },
+        "crates/neo-os-core/tests/n3_tx.rs": {
+          "sha256": "2f61c5dcab096cc1dac8e4c746c735fd7793d032239e6e8981db674b41a235a8"
+        },
+        "crates/neo-os-core/tests/sponsor_intent.rs": {
+          "sha256": "1a22f6c5dc330f74735152d0a8d6efb8ce00dd44ed4b05b7e6e8d1b089e1561a"
+        },
+        "crates/neo-os-core/tests/vectors/config_resolution.json": {
+          "sha256": "91b9cb4fb57145e3518464c7b2563073f318da14595828e9cc9d4455a0d5ba85"
+        },
+        "crates/neo-os-core/tests/vectors/fulfillment_digest.json": {
+          "sha256": "181cd5120a7208a4d311ceb574e22b51f4c4f05d858110a978159173e08ffef2"
+        },
+        "crates/neo-os-core/tests/vectors/ssrf_addresses.json": {
+          "sha256": "4e607851f97267f55c8547ec96d62c96389ac198e8fb6237d99fd0b719c9b174"
+        },
+        "crates/neo-os-relayer-store/src/delivery.rs": {
+          "sha256": "eb1a5d497f96742f64ab1511bb09f501341978182eb454879a8610bcce15773d"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-nitro-attestation-and-cbc-zeroization-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Exact-file economic-randomness review of Nitro attestation, RSA/provider, session-key and release parsing plus their synthetic tests. These security-sensitive bytes authenticate or process key material but do not consume a VRF/random result to choose an economic winner, payee, payout or settlement. The CBC change uses zeroizing buffers and its allocator-based tests use only synthetic plaintext; they do not authorize key release or prove production enclave measurements. This narrow classification grants no deployment, custody, attestation, identity, runtime-admission or downstream economic approval.",
+      "inputs": {
+        "crates/nitro-attest/Cargo.toml": {
+          "sha256": "169322a04f6a8f685da97788e79def861bc655d4035918d2231861fee8ddc0a6"
+        },
+        "crates/nitro-attest/src/asn1.rs": {
+          "sha256": "79a4280022bcff3726670df3de2fcc5be33ed233ebc2baca08d5cd15b1f7a63f"
+        },
+        "crates/nitro-attest/src/bin/nsm-attest-rs.rs": {
+          "sha256": "fd52bce1c030e7ade23e61a479b414452275685595eb8a151f82740ad3e389b3"
+        },
+        "crates/nitro-attest/src/cms.rs": {
+          "sha256": "1cb7a02ba5fc091a538a0a0b58e320b862d33161b64686e7f014e15e8e9d0972"
+        },
+        "crates/nitro-attest/src/cms/zeroization_tests.rs": {
+          "sha256": "2100c2532688d27cb80ad20e3270254a17ef7d09b2e89d5c408a1a13531ed26a"
+        },
+        "crates/nitro-attest/src/lib.rs": {
+          "sha256": "be6c381c064f34ed1873c0a231e4fbade0acfd3e071413c1f83f466f41a7c69d"
+        },
+        "crates/nitro-attest/src/release.rs": {
+          "sha256": "981feca5211a03939df80451fd0feb1d1711aa8a092893ab279033019d5a4c4d"
+        },
+        "crates/nitro-attest/src/rsa_provider.rs": {
+          "sha256": "6e6bd76a524d4fd4f5bcb70535f81461ba6240e60b6df684782a1b957255af7b"
+        },
+        "crates/nitro-attest/src/session_key.rs": {
+          "sha256": "658335edd964644b2c70550fe78d82e0f9b5eeae5ae30a6907793ca4a5b02504"
+        },
+        "crates/nitro-attest/tests/cms_roundtrip.rs": {
+          "sha256": "1e26d6fe2d15723fd5c553b0e0e964391dd28e6aa9ac107aa9ebf198f37da074"
+        },
+        "crates/nitro-attest/tests/release.rs": {
+          "sha256": "68e96358a11692678eddd672c162945482ad96de16a9e23b698474b12dba0917"
+        },
+        "crates/nitro-attest/tests/session_key.rs": {
+          "sha256": "97261a0e3e7d42c0a7a3dc786595c2031873eff2a062ecec783743c487a33cca"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-oracle-upgrade-and-smoke-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Exact-file economic-randomness review of Oracle upgrade helpers, smoke orchestration and their synthetic regression inputs. These files validate and invoke explicitly configured contract operations or test their failure boundaries; they do not use VRF or random results to select an economic winner, payee, payout or settlement. This narrow classification does not authorize an upgrade, deployment, broadcast, custody change, production admin operation or downstream economic consumer.",
+      "inputs": {
+        "scripts/lib-oracle-upgrade.mjs": {
+          "sha256": "8158cbed6e74626acb875702b484c2f5874c37ad3e05bab6d48d21322c97b152"
+        },
+        "scripts/lib-oracle-upgrade.test.mjs": {
+          "sha256": "2bb5b7f73d5f90d03d9a8960d979b554e4de4009bd8c518bd374186a01e916c8"
+        },
+        "scripts/lib-smoke-oracle-signing.mjs": {
+          "sha256": "840e66e3cf04b0da74c4733079c16f76fbc8402ef3fbb5235ccf6514339d896e"
+        },
+        "scripts/lib-smoke-oracle-signing.test.mjs": {
+          "sha256": "2b12740f02b6879ce825ba757a03158a4c59eb623c2141995528da31285bbac0"
+        },
+        "scripts/smoke-oracle-n3.mjs": {
+          "sha256": "0ba88a49a8e59bdd20f82c918542c03936704ac851dbcfdefa94b49e13edac26"
+        },
+        "scripts/upgrade-morpheus-datafeed.test.mjs": {
+          "sha256": "492475e71fd93baf675742b138ae35711b536ff0d75d400874bdcc6910bfafb6"
+        },
+        "scripts/upgrade-morpheus-oracle.mjs": {
+          "sha256": "d43c2896a8bd334fcf4939dd1fd9a53fab942dd2c2f21c79437d6a9c13ce4891"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-sponsor-private-chain-and-fixture-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Exact-file economic-randomness review of sponsor-lane orchestration, private-chain fixtures and regression tests. Sponsor intent, approvals and delivery accounting are deterministic. Random bytes generate disposable private-chain key material, not an economic allocation; shell/Python/C#/SQL fixtures exercise consent, consumption and delivery behavior with synthetic state. No VRF/random output selects a winner, payee, payout or settlement. This classification grants no live-chain, signing, custody, deployment, paymaster-funding or downstream economic approval.",
+      "inputs": {
+        "scripts/lib-sponsor-lane-private-chain.mjs": {
+          "sha256": "296dd3af3f4828e916c1c52b5a891ad567e1ba4f7edbad30988841c1a4da0fe8"
+        },
+        "scripts/lib-sponsor-lane-private-chain.test.mjs": {
+          "sha256": "09ac2949325dc07efad399cbb7686ec1a7450ee5f0b64561bbd3a9968a8750cb"
+        },
+        "scripts/test-relayer-delivery-sponsor.py": {
+          "sha256": "0243fac319f62b69b55dfff6a5f7a66b4ded0166f945622fd4fa7d8642c03c1b"
+        },
+        "scripts/test-relayer-delivery-v2.sh": {
+          "sha256": "e40b38b852460c141cf085ff4b9dcd2a533d5a0b35f1da08ad1801156a482009"
+        },
+        "scripts/test-sponsor-lane-private-chain.mjs": {
+          "sha256": "107690b095d7af0c7c03a86c9e73cb753d01753e133a68209709d325a0415f56"
+        },
+        "tests/fixtures/sponsorable-intent-probe/SponsorableIntentProbe.cs": {
+          "sha256": "7e2f2e74745bf279da22e20adca055bb82e7afdc758906bc6e32640d445079ac"
+        },
+        "tests/fixtures/sponsorable-intent-probe/SponsorableIntentProbe.csproj": {
+          "sha256": "0229043a085f3a6b0e358dea2f7c1c4ab11986b29e0a0e4bfd1128dcc497a98b"
+        },
+        "tests/relayer-delivery-sponsor.sql": {
+          "sha256": "85ac1b425c7b34579fad8d5e7b1c99ccc398f8625141ee81b9dbb75c49b04c25"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-build-routing-and-quality-gate-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Exact-file economic-randomness review of tracked-build helpers, module/workflow checks, routing and security regression tests and repository verification entrypoints. These inputs inspect builds, routing, rendering, imports and policy or run local quality gates; they do not consume VRF/random output to allocate economic value. Randomized-input workflow assertions exercise rejection and robustness, not winner or payout selection. This classification does not authorize CI runner admission, deployment, custody, dependency implementations or downstream economic consumers.",
+      "inputs": {
+        "scripts/lib/tracked-build-outputs.mjs": {
+          "sha256": "d4c91f9522ce59811bc860a94d21f9fddf947fed6a936032d82e497bf048ec90"
+        },
+        "scripts/lib/tracked-build-outputs.test.mjs": {
+          "sha256": "04f6f2e9bc850c55ccfa6de088b3422da5a368cc84332348904f2b98ed5a09a9"
+        },
+        "scripts/module-imports.test.mjs": {
+          "sha256": "0fbb6d65fdab2ac3dcd631cbbcf033fc63c9d211fb6700d980419b2877734174"
+        },
+        "scripts/nitro-legacy-toolchain.test.mjs": {
+          "sha256": "9345b446e40b582df0e697b9923e445719d0eab8e2c7938507c500c82325efcc"
+        },
+        "scripts/randomized-inputs-workflow.test.mjs": {
+          "sha256": "d0cc0f3b1e002b68775f3568e07f6ae93a300eb9a8a1df2947eaa4a59e3c01a7"
+        },
+        "scripts/render-nitro-compose-env.test.mjs": {
+          "sha256": "8b8b7c3e2a9f301b9804f09c00b531e7af567c3677b805b6483aea71b8ac6cd7"
+        },
+        "scripts/request-hub-routing.test.mjs": {
+          "sha256": "f11450134320473c8ec999b0ef9881057fd047fb380bf161b206cf5761677dd1"
+        },
+        "scripts/rsa-provider-migration.test.mjs": {
+          "sha256": "86d971cc28fced6b107cbef399af1ea4b50a17fd8d2cd800c28490cbd81b308a"
+        },
+        "scripts/rust-security-audit-policy.test.mjs": {
+          "sha256": "fd7db074ab7f9b9d1e21df02cc5f9d74301c9a8b7b9596e4115df4a17de36d08"
+        },
+        "scripts/rust-security-dependency.test.mjs": {
+          "sha256": "5fe29916b63f2d42867e42d1868d2636acffd6de9c57f18770f73d2c395ec8f4"
+        },
+        "scripts/source-quality-gates.test.mjs": {
+          "sha256": "0253c30939ee21ddb5c2f148f7d282d2992d002a6c20e28318f7d08b12651d99"
+        },
+        "scripts/verify-repo-entrypoint.test.mjs": {
+          "sha256": "ad3dee61e0f37a6a522d4a426c009aae200cb85cdda93b8168db5900f2de30d3"
+        },
+        "scripts/verify_repo.sh": {
+          "sha256": "7248db86dc42d562fe8f897091e4b3ced4eb52cb375fcc02ba7f2e844e2be3aa"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-relayer-quarantine-operation",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "This exact relayer-job quarantine operation changes explicitly selected stale job state under its operational guards; it does not consume VRF/random output to choose an economic winner, payee, payout or settlement. Non-value is limited to economic-randomness classification and grants no production database, custody, deployment, authorization or downstream economic approval.",
+      "inputs": {
+        "scripts/ops/quarantine-stale-relayer-jobs.mjs": {
+          "sha256": "86eabe36ee8f9539c6cb51899240182fed398a87bf529fd2a6735e49f4d31145"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-legacy-secure-backup-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Exact-file economic-randomness review of the legacy backup entrypoint, secure writer and synthetic regressions. All four secret outputs use exclusive owner-only files inside owner-only directories, with path, symlink, inode and overwrite refusal; tests use only temporary synthetic secrets and loopback services. These bytes do not consume VRF/random output to select an economic winner, payee, payout or settlement. This narrow classification does not authorize a production backup, remote secret storage, custody or deployment, and does not remediate historical backups or rotate already exposed secrets.",
+      "inputs": {
+        "scripts/archive/backup-system-state.mjs": {
+          "sha256": "e10638218ca261b7d3cff0d5e966391327606f85735d97120c9e891cc8e51897"
+        },
+        "scripts/backup-system-state.test.mjs": {
+          "sha256": "fa3a4102703efaac136a199078f5b35dede6be36594db2f6eab292493396b447"
+        },
+        "scripts/lib-secure-backup.mjs": {
+          "sha256": "d4ac5d393fa0b7ad9dde6ce5fd3745824a7fbbc91cffea4b85bf33a2c8e6ceed"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-admin-recovery-transaction-inputs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Exact-file economic-randomness review of the admin recovery transaction builder and its synthetic regression suite. The command requires explicit network, contract, admin custody, apply confirmation and per-transaction/total fee ceilings; dry-run and non-loopback plaintext CVM requests fail before signing, and every planned fee is checked before the first signature. Cryptographic randomness is used only for transaction nonces and fixed test keys, never to select an economic winner, payee, payout or settlement. Tests use synthetic identities and loopback services. This security-sensitive non-value classification grants no production admin, custody, signer-route, RPC, deployment or downstream economic approval; the current host protocol remains unadapted and verifier changes remain timelock proposals.",
+      "inputs": {
+        "scripts/ops/recover-and-rotate-admin.mjs": {
+          "sha256": "486103556fdccb0eb225e6324064b6f551ecdb67d84e5b5bf71290f31f3b2873"
+        },
+        "scripts/ops/recover-and-rotate-admin.test.mjs": {
+          "sha256": "571d2f894b47472a6e2193c0676192b10d18f95ae94174186e85127bdfd856a7"
         }
       }
     }
