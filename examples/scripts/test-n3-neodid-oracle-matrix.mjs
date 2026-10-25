@@ -427,6 +427,23 @@ const recoveryAccountIdC = trimString(
   process.env.NEODID_TEST_RECOVERY_ACCOUNT_ID_C || `aa-recovery-${Date.now()}-c`
 );
 
+// This ticket matrix uses the disposable accounts as synthetic AA context; the
+// separate AA boundary probe registers real AA raw IDs and proxy addresses.
+const recoveryAccountAddressA = normalizeHash160(
+  process.env.NEODID_TEST_RECOVERY_ACCOUNT_ADDRESS_A ||
+    `0x${Buffer.from(disposableAccountA.slice(2), 'hex').reverse().toString('hex')}`
+);
+const recoveryAccountAddressB = normalizeHash160(
+  process.env.NEODID_TEST_RECOVERY_ACCOUNT_ADDRESS_B ||
+    `0x${Buffer.from(disposableAccountB.slice(2), 'hex').reverse().toString('hex')}`
+);
+const recoveryAccountIdRawA = normalizeHash160(
+  process.env.NEODID_TEST_RECOVERY_ACCOUNT_ID_RAW_A || recoveryAccountAddressA
+);
+const recoveryAccountIdRawB = normalizeHash160(
+  process.env.NEODID_TEST_RECOVERY_ACCOUNT_ID_RAW_B || recoveryAccountAddressB
+);
+
 if (!wif) throw new Error('NEO_N3_WIF or MORPHEUS_RELAYER_NEO_N3_WIF is required');
 if (!consumerHash) throw new Error('Neo N3 example consumer hash is required');
 if (!oracleHash) throw new Error('CONTRACT_MORPHEUS_ORACLE_HASH is required');
@@ -542,6 +559,8 @@ const recoveryPayloadA = {
   network: 'neo_n3',
   aa_contract: aaContractHash,
   verifier_contract: aaVerifierHash,
+  account_address: recoveryAccountAddressA,
+  account_id_raw: recoveryAccountIdRawA,
   account_id: recoveryAccountIdA,
   new_owner: newOwnerA,
   recovery_nonce: '7',
@@ -554,6 +573,8 @@ const recoveryPayloadB = {
   network: 'neo_n3',
   aa_contract: aaContractHash,
   verifier_contract: aaVerifierHash,
+  account_address: recoveryAccountAddressB,
+  account_id_raw: recoveryAccountIdRawB,
   account_id: recoveryAccountIdB,
   new_owner: newOwnerB,
   recovery_nonce: '7',

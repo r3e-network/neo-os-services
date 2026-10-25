@@ -708,6 +708,7 @@ curl http://localhost:3000/api/neodid/recovery-ticket \
     "network":"neo_n3",
     "aa_contract":"0x0268a387913b250166ddec032b03332690a1ef78",
     "verifier_contract":"0xfb3f605fc6bcd59d265d7c18230093d7dc24ac26",
+    "account_address": "<raw-20-byte-AA-account-script-hash>",
     "account_id_raw":"<raw-20-byte-account-id>",
     "account_id":"<aa-account-id>",
     "new_owner":"0x89b05cac00804648c666b47ecb1c57bc185821b7",

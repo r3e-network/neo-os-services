@@ -311,7 +311,10 @@ pub fn is_confidential_decrypt_operation(operation: &str) -> bool {
 /// decodePayload: utf8 if it round-trips, else the trimmed hex verbatim.
 pub fn decode_payload(payload_hex: &str) -> String {
     let raw = payload_hex.trim().strip_prefix("0x").unwrap_or(payload_hex);
-    if raw.is_empty() || !raw.len().is_multiple_of(2) {
+    if raw.is_empty() {
+        return String::new();
+    }
+    if !raw.len().is_multiple_of(2) {
         return payload_hex.trim().to_string();
     }
     let bytes = hex_to_bytes(raw);

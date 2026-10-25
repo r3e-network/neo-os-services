@@ -97,11 +97,16 @@ pub fn build_event_from_request(record: &Value) -> Option<NeoXEvent> {
         } else {
             decode_payload(&payload_hex)
         },
-        payload_hex: payload_hex
-            .trim()
-            .strip_prefix("0x")
-            .unwrap_or(payload_hex.trim())
-            .to_ascii_lowercase(),
+        // Preserve explicit empty bytes; an absent payload must remain missing.
+        payload_hex: if payload_hex.trim() == "0x" {
+            "0x".to_string()
+        } else {
+            payload_hex
+                .trim()
+                .strip_prefix("0x")
+                .unwrap_or(payload_hex.trim())
+                .to_ascii_lowercase()
+        },
         message_id: if decrypt_lane {
             decode_confidential_message_id(&payload_hex)
         } else {

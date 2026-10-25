@@ -17,6 +17,24 @@ import subprocess
 import tempfile
 
 
+def fulfillment_request(pending, contract, network_magic):
+    """Keep the chain's exact bytes and UTF-8 view together with parsed compute input."""
+    raw = base64.b64decode(pending[4]["value"], validate=True)
+    payload_text = raw.decode("utf-8")
+
+    def decoded(index):
+        return base64.b64decode(pending[index]["value"], validate=True).decode("utf-8")
+
+    return {
+        "chain": "neo_n3", "request_id": pending[0]["value"],
+        "request_type": decoded(3), "payload": json.loads(payload_text),
+        "payload_hex": raw.hex(), "payload_text": payload_text,
+        "fulfillment_context": {"app_id": decoded(1), "module_id": decoded(2),
+                                "operation": decoded(3), "contract_script_hash": contract,
+                                "network_magic": network_magic},
+    }
+
+
 def port():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -122,17 +140,10 @@ def main():
         assert int(pending[8]["value"]) == 0, "fresh request must be pending"
         print("On-chain request 1 is pending; invoking the host.", flush=True)
 
-        def decoded(index):
-            return base64.b64decode(pending[index]["value"]).decode()
-
         fixture = root / "request.json"
-        fixture.write_text(json.dumps({"request": {
-            "chain": "neo_n3", "request_id": pending[0]["value"],
-            "request_type": decoded(3), "payload": json.loads(decoded(4)),
-            "fulfillment_context": {"app_id": decoded(1), "module_id": decoded(2),
-                                    "operation": decoded(3), "contract_script_hash": contract,
-                                    "network_magic": config["magic"]},
-        }}))
+        fixture.write_text(json.dumps({
+            "request": fulfillment_request(pending, contract, config["magic"])
+        }))
         subprocess.run(["cargo", "test", "--offline", "--locked", "-p", "nitro-enclave-host",
                         "--lib", "fulfill::tests::private_chain::fulfill_deployed_kernel_request", "--",
                         "--ignored", "--exact"], check=True, timeout=480,

@@ -285,7 +285,7 @@
           "sha256": "9d057449b7664bf04b8d2e2ad45f8e749a4117b47efe82e2a6ab4c9b849e207e"
         },
         "examples/scripts/test-n3-aa-recovery-cross-account-boundary.mjs": {
-          "sha256": "89a9b9e21d41fcfa7ee2b83e1c7bad95f6c791d4e81118abfd7262c70546c258"
+          "sha256": "3b47bf8b62308f3b145b47dadba521a2e448d1fda3f05d08b3455ef97df845ef"
         },
         "examples/scripts/test-n3-automation-cancel-race.mjs": {
           "sha256": "7faa6a8aa5af6e0b82c9c32d6948438dec61165ccb98ee250bd4415d423890b1"
@@ -519,7 +519,7 @@
           "sha256": "eddf1012ba51591c027efa65803a1f5b6c32ed5c35e4a0a210bf0bc6ff404e21"
         },
         "scripts/test-host-private-chain.py": {
-          "sha256": "7038c32c198aa2bd6640aadb9f560103b76c337e506ec4cbcda71a3a4219d099"
+          "sha256": "6e266b4b7248253225ad8ba6c989c458ed628afb1d77ffc6a431ef728d966c2e"
         },
         "scripts/upgrade-morpheus-oracle.test.mjs": {
           "sha256": "1e83b015dd67366b4f52fbc4c290b5cd67f3ccc24d37e31ff0fbfce998b91294"
@@ -2080,13 +2080,13 @@
       "justification": "Exact-file economic-randomness review of the listed Rust implementation, test and vector inputs. The Oracle changes bind exact raw payloads into fulfillment digests; relayer delivery and sponsor/N3 construction use deterministic state, fee and consent rules. Injected random units support compute noise and randomized regression inputs, not selection of an economic winner, payee, payout or settlement. Test randomness and synthetic Oracle payloads do not establish an economic allocation mechanism. This narrow non-value classification does not approve deployment, custody, signing, transport security, runtime admission or downstream economic consumers.",
       "inputs": {
         "crates/neo-os-chain-evm/src/fulfill.rs": {
-          "sha256": "795da27c81ab0c03f0110c54093237d49d2f9356b903b23cc80db9ed4783e37a"
+          "sha256": "95c7693f524a9425ebba1e245e8078b11755bb012f2b71a68966ae736b0bbb25"
         },
         "crates/neo-os-chain-evm/src/scan.rs": {
-          "sha256": "24524d63b8e43ae9562b18d61fd02b1c4da2e6aa5c992c0d8fef8ab74b28190c"
+          "sha256": "4143006ec52db304df4ad89cee8e345fed365feb0a3fb4473b6fd7aa418c3aef"
         },
         "crates/neo-os-chain-evm/tests/neox_parity.rs": {
-          "sha256": "2b39e25ecc4d6bac0731f940ae629ffd692d16c50b79aba469b0a4752522c10c"
+          "sha256": "24d990da5f6011ac435316a34472cc9f6f00c60ba1739227af338b1f15942900"
         },
         "crates/neo-os-chain-n3/src/ssrf.rs": {
           "sha256": "62bc5feffaa621392557970643ea485ffeb8187fb7e55d8c79b5f11a7bc21255"
@@ -2347,6 +2347,119 @@
         },
         "scripts/ops/recover-and-rotate-admin.test.mjs": {
           "sha256": "571d2f894b47472a6e2193c0676192b10d18f95ae94174186e85127bdfd856a7"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-neox-custody-crypto-inputs",
+      "classification": "non-value",
+      "owner": "Jimmy",
+      "justification": "Exact dependency manifests, authenticated custody identity/transport and EIP-1559 encoding/recovery. OS randomness supports cryptographic APIs, not winner or reward selection. These inputs verify/transport fixed transaction bytes and define no random-output economic allocation. This classification does not authorize signing, fees/spend policy, deployment, future bytes or downstream consumers.",
+      "inputs": {
+        "crates/neo-os-chain-evm/Cargo.toml": {
+          "sha256": "c368eaf7138d4fcf765de01b07dcea71ab8dd1d6f054fb5e7c9d40b3c7a2641f"
+        },
+        "crates/neo-os-chain-evm/src/custody.rs": {
+          "sha256": "d55532abc2213a30c94c19f8b8d9c65c63fbc15738de6b890d79638727636a4f"
+        },
+        "crates/neo-os-chain-evm/src/tx.rs": {
+          "sha256": "79ea3a176556191e79ab3784b3aa083c6ec7cc63b186420b026008f6587280d5"
+        },
+        "workers/neo-os-relayer/Cargo.toml": {
+          "sha256": "458ae8b5de29bfc5ff4e6e19d0904819aeea87a488f23d4383e21e39c5ffa42a"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-game-session-witness-inputs",
+      "classification": "non-value",
+      "owner": "Jimmy",
+      "justification": "Exact manifest and session implementation: changed p256 APIs verify the player witness. Fresh entropy is a bearer session token; HMAC-derived problem secrets seed deterministic engine challenges, and authenticated operations/timings are replayed for score. No direct/oracle/automation VRF lane or random-output draw selects a payee or reward amount here. Encoded score/win and game binding feed separately owned engines and PlatformGame settlement. This classification does not approve their economics, challenge fairness, KMS secrecy, custody, replay security or production use; no game, sibling or directory is exempted.",
+      "inputs": {
+        "crates/neo-os-games/Cargo.toml": {
+          "sha256": "6bfa3b434ecd24ebf52e6a5b1b46f4d102d538982d3a7c1eabdfb2137131c39e"
+        },
+        "crates/neo-os-games/src/session.rs": {
+          "sha256": "305aef6e7be0e5585d1943410ee8e27bd6cbcca6543223e65010148739ac86c3"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-local-validation-shell-inputs",
+      "classification": "non-value",
+      "owner": "Jimmy",
+      "justification": "Exact local gate orchestration and fake-tool fixtures. Shell commands invoke existing project checks/tests/builds; the regression fixtures substitute local tool scripts. No random output decides economic value. Classification does not authorize native suites, providers, builds or deployments, certify invoked production code, or exempt any sibling/future input.",
+      "inputs": {
+        "scripts/run_local_validation_gates.sh": {
+          "sha256": "f69b2c9d0bd99b46f2b05e28f92ea47b2f94d46a69d1652b7dec37f6911ecae4"
+        },
+        "scripts/run_workspace_local_validation.sh": {
+          "sha256": "b2d89b1974d3cd566d936a40b5488ca5a7f7646d271c2b3db3bc502c862b4ce8"
+        },
+        "scripts/services-local-validation.test.mjs": {
+          "sha256": "cf9747fbe55a056142bb6c30b119abda0e0679f19b714795a2f9300e0665060f"
+        },
+        "scripts/workspace-local-validation.test.mjs": {
+          "sha256": "b9db7ee2fb87a31146607fe8d7aedd5ee2cadd25e41878f4086fd1bca8fa405f"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-signer-crypto-api-inputs",
+      "classification": "non-value",
+      "owner": "Jimmy",
+      "justification": "Exact crypto API migration and public-key/receipt tests retain SEC1 identity, low-S normalization, prehash verification and OS key randomness. Randomness is cryptographic key/signature material, never an economic allocation draw. This is not custody/authorization, upstream-crypto, secret-handling, runtime or release approval; only the enumerated file hashes are classified.",
+      "inputs": {
+        "workers/neo-signer/src/crypto.rs": {
+          "sha256": "8650ea55a8aeb696c5ed9ab4330b7e0c9674ff2fbaf02dd09346dacbcdad96ee"
+        },
+        "workers/neo-signer/src/signclient.rs": {
+          "sha256": "2d69c8576e2d2a6abbb276c4ef7d99560e6fd4625d2271d3e6a421b9cc8e6e36"
+        },
+        "workers/neo-signer/src/vault_profile.rs": {
+          "sha256": "5968a003e292bdbc005628221cb32618847df1cf83e2294cd0ee7d98e751f3cd"
+        },
+        "workers/neo-signer/tests/unit/crypto.rs": {
+          "sha256": "12a38c76f7032525fba9be07856004b5ac911aba9da791f136423e891b70fda8"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-recovery-payload-boundary-tests",
+      "classification": "non-value",
+      "owner": "Jimmy",
+      "justification": "Pure source-selected regressions and public synthetic values validate raw action IDs, mandatory caller fields, selected-deployment ref lookup, requester/callback/replay refusal and exact payload fixture views. They never import the live examples/chain driver, generate keys, sign or contact a provider/chain. They allocate no economic value. Source-only checks do not certify Rust runtime, real storage or deployment; production source and future tests are not exempted.",
+      "inputs": {
+        "scripts/neodid-recovery-boundaries.test.mjs": {
+          "sha256": "53454698b31e183d156336263575cc77cd870a02de2e31c8fa6325f0f3fbbf48"
+        },
+        "scripts/lib/host_private_chain_fixture_test.py": {
+          "sha256": "0caca283d37ae989f443564d7120c65e40b5dc8ca6d319eba7a5bf11f308b35e"
+        },
+        "scripts/host-private-chain-fixture.test.mjs": {
+          "sha256": "c515c1a7e83ae482971c9fa78ed7503cf9a18117a907da44937f79e20fa86009"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-neodid-recovery-matrix-input",
+      "classification": "non-value",
+      "owner": "Jimmy",
+      "justification": "Exact recovery matrix submits synthetic provider/account contexts to exercise ticket callbacks. Existing disposable key generation is test identity material, not economic randomness. Repaired success callers include nonzero account address and raw ID, in Neo internal byte order by default with explicit raw overrides; the matrix does not register real AA accounts. No random output determines a winner, recipient or reward amount. This classification grants no authorization to run its live provider/signing/chain entrypoint and does not approve AA verifier, custody, fee/spend or deployment boundaries.",
+      "inputs": {
+        "examples/scripts/test-n3-neodid-oracle-matrix.mjs": {
+          "sha256": "b78e1ad8407ef7a2c70072725af956ed87575803860001aac88558d217abc5ab"
+        }
+      }
+    },
+    {
+      "consumer": "reviewed-confidential-reference-runtime-input",
+      "classification": "non-value",
+      "owner": "Jimmy",
+      "justification": "Exact Services-owned confidentiality module: encrypted-ref lookup/claim binds selected deployment, requester, callback and consumed request; recognized AA-v3 labels remain signed opaque data. Key generation/encryption randomness is security material. Optional bounded script/WASM execution transports caller oracle data under existing opt-in/size/time policy; this file defines no random economic allocation rule. This narrow classification does not approve user programs, downstream economic consumers, key secrecy, storage atomicity, authorization, custody or deployment; it is not an overall security approval.",
+      "inputs": {
+        "workers/nitro-worker/src/oracle/crypto.js": {
+          "sha256": "ca34839cc1151c200e71e6b44f791c0a343a1137c877c4605895672424d68604"
         }
       }
     }

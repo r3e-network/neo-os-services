@@ -514,12 +514,24 @@ function creditProtectedHooks({
 function computeRecoveryActionId({
   network,
   aaContract,
-  accountIdText,
+  accountIdRaw,
   newOwner,
   recoveryNonceText,
 }) {
   const digest = createHash('sha256')
-    .update([network, aaContract, accountIdText, newOwner, recoveryNonceText].join('\u001f'))
+    .update(
+      Buffer.concat([
+        Buffer.from(network, 'utf8'),
+        Buffer.from([0x1f]),
+        Buffer.from(aaContract.replace(/^0x/i, ''), 'hex'),
+        Buffer.from([0x1f]),
+        Buffer.from(accountIdRaw.replace(/^0x/i, ''), 'hex'),
+        Buffer.from([0x1f]),
+        Buffer.from(newOwner.replace(/^0x/i, ''), 'hex'),
+        Buffer.from([0x1f]),
+        Buffer.from(recoveryNonceText, 'utf8'),
+      ])
+    )
     .digest('hex');
   return `aa_recovery:${digest}`;
 }
@@ -679,16 +691,16 @@ async function main() {
     await waitForApplicationLog(rpcClient, setupATx);
     await waitForApplicationLog(rpcClient, setupBTx);
 
+    const accountIdRawAInternal = toNeoInternalHex(accountIdRawA);
+    const accountIdRawBInternal = toNeoInternalHex(accountIdRawB);
     const recoveryActionIdA = computeRecoveryActionId({
       network: 'neo_n3',
       aaContract: aaCoreHashInternal,
-      accountIdText: accountIdA,
+      accountIdRaw: accountIdRawAInternal,
       newOwner: newOwnerAInternal,
       recoveryNonceText,
     });
 
-    const accountIdRawAInternal = toNeoInternalHex(accountIdRawA);
-    const accountIdRawBInternal = toNeoInternalHex(accountIdRawB);
     const recoveryPayloadA = {
       provider: 'github',
       provider_uid: providerUid,
@@ -748,7 +760,7 @@ async function main() {
     const recoveryActionIdB = computeRecoveryActionId({
       network: 'neo_n3',
       aaContract: aaCoreHashInternal,
-      accountIdText: accountIdB,
+      accountIdRaw: accountIdRawBInternal,
       newOwner: newOwnerAInternal,
       recoveryNonceText,
     });

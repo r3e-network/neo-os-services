@@ -218,3 +218,40 @@ fn abi_decode_uint256_bytes_round_trips() {
     );
     assert_eq!(data, vec![0xde, 0xad, 0xbe, 0xef]);
 }
+
+#[test]
+fn scanner_preserves_explicit_empty_payload_as_bytes_and_empty_text() {
+    use neo_os_chain_evm::{build_event_from_request, decode_payload};
+    let event = build_event_from_request(&serde_json::json!({
+        "id": "1", "operation": "random.generate", "status": 1, "payload": "0x"
+    }))
+    .expect("pending request");
+    assert_eq!(event.payload_hex, "0x");
+    assert_eq!(event.payload_text, "");
+    assert_eq!(decode_payload("0x"), "");
+    assert_eq!(decode_payload("0xff"), "0xff");
+    assert_eq!(decode_payload("0x0"), "0x0");
+}
+
+#[test]
+fn scanner_does_not_turn_missing_payload_into_explicit_empty_bytes() {
+    use neo_os_chain_evm::build_event_from_request;
+    let missing = build_event_from_request(&serde_json::json!({
+        "id": "1", "operation": "random.generate", "status": 1
+    }))
+    .expect("pending request");
+    assert_eq!(missing.payload_hex, "");
+    for value in [serde_json::Value::Null, serde_json::json!("")] {
+        let event = build_event_from_request(&serde_json::json!({
+            "id": "1", "operation": "random.generate", "status": 1, "payload": value
+        }))
+        .expect("pending request");
+        assert_ne!(event.payload_hex, "0x");
+    }
+    let event = build_event_from_request(&serde_json::json!({
+        "id": "1", "operation": "compute_hash", "status": 1, "payload": "0x7B7D"
+    }))
+    .expect("pending request");
+    assert_eq!(event.payload_hex, "7b7d");
+    assert_eq!(event.payload_text, "{}");
+}

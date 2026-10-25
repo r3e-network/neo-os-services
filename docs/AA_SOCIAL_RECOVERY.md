@@ -268,6 +268,7 @@ Example on-chain request payload:
   "provider": "web3auth",
   "network": "neo_n3",
   "aa_contract": "0x711c1899a3b7fa0e055ae0d17c9acfcd1bef6423",
+  "account_address": "<raw-20-byte-AA-account-script-hash>",
   "account_id_raw": "<raw-20-byte-account-id>",
   "verifier_contract": "<aa-recovery-verifier-contract-hash>",
   "account_id": "<aa-account-id>",
@@ -285,6 +286,7 @@ Large-JWT alternative:
   "provider": "web3auth",
   "network": "neo_n3",
   "aa_contract": "0x711c1899a3b7fa0e055ae0d17c9acfcd1bef6423",
+  "account_address": "<raw-20-byte-AA-account-script-hash>",
   "account_id_raw": "<raw-20-byte-account-id>",
   "verifier_contract": "<aa-recovery-verifier-contract-hash>",
   "account_id": "<aa-account-id>",
@@ -295,8 +297,13 @@ Large-JWT alternative:
 }
 ```
 
-The worker looks the ref up under its own `MORPHEUS_NETWORK`: in a recovery
-ticket `network` names the chain family (`neo_n3`), not a Morpheus network. The
+The worker looks the ref up under its own `MORPHEUS_NETWORK`. In legacy recovery
+tickets `network` names the chain family (`neo_n3`); AA-v3 tickets instead carry
+an opaque signed AA label (for example `neo3-testnet`). Neither selects the ref
+storage deployment. Any `morpheus_network`, `runtime_network` or `environment`
+assertion on an AA-v3 request must match the worker deployment; conflicting
+aliases fail before lookup. The account address and raw ID are the registered
+20-byte values in Neo internal byte order, not hashes of the textual account ID. The
 Rust enclave host serves only a direct `encrypted_params` today and answers a
 ref with 503.
 

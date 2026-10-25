@@ -71,6 +71,10 @@ NEOX_REQUESTER_PK=0x.. node deploy/evm/validate-vrf.mjs
 
 ## v1 → v2 deployment and migration
 
+An explicit empty request payload remains raw `0x` and UTF-8 text `""` through
+Rust discovery and fulfillment; a missing raw field is still rejected. Nonempty
+payload bytes are preserved independently of their display text.
+
 The frozen v1 address is not an in-place v2 target. A v2 cutover requires all of
 these steps:
 
