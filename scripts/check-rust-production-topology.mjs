@@ -1231,7 +1231,12 @@ export async function auditProductionTopology(root = repoRoot, { chainWriters = 
   return problems;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+const invokedPath = process.argv[1]
+  ? await fs.realpath(process.argv[1]).catch(() => path.resolve(process.argv[1]))
+  : '';
+const modulePath = await fs.realpath(fileURLToPath(import.meta.url));
+
+if (invokedPath && invokedPath === modulePath) {
   // Refuse before the production audit or its later exception-reporting scan
   // can open deployment content. In particular, never open a linked FIFO.
   const unsafeReferences = await auditDeployReferences(repoRoot, { checkRetiredNames: false });
