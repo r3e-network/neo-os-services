@@ -882,10 +882,10 @@
       "consumer": "vendor/neo-os-did.pin.json",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Pins17 explicit source-to-destination mappings to canonical DID7dac2321af7cb8d4d39306c780154bd8b88756ce with SHA256 digests, including current resolver/common/host/docs and unchanged contract artifacts. Provenance metadata identifies trusted identity implementation bytes; it does not implement reward allocation. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "justification": "Pins17 explicit source-to-destination mappings to canonical DID02cc6bd0df2b2d475aceab54e388139c3309260a with SHA256 digests, including the AA action/recovery payload binding fixes, current resolver/common/host/docs and unchanged contract artifacts. Provenance metadata identifies trusted identity implementation bytes; it does not implement reward allocation. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "vendor/neo-os-did.pin.json": {
-          "sha256": "1749df289ea28eeb29f049623dd565dd7d11b51cb71ba00da056f6eb8c76b18e"
+          "sha256": "ab3373bcd31c63ff1512ba8ead64a874205e581d4e6138ebd4004f0e3cef1a75"
         }
       }
     },
