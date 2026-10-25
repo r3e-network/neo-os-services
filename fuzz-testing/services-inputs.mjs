@@ -26,6 +26,30 @@ import {
   integerToDecimalString,
 } from '../workers/nitro-worker/src/oracle/feeds/decimal.js';
 import { clampFeedTimestampSec } from '../workers/nitro-worker/src/oracle/feeds/shared.js';
+import { __setCustodyTransportForTests } from '../workers/nitro-worker/src/platform/custody.js';
+
+process.env.MORPHEUS_NETWORK = 'testnet';
+process.env.MORPHEUS_PAYMASTER_TESTNET_ENABLED = 'false';
+process.env.MORPHEUS_PAYMASTER_MAINNET_ENABLED = 'false';
+delete process.env.MORPHEUS_ALLOW_TRANSACTION_SPONSORSHIP;
+process.env.SIGNER_ROLE_WORKER_KEY_ID = 'fuzz-worker-key';
+const custodyIdentity = {
+  public_key: `02${'11'.repeat(32)}`,
+  address: 'Nfuzz',
+  script_hash: `0x${'22'.repeat(20)}`,
+};
+__setCustodyTransportForTests(async (method) =>
+  method === 'GET'
+    ? {
+        allowed: true,
+        ...custodyIdentity,
+        key_id: 'fuzz-worker-key',
+        network: 'testnet',
+        network_magic: 894710606,
+        signing_enabled: true,
+      }
+    : { allowed: true, ...custodyIdentity, signature: '00' }
+);
 
 // Committed seeds: a failing input replays with FUZZ_SEED=<seed>. The three
 // values are fixed so a CI run and a local run explore the same streams.
@@ -226,25 +250,35 @@ function exerciseDelivery(kind, text, decoded, index) {
   assert.equal(payload.kernel_operation, intent.operation);
   assert.equal(payload.requester, 'requester');
   const options = { appId: `app-${index}`, moduleId: intent.moduleId, operation: intent.operation };
-  const digest = buildFulfillmentDigestBytes(String(index), kind, true, text, '', '', options);
+  const withPayload = (value, overrides = {}) => ({
+    ...options,
+    payloadText: value,
+    payloadHex: Buffer.from(value, 'utf8').toString('hex'),
+    ...overrides,
+  });
+  const digest = buildFulfillmentDigestBytes(
+    String(index), kind, true, text, '', '', withPayload(text)
+  );
   assert.equal(digest.length, 32);
   // Binding: a different request id, result or envelope tuple changes the digest.
   assert(
     !digest.equals(
-      buildFulfillmentDigestBytes(String(index + 1), kind, true, text, '', '', options)
+      buildFulfillmentDigestBytes(String(index + 1), kind, true, text, '', '', withPayload(text))
     )
   );
   assert(
     !digest.equals(
-      buildFulfillmentDigestBytes(String(index), kind, true, `${text} `, '', '', options)
+      buildFulfillmentDigestBytes(
+        String(index), kind, true, `${text} `, '', '', withPayload(`${text} `)
+      )
     )
   );
   assert(
     !digest.equals(
-      buildFulfillmentDigestBytes(String(index), kind, true, text, '', '', {
-        ...options,
-        operation: `${options.operation}.other`,
-      })
+      buildFulfillmentDigestBytes(
+        String(index), kind, true, text, '', '',
+        withPayload(text, { operation: `${options.operation}.other` })
+      )
     )
   );
   targets.delivery += 1;
@@ -408,11 +442,12 @@ async function exerciseSponsor(decoded) {
     response.status === 200 || response.status === 400,
     `sponsor status ${response.status}`
   );
+  const body = await response.json();
   // Sponsorship is not enabled in this suite: no input may be approved.
-  assert.notEqual(response.body?.approved, true, 'sponsor approved with the policy disabled');
+  assert.notEqual(body.approved, true, 'sponsor approved with the policy disabled');
   if (response.status === 200) {
     outcomes.sponsorRefused += 1;
-    assert.equal(response.body.mode, 'paymaster_authorize');
+    assert.equal(body.mode, 'paymaster_authorize');
   }
   targets.sponsor += 1;
 }
