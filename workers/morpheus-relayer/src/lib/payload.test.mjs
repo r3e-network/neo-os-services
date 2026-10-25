@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { ethers } from 'ethers';
 
 import { buildFulfillmentDigestBytes } from '../router.js';
 import { buildNeoXDigest } from '../neox.js';
@@ -21,15 +22,17 @@ test('raw payload validation distinguishes explicit empty bytes from missing inp
   assert.deepEqual(resolveEventPayload({ payloadText: '', payloadHex: '0x' }), {
     payloadText: '',
     payloadHex: '0x',
+    messageId: null,
   });
 
   for (const payloadHex of [undefined, null, '', '   ', 0, false, '0', 'zz']) {
     assert.throws(() => requireRawPayloadHex({ payloadHex }), /payloadHex/);
   }
   assert.throws(() => requireRawPayloadHex({}), /payloadHex is required/);
-  assert.deepEqual(resolveEventPayload({ payloadHex: 'ff', payload_hex: 'ff' }), {
-    payloadText: '',
-    payloadHex: 'ff',
+  assert.deepEqual(resolveEventPayload({ payloadText: 'a', payloadHex: '61', payload_hex: '61' }), {
+    payloadText: 'a',
+    payloadHex: '61',
+    messageId: null,
   });
   assert.throws(
     () => resolveEventPayload({ payloadHex: 'ff', payload_hex: '00' }),
@@ -149,6 +152,74 @@ test('the signing entrypoint rejects non-object JSON before custody or wallet ac
     global.fetch = originalFetch;
   }
   assert.equal(calls.length, 0);
+});
+
+test('raw bytes and supplied text must match before any signing or delivery', async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (...args) => {
+    calls.push(args);
+    throw new Error('custody must not be called');
+  };
+  const config = {
+    network: 'testnet',
+    nitro: { custodyUrl: 'https://custody.test', custodyToken: 'token' },
+    neo_n3: {
+      oracleContract: '0x1212121212121212121212121212121212121212',
+      networkMagic: 894710606,
+      custodyKeyIds: { oracle_verifier: 'verifier' },
+    },
+    neox: { ...NEOX_CONFIG.neox, verifierPrivateKey: 'not-a-key' },
+  };
+  const fulfillment = (requestType, payloadText, payloadHex) => ({
+    requestId: '7',
+    requestType,
+    appId: 'app',
+    moduleId: requestType === 'decrypt' ? 'confidential.decrypt' : 'compute.run',
+    operation: requestType,
+    payloadText,
+    payloadHex,
+    success: false,
+    result: '',
+    error: 'failed',
+  });
+  try {
+    for (const chain of ['neo_n3', 'neox']) {
+      await assert.rejects(
+        signFulfillmentPayload(config, chain, fulfillment('compute', '{}', '5b5d')),
+        /payloadText does not match payloadHex/
+      );
+      for (const payloadText of [undefined, null]) {
+        await assert.rejects(
+          signFulfillmentPayload(config, chain, fulfillment('compute', payloadText, '5b5d')),
+          /payloadText/
+        );
+      }
+      assert.throws(
+        () => resolveEventPayload({ payloadText: '{}', payload: '[]', payloadHex: '5b5d' }),
+        /payloadText aliases disagree/
+      );
+    }
+  } finally {
+    global.fetch = originalFetch;
+  }
+  assert.equal(calls.length, 0);
+
+  const abi = ethers.AbiCoder.defaultAbiCoder().encode(
+    ['uint256', 'bytes'],
+    [7, ethers.toUtf8Bytes('expected-envelope')]
+  );
+  const good = resolveEventPayload({
+    chain: 'neox',
+    requestType: 'decrypt',
+    payloadText: 'expected-envelope',
+    payloadHex: abi,
+  });
+  assert.deepEqual(good, { payloadText: 'expected-envelope', payloadHex: abi, messageId: '7' });
+  await assert.rejects(
+    signFulfillmentPayload(config, 'neox', fulfillment('decrypt', 'attacker-envelope', abi)),
+    /payloadText does not match payloadHex/
+  );
 });
 
 test('old durable prepared records without raw hex cannot be broadcast', async () => {

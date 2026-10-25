@@ -1,3 +1,4 @@
+import { ethers } from 'ethers';
 import { trimString } from './strings.js';
 
 const HEX_PAYLOAD = /^(?:[0-9a-fA-F]{2})*$/;
@@ -40,7 +41,40 @@ export function requireRawPayloadHex(holder, field = 'payloadHex') {
   return normalized;
 }
 
-export function resolveEventPayload(event = {}) {
+function derivePayloadText(payloadHex, chain, confidential) {
+  const bytes = Buffer.from(payloadHex.replace(/^0x/i, ''), 'hex');
+  if (confidential && chain === 'neox') {
+    try {
+      const [messageId, envelopeBytes] = ethers.AbiCoder.defaultAbiCoder().decode(
+        ['uint256', 'bytes'],
+        ethers.getBytes(payloadHex.startsWith('0x') ? payloadHex : `0x${payloadHex}`)
+      );
+      return { text: ethers.toUtf8String(envelopeBytes), messageId: messageId.toString() };
+    } catch {
+      // A raw-envelope payload remains a separate, explicit compatibility form.
+    }
+  }
+  return {
+    text: new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+    messageId: null,
+  };
+}
+
+function suppliedPayloadText(event) {
+  const hasText = Object.prototype.hasOwnProperty.call(event, 'payloadText');
+  const hasPayload = Object.prototype.hasOwnProperty.call(event, 'payload');
+  const read = (field) => {
+    if (typeof event[field] !== 'string') throw new Error(`${field} must be a string`);
+    return event[field];
+  };
+  const text = hasText ? read('payloadText') : hasPayload ? read('payload') : null;
+  if (hasText && hasPayload && read('payload') !== text) {
+    throw new Error('payloadText aliases disagree');
+  }
+  return text;
+}
+
+export function resolveEventPayload(event = {}, { chain = event.chain, confidential } = {}) {
   const hasCamel = Object.prototype.hasOwnProperty.call(event, 'payloadHex');
   const hasSnake = Object.prototype.hasOwnProperty.call(event, 'payload_hex');
   if (!hasCamel && !hasSnake) requireRawPayloadHex(event);
@@ -50,8 +84,27 @@ export function resolveEventPayload(event = {}) {
     throw new Error('payloadHex aliases disagree');
   }
   const payloadHex = camel ?? snake;
-  const payloadText = Object.prototype.hasOwnProperty.call(event, 'payloadText')
-    ? String(event.payloadText ?? '')
-    : String(event.payload ?? '');
-  return { payloadText, payloadHex };
+  const normalizedRequestType = trimString(event.requestType)
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  const isConfidential =
+    confidential ??
+    (normalizedRequestType === 'decrypt' ||
+      normalizedRequestType.includes('decrypt') ||
+      normalizedRequestType.includes('reveal'));
+  const derived = derivePayloadText(payloadHex, chain, isConfidential);
+  const suppliedText = suppliedPayloadText(event);
+  const rawLength = Buffer.from(payloadHex.replace(/^0x/i, ''), 'hex').length;
+  if (rawLength > 0 && suppliedText === null) {
+    throw new Error('payloadText is required when payloadHex is non-empty');
+  }
+  if (suppliedText !== null && suppliedText !== derived.text) {
+    throw new Error('payloadText does not match payloadHex');
+  }
+  if (rawLength > 0 && derived.text === '') {
+    throw new Error('payloadText must not be empty when payloadHex is non-empty');
+  }
+  const payloadText = derived.text;
+  decodeJsonObjectPayload(payloadText, { allowNonObject: isConfidential });
+  return { payloadText, payloadHex, messageId: derived.messageId };
 }

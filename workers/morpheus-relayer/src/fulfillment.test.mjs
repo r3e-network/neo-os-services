@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createHash } from 'node:crypto';
+import { ethers } from 'ethers';
 
 import {
   buildDecryptBindingRequest,
@@ -2242,7 +2243,7 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
     assert.equal(submissions, 0);
   });
 
-  function nonObjectEvent(payloadText) {
+  function nonObjectEvent(payloadText, payloadHex = Buffer.from(payloadText).toString('hex')) {
     return {
       chain: 'neo_n3',
       requestId: '9400',
@@ -2251,7 +2252,7 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
       moduleId: 'compute.run',
       operation: 'compute',
       payloadText,
-      payloadHex: Buffer.from(payloadText).toString('hex'),
+      payloadHex,
     };
   }
 
@@ -2346,6 +2347,87 @@ describe('enclave /oracle/fulfill path (MORPHEUS_RELAYER_ENCLAVE_FULFILL flag)',
           durable_claimed: true,
         }
       );
+      assert.deepEqual(digests, []);
+    });
+    assert.equal(submissions, 0);
+  });
+
+  it('rejects raw non-object bytes with valid object text on finalize-only retry', async () => {
+    let submissions = 0;
+    const config = baseConfig({
+      hooks: {
+        fulfillNeoRequest: async () => {
+          submissions += 1;
+          return { tx_hash: '0xmust-not-happen', vm_state: 'HALT' };
+        },
+      },
+    });
+    await withN3SigningCapture(async (digests) => {
+      await processEvent(
+        config,
+        createEmptyRelayerState(),
+        () => {},
+        silentLogger,
+        nonObjectEvent('{}', Buffer.from('[]').toString('hex')),
+        {
+          attempts: 0,
+          finalize_only: true,
+          terminal_error: 'worker failed',
+          durable_claimed: true,
+        }
+      );
+      assert.deepEqual(digests, []);
+    });
+    assert.equal(submissions, 0);
+  });
+
+  it('rejects a non-empty raw payload with missing text on retry-exhaustion finalize', async () => {
+    let submissions = 0;
+    const config = baseConfig({
+      maxRetries: 0,
+      hooks: {
+        fulfillNeoRequest: async () => {
+          submissions += 1;
+          return { tx_hash: '0xmust-not-happen', vm_state: 'HALT' };
+        },
+      },
+    });
+    const event = nonObjectEvent('[]');
+    delete event.payloadText;
+    await withN3SigningCapture(async (digests) => {
+      await processEvent(config, createEmptyRelayerState(), () => {}, silentLogger, event, {
+        attempts: 0,
+        durable_claimed: true,
+      });
+      assert.deepEqual(digests, []);
+    });
+    assert.equal(submissions, 0);
+  });
+
+  it('rejects confidential ABI text mismatch on prepared redelivery without submitting', async () => {
+    let submissions = 0;
+    const config = baseConfig({
+      hooks: {
+        fulfillNeoRequest: async () => {
+          submissions += 1;
+          return { tx_hash: '0xmust-not-happen', vm_state: 'HALT' };
+        },
+      },
+    });
+    config.neox.verifierPrivateKey = TEST_EVM_PK;
+    const event = nonObjectEvent('attacker-envelope');
+    event.chain = 'neox';
+    event.requestType = 'decrypt';
+    event.payloadHex = ethers.AbiCoder.defaultAbiCoder().encode(
+      ['uint256', 'bytes'],
+      [7, ethers.toUtf8Bytes('expected-envelope')]
+    );
+    await withN3SigningCapture(async (digests) => {
+      await processEvent(config, createEmptyRelayerState(), () => {}, silentLogger, event, {
+        attempts: 1,
+        prepared_fulfillment: preparedRecord(),
+        durable_claimed: true,
+      });
       assert.deepEqual(digests, []);
     });
     assert.equal(submissions, 0);
@@ -2795,10 +2877,21 @@ describe('verifyEnclaveAttestation COSE crypto verification', () => {
 // ===================================================================
 
 describe('buildDecryptBindingRequest (C3)', () => {
+  function abiPayload(messageId, envelope) {
+    return ethers.AbiCoder.defaultAbiCoder().encode(
+      ['uint256', 'bytes'],
+      [messageId, ethers.toUtf8Bytes(envelope)]
+    );
+  }
+
   it('sends only the envelope when no message_id is derivable (legacy)', () => {
     const req = buildDecryptBindingRequest(
       {},
-      { chain: 'neox' },
+      {
+        chain: 'neox',
+        payloadText: 'the-env',
+        payloadHex: Buffer.from('the-env').toString('hex'),
+      },
       { raw_payload: 'env' },
       'the-env'
     );
@@ -2807,7 +2900,17 @@ describe('buildDecryptBindingRequest (C3)', () => {
 
   it('includes chain + message_id + contract when a message id is present', () => {
     const config = { neox: { messageContract: '0xCAFE' } };
-    const req = buildDecryptBindingRequest(config, { chain: 'neox' }, { message_id: '7' }, 'env7');
+    const req = buildDecryptBindingRequest(
+      config,
+      {
+        chain: 'neox',
+        requestType: 'decrypt',
+        payloadText: 'env7',
+        payloadHex: abiPayload(7, 'env7'),
+      },
+      { message_id: '7' },
+      'env7'
+    );
     assert.equal(req.envelope, 'env7');
     assert.equal(req.message_id, '7');
     assert.equal(req.chain, 'neox');
@@ -2818,7 +2921,12 @@ describe('buildDecryptBindingRequest (C3)', () => {
     const config = { neox: { messageContract: '0xCAFE' } };
     const req = buildDecryptBindingRequest(
       config,
-      {},
+      {
+        chain: 'neox',
+        requestType: 'decrypt',
+        payloadText: 'env9',
+        payloadHex: abiPayload(9, 'env9'),
+      },
       { messageId: 9, contract: '0xBEEF' },
       'env9'
     );

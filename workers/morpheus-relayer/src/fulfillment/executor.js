@@ -170,15 +170,9 @@ export function isQueuedAutomationExecutionPayload(payload) {
  */
 export function buildDecryptBindingRequest(config, event = {}, payload = {}, envelope = '') {
   const request = { envelope };
-  const messageId =
-    payload?.message_id ??
-    payload?.messageId ??
-    payload?.id ??
-    event?.messageId ??
-    event?.message_id ??
-    null;
+  const { messageId } = resolveEventPayload(event);
   const normalizedMessageId =
-    messageId === null || messageId === undefined || trimString(String(messageId)) === ''
+    messageId === null || trimString(String(messageId)) === ''
       ? null
       : trimString(String(messageId));
   if (normalizedMessageId === null) return request;

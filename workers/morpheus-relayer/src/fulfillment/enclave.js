@@ -134,7 +134,7 @@ export async function callEnclaveFulfill(
       requester: String(event.requester ?? ''),
       callback_contract: String(event.callbackContract ?? ''),
       callback_method: String(event.callbackMethod ?? ''),
-      message_id: String(event.messageId ?? event.message_id ?? ''),
+      message_id: String(eventPayload.messageId ?? ''),
       contract: String(config?.neox?.messageContract || config?.neox?.oracleContract || ''),
     },
     fulfillment_context: buildEnclaveFulfillmentContext(

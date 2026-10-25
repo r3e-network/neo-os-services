@@ -11,7 +11,7 @@ import { fulfillNeoXRequest } from '../neox.js';
 import { normalizeErrorMessage } from '../feed-sync.js';
 import { resolveEventFulfillmentContext, signFulfillmentPayload } from './signer.js';
 import { trimOnchainErrorMessage } from './classifier.js';
-import { decodeJsonObjectPayload, resolveEventPayload } from '../lib/payload.js';
+import { resolveEventPayload } from '../lib/payload.js';
 
 /**
  * Prepared-fulfillment helpers: building retry metadata, checkpointing pending
@@ -172,11 +172,7 @@ async function fulfillNeoRequest(config, event, fulfillment, verification) {
 }
 
 function assertEventPayloadObject(event) {
-  const { payloadText } = resolveEventPayload(event);
-  const kernelIntent = resolveKernelIntent(event.requestType);
-  decodeJsonObjectPayload(payloadText, {
-    allowNonObject: kernelIntent.moduleId === 'confidential.decrypt',
-  });
+  resolveEventPayload(event);
 }
 
 /**
