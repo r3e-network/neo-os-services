@@ -13,6 +13,37 @@
       }
     },
     {
+      "consumer": "npm-audit-exception-policy",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "The reviewed config declares an empty npm audit exception list. No production or development advisory is waived, including high or critical findings, and no random economic allocation is introduced. This exact-file classification does not approve dependency versions, deployment, custody or downstream economic consumers.",
+      "inputs": {
+        "config/npm-audit-exceptions.json": {
+          "sha256": "732176eb2caf8c14d37621481fcd0915b482094566c001b3014d732105193171"
+        }
+      }
+    },
+    {
+      "consumer": "api-automation-and-control-plane-types",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Exact-file review of apps/web/app/api/internal/control-plane/automation-execute/route.ts, apps/web/lib/api-helpers.ts, apps/web/lib/neo-control-plane.ts, and apps/web/lib/supabase-types.ts: these production inputs implement authenticated automation dispatch, generic oracle/automation relay and Supabase bookkeeping, including read-only kernel ABI discovery for queue-lane selection, API error formatting, and generated database types. None makes an operator-controlled/random winner, recipient, payout, settlement, or other random economic-allocation decision. Transaction fees, legacy/sponsor and per-job spend controls, custody-signed relay behavior, and downstream callbacks remain separate boundaries. This non-value classification is limited to VRF/operator-predictability; it is not deployment, custody/signing, identity/authentication, secret-handling, spend, downstream economic authorization, or overall security approval.",
+      "inputs": {
+        "apps/web/app/api/internal/control-plane/automation-execute/route.ts": {
+          "sha256": "68316dbb7c3618812d471302123c9c1e71626e8fe77e4943e89eadda2dfbea5a"
+        },
+        "apps/web/lib/api-helpers.ts": {
+          "sha256": "3b2a2a8e0f7eb03e8d9906591525252e0f42e09ad11d072b89708a815a502014"
+        },
+        "apps/web/lib/neo-control-plane.ts": {
+          "sha256": "9f54b735043aa7ae37d0fa8dcc52b5e035a13815210bc47bf6cff9c864dd05f0"
+        },
+        "apps/web/lib/supabase-types.ts": {
+          "sha256": "a92ce32d396bb62769e85a1cac94d382d6c9e6118c9be8d1246b78da713c8fa0"
+        }
+      }
+    },
+    {
       "consumer": ".github/dependabot.yml",
       "classification": "non-value",
       "owner": "services lead",
