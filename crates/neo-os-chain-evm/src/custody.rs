@@ -224,7 +224,7 @@ fn address_from_public_key(public_key: &str) -> Result<String, String> {
         .collect::<Vec<_>>();
     let key = VerifyingKey::from_sec1_bytes(&bytes)
         .map_err(|_| "NeoX custody public key is not secp256k1".to_string())?;
-    let uncompressed = key.to_encoded_point(false);
+    let uncompressed = key.to_sec1_point(false);
     let hash = Keccak256::digest(&uncompressed.as_bytes()[1..]);
     Ok(format!("0x{}", hex_lower(&hash[12..])))
 }
@@ -305,8 +305,8 @@ mod tests {
     #[test]
     fn identity_is_chain_and_key_bound() {
         let key = k256::ecdsa::SigningKey::from_slice(&[3u8; 32]).unwrap();
-        let public_key = key.verifying_key().to_encoded_point(true);
-        let uncompressed = key.verifying_key().to_encoded_point(false);
+        let public_key = key.verifying_key().to_sec1_point(true);
+        let uncompressed = key.verifying_key().to_sec1_point(false);
         let hash = Keccak256::digest(&uncompressed.as_bytes()[1..]);
         let transport = Transport {
             body: serde_json::json!({

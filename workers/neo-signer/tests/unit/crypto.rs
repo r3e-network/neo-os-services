@@ -279,15 +279,14 @@ fn sign_and_verify_round_trip() {
 
 #[test]
 fn signature_is_low_s() {
-    // Consensus rejects high-S signatures. `normalize_s` returns Some only when
-    // it had to flip S, so "always None" is the crate's own definition of a
-    // low-S signature — and it fails if normalization is ever removed here.
+    // A signature is low-S exactly when normalization leaves it unchanged.
     for seed in 1u8..24 {
         let private_key = [seed; 32];
         let signature = sign_transaction(&private_key, b"low-s check", MAINNET).expect("signs");
         let parsed = Signature::from_slice(&signature[..]).expect("64-byte r||s parses");
-        assert!(
-            parsed.normalize_s().is_none(),
+        assert_eq!(
+            parsed.normalize_s(),
+            parsed,
             "seed {seed}: signature carries a high S value"
         );
     }

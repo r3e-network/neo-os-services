@@ -108,7 +108,7 @@ pub fn public_key_from_private(private_key: &[u8; 32]) -> Result<[u8; 33], Signe
     let sk =
         SigningKey::from_slice(private_key).map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
     let vk = sk.verifying_key();
-    let point = vk.to_encoded_point(true);
+    let point = vk.to_sec1_point(true);
     let bytes = point.as_bytes();
     let mut out = [0u8; 33];
     out.copy_from_slice(bytes);
@@ -119,22 +119,20 @@ pub fn public_key_from_private(private_key: &[u8; 32]) -> Result<[u8; 33], Signe
 /// one canonical compressed representation used by custody records.
 pub fn compress_public_key(public_key: &[u8]) -> Option<[u8; 33]> {
     let key = VerifyingKey::from_sec1_bytes(public_key).ok()?;
-    let encoded = key.to_encoded_point(true);
+    let encoded = key.to_sec1_point(true);
     encoded.as_bytes().try_into().ok()
 }
 
 /// Mint a fresh custody private key from the OS CSPRNG.
 ///
-/// Through `SigningKey::random` rather than 32 raw random bytes because the
+/// Through `Generate::generate` rather than 32 raw random bytes because the
 /// scalar has to be inside `[1, n-1]`: 32 bytes from a generator has a
 /// negligible but non-zero chance of falling outside it, and a custody service
-/// should not be discovering that when a key refuses to import. The RNG itself
-/// arrives via `aes_gcm`'s re-export, which is already a dependency of the
-/// sealing path below — the alternative was adding `rand` to a key vault to
-/// reach the same `getrandom` call.
+/// should not be discovering that when a key refuses to import. The RNG comes
+/// from the same elliptic-curve API family as the signing trait.
 pub fn generate_private_key() -> Zeroizing<[u8; 32]> {
-    use aes_gcm::aead::OsRng;
-    let key = SigningKey::random(&mut OsRng);
+    use p256::elliptic_curve::Generate;
+    let key = SigningKey::generate();
     let mut out = [0u8; 32];
     out.copy_from_slice(key.to_bytes().as_slice());
     Zeroizing::new(out)
@@ -195,7 +193,7 @@ pub fn sign_transaction(
     let sk =
         SigningKey::from_slice(private_key).map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
     let signature: Signature = sk.sign(&sign_data(unsigned_tx, network_magic));
-    let signature = signature.normalize_s().unwrap_or(signature);
+    let signature = signature.normalize_s();
     let mut out = [0u8; 64];
     out.copy_from_slice(&signature.to_bytes());
     Ok(out)
@@ -211,7 +209,7 @@ pub fn sign_raw(private_key: &[u8; 32], data: &[u8]) -> Result<[u8; 64], SignerC
     let sk =
         SigningKey::from_slice(private_key).map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
     let signature: Signature = sk.sign(data);
-    let signature = signature.normalize_s().unwrap_or(signature);
+    let signature = signature.normalize_s();
     let mut out = [0u8; 64];
     out.copy_from_slice(&signature.to_bytes());
     Ok(out)
@@ -235,11 +233,7 @@ pub fn verify_signature(public_key: &[u8; 33], preimage: &[u8], signature: &[u8;
         Ok(s) => s,
         Err(_) => return false,
     };
-    let point = match p256::EncodedPoint::from_bytes(public_key) {
-        Ok(p) => p,
-        Err(_) => return false,
-    };
-    let vk = match VerifyingKey::from_encoded_point(&point) {
+    let vk = match VerifyingKey::from_sec1_bytes(public_key) {
         Ok(k) => k,
         Err(_) => return false,
     };
@@ -414,7 +408,7 @@ pub fn evm_public_key_from_private(private_key: &[u8; 32]) -> Result<[u8; 65], S
     let sk = K256SigningKey::from_slice(private_key)
         .map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
     let vk = sk.verifying_key();
-    let point = vk.to_encoded_point(false); // uncompressed
+    let point = vk.to_sec1_point(false); // uncompressed
     let bytes = point.as_bytes();
     let mut out = [0u8; 65];
     out.copy_from_slice(bytes);
@@ -427,7 +421,7 @@ pub fn evm_compressed_public_key_from_private(
 ) -> Result<[u8; 33], SignerCryptoError> {
     let sk = K256SigningKey::from_slice(private_key)
         .map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
-    let point = sk.verifying_key().to_encoded_point(true);
+    let point = sk.verifying_key().to_sec1_point(true);
     let mut out = [0u8; 33];
     out.copy_from_slice(point.as_bytes());
     Ok(out)
@@ -439,7 +433,7 @@ pub fn evm_address_from_compressed_public_key(
 ) -> Result<[u8; 20], SignerCryptoError> {
     let key = K256VerifyingKey::from_sec1_bytes(public_key)
         .map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
-    let point = key.to_encoded_point(false);
+    let point = key.to_sec1_point(false);
     let bytes = point.as_bytes();
     let mut uncompressed = [0u8; 65];
     uncompressed.copy_from_slice(bytes);
@@ -479,9 +473,7 @@ pub fn sign_evm_transaction(
         .map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
 
     // Sign the transaction hash
-    let (signature, recovery_id) = sk
-        .sign_prehash_recoverable(unsigned_tx_hash)
-        .map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
+    let (signature, recovery_id) = sk.sign_prehash_recoverable(unsigned_tx_hash);
 
     let sig_bytes = signature.to_bytes();
     let mut r = [0u8; 32];
@@ -516,9 +508,7 @@ pub fn sign_eip191_prehash(
 ) -> Result<[u8; 65], SignerCryptoError> {
     let sk = K256SigningKey::from_slice(private_key)
         .map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
-    let (signature, recovery_id) = sk
-        .sign_prehash_recoverable(message_hash)
-        .map_err(|_| SignerCryptoError::InvalidPrivateKey)?;
+    let (signature, recovery_id) = sk.sign_prehash_recoverable(message_hash);
     let mut result = [0u8; 65];
     result[..64].copy_from_slice(&signature.to_bytes());
     // personal_sign/ecrecover uses the historical 27/28 convention.
@@ -528,8 +518,8 @@ pub fn sign_eip191_prehash(
 
 /// Generate a fresh secp256k1 private key for EVM chains.
 pub fn generate_evm_private_key() -> Zeroizing<[u8; 32]> {
-    use aes_gcm::aead::OsRng;
-    let key = K256SigningKey::random(&mut OsRng);
+    use p256::elliptic_curve::Generate;
+    let key = K256SigningKey::generate();
     let mut out = [0u8; 32];
     out.copy_from_slice(key.to_bytes().as_slice());
     Zeroizing::new(out)

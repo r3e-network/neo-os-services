@@ -769,11 +769,11 @@ async fn structured_eip191_fulfillment_is_vector_locked_policy_bound_and_idempot
     assert_eq!(
         format!(
             "0x{}",
-            hex::encode(recovered.to_encoded_point(true).as_bytes())
+            hex::encode(recovered.to_sec1_point(true).as_bytes())
         ),
         first.field("public_key")
     );
-    let uncompressed = recovered.to_encoded_point(false);
+    let uncompressed = recovered.to_sec1_point(false);
     let recovered_address = &neo_os_chain_evm::keccak256(&uncompressed.as_bytes()[1..])[12..];
     assert_eq!(
         format!("0x{}", hex::encode(recovered_address)),

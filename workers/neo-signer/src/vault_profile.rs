@@ -428,7 +428,7 @@ fn canonical_profile(profile: &VaultProfile, network_set_hash: &[u8; 32]) -> Vec
 
 #[cfg(test)]
 pub(crate) fn test_profile(master_bytes: [u8; 32]) -> ValidatedVaultProfile {
-    use p256::{elliptic_curve::sec1::ToEncodedPoint, SecretKey};
+    use p256::{elliptic_curve::sec1::ToSec1Point, SecretKey};
 
     let master = MasterKey::from_bytes(master_bytes);
     let receipt_key = SecretKey::from_slice(&[7; 32]).expect("fixed test receipt key");
@@ -463,7 +463,7 @@ pub(crate) fn test_profile(master_bytes: [u8; 32]) -> ValidatedVaultProfile {
             receipt_keys: vec![ReceiptVerifierKey {
                 key_id: "receipt-r1".to_string(),
                 public_key_sec1_hex: hex::encode(
-                    receipt_key.public_key().to_encoded_point(false).as_bytes(),
+                    receipt_key.public_key().to_sec1_point(false).as_bytes(),
                 ),
             }],
         },

@@ -17,6 +17,6 @@ num-bigint = "0.4"
 # Player witness verification: the wallet signs the session canonical with
 # its secp256r1 account key (NEP dAPI signMessage framing); the session host
 # checks it in-process. Same version/features the enclave host already links.
-p256 = { version = "0.13", features = ["ecdsa"] }
+p256 = { version = "0.14", features = ["ecdsa", "getrandom"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"

@@ -213,14 +213,14 @@ pub fn recover_eip191_address(
     }
     let signature = Signature::from_slice(&bytes[..64])
         .map_err(|_| "EIP-191 signature scalars are invalid".to_string())?;
-    if signature.normalize_s().is_some() {
+    if signature.normalize_s() != signature {
         return Err("EIP-191 signature must use canonical low-S form".to_string());
     }
     let recovery_id = RecoveryId::from_byte(bytes[64] - 27)
         .ok_or_else(|| "EIP-191 recovery id is invalid".to_string())?;
     let key = VerifyingKey::recover_from_prehash(message_hash, &signature, recovery_id)
         .map_err(|_| "EIP-191 signature does not recover a verifier".to_string())?;
-    let public_key = key.to_encoded_point(false);
+    let public_key = key.to_sec1_point(false);
     let hash = keccak256(&public_key.as_bytes()[1..]);
     Ok(hash[12..].try_into().expect("20-byte EVM address"))
 }

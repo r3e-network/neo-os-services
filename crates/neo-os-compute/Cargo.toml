@@ -44,7 +44,7 @@ hmac = "0.12"
 sha3 = "0.10"
 aes-gcm = "0.10"
 # EIP-191 personal-message recovery for the message-reveal lane.
-k256 = { version = "0.13", features = ["ecdsa"] }
+k256 = { version = "0.14", features = ["ecdsa", "getrandom"] }
 # crypto.rsa_verify — Node `createVerify('RSA-SHA256')` parity (PKCS#1 v1.5).
 aws-lc-rs = "1.18"
 # Ephemeral oracle key generation (dev fallback path).

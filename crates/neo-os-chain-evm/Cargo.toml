@@ -25,7 +25,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 sha3 = "0.10"
 url = "2"
 rlp = "0.5"
-k256 = { version = "0.13", features = ["ecdsa"] }
+k256 = { version = "0.14", features = ["ecdsa", "getrandom"] }
 
 [dev-dependencies]
 hex = "0.4"

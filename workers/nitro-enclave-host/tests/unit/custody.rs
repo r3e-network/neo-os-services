@@ -164,7 +164,7 @@ fn n3_transaction_signature_body(
     let unsigned = hex::decode(unsigned_hex.trim_start_matches("0x")).expect("unsigned hex");
     let signing_key =
         P256SigningKey::from_bytes((&[7_u8; 32]).into()).expect("fixed P-256 signing key");
-    let public_key = signing_key.verifying_key().to_encoded_point(true);
+    let public_key = signing_key.verifying_key().to_sec1_point(true);
     let verification_script =
         verification_script_single_sig(public_key.as_bytes()).expect("P-256 verification script");
     let script_hash =
@@ -177,7 +177,7 @@ fn n3_transaction_signature_body(
     let mut message = network_magic.to_le_bytes().to_vec();
     message.extend_from_slice(&Sha256::digest(&unsigned));
     let signature: p256::ecdsa::Signature = signing_key.sign(&message);
-    let signature = signature.normalize_s().unwrap_or(signature);
+    let signature = signature.normalize_s();
     let mut invocation_script = vec![0x0c, 0x40];
     invocation_script.extend_from_slice(&signature.to_bytes());
     let mut display_digest = Sha256::digest(&unsigned).to_vec();
@@ -230,14 +230,12 @@ fn eip191_signature_body(
     let digest = build_neox_digest(chain_id, oracle_contract, fulfillment, result_bytes_hex)
         .expect("valid fulfillment");
     let message_hash = eip191_message_hash(&digest);
-    let (signature, recovery) = signing_key
-        .sign_prehash_recoverable(&message_hash)
-        .expect("sign prehash");
+    let (signature, recovery) = signing_key.sign_prehash_recoverable(&message_hash);
     let mut signature_bytes = signature.to_bytes().to_vec();
     signature_bytes.push(recovery.to_byte() + 27);
     let verifying_key = signing_key.verifying_key();
-    let public_key = verifying_key.to_encoded_point(true);
-    let uncompressed = verifying_key.to_encoded_point(false);
+    let public_key = verifying_key.to_sec1_point(true);
+    let uncompressed = verifying_key.to_sec1_point(false);
     let address_hash = Keccak256::digest(&uncompressed.as_bytes()[1..]);
     let address = format!("0x{}", hex::encode(&address_hash[12..]));
     serde_json::json!({

@@ -633,7 +633,7 @@ mod tests {
         assert_eq!(status.status, AccountStatus::Single as i32);
         let uncompressed = p256::ecdsa::VerifyingKey::from_sec1_bytes(&key.public_key)
             .expect("custody stores a valid P-256 key")
-            .to_encoded_point(false);
+            .to_sec1_point(false);
         let status = bridge
             .get_account_status(Request::new(GetAccountStatusRequest {
                 public_key: uncompressed.as_bytes().to_vec(),

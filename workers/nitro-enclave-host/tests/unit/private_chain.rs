@@ -1,6 +1,9 @@
 //! Driven by scripts/test-host-private-chain.py with a freshly deployed kernel.
 use crate::{fulfill::handle_oracle_fulfill, state, RuntimeError};
-use p256::ecdsa::{signature::Signer, Signature, SigningKey};
+use p256::{
+    ecdsa::{signature::Signer, Signature, SigningKey},
+    elliptic_curve::Generate,
+};
 use serde_json::{json, Value};
 
 #[path = "support.rs"]
@@ -13,7 +16,7 @@ struct LocalSigner(SigningKey);
 
 impl LocalSigner {
     fn identity(&self) -> Value {
-        let public = self.0.verifying_key().to_encoded_point(true);
+        let public = self.0.verifying_key().to_sec1_point(true);
         let hash = neo_os_core::n3_tx::script_hash_from_public_key(public.as_bytes()).unwrap();
         let address = neo_os_core::n3_tx::address_from_script_hash(&hash);
         let display: Vec<_> = hash.iter().rev().copied().collect();
@@ -65,7 +68,7 @@ fn fulfill_deployed_kernel_request() {
         support::FakeKms::default(),
     );
     harness.state.fulfillment_compute_override = None;
-    harness.state.signer = Box::new(LocalSigner(SigningKey::random(&mut rand::rngs::OsRng)));
+    harness.state.signer = Box::new(LocalSigner(SigningKey::generate()));
     let response = handle_oracle_fulfill(&harness.state, &fixture["request"])
         .expect("freshly deployed kernel request must fulfill");
     assert_eq!(response["success"], true);

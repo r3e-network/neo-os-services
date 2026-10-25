@@ -201,10 +201,7 @@ fn network_fixture(
             receipt_keys: vec![ReceiptVerifierKey {
                 key_id: "receipt-r1".to_string(),
                 public_key_sec1_hex: hex::encode(
-                    receipt_key
-                        .verifying_key()
-                        .to_encoded_point(false)
-                        .as_bytes(),
+                    receipt_key.verifying_key().to_sec1_point(false).as_bytes(),
                 ),
             }],
         },

@@ -2,7 +2,7 @@ use super::*;
 use crate::network_profiles::{select_request, PROFILES_ENV};
 use neo_signer::vault::MasterKey;
 use neo_signer::vault_profile::root_key_commitment;
-use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::elliptic_curve::sec1::ToSec1Point;
 use serde_json::{json, Value};
 
 fn fixture(dir: &Path) -> Value {
@@ -19,7 +19,7 @@ fn fixture(dir: &Path) -> Value {
             "root_key_version":format!("{network}-r1"),"root_key_commitment":hex::encode(root_key_commitment(&MasterKey::from_bytes([seed;32]))),
             "snapshot_format_version":2,"signer_schema_version":1,
             "coordinator":{"origin":format!("https://authority-{network}.example"),"aws_region":"us-east-1","snapshot_bucket":"synthetic-neoos-bucket","snapshot_prefix":format!("vaults/{network}"),
-            "receipt_keys":[{"key_id":"receipt-r1","public_key_sec1_hex":hex::encode(receipt.public_key().to_encoded_point(false).as_bytes())}]},
+            "receipt_keys":[{"key_id":"receipt-r1","public_key_sec1_hex":hex::encode(receipt.public_key().to_sec1_point(false).as_bytes())}]},
             "release_policy_version":format!("{network}-r1")
         });
         let bytes = serde_json::to_vec(&profile).unwrap();

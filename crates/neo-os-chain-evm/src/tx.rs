@@ -187,14 +187,14 @@ fn recover_sender(
     s_word[32 - s.len()..].copy_from_slice(s);
     let signature = Signature::from_scalars(r_word, s_word)
         .map_err(|_| "EIP-1559 signature scalar is outside secp256k1".to_string())?;
-    if signature.normalize_s().is_some() {
+    if signature.normalize_s() != signature {
         return Err("EIP-1559 signature must use canonical low-S form".to_string());
     }
     let recovery_id = RecoveryId::from_byte(y_parity)
         .ok_or_else(|| "EIP-1559 signature parity is invalid".to_string())?;
     let key = VerifyingKey::recover_from_prehash(signing_hash, &signature, recovery_id)
         .map_err(|_| "EIP-1559 signature does not recover a sender".to_string())?;
-    let public_key = key.to_encoded_point(false);
+    let public_key = key.to_sec1_point(false);
     let hash = Keccak256::digest(&public_key.as_bytes()[1..]);
     Ok(hash[12..].try_into().expect("20-byte EVM address"))
 }
@@ -292,7 +292,7 @@ mod tests {
         signing_payload.extend_from_slice(&unsigned.out());
         let signing_hash: [u8; 32] = Keccak256::digest(&signing_payload).into();
         let key = SigningKey::from_slice(&[9u8; 32]).unwrap();
-        let (signature, recovery_id) = key.sign_prehash_recoverable(&signing_hash).unwrap();
+        let (signature, recovery_id) = key.sign_prehash_recoverable(&signing_hash);
 
         let mut stream = RlpStream::new_list(12);
         stream.append(&12_227_332u64);
@@ -316,7 +316,7 @@ mod tests {
         assert_eq!(decoded.data, vec![0xaa, 0xbb]);
         assert!(decoded.value.iter().all(|byte| *byte == 0));
         assert_eq!(decoded.signing_hash, signing_hash);
-        let public_key = key.verifying_key().to_encoded_point(false);
+        let public_key = key.verifying_key().to_sec1_point(false);
         let expected_hash = Keccak256::digest(&public_key.as_bytes()[1..]);
         assert_eq!(decoded.from.as_slice(), &expected_hash[12..]);
         assert_eq!(decoded.tx_hash.len(), 66);

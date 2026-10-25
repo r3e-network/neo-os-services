@@ -38,7 +38,7 @@ fn identity(app_id: &str, game_id: usize) -> Json {
     let mut scalar = [1u8; 32];
     scalar[0] = 0x11;
     let signing_key = SigningKey::from_slice(&scalar).expect("valid test scalar");
-    let public_key = signing_key.verifying_key().to_encoded_point(true);
+    let public_key = signing_key.verifying_key().to_sec1_point(true);
     let public_key_hex = hex_encode(public_key.as_bytes());
     let script_hash = neo_os_core::n3_tx::script_hash_from_public_key(public_key.as_bytes())
         .expect("test public key script hash");
@@ -331,7 +331,7 @@ fn player(seed: u8) -> Player {
     let mut scalar = [seed; 32];
     scalar[0] = 0x11;
     let signing_key = SigningKey::from_slice(&scalar).expect("valid test scalar");
-    let public_key = signing_key.verifying_key().to_encoded_point(true);
+    let public_key = signing_key.verifying_key().to_sec1_point(true);
     let script_hash = neo_os_core::n3_tx::script_hash_from_public_key(public_key.as_bytes())
         .expect("test public key script hash");
     Player {

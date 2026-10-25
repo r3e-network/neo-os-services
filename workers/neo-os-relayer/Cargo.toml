@@ -28,11 +28,11 @@ axum = "0.8"
 http = "1"
 hex = "0.4"
 sha2 = "0.10"
-p256 = { version = "0.13", features = ["ecdsa"] }
+p256 = { version = "0.14", features = ["ecdsa", "getrandom"] }
 url = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 [dev-dependencies]
 rlp = "0.5"
-k256 = { version = "0.13", features = ["ecdsa"] }
+k256 = { version = "0.14", features = ["ecdsa", "getrandom"] }

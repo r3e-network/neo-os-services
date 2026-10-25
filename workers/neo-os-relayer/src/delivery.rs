@@ -1895,7 +1895,7 @@ mod tests {
     }
 
     fn evm_address(key: &SigningKey) -> String {
-        let public_key = key.verifying_key().to_encoded_point(false);
+        let public_key = key.verifying_key().to_sec1_point(false);
         let hash = neo_os_chain_evm::keccak256(&public_key.as_bytes()[1..]);
         format!("0x{}", hex::encode(&hash[12..]))
     }
@@ -1909,7 +1909,7 @@ mod tests {
             "address": evm_address(key),
             "public_key": format!(
                 "0x{}",
-                hex::encode(key.verifying_key().to_encoded_point(true).as_bytes())
+                hex::encode(key.verifying_key().to_sec1_point(true).as_bytes())
             )
         })
     }
@@ -1923,9 +1923,7 @@ mod tests {
             &word[first..]
         }
 
-        let (signature, recovery_id) = key
-            .sign_prehash_recoverable(&unsigned.signing_hash())
-            .expect("test EVM signature");
+        let (signature, recovery_id) = key.sign_prehash_recoverable(&unsigned.signing_hash());
         let mut stream = RlpStream::new_list(12);
         stream.append(&unsigned.chain_id);
         stream.append(&unsigned.nonce);
@@ -2452,9 +2450,8 @@ mod tests {
         )
         .unwrap();
         let message_hash = eip191_message_hash(&digest);
-        let (verifier_signature, verifier_recovery) = verifier_key
-            .sign_prehash_recoverable(&message_hash)
-            .unwrap();
+        let (verifier_signature, verifier_recovery) =
+            verifier_key.sign_prehash_recoverable(&message_hash);
         let mut signature = verifier_signature.to_bytes().to_vec();
         signature.push(verifier_recovery.to_byte() + 27);
         let signature = format!("0x{}", hex::encode(signature));
@@ -2489,7 +2486,7 @@ mod tests {
                     "signature": signature,
                     "public_key": format!(
                         "0x{}",
-                        hex::encode(verifier_key.verifying_key().to_encoded_point(true).as_bytes())
+                        hex::encode(verifier_key.verifying_key().to_sec1_point(true).as_bytes())
                     ),
                     "fulfillment_digest_hex": format!("0x{}", hex::encode(digest)),
                     "verification": {"signature_scheme": "eip191"},

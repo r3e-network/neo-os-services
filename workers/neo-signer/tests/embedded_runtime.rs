@@ -13,7 +13,7 @@ use neo_signer::{
     },
 };
 use nitro_attest::release::AttestationSource;
-use p256::{elliptic_curve::sec1::ToEncodedPoint, SecretKey};
+use p256::{elliptic_curve::sec1::ToSec1Point, SecretKey};
 use std::{
     path::Path,
     sync::{Arc, Mutex},
@@ -53,7 +53,7 @@ fn profile(master: &MasterKey) -> VaultProfile {
             receipt_keys: vec![ReceiptVerifierKey {
                 key_id: "receipt-r1".to_string(),
                 public_key_sec1_hex: hex::encode(
-                    receipt_key.public_key().to_encoded_point(false).as_bytes(),
+                    receipt_key.public_key().to_sec1_point(false).as_bytes(),
                 ),
             }],
         },

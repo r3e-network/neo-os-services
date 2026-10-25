@@ -1115,7 +1115,7 @@ impl SignerPlane for CustodySigner {
         let recovered =
             K256VerifyingKey::recover_from_prehash(&expected_message_hash, &compact, recovery)
                 .map_err(|_| invalid_response_error(role, "signature did not recover"))?;
-        let recovered_compressed = recovered.to_encoded_point(true);
+        let recovered_compressed = recovered.to_sec1_point(true);
         let public_key = required_response_field(role, &reply.body, "public_key")?;
         if decode_hex(&public_key).as_deref() != Some(recovered_compressed.as_bytes()) {
             return Err(invalid_response_error(
@@ -1123,7 +1123,7 @@ impl SignerPlane for CustodySigner {
                 "public_key did not match signature",
             ));
         }
-        let recovered_uncompressed = recovered.to_encoded_point(false);
+        let recovered_uncompressed = recovered.to_sec1_point(false);
         let address_hash = Keccak256::digest(&recovered_uncompressed.as_bytes()[1..]);
         let recovered_address: [u8; 20] = address_hash[12..]
             .try_into()

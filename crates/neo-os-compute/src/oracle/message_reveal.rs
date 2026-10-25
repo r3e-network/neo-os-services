@@ -285,7 +285,7 @@ pub fn recover_reveal_signer(statement: &str, signature: &str) -> Option<String>
     let recovery = RecoveryId::new(recovery_id == 1, false);
     let verifying_key =
         VerifyingKey::recover_from_prehash(digest.as_slice(), &signature, recovery).ok()?;
-    let encoded = verifying_key.to_encoded_point(false);
+    let encoded = verifying_key.to_sec1_point(false);
     let hash = Keccak256::digest(&encoded.as_bytes()[1..]);
     Some(eip55_checksum(&hash[12..]))
 }
@@ -1162,11 +1162,11 @@ mod tests {
 
     fn reveal_wallet() -> k256::ecdsa::SigningKey {
         let bytes = hex_bytes(TEST_PK_HEX).unwrap();
-        k256::ecdsa::SigningKey::from_bytes((&bytes[..]).into()).unwrap()
+        k256::ecdsa::SigningKey::from_slice(&bytes[..]).unwrap()
     }
 
     fn reveal_wallet_address() -> String {
-        let encoded = reveal_wallet().verifying_key().to_encoded_point(false);
+        let encoded = reveal_wallet().verifying_key().to_sec1_point(false);
         let hash = Keccak256::digest(&encoded.as_bytes()[1..]);
         eip55_checksum(&hash[12..])
     }
@@ -1182,7 +1182,7 @@ mod tests {
         );
         let digest = Keccak256::digest(personal.as_bytes());
         let prehash: [u8; 32] = digest.into();
-        let (signature, recid) = key.sign_prehash_recoverable(&prehash).unwrap();
+        let (signature, recid) = key.sign_prehash_recoverable(&prehash);
         assert!(!recid.is_x_reduced());
         let mut raw = signature.to_bytes().to_vec();
         raw.push(27 + recid.is_y_odd() as u8);

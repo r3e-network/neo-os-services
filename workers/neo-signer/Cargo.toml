@@ -43,12 +43,12 @@ fs2 = "0.4.3"
 hex = "0.4"
 hkdf = "0.12"
 hmac = "0.12"
-k256 = { version = "0.13", features = ["ecdsa", "sha256"] }
+k256 = { version = "0.14", features = ["ecdsa", "getrandom", "sha256"] }
 neo-os-core = { path = "../../crates/neo-os-core" }
 neo-os-chain-evm = { path = "../../crates/neo-os-chain-evm" }
 neo-os-service-runtime = { path = "../../crates/neo-os-service-runtime" }
 nitro-attest = { path = "../../crates/nitro-attest" }
-p256 = { version = "0.13", features = ["ecdsa"] }
+p256 = { version = "0.14", features = ["ecdsa", "getrandom"] }
 prost = "0.13"
 rlp = "0.5"
 ripemd = "0.1"

@@ -1654,7 +1654,7 @@ pub(crate) mod test_support {
         let mut scalar = [seed; 32];
         scalar[0] = 0x11;
         let signing_key = SigningKey::from_slice(&scalar).expect("valid scalar");
-        let public_key = signing_key.verifying_key().to_encoded_point(true);
+        let public_key = signing_key.verifying_key().to_sec1_point(true);
         let public_key_hex = crate::hex_encode(public_key.as_bytes());
         let script_hash = neo_os_core::n3_tx::script_hash_from_public_key(public_key.as_bytes())
             .expect("script hash");

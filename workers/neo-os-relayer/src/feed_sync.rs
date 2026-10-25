@@ -1309,7 +1309,7 @@ fn parse_n3_signed_plan(
         .map_err(|_| "Neo N3 feed signer returned an invalid P-256 public key".to_string())?;
     let signature_value = P256Signature::from_slice(&signature)
         .map_err(|_| "Neo N3 feed signer returned an invalid P-256 signature".to_string())?;
-    if signature_value.normalize_s().is_some() {
+    if signature_value.normalize_s() != signature_value {
         return Err("Neo N3 feed signer returned a non-canonical high-S signature".to_string());
     }
     verifying_key
@@ -1840,7 +1840,7 @@ mod tests {
             let signing_key = SigningKey::from_slice(&[7u8; 32]).expect("test key");
             let public_key = signing_key
                 .verifying_key()
-                .to_encoded_point(true)
+                .to_sec1_point(true)
                 .as_bytes()
                 .to_vec();
             let verification = verification_script_single_sig(&public_key).expect("test script");
@@ -1975,7 +1975,7 @@ mod tests {
                 };
                 let message = tx.message_for_signing(network_magic);
                 let signature: P256Signature = self.signing_key.sign(&message);
-                let signature = signature.normalize_s().unwrap_or(signature);
+                let signature = signature.normalize_s();
                 let mut response = json!({
                     "status": "ok",
                     "chain": "neo_n3",
@@ -2117,7 +2117,7 @@ mod tests {
         signing_payload.extend_from_slice(&unsigned.out());
         let signing_hash = neo_os_chain_evm::keccak256(&signing_payload);
         let key = k256::ecdsa::SigningKey::from_slice(&[8u8; 32]).unwrap();
-        let (signature, recovery_id) = key.sign_prehash_recoverable(&signing_hash).unwrap();
+        let (signature, recovery_id) = key.sign_prehash_recoverable(&signing_hash);
         let mut stream = RlpStream::new_list(12);
         stream.append(&12_227_332u64);
         stream.append(&7u64);
@@ -2133,14 +2133,14 @@ mod tests {
         stream.append(&minimal(signature.s().to_bytes().as_slice()));
         let mut raw = vec![0x02];
         raw.extend_from_slice(&stream.out());
-        let public_key = key.verifying_key().to_encoded_point(false);
+        let public_key = key.verifying_key().to_sec1_point(false);
         let address_hash = neo_os_chain_evm::keccak256(&public_key.as_bytes()[1..]);
         (
             format!("0x{}", hex::encode(raw)),
             format!("0x{}", hex::encode(&address_hash[12..])),
             format!(
                 "0x{}",
-                hex::encode(key.verifying_key().to_encoded_point(true).as_bytes())
+                hex::encode(key.verifying_key().to_sec1_point(true).as_bytes())
             ),
         )
     }
