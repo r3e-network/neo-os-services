@@ -5,7 +5,7 @@
       "consumer": "isolated-regression-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Test harnesses, vectors and generators exercise request routing, signatures and byte formats with synthetic inputs; their assertions do not award economic value to users. Current network-context, scoped-state and sponsor-projection fixtures preserve this boundary. Tests of signing or game results do not classify the production signing authority, game engines or settlement consumers as non-value. Review covers these exact files only, not future tests or live deployments.",
+      "justification": "Test harnesses, vectors and generators exercise request routing, signatures and byte formats with synthetic inputs; their assertions do not award economic value to users. Current network-context, scoped-state, sponsor-projection and raw-payload-v2 fixtures preserve this boundary, with exact payload bytes covered by the same JS/Rust/C# vector checks rather than reconstructed from display text. Tests of signing or game results do not classify the production signing authority, game engines or settlement consumers as non-value. Review covers these exact files only, not future tests or live deployments.",
       "inputs": {
         "apps/web/__tests__/control-plane.test.ts": {
           "sha256": "6de119dd0f5ebda3a3cc046514d1130c5070b2ad9847a6220e50d4dbecac9435"
@@ -20,7 +20,7 @@
           "sha256": "3ab81728d5b202d431191cfb08078ff7c1128a3841e39958a9b5b5cd4a4c18fe"
         },
         "crates/neo-os-chain-evm/tests/vectors/neox_digest.json": {
-          "sha256": "c3cfb4e59d4f984b875c92c004bed48fd4142e8bc57e9346e13990b1a16b89f7"
+          "sha256": "407227b77d27b40c57e243caa996e56bba0442701e9b12a2f41ab73d2eb4fca6"
         },
         "crates/neo-os-compute/tests/capabilities_tests.rs": {
           "sha256": "4e4ec0c1ab01c03adc2dab2af9b14065664be256b96ff903351e4b4e9be51b43"
@@ -38,7 +38,7 @@
           "sha256": "1275507e2aea08e0ff773798f0bc9b3e49af1b11ae59cadf9763bbaacbe583e8"
         },
         "crates/neo-os-core/tests/vectors/neox_digest.json": {
-          "sha256": "c3cfb4e59d4f984b875c92c004bed48fd4142e8bc57e9346e13990b1a16b89f7"
+          "sha256": "407227b77d27b40c57e243caa996e56bba0442701e9b12a2f41ab73d2eb4fca6"
         },
         "crates/neo-os-core/tests/vectors/retry_backoff.json": {
           "sha256": "a039a698d4b86052ce98249d89aca7de0649404630aa69e1e68a9dd4152cf34c"
@@ -56,16 +56,16 @@
           "sha256": "2d38607a973c1ad374133956b9ec7d77ad564beac497eb0865943451ec6cb126"
         },
         "deploy/nitro/enclave-server.test.mjs": {
-          "sha256": "487b8c94db1627638276ee85730b8f9225946bc63470e544c033c6f0e25af866"
+          "sha256": "4ee540d76f78e11108a1169a855ceca9c8108bda7285531749caafdb365d513c"
         },
         "fuzz-os-infra.mjs": {
           "sha256": "506962eb18f707466be45abaad691289a50b4640e22aeb6198a4e855ee0b1354"
         },
         "scripts/custody-plane-e2e.mjs": {
-          "sha256": "8b66c96605518816426eddf0030ab17a3ede0e0d708f7437bebfa5d427f63c1f"
+          "sha256": "91c1c7805a783ccd0aeefc5013917ea373a0f3e6fa543eb6759c655f714c23e6"
         },
         "scripts/export-rust-vectors.mjs": {
-          "sha256": "6249ab98047227cd3967f6bf8376f984b0d32ff08051eebfe42b3b99caf3d0ee"
+          "sha256": "8e612c7e92d2fe4b9391bca10a6ac1c8f58d4f74dca4661a72f02c70dc395113"
         },
         "scripts/network-identity-consumers.test.mjs": {
           "sha256": "04e475b1e058566d110a113afef0eda939ee18cf1af0671491524e9a3c031ded"
@@ -80,34 +80,34 @@
           "sha256": "1e83b015dd67366b4f52fbc4c290b5cd67f3ccc24d37e31ff0fbfce998b91294"
         },
         "workers/morpheus-relayer/relayer.test.mjs": {
-          "sha256": "3da13ec43377c7cf1461c71af1ec94c449050ef5bba864d1275fe3e05007901d"
+          "sha256": "1d3fa9b04227371daa972095a9a2912c72555540d30abc2d833e516d2eec8d4b"
         },
         "workers/morpheus-relayer/src/fulfillment.test.mjs": {
-          "sha256": "b426790409e3bfe0542427e7aca59da874c8bf26c2e76974cc66f52649cc1c53"
+          "sha256": "9f3fb3102f0f34041d81e49478ad3e84308c0f0ad1053521a619519fbb20db9a"
         },
         "workers/morpheus-relayer/src/identifier-hygiene.test.mjs": {
-          "sha256": "298d0220eb7ff097878169f45a25c269d19112373123d3b7586756f7d5d22bf6"
+          "sha256": "bfc75aeb8a7f3e06603fa4bc0bcfac417cf1afdf345cec27db4315e942b1012c"
         },
         "workers/morpheus-relayer/src/lib/neo-signers.test.mjs": {
           "sha256": "9a9fc826d924c77a5dbc0728cd259c1a450faddb92e93e6c7a4caab7b5c177e4"
         },
         "workers/morpheus-relayer/src/neox.test.mjs": {
-          "sha256": "5e4b0f31978465123e7e3e65ad2f1e53bc4085d2a35de7d11b1520ee999ef7ed"
+          "sha256": "3a54f28e5be244c4d478ac7b1fa6e4c7a562fa55ca1f7cfa23cc22244b5c82bc"
         },
         "workers/morpheus-relayer/src/prometheus.test.mjs": {
           "sha256": "cc21eafb8a68076389903d425fc1a2aa3e27d9eb4c7c7a4e4f588846806997c0"
         },
         "workers/morpheus-relayer/src/request-processor.test.mjs": {
-          "sha256": "e8f99fbb143e42d63c975ad3d73cd0de0f63d1df5700238e26338518c498a705"
+          "sha256": "0842e8aa6fc1f249483242bd436e6982c4b14942fa19a31f6c1ae38935909d8a"
         },
         "workers/nitro-enclave-host/tests/unit/custody.rs": {
-          "sha256": "a0ba913fe0743b3faf2597b4bcee2f662b452d961174cd27d4980375e41979bc"
+          "sha256": "de6b5fcc0dfa51e0c92f38fd1f780f4a2a1c80cba1a6523bbfa01e6a7aa51dd4"
         },
         "workers/nitro-enclave-host/tests/unit/dispatch.rs": {
           "sha256": "bfdec5533ed82f65aa1cf99d062fafea97c966926b480ba52c4da1e3a4717b52"
         },
         "workers/nitro-enclave-host/tests/unit/fulfill.rs": {
-          "sha256": "0d79bd31b9c2db3fce3b67aed78ff214993f8c9352f4f25ef8434c73a6ca5ca7"
+          "sha256": "7c1f793a80c6dc5e87675776b1652091478f4f4104ed4f6ffd3bca134312f068"
         },
         "workers/nitro-enclave-host/tests/unit/overlay.rs": {
           "sha256": "a9924f35c5fbca7fcc4120729e19712aab8518ba15e94c7b98e5b06628f658b6"
@@ -122,13 +122,13 @@
           "sha256": "3991b54a38a19d3c4cfd9dab23a444607410a569244f9591b52eb19dddb97f4f"
         },
         "workers/nitro-enclave-host/tests/unit/session.rs": {
-          "sha256": "2f26ce98189eceead84e0b8b4826d51f2e2680adc83cbd5c58b9388db07255d0"
+          "sha256": "e0c70265eef80f4442659a961a385d91cc4e3afdabac5e156dfee263b4e829ec"
         },
         "workers/nitro-enclave-host/tests/unit/sign.rs": {
           "sha256": "a94c7b465a2c52385b2222109aa48ad847b0b459d5a12ec21429d7982f848da4"
         },
         "workers/nitro-enclave-host/tests/unit/vrf.rs": {
-          "sha256": "92c53f7366c8479b3e3e47bd04095fc409e1f0bd030ffd03e539cc476ada252e"
+          "sha256": "c5f7d65512e1841d08fd3236b42c9cc6a912b364df567caddb66ef1d9f27eda1"
         },
         "workers/nitro-worker/src/capabilities.test.mjs": {
           "sha256": "81958e6018b72875b3887bc43a72228b7f9bf3d2a5ae7cd54e182df5d5f8a96c"
@@ -228,7 +228,7 @@
       "justification": "Kernel capability, routing, configuration, resource accounting and envelope definitions. These integration inputs do not consume VRF output to decide economic value; oracle service fees are independent of the random output. Caller settlement is separately classified.",
       "inputs": {
         "contracts/MorpheusOracle/MorpheusOracle.cs": {
-          "sha256": "68ad447db1ac276cc2ff21ac05850fe1577d49f766a057189b5b045d978c2953"
+          "sha256": "9f7ba2bff8e8515c4ee3a6f2580d72ce1b0cea6ac9c494269180cfab2755eb2d"
         },
         "crates/neo-os-compute/src/capabilities.rs": {
           "sha256": "f83d92bc792a47fa34d684e9b9f9631394d9e9b4ccbdbcdb84c3ecf993c46099"
@@ -280,7 +280,7 @@
           "sha256": "2756c8688bb1b114001783e681db31f0a48d6b2be96b91aa6cd9e297cbef2392"
         },
         "deploy/nitro/enclave-server.mjs": {
-          "sha256": "59a84e67912ebba9c2a4529f0c31ec9e5895ffc40d8f040e651f34b78f523e40"
+          "sha256": "6c393b32af72ee8075038d1a465fb6d1363d4bcd9caff0c4735c1068788b0637"
         }
       }
     },
@@ -288,10 +288,10 @@
       "consumer": "oracle-delivery-adapters",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Transport, dispatch and compatibility generation for oracle results, including the unchanged sponsor projection expressed by the current config adapter. These exact adapters do not select rewards or settle wagers; final consumers require separate review, including the explicitly recorded dice debt. Forwarding is not proof that a caller is non-value.",
+      "justification": "Transport, dispatch and compatibility generation for oracle results, including the unchanged sponsor projection expressed by the current config adapter. The payload-v2 changes bind exact request bytes into fulfillment digests, preserve them through durable delivery and refuse missing or text-mismatched payloads rather than silently reconstructing them. These exact adapters do not select rewards or settle wagers; final consumers require separate review, including the explicitly recorded dice debt. Forwarding is not proof that a caller is non-value.",
       "inputs": {
         "deploy/evm/neox-fulfiller.mjs": {
-          "sha256": "8e86f13d6fae7b4dc56e5257d0360e1fab1dfdfd798abfc7c435b06d7bce9646"
+          "sha256": "6a58bebba5000fff46f04f6de74fefa81870f18c0faf2d371985de5bcfa963e2"
         },
         "workers/morpheus-relayer/src/config-schema.js": {
           "sha256": "d2492f4a0fe47ba7d8b1eecce6075c7a1f1e08947ee41fc275701fae8970b403"
@@ -303,22 +303,22 @@
           "sha256": "1863f6b07e72b057312fd49048588e49722bb9ed27bfbd41e2b6bf911c1d1650"
         },
         "workers/morpheus-relayer/src/fulfillment/enclave.js": {
-          "sha256": "944064db641add6b70df931a8dae1d755e68a076c720480d69644ef36606e979"
+          "sha256": "3593aca1bb2e7436136e0573c25423d7872be06113db65b70bbda1a1fabe89b7"
         },
         "workers/morpheus-relayer/src/fulfillment/executor.js": {
-          "sha256": "0710b3bb6529e5d96da3245e95c03bda4b9ed7812d3895f6261ed9cf9474d6db"
+          "sha256": "c50b1f7fe50cbf7bd8a636ff42b0500b5d31287417693965e27b98b665fe351b"
         },
         "workers/morpheus-relayer/src/neox.js": {
-          "sha256": "6e95c9a9dd36cd5ebcc20d03c5549d6285b0f70cba4c6f6e7a2830258f78ed0e"
+          "sha256": "4a2605fc74aa280376dace14e3cb498c6bfb08f593946e13e05917c5d2b92909"
         },
         "workers/morpheus-relayer/src/router.js": {
-          "sha256": "919586c7c4c574c20a69506d139b394ac8fc2c380dacbf55ef9674b761d5b267"
+          "sha256": "9daf8f254c5145f69518f47adcfec3c854d57e08e4a143103f16d16b7234b63d"
         },
         "workers/neo-os-relayer/src/config_introspect.rs": {
           "sha256": "108eb7baec8e545a7addee153d7ef3609ff959c440164e34b25e8fa31f895666"
         },
         "workers/neo-os-relayer/src/delivery.rs": {
-          "sha256": "458b22e4f0ce4304a492bce59dd7bc9bc1fe390f370f06a85f23fbd2a9f41a23"
+          "sha256": "71f762e80c2107163466c23be1e5125bc09fbdd8226e6cae4484d78f1341221c"
         }
       }
     },
@@ -340,7 +340,7 @@
       "justification": "Diagnostic consumer requests randomness and inspects result fields or signatures. Its random result is not used to choose a stake, payout, reward or asset allocation. Transaction fees are not conditioned on the random output. This classification does not authorize executing the script against a live chain.",
       "inputs": {
         "deploy/evm/validate-vrf.mjs": {
-          "sha256": "ba51dbfb4d220702d76bc33dceb3a5820785619a09d4cf5cfbaecdfcac68b2a4"
+          "sha256": "c2e84da0cbe7391c597c11355901d585d5bfd3d1fed8cd5bcc27afed5d9df1ce"
         }
       }
     },
@@ -534,7 +534,7 @@
           "sha256": "648a3c65156322f11bd6ba450b67ec8864ed8cb36bc12a1ffb3e0308c731af56"
         },
         "workers/neo-os-relayer/src/scan.rs": {
-          "sha256": "ef7fb19d9629502e3bc137ee363282993ad134cd829df58796d4f2a7040b77d3"
+          "sha256": "f91339348dd9d24beba11cc3cf30fa165f20c7d8e022a5eb85c3e4a7b5cfdf9e"
         },
         "workers/neo-os-relayer/src/transport.rs": {
           "sha256": "fe73927c2c92f35f455978bbefec90f733ebf569191216f66cd21ec133c47732"
@@ -602,7 +602,7 @@
           "sha256": "3a4c4336e5a5cf6298470c6dde356ec2a4c0cbd313f8a97e091dd6c7e616ddbe"
         },
         "crates/neo-os-chain-n3/src/scan.rs": {
-          "sha256": "81e064c30199f9088c194dcd19f706f465ee27db00488adbc156486b48f2076a"
+          "sha256": "855dfc017131ba814420f951f1eb9985859e51dbc7c67bd95a8e71d8df485058"
         },
         "crates/neo-os-chain-n3/src/tx.rs": {
           "sha256": "5ae4102ed0ec1667a820bedc6dcad976a82be85320f6d21cfe5632974e25af70"
