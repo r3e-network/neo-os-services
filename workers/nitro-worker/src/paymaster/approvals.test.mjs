@@ -108,6 +108,18 @@ test('authorize-only remains available without Upstash while sponsorship is disa
   assert.equal(upstash.commands.length, 0);
 });
 
+test('invalid gas returns before custody signing', async () => {
+  let custodyCalls = 0;
+  __setCustodyTransportForTests(async () => {
+    custodyCalls += 1;
+    throw new Error('custody must not be called');
+  });
+  const response = await handlePaymasterAuthorize(authorizePayload({ estimated_gas_units: 0 }));
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /estimated_gas_units must be a positive number/);
+  assert.equal(custodyCalls, 0);
+});
+
 test('enabled sponsorship fails closed without storage and denied verdicts stay authorize-only', async () => {
   process.env.MORPHEUS_ALLOW_TRANSACTION_SPONSORSHIP = 'true';
   const missing = await handlePaymasterAuthorize(authorizePayload());

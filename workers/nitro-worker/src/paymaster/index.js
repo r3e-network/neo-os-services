@@ -350,6 +350,7 @@ async function evaluatePaymasterAuthorization(payload = {}) {
 export async function handlePaymasterAuthorize(payload = {}) {
   try {
     const result = await evaluatePaymasterAuthorization(payload);
+    if (result instanceof Response) return result;
     const signed = await buildSignedResultEnvelope(result, payload);
     const response = {
       ...result,
