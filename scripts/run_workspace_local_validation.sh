@@ -65,7 +65,7 @@ fi
 if [[ $run_aa -eq 1 ]]; then
   echo ""
   echo "=== AA Local Validation ==="
-  (cd "$AA_ROOT" && bash scripts/run_local_validation_gates.sh)
+  (cd "$AA_ROOT" && bash scripts/verify_repo.sh --skip-contract-build --skip-e2e)
 fi
 
 if [[ $run_platform -eq 1 ]]; then

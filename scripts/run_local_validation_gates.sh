@@ -95,6 +95,8 @@ if [[ $run_control_plane -eq 1 ]]; then
 fi
 
 if [[ $run_web -eq 1 ]]; then
+  export MORPHEUS_NETWORK="${MORPHEUS_NETWORK:-${NEXT_PUBLIC_MORPHEUS_NETWORK:-testnet}}"
+  export NEXT_PUBLIC_MORPHEUS_NETWORK="${NEXT_PUBLIC_MORPHEUS_NETWORK:-$MORPHEUS_NETWORK}"
   echo ""
   echo "=== Web Local Gates ==="
   npm --prefix apps/web run test:run
