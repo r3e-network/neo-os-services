@@ -2343,7 +2343,7 @@
       "justification": "Exact-file economic-randomness review of the admin recovery transaction builder and its synthetic regression suite. The command requires explicit network, contract, admin custody, apply confirmation and per-transaction/total fee ceilings; dry-run and non-loopback plaintext CVM requests fail before signing, and every planned fee is checked before the first signature. Cryptographic randomness is used only for transaction nonces and fixed test keys, never to select an economic winner, payee, payout or settlement. Tests use synthetic identities and loopback services. This security-sensitive non-value classification grants no production admin, custody, signer-route, RPC, deployment or downstream economic approval; the current host protocol remains unadapted and verifier changes remain timelock proposals.",
       "inputs": {
         "scripts/ops/recover-and-rotate-admin.mjs": {
-          "sha256": "486103556fdccb0eb225e6324064b6f551ecdb67d84e5b5bf71290f31f3b2873"
+          "sha256": "07249236a9250a74fcd67a8c36603addb250a910400cfef793b1f465ce385e55"
         },
         "scripts/ops/recover-and-rotate-admin.test.mjs": {
           "sha256": "571d2f894b47472a6e2193c0676192b10d18f95ae94174186e85127bdfd856a7"

@@ -3,7 +3,7 @@ import { createHash, randomInt } from 'node:crypto';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { sc, tx, u, wallet } from '@cityofzion/neon-js';
+import { rpc as neonRpc, sc, tx, u, wallet } from '@cityofzion/neon-js';
 import { trimString } from '../lib-strings.mjs';
 import {
   readReviewedNetworkRegistrySync,
@@ -256,31 +256,38 @@ async function fetchJson(fetchImpl, url, init, label) {
 }
 
 function createRpcClient(fetchImpl, rpcUrl) {
+  class NoRedirectRpcClient extends neonRpc.RPCClient {
+    async execute(query) {
+      const body = await fetchJson(
+        fetchImpl,
+        rpcUrl,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(query.export()),
+        },
+        `RPC ${query.method}`
+      );
+      if (body.jsonrpc !== '2.0' || body.id !== query.id) {
+        throw new Error(`RPC ${query.method} returned a mismatched JSON-RPC envelope`);
+      }
+      if (body.error) {
+        throw new RpcError(
+          query.method,
+          body.error.code ?? 'unknown',
+          trimString(body.error.message) || 'unknown error'
+        );
+      }
+      if (!Object.hasOwn(body, 'result')) {
+        throw new Error(`RPC ${query.method} returned no result`);
+      }
+      return body.result;
+    }
+  }
+  const client = new NoRedirectRpcClient(rpcUrl);
   let nextId = 0;
   return async function rpc(method, params = []) {
-    const id = ++nextId;
-    const body = await fetchJson(
-      fetchImpl,
-      rpcUrl,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', method, params, id }),
-      },
-      `RPC ${method}`
-    );
-    if (body.jsonrpc !== '2.0' || body.id !== id) {
-      throw new Error(`RPC ${method} returned a mismatched JSON-RPC envelope`);
-    }
-    if (body.error) {
-      throw new RpcError(
-        method,
-        body.error.code ?? 'unknown',
-        trimString(body.error.message) || 'unknown error'
-      );
-    }
-    if (!Object.hasOwn(body, 'result')) throw new Error(`RPC ${method} returned no result`);
-    return body.result;
+    return client.execute(new neonRpc.Query({ id: ++nextId, method, params }));
   };
 }
 
