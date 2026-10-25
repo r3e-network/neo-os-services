@@ -1933,6 +1933,7 @@ dependencies = [
  "aws-lc-rs",
  "aws-nitro-enclaves-nsm-api",
  "base64",
+ "generic-array",
  "hex",
  "hmac",
  "reqwest",

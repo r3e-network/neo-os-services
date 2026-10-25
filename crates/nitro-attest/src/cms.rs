@@ -250,11 +250,11 @@ fn decrypt_aes256_cbc(
 
     let block =
         aes::Aes256::new_from_slice(cek).map_err(|e| format!("cms: new AES cipher: {e}"))?;
-    let mut out = Vec::with_capacity(ct.len());
+    let mut out = Zeroizing::new(Vec::with_capacity(ct.len()));
     let mut prev = [0u8; 16];
     prev.copy_from_slice(iv);
     for chunk in ct.as_chunks::<16>().0 {
-        let mut buf = GenericArray::clone_from_slice(chunk);
+        let mut buf = Zeroizing::new(GenericArray::clone_from_slice(chunk));
         block.decrypt_block(&mut buf);
         for (b, p) in buf.iter_mut().zip(prev.iter()) {
             *b ^= p;
@@ -264,7 +264,9 @@ fn decrypt_aes256_cbc(
         prev.copy_from_slice(chunk);
     }
 
-    Ok(Zeroizing::new(pkcs7_unpad(&out, 16)?.to_vec()))
+    let plaintext_len = pkcs7_unpad(&out, 16)?.len();
+    out.truncate(plaintext_len);
+    Ok(out)
 }
 
 /// Decrypts AES-256-GCM content (forward-compat path). The parameters carry
@@ -441,3 +443,6 @@ pub fn pkcs7_unpad(data: &[u8], block_size: usize) -> AttestResult<&[u8]> {
     }
     Ok(&data[..n - pad])
 }
+
+#[cfg(test)]
+mod zeroization_tests;
