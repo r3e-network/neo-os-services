@@ -205,7 +205,7 @@
           "sha256": "cb04028dafb9bc21e9825bf6a0d4e1fbaeff1e4b90557ffbd63576129080af39"
         },
         "workers/neo-signer/Cargo.toml": {
-          "sha256": "111a9c9220c73b70a319d983d5e360111824971c834f713e0ee73c52799fb4cb"
+          "sha256": "638f8cde6dd5c9bd4e0fc5fffc8f3b2b337ae77570436dd25b62dd8863efed80"
         },
         "workers/neo-signer/src/evm_tx.rs": {
           "sha256": "9e61382cf79ee46301a832bc1c65e93eb6a637718c399215abad7fc443f91a45"
@@ -220,7 +220,7 @@
           "sha256": "7965dcf4bd82d4b2a477d34058c2a4d68c37d310e75203c4d10c5e1306d77e88"
         },
         "workers/nitro-enclave-host/src/custody.rs": {
-          "sha256": "2e918e4a8d281c4ea01b158c9091fc49f24b7bb5b6f87bb765e71db0c347bd1b"
+          "sha256": "93efce14ce8dd2634bab8235e9e1d32638a5c1c83c5bc796b38dcedaef47947a"
         },
         "workers/nitro-enclave-host/src/kms_release.rs": {
           "sha256": "e9351ec0398259829232f5f017189129b48ef21ff7516656c7c546b590a943b7"
@@ -546,7 +546,7 @@
           "sha256": "0842e8aa6fc1f249483242bd436e6982c4b14942fa19a31f6c1ae38935909d8a"
         },
         "workers/nitro-enclave-host/tests/unit/custody.rs": {
-          "sha256": "de6b5fcc0dfa51e0c92f38fd1f780f4a2a1c80cba1a6523bbfa01e6a7aa51dd4"
+          "sha256": "7949164a70c429611a1a86203b458155bf4e3b9c27043ef38c5d45310ffcf2b3"
         },
         "workers/nitro-enclave-host/tests/unit/dispatch.rs": {
           "sha256": "bfdec5533ed82f65aa1cf99d062fafea97c966926b480ba52c4da1e3a4717b52"
@@ -558,7 +558,7 @@
           "sha256": "a9924f35c5fbca7fcc4120729e19712aab8518ba15e94c7b98e5b06628f658b6"
         },
         "workers/nitro-enclave-host/tests/unit/private_chain.rs": {
-          "sha256": "3f71ea0306a664bcc9e68a38210a195543c4fb2f856cf6b92097210474204b48"
+          "sha256": "9a1ae98698d6949fa25bd60d8310b5e00f9fd9efae935c98f1beca616ce10787"
         },
         "workers/nitro-enclave-host/tests/unit/routes.rs": {
           "sha256": "90c9a78d3ac30f0468f82a74e2731f41a0df68321e778a093fed1c42073d8085"
@@ -567,7 +567,7 @@
           "sha256": "3991b54a38a19d3c4cfd9dab23a444607410a569244f9591b52eb19dddb97f4f"
         },
         "workers/nitro-enclave-host/tests/unit/session.rs": {
-          "sha256": "e0c70265eef80f4442659a961a385d91cc4e3afdabac5e156dfee263b4e829ec"
+          "sha256": "94ab95f2e4e228ec6b7bbf94a957431ea16d835719335274ecc8d375b4f12ed0"
         },
         "workers/nitro-enclave-host/tests/unit/sign.rs": {
           "sha256": "a94c7b465a2c52385b2222109aa48ad847b0b459d5a12ec21429d7982f848da4"
@@ -763,7 +763,7 @@
           "sha256": "108eb7baec8e545a7addee153d7ef3609ff959c440164e34b25e8fa31f895666"
         },
         "workers/neo-os-relayer/src/delivery.rs": {
-          "sha256": "71f762e80c2107163466c23be1e5125bc09fbdd8226e6cae4484d78f1341221c"
+          "sha256": "d65cdfe782ddc0f30c2eea99faf4c6a013b6bff155e7e26d8a6d1b4603049958"
         }
       }
     },
@@ -921,7 +921,7 @@
           "sha256": "5dc853f17b62b79959221a79c99b6bd07bdf202a879b12e1cf65501e1ad847c5"
         },
         "crates/neo-os-compute/src/oracle/message_reveal.rs": {
-          "sha256": "4f6d25aa5a50854e030722186e25442dcb9b52a669a50fa1418465d77548a8a8"
+          "sha256": "1ee98be406be89d575d241626cc03ff6bdaa73092142c67a3bcb32045ec78a71"
         },
         "workers/nitro-enclave-host/src/neodid.rs": {
           "sha256": "88e0447291f46528353f6bc14b22f50d4d094904fa3006fc1aa251ef2baf7650"
@@ -1056,7 +1056,7 @@
           "sha256": "8523fddcddea1c0a1d38fc4f6ce227c81a63cc6ca94a0b25f394ad8e0f32eb50"
         },
         "workers/neo-os-relayer/src/feed_sync.rs": {
-          "sha256": "2f128b0bec7fdf34a76c7a80ed40eba6e541a58107a09f839993591409600b50"
+          "sha256": "14e5c596367ea9d834a134f1d93590ea2dd4dd71a8586083b82f73b5ae5a66e8"
         },
         "package.json": {
           "sha256": "1b799dd77f2318cda0b48d1400e5e88050fd10ab94ff0cd09c9a3ee073d0d693"
@@ -1099,7 +1099,7 @@
       "justification": "Locks the existing Rust dependency graph, including nitro-attest's direct generic-array dependency with its existing zeroize feature enabled for CBC plaintext cleanup. Dependency resolution metadata does not use random outputs for economic allocation. Security properties of resolved implementations still matter. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "Cargo.lock": {
-          "sha256": "47f4c219bbc496fe59daa5a878f6d091c529a33111aee314a957e9216ffc13ab"
+          "sha256": "0fc955b9670e977b155997f21edf069f787b4cb309bac1c93ae9665910600acc"
         }
       }
     },
@@ -1440,7 +1440,7 @@
       "justification": "Synthetic signed receipts exercise two independent HEAD histories and wrong-network receipt/HEAD fencing; later retry remains fenced and no second coordinator call occurs. Assertions over temporary stores and synthetic receipt keys test custody integrity, not a live payment or lottery. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "workers/neo-signer/tests/durable_state.rs": {
-          "sha256": "9e1eeebd180a87dfb31239700709665549272d8c3419839b18a947d2d098c135"
+          "sha256": "852469f1e07182c2bf0ea3e28a253ceaa31cc554293ac97e66983eecd3ccfba8"
         }
       }
     },
@@ -1451,7 +1451,7 @@
       "justification": "Exercises real exported router/lease lifetimes, synthetic fresh/replayed/zero PCR input, forbidden plaintext, independent network contexts and pending-body admission. Temporary local boot fixtures and public fake profiles do not award value; their nonce randomness calibrates attestation/lease behavior. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers. Genesis source update: The existing local synthetic embedded fixtures explicitly leave enrollment disabled and continue to exercise the unconfigured boundary. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval.",
       "inputs": {
         "workers/neo-signer/tests/embedded_runtime.rs": {
-          "sha256": "872b3bc0c91a197a9c8f0cf1ef4804412277c1d8957a9ed84ab93528306a9894"
+          "sha256": "a0bbb22c3306029d51347b73f73a1dd7ab2eb4e999ef667142e8b4daf7f9f03d"
         }
       }
     },
@@ -1462,7 +1462,7 @@
       "justification": "Runs real local API signing/grant/policy paths: both-network positives, foreign imports/transactions/raw/cached completions/families refuse; workload replay and detached ready/pending lease retention are asserted. Current fixtures also pin the payload-v2 fulfillment vector and malformed or foreign transferFrom refusal paths. Synthetic local keys and transactions exercise value-moving APIs without broadcasting or allocating random-output rewards. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers; critical custody and authorization review remains separate.",
       "inputs": {
         "workers/neo-signer/tests/unit/api.rs": {
-          "sha256": "2f53b55d1d5b924f2bd2a8eb21a3fff9b840ea625e22decf2ab3c5841ee9fa87"
+          "sha256": "eaaeca4fd8cd7cb476b6d1ccbad9a48a71270ad7f74c889552954cfc8ca0edc9"
         }
       }
     },
@@ -1495,7 +1495,7 @@
       "justification": "Invokes actual signer_service validate-vault-profile for both networks and malformed/crossed selectors, asserts public identity hashes and no data directory creation. Public profile validation fixtures are a boot configuration check; no random reward or private-key release occurs. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "workers/neo-signer/tests/vault_profile.rs": {
-          "sha256": "8ac97c8212fdc14ca90f2ff384141018a8732d085cf2557bc1674e39adedb47d"
+          "sha256": "013f70b095ab4da971c3189516fadbabea34d7e8854160c98a272df731cc9848"
         }
       }
     },
@@ -1506,7 +1506,7 @@
       "justification": "Adds the in-process neo-signer path dependency and Tokio sync/time, Tower utilities and tempfile test support used by the native adapter, admission and fixtures. Dependency declarations add no executable random-output payoff mapping of their own. This classification covers manifest metadata, not the behavior of linked dependencies. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "workers/nitro-enclave-host/Cargo.toml": {
-          "sha256": "7e7040f58eb1d4f24b7f5d5960032bd0812a470abc0970f563d8ff3787e48f00"
+          "sha256": "5f28c82c6c19f0e198739fa57dbc842794ded83cc186c705f189a4dfbc5419f4"
         }
       }
     },
@@ -1572,7 +1572,7 @@
       "justification": "New local profile/boot fixtures cover complete plans, canonical-equivalent audience refusal before any boot, shared identities, missing/digest/foreign configuration, failed attestation, distinct retained leases and partial-boot rollback. Synthetic profile hashes, local lease ownership and refusal assertions do not select economic rewards. Generated fixture material is not operator key evidence. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers. Genesis source update: Synthetic host fixtures test the explicit opt-in, exact manifest/profile binding and Mainnet refusal; fixture results are not admission or operator-credential evidence. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval.",
       "inputs": {
         "workers/nitro-enclave-host/tests/unit/custody_bootstrap.rs": {
-          "sha256": "5b862353a8db39287f5485b6cf379b4b636ec1d945d05909b628b4a2f3f0f21c"
+          "sha256": "000d8af83ea6447004f6552c22f1fa1f2a2340aef5a77eda40e9fa6a7c219b7c"
         }
       }
     },
@@ -2080,7 +2080,7 @@
       "justification": "Exact-file economic-randomness review of the listed Rust implementation, test and vector inputs. The Oracle changes bind exact raw payloads into fulfillment digests; relayer delivery and sponsor/N3 construction use deterministic state, fee and consent rules. Injected random units support compute noise and randomized regression inputs, not selection of an economic winner, payee, payout or settlement. Test randomness and synthetic Oracle payloads do not establish an economic allocation mechanism. This narrow non-value classification does not approve deployment, custody, signing, transport security, runtime admission or downstream economic consumers.",
       "inputs": {
         "crates/neo-os-chain-evm/src/fulfill.rs": {
-          "sha256": "33eba803a890c38d78f968144b37880f50516a66fe85fdce93260e824feb0b6c"
+          "sha256": "795da27c81ab0c03f0110c54093237d49d2f9356b903b23cc80db9ed4783e37a"
         },
         "crates/neo-os-chain-evm/src/scan.rs": {
           "sha256": "24524d63b8e43ae9562b18d61fd02b1c4da2e6aa5c992c0d8fef8ab74b28190c"
@@ -2092,7 +2092,7 @@
           "sha256": "62bc5feffaa621392557970643ea485ffeb8187fb7e55d8c79b5f11a7bc21255"
         },
         "crates/neo-os-compute/Cargo.toml": {
-          "sha256": "55682dd77616e4a2ee2eec97088aedda221763bbc122ec6555417ab58cf34d31"
+          "sha256": "295e91b5b774fdc58bd0cd1f733bbfdc3bdfec7e527fd1cd56e2d155e3b81960"
         },
         "crates/neo-os-compute/src/compute.rs": {
           "sha256": "e2aebb7561ecd42c11c63b79eabf5a93c7e775d1a69fad3b41c142a074c7e899"
