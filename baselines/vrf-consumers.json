@@ -71,6 +71,80 @@
       }
     },
     {
+      "consumer": "deployment-enclave-and-feed-tooling",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "These deployment and runtime inputs configure image builds, enclave host networking, feed monitors, signer provisioning and read/test orchestration. VRF/CSPRNG is used for oracle random results or test/key material, not to select an economic winner, payee, payout or settlement. Deterministic sponsorship, fee, custody and attestation boundaries remain separate. This non-value classification is limited to random-output economics and grants no deployment, production custody, secret-handling or overall security approval.",
+      "inputs": {
+        "deploy/cloudflare/morpheus-edge-gateway/wrangler.example.toml": {
+          "sha256": "f82c185bafedc85f908d6b1453780690df6613d952311b66176c64290e3a49ae"
+        },
+        "deploy/cloudflare/morpheus-edge-gateway/wrangler.meshmini.toml": {
+          "sha256": "dced8af44aa82666025d287d1d9095cfc5c0f0f9feeba0b1f150a8ee269edb9e"
+        },
+        "deploy/evm/deploy.mjs": {
+          "sha256": "15f69d2ef3d1ba28e578c6c574085e0468624e8cba7dc570e9f090ddc54f3518"
+        },
+        "deploy/evm/neox-fulfiller.env.example": {
+          "sha256": "6009b0f66c06c34fc91a61f6ecf8a0ceed6412018f2cfa7ede92cab576e32f85"
+        },
+        "deploy/evm/validate-http.mjs": {
+          "sha256": "c0360d788f6671a5c25d2ddefe311df42ce411a8ecec9af3360251752845870f"
+        },
+        "deploy/feed-pusher/feed-monitor.d.mts": {
+          "sha256": "e0ef4beb5a0fcb4c815d88ef6f2b31fce93744715afebd0eb8c600ed7a969614"
+        },
+        "deploy/feed-pusher/feed-monitor.mjs": {
+          "sha256": "4a840cabaecbb54320a5ee96f1406850a021ab1bf902e355bfa132e4d2efeea3"
+        },
+        "deploy/feed-pusher/feed-monitor.test.mjs": {
+          "sha256": "2dea010a821377f57329afbe96fe040fcff3400e9bc791234e4775c8586a4abb"
+        },
+        "deploy/feed-pusher/feed-pusher.env.example": {
+          "sha256": "c83598f571bcdbb7b3532c2fa0ac40ecfb97a14d40f0ab38e639e78b31ff5dad"
+        },
+        "deploy/feed-pusher/feed-pusher.mjs": {
+          "sha256": "c22a79697666c5425fde30ac85051dee88ebaf32136cb33446fa65a16b148670"
+        },
+        "deploy/feed-pusher/feed-pusher.test.mjs": {
+          "sha256": "60cae6f29bf207c16821be0b0a5b3a39ade27fe10be325cee851e4b9b5ffcf95"
+        },
+        "deploy/feed-pusher/feed-write-mode.test.mjs": {
+          "sha256": "3cf46516c3d97fa56d1d72b6cc9a476fff54a0c28c6d58f236e993ff6ae57f6a"
+        },
+        "deploy/nitro/Dockerfile.enclave": {
+          "sha256": "76c33be144d761c0b5d95b32d5677409a6a87154191cf161a1b1df2c2d7e5ea2"
+        },
+        "deploy/nitro/Dockerfile.signer": {
+          "sha256": "e04e8d6b68295301c634d6a349efee67333195fc778b980dfbbbd876fc74016f"
+        },
+        "deploy/nitro/Dockerfile.signer-legacy": {
+          "sha256": "968642c7317f4242c07913c1e3f791021f2cdeb0ae634c6f878d4d6353c2e545"
+        },
+        "deploy/nitro/bootstrap-testnet-host.sh": {
+          "sha256": "ba9a3505f6f30db10326569e9ec88835bf2cf630e9dff8a51ed0b1bae5fafb05"
+        },
+        "deploy/nitro/morpheus-nitro-testnet.env.example": {
+          "sha256": "20f7162dbcc26b55e4e86561cfd743a1b145655b422f87a3375f9a91db596463"
+        },
+        "deploy/nitro/morpheus.env.example": {
+          "sha256": "7111387abc360ae5324ae5efe42aca2934603a832c0bace9201b030c7e684b2f"
+        },
+        "deploy/nitro/nitro-signer-server.mjs": {
+          "sha256": "aa744520cdec10f14d9614ce284f570373cff552e10efe2b411403091ebfb2cb"
+        },
+        "deploy/nitro/nitro-signer-server.test.mjs": {
+          "sha256": "94fd2dd42825ac08856a1afda6e453d3eeb96d4093b4f5ef26a2b51de20cb39d"
+        },
+        "deploy/nitro/nitro-unit-isolation.test.mjs": {
+          "sha256": "20ec6215b1276c0e837aac4e995363b26352e608b6dae806b19374d875f8fc5d"
+        },
+        "deploy/nitro/nsm-attest/go.mod": {
+          "sha256": "4052f90b8d562380d8d2cc184e2bdeb7aa8abd37464b3dfb7fbcd2c28ad52017"
+        }
+      }
+    },
+    {
       "consumer": "api-automation-and-control-plane-types",
       "classification": "non-value",
       "owner": "services lead",
