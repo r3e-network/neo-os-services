@@ -126,16 +126,19 @@ const LEGACY_ORACLE_PIN = {
 const CUSTODY_UNPUBLISHED = {
   app_id: 'morpheus-custody',
   reason:
-    'No custody EIF has ever been built from this tree on a Nitro host. deploy/nitro/measurements/ holds nine manifests and every one is app_id morpheus-oracle, so build-custody-eif.sh:39 has never written measurements/<release>.json. Real PCR0/1/2 for the custody image can only come from `nitro-cli build-enclave` on the Nitro box; inventing them here would produce exactly the unverifiable pin this file exists to prevent. Until then the enclave holding every private key publishes no measurement at all, and workers/neo-signer/src/attestation.rs:9-20 delegates its identity gate to a KMS policy that is likewise unpublished.',
+    'Reviewed again on 2026-10-25 after the Oracle payload-v2 and dependency remediations: all eight non-fixture measurement manifests still name app_id morpheus-oracle, and no custody EIF manifest or exported custody CMK policy exists in this tree. Real PCR0/1/2 can only come from `nitro-cli build-enclave` on the Nitro host; this review generated no manifest, PCR, key policy or canonical receipt and does not attest the custody image.',
   blocked_on:
     'bash deploy/nitro/build-custody-eif.sh on the Nitro host (reproducibility verification is now the default), then commit the generated manifest and export the custody CMK policy beside it',
-  required_by: '2026-10-21',
+  required_by: '2026-11-07',
   owner: 'neo-os-services platform operator (Nitro host + KMS read)',
 };
+const CUSTODY_EXPIRED = { ...CUSTODY_UNPUBLISHED, required_by: '2026-10-21' };
 const CUSTODY_EXPIRY =
   'deploy/nitro/kms/attestation-pins.json unpublished[0]: required_by 2026-10-21 is past due — publish the morpheus-custody measurement and key policy, or re-date the record under review';
+const CUSTODY_REVIEW_EXPIRY =
+  'deploy/nitro/kms/attestation-pins.json unpublished[0]: required_by 2026-11-07 is past due — publish the morpheus-custody measurement and key policy, or re-date the record under review';
 
-test('retained legacy Oracle policy is published while custody remains expired', () => {
+test('retained legacy Oracle policy is published while custody remains unpublished', () => {
   const pins = JSON.parse(
     readFileSync(join(repoRoot, 'deploy/nitro/kms/attestation-pins.json'), 'utf8')
   );
@@ -143,7 +146,10 @@ test('retained legacy Oracle policy is published while custody remains expired',
   assert.deepEqual(pins.pins, [LEGACY_ORACLE_PIN]);
   assert.deepEqual(pins.unpublished, [CUSTODY_UNPUBLISHED]);
   // Publication consistency does not establish exclusive KMS authorization.
-  assert.deepEqual(auditAttestationPins(repoRoot, { today: '2026-10-22' }), [CUSTODY_EXPIRY]);
+  assert.deepEqual(auditAttestationPins(repoRoot, { today: '2026-10-22' }), []);
+  assert.deepEqual(auditAttestationPins(repoRoot, { today: '2026-11-08' }), [
+    CUSTODY_REVIEW_EXPIRY,
+  ]);
   const policy = readFileSync(join(repoRoot, 'deploy/nitro/kms', LEGACY_ORACLE_PIN.policy_file));
   assert.equal(policy.length, 1020);
   assert.equal(
@@ -218,9 +224,15 @@ test('retained legacy Oracle binding refuses publication drift without clearing 
     ],
   ]) {
     await t.test(name, () => {
+      const expiredPins = {
+        ...pins,
+        unpublished: pins.unpublished.map((record) =>
+          record.app_id === 'morpheus-custody' ? CUSTODY_EXPIRED : record
+        ),
+      };
       const root = fixture({
         manifests: [measurement],
-        pins,
+        pins: expiredPins,
         policies: { [LEGACY_ORACLE_PIN.policy_file]: JSON.parse(policyBytes) },
         files: { [policyPath]: policyBytes },
       });
