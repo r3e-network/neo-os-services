@@ -24,6 +24,53 @@
       }
     },
     {
+      "consumer": "oracle-contracts-and-build-evidence",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Exact-file random-output review covering only the 13 paths bound in this review's inputs: the four listed EVM/N3 production files, the eight listed generated/test files, and contracts/build.sh. The production changes bind stored request payloads into fulfillment signatures and implement deterministic oracle-fee consent and accounting; fixed fees, sponsorship, expiry refunds and fee settlement are not conditioned on VRF or random results. The tests execute the generated artifact with local VM state, synthetic credit and disposable test keys, while build.sh compiles with the required nccs 3.9.1* toolchain and performs no deployment or live operation. No VRF/random or operator-predictable random output selects a winner, payee, payout, refund, settlement or other economic allocation. This narrow non-value classification grants no deployment, production custody, identity, signer/auth or downstream economic authorization, does not certify the toolchain or final consumers, and is not an overall security approval.",
+      "inputs": {
+        "contracts-evm/MorpheusOracleEVM.sol": {
+          "sha256": "1b4d932f9dc168b3c4308d6503ce937e41582904bc625534822c34b0c01d2f21"
+        },
+        "contracts/MorpheusOracle/MorpheusOracle.Automation.cs": {
+          "sha256": "a1d2dea58ec07d34d0c96bf1d1475ad84a84e6cb7b29e8f6a6bb4c548b990a54"
+        },
+        "contracts/MorpheusOracle/MorpheusOracle.Fulfillment.cs": {
+          "sha256": "4807eac47e029fdc54227b15617820308e1c8f9e15c30991dd4e785ca078fa02"
+        },
+        "contracts/MorpheusOracle/MorpheusOracle.Requests.cs": {
+          "sha256": "9c2c1f6235532ab8b106348eee411e5951c1ae2ef4fd72899cf81829daf40f96"
+        },
+        "contracts/__tests__/Generated/MorpheusOracle.artifacts.cs": {
+          "sha256": "4fd7555b7ee928e20c9914310081ed7bb36909f5868d3d2ed2dc07192034e661"
+        },
+        "contracts/__tests__/KernelFeeHarness.cs": {
+          "sha256": "7e8441d5d3c0c22dd009131927dfc8a3fc3a9314caf56eb37b48527ebb812b27"
+        },
+        "contracts/__tests__/MorpheusOracleAutomationSpendTests.cs": {
+          "sha256": "197008cceb284041a1d93e0a5af30674d60486f15d2c3f05368f9d002c325436"
+        },
+        "contracts/__tests__/MorpheusOracleCallbackDispatchTests.cs": {
+          "sha256": "73f78cf963cc40c66702ccce23d1e80290299c130bd5ba6c438c07018c476b91"
+        },
+        "contracts/__tests__/MorpheusOracleFeeAccountingTests.cs": {
+          "sha256": "6a83d85160f2e861da0f85e9363204d533f74be9a87d8a7f240a7a6f01332513"
+        },
+        "contracts/__tests__/MorpheusOracleGoldenDigestTests.cs": {
+          "sha256": "8a6b941e4902fc167d541055857aa82d5ade69af9b328fa35af5d7071b3a147b"
+        },
+        "contracts/__tests__/MorpheusOracleIntegrationWitnessTests.cs": {
+          "sha256": "e257d9117dac475b6e9872271f0bb7ff3cdef48f78fafbbd26d419d0a94a6dfd"
+        },
+        "contracts/__tests__/MorpheusOracleStoragePrefixFreezeTests.cs": {
+          "sha256": "a3195979ba9239629253b245e50021ba92db4ee563c2f56eb33638f6f0b7e1a6"
+        },
+        "contracts/build.sh": {
+          "sha256": "0ee357ce287d2bd5fc2fd2b63cb6e546475d6e0bd0116693f4e6f19c5b44bf75"
+        }
+      }
+    },
+    {
       "consumer": "api-automation-and-control-plane-types",
       "classification": "non-value",
       "owner": "services lead",
