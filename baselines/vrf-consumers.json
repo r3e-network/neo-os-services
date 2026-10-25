@@ -551,7 +551,7 @@
       "justification": "CU-179 offline randomized-input harness for the relayer and enclave request plane. It draws every case from three committed seeds through its own xorshift32, so it holds no entropy source, and it reads no random result: the \"random\" it names is the router request-type label, and the oracle-random, feed, price, envelope and sponsor paths are asserted only on shapes, refusals, request-id stringification and clamp monotonicity. Its inputs are synthetic and it awards no value. This review covers this file and no other part of the CU-179 change.",
       "inputs": {
         "fuzz-testing/services-inputs.mjs": {
-          "sha256": "002dbab3f199616f7ff8bfd488eebfc144686c9f89a2720dd5e3c1a69739182c"
+          "sha256": "cad5d0f961000630dbd7c09a2825a18b4be8f2bd2f706a13f1406c8a96c3848d"
         }
       }
     },
@@ -1291,7 +1291,7 @@
       "consumer": "dual-release-validator-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These exact DRA01 R2 validator and provenance files validate dual-release source closure and reject incomplete or inconsistent publication inputs; they do not draw VRF output, select an economic winner, award value or authorize settlement. Their bytes are bound to the independent DRA01 R2 review and source commit cc19e1ad. This exact-file classification does not authorize deployment, replace measured artifacts or public identity evidence, or exempt custody, transport security or downstream economic consumers.",
+      "justification": "These exact DRA01 R2 validator and provenance files validate dual-release source closure and reject incomplete or inconsistent publication inputs; they do not draw VRF output, select an economic winner, award value or authorize settlement. The 2026-10-25 fixture repair only creates the Xcode Python cache parents and preserves every source/provenance refusal. This exact-file classification does not authorize deployment, replace measured artifacts or public identity evidence, or exempt custody, transport security or downstream economic consumers.",
       "inputs": {
         "scripts/check-dual-release.mjs": {
           "sha256": "57143f500310a88c01b585a2c2722b01f883df5237c4acf5c1abdc624b646ada"
@@ -1306,7 +1306,7 @@
           "sha256": "19f1a07167f800734f058a447a0ed03fd4ee856f5f1ffbb3b9904f335fdc01cf"
         },
         "scripts/lib/dual_release_provenance_test.py": {
-          "sha256": "497c2c49db6fc93ce3ab9eec4f6cc1fcfe2fbe7d0fe02f4735ed8a0d7c279f74"
+          "sha256": "588a41f5d7cf45ae7c7d5b8e90ef8c2d0775e5207cf3998cbcdc2fb446b8c0f0"
         }
       }
     },
@@ -1411,10 +1411,10 @@
       "consumer": "reviewed-publication-topology-policy-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These exact topology-audit and release/topology regression-test inputs were independently reviewed at source commit 6bfa1845aba97d6286b7fd4505f343560924de74 and verified unchanged at 7eba165fec3bdd339efec213d4ac63b5f9292067. They inspect repository deployment/publication configuration and test fail-closed gates; they do not draw VRF output, select economic winners, award value or authorize settlement. This classification does not approve the runtime consumers they inspect, renew any topology exception or economic debt, authorize publication/deployment, establish full CI, or replace custody inputs, measured artifacts and release admission.",
+      "justification": "These exact topology-audit and release/topology regression-test inputs inspect repository deployment/publication configuration and fail-closed gates; they do not draw VRF output, select economic winners, award value or authorize settlement. The 2026-10-25 repair canonicalizes CLI real paths so the existing preflight executes through /var symlinked paths, and the linked-root/FIFO tests prove refusal before deployment content reads. This classification does not approve runtime consumers, renew topology exceptions or economic debt, authorize publication/deployment, establish full CI, or replace custody inputs, measured artifacts and release admission.",
       "inputs": {
         "scripts/check-rust-production-topology.mjs": {
-          "sha256": "6dd052468d60fad66b9a65a7ec761c4aba5bdbc66c5a548bc5faf913b9e44215"
+          "sha256": "0813aa17a84b7e27db809aa0205b14b17a9c7b9409841c2941cefa61b70f7223"
         },
         "scripts/check-rust-production-topology.test.mjs": {
           "sha256": "a56749a43f25fa962542c3d95e03a7313434541ade9ad37078de322b3a16b24d"
@@ -1593,13 +1593,13 @@
       "consumer": "legacy-oracle-publication-metadata",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These exact source files publish the retained historical Oracle GetKeyPolicy bytes and bind their ImageSha384 to the unchanged committed .10 manifest, with only the Oracle unpublished record removed; custody remains expired at its original2026-10-21 deadline. The exact formatting exclusion preserves that byte-hashed export and does not exempt measurement or authorization checks. These metadata bytes do not implement economic randomness, reward allocation or settlement. Classification is limited to VRF/economic meaning: it does not establish effective or exclusive KMS authorization, apply a cloud policy, activate the diagnostic or production image, waive measured-input requirements or admit custody/runtime operation.",
+      "justification": "These exact source files publish the retained historical Oracle GetKeyPolicy bytes and bind their ImageSha384 to the unchanged committed .10 manifest. Custody remains unpublished after the 2026-10-25 review, with a 2026-11-07 required-by date and no custody manifest, PCR, key policy or canonical receipt generated locally. The exact formatting exclusion preserves that byte-hashed export and does not exempt measurement or authorization checks. These metadata bytes do not implement economic randomness, reward allocation or settlement. Classification is limited to VRF/economic meaning: it does not establish effective or exclusive KMS authorization, apply a cloud policy, activate the diagnostic or production image, waive measured-input requirements or admit custody/runtime operation.",
       "inputs": {
         ".prettierignore": {
           "sha256": "d6b0d6203bc771a5b58e1424d624c4e79c4c53349253f248cb477a8147df84f9"
         },
         "deploy/nitro/kms/attestation-pins.json": {
-          "sha256": "704720bb284ee23b74ac99468ed9b78912d67ebf214d16f5ce4fc829fae476b4"
+          "sha256": "d2283fd6a902132d2f6be680042d74c12095d8d50f99f7c736809883506e95cd"
         },
         "deploy/nitro/kms/morpheus-enclave-master.policy.json": {
           "sha256": "3f933b785a356c24f041cb0b85d0796e6c1dbe62995ae7b99f756d208bc42172"
@@ -1613,7 +1613,7 @@
       "justification": "This exact Node test file verifies committed legacy Oracle policy/manifest hashes, publication correspondence and custody-record preservation, and exercises missing, malformed, drifted and expired fixtures against the existing checker. It does not execute enclave/contract artifacts, choose production entropy, allocate rewards, sign, deploy or settle value. Its classification does not approve the production KMS authorization model, expiry renewal, downstream economic consumers or diagnostic/production runtime admission.",
       "inputs": {
         "scripts/check-nitro-measurements.test.mjs": {
-          "sha256": "61cc0c22296f98c323efb36fa7ebdc372ed44ec77703b9761db2d66b52554cb6"
+          "sha256": "24c0cc6a5da667f1371fe94355914b416b9460bd683bc9acb4dd127dcb6f3e59"
         }
       }
     },
