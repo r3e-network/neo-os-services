@@ -406,7 +406,7 @@
       "justification": "Operational configuration or policy validation names the VRF lane but does not use its output to choose a reward or settlement. This exact-file review does not authorize live operations or classify downstream consumers.",
       "inputs": {
         "scripts/render-nitro-compose-env.mjs": {
-          "sha256": "13249afd466f42d3255f0c1c857ecdac811501d9e5dd2876832cef673ccefad9"
+          "sha256": "ce6c24ab9bc7ad0391bc7bc3639b1b5015fecd48e2d636303427245029ceeda8"
         }
       }
     },
@@ -434,13 +434,13 @@
           "sha256": "77f91d926fa8ad773e977d04fff18aa7ec9e560bd841ea6d7db79567cd851235"
         },
         "workers/nitro-enclave-host/src/fulfill.rs": {
-          "sha256": "6091de4a1273a390fc9e594e5f87d9ecadc708c9c509223fab73463dfe98e9c4"
+          "sha256": "27924543a8cf3d52838cdc8b894d25d60be56b8d974340053dbe15720f7b01e7"
         },
         "workers/nitro-enclave-host/src/lib.rs": {
           "sha256": "50b98008d08a9f4d89447a5389455feb3c7a601a659ce0cf15c932a951b0be64"
         },
         "workers/nitro-enclave-host/src/paymaster.rs": {
-          "sha256": "f76867d383e27809f24412dfd752beccbff34f55a7e425481566bfea5a54a50c"
+          "sha256": "c71336eb259e2e5efacb3f791d36fbacba16ab50b1d9cfb2ccc1743e3687de5e"
         },
         "workers/nitro-enclave-host/src/routes.rs": {
           "sha256": "3eb0338bf2439d778cd891aba769578b77966c68828f58d7f1a82a339bc80935"
@@ -479,7 +479,7 @@
           "sha256": "4f6d25aa5a50854e030722186e25442dcb9b52a669a50fa1418465d77548a8a8"
         },
         "workers/nitro-enclave-host/src/neodid.rs": {
-          "sha256": "2c2c4279fac4efa36c7326842600a9226866aa7a0e130d39d615d002afca0e22"
+          "sha256": "88e0447291f46528353f6bc14b22f50d4d094904fa3006fc1aa251ef2baf7650"
         },
         "workers/nitro-enclave-host/src/oracle_read.rs": {
           "sha256": "83f0b22cf6513680b3e8dc82bc8f0b1eddbfe59d26528049eb8c3748b237c658"
@@ -893,10 +893,10 @@
       "consumer": "workers/neo-signer/src/api.rs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Carries an Arc process lease in ApiState and attaches the immutable vault profile and lease to the ready service after provisioning. HTTP authentication, key grants, provisioning and signature dispatch do not select an economic winner or payout from a random result. Retaining the lease across detached work protects exclusivity rather than allocating value. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers. Genesis source update: Genesis adds a measured enrollment option, preserves failed local initialization in a sealed boot, and checks durable lease freshness under the final Ready publication lock. It does not consume randomness to select rewards or settlement outcomes. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval.",
+      "justification": "Carries an Arc process lease in ApiState and attaches the immutable vault profile and lease to the ready service after provisioning. HTTP authentication, key grants, provisioning and signature dispatch do not select an economic winner or payout from a random result. The current EIP-191 payload-v2 fulfillment binds exact request bytes, while lease retention continues to protect exclusivity rather than allocate value. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers; critical custody and authorization review remains separate.",
       "inputs": {
         "workers/neo-signer/src/api.rs": {
-          "sha256": "50b1fc55aa044f66b733e2cafef930e6b4d92a8cb27e9307a6910ae05e29aa98"
+          "sha256": "4886388c6c8b57f5c57887d6384598c7acb8f9af095f6bf665a5bb1513686221"
         }
       }
     },
@@ -970,10 +970,10 @@
       "consumer": "workers/neo-signer/src/service.rs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Stores immutable vault profile and lease; checks admitted network/family and stored chain identity before key open/import and cached or fresh signing. Transaction policy, spend limits and signatures may move value, but this file does not interpret a VRF/random result to select a winner, recipient or reward amount. Auth tokens and key randomness are security material. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers. Genesis source update: The enrollment publication helper requires an attached durable authority and live lease. It does not renew ownership or allocate value from randomness. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval.",
+      "justification": "Stores immutable vault profile and lease; checks admitted network/family and stored chain identity before key open/import and cached or fresh signing. Transaction policy, spend limits and signatures may move value, but this file does not interpret a VRF/random result to select a winner, recipient or reward amount. Current ERC-20 transferFrom handling binds the source to the custody account and fails closed on malformed calls. Auth tokens and key randomness are security material. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers; critical custody and authorization review remains separate.",
       "inputs": {
         "workers/neo-signer/src/service.rs": {
-          "sha256": "248aa35db21e820a2fa344b67f8219b53ec7e5b2cf2de959f6738fc5f942f5c8"
+          "sha256": "3027806cfeb2ae82ce01771b5805aa7e93c12f50ba49269eac7232d1eebfe705"
         }
       }
     },
@@ -1014,10 +1014,10 @@
       "consumer": "workers/neo-signer/tests/unit/api.rs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Runs real local API signing/grant/policy paths: both-network positives, foreign imports/transactions/raw/cached completions/families refuse; workload replay and detached ready/pending lease retention are asserted. Synthetic local keys and transactions exercise value-moving APIs without broadcasting or allocating random-output rewards. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers. Genesis source update: Measured-genesis router fixtures exercise real local recovery, authorization, cancellation, durable commit, finite lease expiry, two-owner CAS and rotated-Admin restore with synthetic external services. They do not broadcast transactions or select economic rewards. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval.",
+      "justification": "Runs real local API signing/grant/policy paths: both-network positives, foreign imports/transactions/raw/cached completions/families refuse; workload replay and detached ready/pending lease retention are asserted. Current fixtures also pin the payload-v2 fulfillment vector and malformed or foreign transferFrom refusal paths. Synthetic local keys and transactions exercise value-moving APIs without broadcasting or allocating random-output rewards. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers; critical custody and authorization review remains separate.",
       "inputs": {
         "workers/neo-signer/tests/unit/api.rs": {
-          "sha256": "e91f700f790802e59ed8f39217381cb5c86a1f26c3510d12618aed081f55fa2a"
+          "sha256": "2f53b55d1d5b924f2bd2a8eb21a3fff9b840ea625e22decf2ab3c5841ee9fa87"
         }
       }
     },
@@ -1094,7 +1094,7 @@
       "justification": "New parser requires two complete network profiles without ambient credentials, rejects duplicate map keys, and selects only canonical routes with consistent physical-header/query/body aliases. Native custody paths are recognized. Family exceptions are route-specific. Labels select an execution/security context; they do not select an economic winner or amount from randomness. Family alias compatibility is grammar, not authorization to switch deployment. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "workers/nitro-enclave-host/src/network_profiles.rs": {
-          "sha256": "7eed6bfe91d870b1b4c6053e5e24432148e1db5535b11a40069782a9bb8b3a25"
+          "sha256": "48d18c5435c27cd3389755902e32d3f808fa69f80e6db74b0e7588b206cf829d"
         }
       }
     },
@@ -1160,7 +1160,7 @@
       "justification": "Adds selected-context tests for shadowed foreign/malformed aliases, both-network positives, omitted labels, encrypted payloads, production key refusal and provider-before-validation ordering across all four ticket routes. Existing synthetic JWT/signature/cache assertions remain. Synthetic identity tokens, locally generated JWT keys and asserted signature-call counts test identity authority; they award no value from random results. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "workers/nitro-enclave-host/tests/unit/neodid.rs": {
-          "sha256": "95f60abd344e1f7bd424c8614fed92a334dec66e8c0541744c7a71cb639462b1"
+          "sha256": "e85885253e5ccf41755765b1af0d514f6446918331a631db63cb2618d7f64a6d"
         }
       }
     },
@@ -1182,7 +1182,7 @@
       "justification": "New pure routing/profile regressions test boot-policy-only inheritance, duplicate headers/configuration, canonical routes, all deployment aliases and exact route-specific family/whitespace exceptions. These are deterministic string/parser fixtures; no random economic outcome exists. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "workers/nitro-enclave-host/tests/unit/network_profiles.rs": {
-          "sha256": "6091bc256754f25d4bb0e0857e06fe914693c83497246f1d11118419ae864f00"
+          "sha256": "8e4838ac6164688a07ce3f6e29594ca82250ac72938ea281439f507b898f4030"
         }
       }
     },
@@ -1621,10 +1621,10 @@
       "consumer": "testnet-preseal-custody-material-preparation-example",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "This exact standalone operator example prepares a new Testnet root and two distinct authentication credentials, derives privileged first-Admin enrollment/public profile bindings, and later constructs three purpose-separated KMS Encrypt requests. Its randomness is cryptographic custody/authentication material, not a VRF/random result used to choose an economic winner, payout recipient or amount. It is security-critical and can establish control over value; non-value classifies economic-VRF selection only. It is outside runtime startup and does not apply enrollment or publish grants. Independent exact source GO covers ce3ea721f3395dc7d731383fc92c7c89fc19eea3, tree12202454dcc2ce03ab5576955b2ec6ef881a49fd, verdict SHA256 c08b2bd127f500af640deb21522aed818e26e0e92a80b6b2d836eee821326df4, including original private-FD inode closure, externally pinned preparation receipt/substitution, completion-last real-I/O failures, strict dual Testnet/N3 identity and signed Decrypt byte parity. This binding does not authorize material generation, Encrypt, enrollment, permissions changes, source integration, full CI, measurement, custody release, deployment or live/runtime admission. Existing custody expiry and pin/manifest gates remain unchanged.",
+      "justification": "This exact standalone operator example prepares a new Testnet root and two distinct authentication credentials, derives privileged first-Admin enrollment/public profile bindings, and later constructs three purpose-separated KMS Encrypt requests. Its randomness is cryptographic custody/authentication material, not a VRF/random result used to choose an economic winner, payout recipient or amount. The current private-file regression isolates its CLOEXEC/descriptor-reuse assertions in a child process while preserving the real I/O checks. It is security-critical and can establish control over value; non-value classifies economic-VRF selection only. This exact-file classification does not authorize material generation, Encrypt, enrollment, permissions changes, measurement, custody release, deployment or live/runtime admission.",
       "inputs": {
         "workers/neo-signer/examples/prepare_testnet_material.rs": {
-          "sha256": "ab4730d5c1ff8e640b1c9c4395d459000fbe50610a43325cfba0a2769e46b984"
+          "sha256": "49dd5afe04c9c21c0085733a02551f7259a225049341bf476e8326351865887b"
         }
       }
     }
