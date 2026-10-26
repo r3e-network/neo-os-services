@@ -87,3 +87,74 @@ fn trimmed_envelopes_respect_byte_budget() {
 fn _unused(v: &Value) -> Value {
     v.clone()
 }
+
+#[test]
+fn action_v4_callback_encodes_strict_identity_epoch_packet() {
+    let maximum = "57896044618658097711785492504343953926634992332820282019728792003956564819967";
+    let body = json!({
+        "callback_encoding": "neo_n3_action_v4",
+        "master_nullifier": format!("0x{}", "11".repeat(32)),
+        "authorization_epoch": "2",
+        "action_nullifier": format!("0x{}", "22".repeat(32)),
+        "signature": format!("0x{}", "33".repeat(64)),
+    });
+    let encode = |body: &Value| {
+        encode_fulfillment_result(
+            "neodid_action_ticket",
+            &to_js(&json!({"ok": true, "body": body})),
+        )
+    };
+    let expected = format!(
+        "4|{}|2|{}|{}",
+        neo_os_core::base64::encode_standard(&[0x11; 32]),
+        neo_os_core::base64::encode_standard(&[0x22; 32]),
+        neo_os_core::base64::encode_standard(&[0x33; 64])
+    );
+    let result = encode(&body).unwrap();
+    assert_eq!(
+        result.result_bytes_base64,
+        Some(neo_os_core::base64::encode_standard(expected.as_bytes()))
+    );
+    assert!(result.result.is_empty());
+    for epoch in ["1", maximum] {
+        let mut valid = body.clone();
+        valid["authorization_epoch"] = json!(epoch);
+        assert!(encode(&valid).is_ok());
+    }
+    for field in [
+        "master_nullifier",
+        "authorization_epoch",
+        "action_nullifier",
+        "signature",
+    ] {
+        for invalid in [Value::Null, json!(1), json!({}), json!("")] {
+            let mut malformed = body.clone();
+            malformed[field] = invalid;
+            assert!(encode(&malformed).is_err(), "{field}");
+        }
+    }
+    for epoch in [
+        "0", "01", "-1", "+1", "1.0", "1e3", " 1", "1 ", "1|2",
+        "57896044618658097711785492504343953926634992332820282019728792003956564819968",
+    ] {
+        let mut malformed = body.clone();
+        malformed["authorization_epoch"] = json!(epoch);
+        assert!(encode(&malformed).is_err(), "{epoch}");
+    }
+    for (field, length) in [
+        ("master_nullifier", 32),
+        ("action_nullifier", 32),
+        ("signature", 64),
+    ] {
+        for invalid in [
+            "zz".repeat(length),
+            "11".repeat(length - 1),
+            "11".repeat(length + 1),
+            format!(" {}", "11".repeat(length)),
+        ] {
+            let mut malformed = body.clone();
+            malformed[field] = json!(invalid);
+            assert!(encode(&malformed).is_err(), "{field}");
+        }
+    }
+}

@@ -330,7 +330,7 @@ function namesTargetChain(label) {
  * no Morpheus network, so the ref is looked up under this worker's network, the
  * rule the enclave host applies when it signs a recovery ticket. Any other
  * explicit label goes through the strict resolvePayloadNetwork. Recognized
- * AA-v3 callback/result encodings carry an opaque signed AA network label
+ * AA-v3/v4 callback/result encodings carry an opaque signed AA network label
  * instead; their refs stay in the worker deployment and all deployment aliases
  * must agree with it. The ticket payload itself is never rewritten.
  */
@@ -339,7 +339,11 @@ function resolveEncryptedRefNetwork(payload, { networkNamesChainFamily = false }
     env('MORPHEUS_NETWORK') || env('NEXT_PUBLIC_MORPHEUS_NETWORK') || 'testnet'
   );
   const encoding = trimString(payload?.callback_encoding || payload?.result_encoding || '');
-  if (encoding === 'neo_n3_action_v3' || encoding === 'neo_n3_recovery_v3') {
+  if (
+    encoding === 'neo_n3_action_v3' ||
+    encoding === 'neo_n3_recovery_v3' ||
+    encoding === 'neo_n3_action_v4'
+  ) {
     // AA network text is an opaque signed domain, never a storage deployment.
     // Check every actual deployment assertion; do not let first-alias wins
     // hide a conflict or use a ticket label to read another deployment's refs.

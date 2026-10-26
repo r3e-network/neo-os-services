@@ -183,6 +183,40 @@ function encodeNeoN3ActionTicketV3(workerBody) {
   );
 }
 
+function encodeNeoN3ActionTicketV4(workerBody) {
+  const bytes = (field, length) => {
+    const value = workerBody[field];
+    if (typeof value !== 'string' || !/^(?:0x)?[0-9a-f]+$/i.test(value)) {
+      throw new Error(`invalid action-v4 ${field}`);
+    }
+    const raw = value.replace(/^0x/i, '');
+    if (raw.length !== length * 2) throw new Error(`invalid action-v4 ${field}`);
+    return Buffer.from(raw, 'hex').toString('base64');
+  };
+  const epoch = workerBody.authorization_epoch;
+  // NeoVM integers are signed, with at most 32 bytes. Compare decimal text
+  // without coercing types, accepting padding or allocating an unbounded BigInt.
+  const maximum = '57896044618658097711785492504343953926634992332820282019728792003956564819967';
+  if (
+    typeof epoch !== 'string' ||
+    !/^[1-9][0-9]*$/.test(epoch) ||
+    epoch.length > maximum.length ||
+    (epoch.length === maximum.length && epoch > maximum)
+  ) {
+    throw new Error('invalid action-v4 authorization_epoch');
+  }
+  return Buffer.from(
+    [
+      '4',
+      bytes('master_nullifier', 32),
+      epoch,
+      bytes('action_nullifier', 32),
+      bytes('signature', 64),
+    ].join('|'),
+    'utf8'
+  );
+}
+
 function resolveCompactCallbackBytes(requestType, workerResponse) {
   const normalized = normalizeRequestType(requestType);
   const workerBody =
@@ -224,6 +258,9 @@ function resolveCompactCallbackBytes(requestType, workerResponse) {
   }
   if (normalized === 'neodid_action_ticket' && callbackEncoding === 'neo_n3_action_v3') {
     return encodeNeoN3ActionTicketV3(workerBody);
+  }
+  if (normalized === 'neodid_action_ticket' && callbackEncoding === 'neo_n3_action_v4') {
+    return encodeNeoN3ActionTicketV4(workerBody);
   }
   return null;
 }

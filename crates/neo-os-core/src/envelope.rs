@@ -102,6 +102,9 @@ pub fn resolve_compact_callback_bytes(
     if normalized == "neodid_action_ticket" && callback_encoding == "neo_n3_action_v3" {
         return Ok(Some(encode_neo_n3_action_ticket_v3(worker_body)));
     }
+    if normalized == "neodid_action_ticket" && callback_encoding == "neo_n3_action_v4" {
+        return Ok(Some(encode_neo_n3_action_ticket_v4(worker_body)?));
+    }
     Ok(None)
 }
 
@@ -214,6 +217,39 @@ fn encode_neo_n3_action_ticket_v3(body: &JsObject) -> Vec<u8> {
         base64::encode_standard(&signature)
     )
     .into_bytes()
+}
+
+fn encode_neo_n3_action_ticket_v4(body: &JsObject) -> CoreResult<Vec<u8>> {
+    let bytes = |field: &str, length: usize| -> CoreResult<Vec<u8>> {
+        let value = strict_str(body.get(field));
+        if value != crate::js_value::js_trim(value) {
+            return Err(CoreError::new(format!("invalid action-v4 {field}")));
+        }
+        let result = if length == 32 {
+            encode_hash32(value, field)
+        } else {
+            encode_signature(value, field)
+        };
+        result.map_err(|_| CoreError::new(format!("invalid action-v4 {field}")))
+    };
+    let epoch = strict_str(body.get("authorization_epoch"));
+    let maximum = "57896044618658097711785492504343953926634992332820282019728792003956564819967";
+    if epoch.is_empty()
+        || epoch.starts_with('0')
+        || !epoch.bytes().all(|c| c.is_ascii_digit())
+        || epoch.len() > maximum.len()
+        || (epoch.len() == maximum.len() && epoch > maximum)
+    {
+        return Err(CoreError::new("invalid action-v4 authorization_epoch"));
+    }
+    Ok(format!(
+        "4|{}|{}|{}|{}",
+        base64::encode_standard(&bytes("master_nullifier", 32)?),
+        epoch,
+        base64::encode_standard(&bytes("action_nullifier", 32)?),
+        base64::encode_standard(&bytes("signature", 64)?)
+    )
+    .into_bytes())
 }
 
 fn compact_tee_attestation(attestation: Option<&JsValue>) -> JsValue {
