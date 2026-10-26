@@ -1099,7 +1099,7 @@
       "justification": "Locks the existing Rust dependency graph, including nitro-attest's direct generic-array dependency with its existing zeroize feature enabled for CBC plaintext cleanup. Dependency resolution metadata does not use random outputs for economic allocation. Security properties of resolved implementations still matter. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "Cargo.lock": {
-          "sha256": "1407d11dfffa912be12935818e69640f94a52169f94384bf46797bb255485666"
+          "sha256": "65fad7e7791cd381fe115e4c18d16cae576b4a87014ebb6e57b017e458e743c6"
         }
       }
     },
@@ -2069,7 +2069,7 @@
       "justification": "This exact standalone operator example prepares a new Testnet root and two distinct authentication credentials, derives privileged first-Admin enrollment/public profile bindings, and later constructs three purpose-separated KMS Encrypt requests. Its randomness is cryptographic custody/authentication material, not a VRF/random result used to choose an economic winner, payout recipient or amount. The current private-file regression isolates its CLOEXEC/descriptor-reuse assertions in a child process while preserving the real I/O checks. It is security-critical and can establish control over value; non-value classifies economic-VRF selection only. This exact-file classification does not authorize material generation, Encrypt, enrollment, permissions changes, measurement, custody release, deployment or live/runtime admission.",
       "inputs": {
         "workers/neo-signer/examples/prepare_testnet_material.rs": {
-          "sha256": "49dd5afe04c9c21c0085733a02551f7259a225049341bf476e8326351865887b"
+          "sha256": "e801e96b9725fdda43ff7a74270455896f37b1828af5e07635ec934175e3cccd"
         }
       }
     },
