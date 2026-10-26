@@ -345,7 +345,7 @@ function resolveEncryptedRefNetwork(payload, { networkNamesChainFamily = false }
     for (const key of ['network', 'morpheus_network', 'runtime_network', 'environment']) {
       if (!Object.hasOwn(payload, key)) continue;
       const value = payload[key];
-      if (typeof value !== 'string' || !value.trim()) {
+      if (typeof value !== 'string' || !/[^\p{White_Space}]/u.test(value)) {
         throw new Error(`encrypted ref ${key} is not valid network text`);
       }
       if (key !== 'network' && value !== workerNetwork) {

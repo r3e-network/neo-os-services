@@ -260,3 +260,26 @@ test('legacy v1-v3 ref assertion coercion and optional fields remain unchanged',
     }
   }
 });
+
+test('action-v4 network whitespace matches Rust White_Space without rewriting bytes', () => {
+  for (const deployment of ['mainnet', 'testnet']) {
+    const resolve = resolver(deployment);
+    for (const key of ['callback_encoding', 'result_encoding']) {
+      assert.throws(() => resolve({ [key]: 'neo_n3_action_v4', network: '\u0085' }), /network/);
+      const payload = { [key]: 'neo_n3_action_v4', network: '\ufeff' };
+      const before = structuredClone(payload);
+      assert.equal(resolve(payload), deployment);
+      assert.deepEqual(payload, before);
+      for (const alias of ['morpheus_network', 'runtime_network', 'environment']) {
+        assert.throws(
+          () => resolve({ [key]: 'neo_n3_action_v4', network: 'opaque', [alias]: '\u0085' }),
+          /not valid network text/
+        );
+        assert.throws(
+          () => resolve({ [key]: 'neo_n3_action_v4', network: 'opaque', [alias]: '\ufeff' }),
+          /does not match worker network/
+        );
+      }
+    }
+  }
+});
