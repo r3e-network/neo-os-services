@@ -222,9 +222,10 @@ pub(crate) fn assert_payload_network(
 ) -> Result<(), RuntimeError> {
     // Recognize the callback domain locally without advancing the DID pin or
     // enabling issuance. This text is signed AA data, not a deployment selector.
-    let is_aa_action_v4 = neo_os_compute::js::js_trim_string(
-        neo_os_compute::js::js_first_truthy(payload, &["callback_encoding", "result_encoding"]),
-    ) == "neo_n3_action_v4";
+    let is_aa_action_v4 = neo_os_compute::js::js_trim_string(neo_os_compute::js::js_first_truthy(
+        payload,
+        &["callback_encoding", "result_encoding"],
+    )) == "neo_n3_action_v4";
     for alias in NETWORK_ALIASES {
         if let Some(value) = payload.get(alias) {
             let nonempty_text = value.as_str().is_some_and(|s| !s.trim().is_empty());

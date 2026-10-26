@@ -39,6 +39,7 @@ k256 = { version = "0.14", features = ["ecdsa", "getrandom"] }
 p256 = { version = "0.14", features = ["ecdsa", "getrandom"] }
 neo-os-compute = { path = "../../crates/neo-os-compute" }
 neo-os-chain-evm = { path = "../../crates/neo-os-chain-evm" }
+neo-os-chain-n3 = { path = "../../crates/neo-os-chain-n3" }
 neo-os-core = { path = "../../crates/neo-os-core" }
 neo-os-games = { path = "../../crates/neo-os-games" }
 neo-os-service-runtime = { path = "../../crates/neo-os-service-runtime" }

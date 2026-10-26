@@ -285,8 +285,14 @@ fn run(
 
         Target::NeoDidActionTicket => {
             let (payload, _slot) = admit!(state, headers, Target::NeoDidActionTicket, body);
+            let overlay = state.overlay.read().expect("overlay lock").merged_map();
+            let read = |request: &neo_os_compute::neodid::AaActionAuthorizationRequest| {
+                crate::aa_action_authorization::read(&overlay, state.oracle_io.as_ref(), request)
+            };
             Ok(DispatchOutcome::ok(
-                crate::neodid::handle_neo_did_action_ticket(state, &payload)?,
+                crate::neodid::handle_neo_did_action_ticket_with_authorization(
+                    state, &payload, &read,
+                )?,
             ))
         }
 

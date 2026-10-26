@@ -23,6 +23,7 @@
 //! `dispatch()` — which is what lets the Node test file's dispatch fixtures
 //! port directly and the two implementations be diffed over HTTP.
 
+pub mod aa_action_authorization;
 pub mod attestation;
 pub mod auth;
 pub mod automation;

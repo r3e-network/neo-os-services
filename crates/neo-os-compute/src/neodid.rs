@@ -35,7 +35,7 @@ const NEODID_BINDING_DOMAIN: &[u8] = b"neodid-binding-v1";
 const NEODID_CLAIM_COMMITMENT_DOMAIN: &[u8] = b"neodid-claim-secret-v1";
 const NEODID_BINDING_COMMITMENT_DOMAIN: &[u8] = b"neodid-claim-commitment-v1";
 const NEODID_ACTION_DOMAIN: &[u8] = b"neodid-action-v1";
-const NEODID_AA_ACTION_DOMAIN: &[u8] = b"neodid-action-v2";
+const NEODID_AA_ACTION_V4_DOMAIN: &[u8] = b"neodid-aa-action-v3";
 const NEODID_RECOVERY_DOMAIN: &[u8] = b"neodid-recovery-v2";
 const NEODID_ZKLOGIN_DOMAIN: &[u8] = b"neodid-zklogin-v1";
 
@@ -188,6 +188,125 @@ pub struct NeoDidIo<'a> {
     pub env: EnvReader<'a>,
     pub verify_id_token: VerifyIdToken<'a>,
     pub derive_key_bytes: DeriveKeyBytes<'a>,
+    pub read_aa_action_authorization: Option<ReadAaActionAuthorization<'a>>,
+}
+
+/// Host capability, never deserialized from a request. The host selects the
+/// canonical core/RPC using its trusted deployment context, then reads core
+/// installation and the verifier's action grant at ONE coherent chain state.
+#[derive(Clone, Debug)]
+pub struct AaActionAuthorizationRequest {
+    pub network: String,
+    pub aa_contract: String,
+    pub account_id_raw: String,
+    pub verifier_contract: String,
+    pub account_id: String,
+    pub master_nullifier: String,
+    pub authorization_epoch: String,
+    pub session_nonce: String,
+    pub expires_at: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct AaActionAuthorizationSnapshot {
+    pub protocol_version: u8,
+    pub vm_state: String,
+    pub canonical_core: String,
+    pub installed_verifier: String,
+    pub core_state_root: String,
+    pub verifier_state_root: String,
+    pub account_id_raw: String,
+    pub network: String,
+    pub account_id: String,
+    pub owner: String,
+    pub master_nullifier: String,
+    pub authorization_epoch: String,
+    pub session_nonce: String,
+    pub observed_time_ms: String,
+    pub action_allowed: bool,
+}
+
+pub type ReadAaActionAuthorization<'a> =
+    &'a dyn Fn(&AaActionAuthorizationRequest) -> Result<AaActionAuthorizationSnapshot, String>;
+
+fn require_aa_action_authorization(
+    io: &NeoDidIo<'_>,
+    request: &AaActionAuthorizationRequest,
+) -> Result<(), String> {
+    let read = io
+        .read_aa_action_authorization
+        .ok_or("trusted AA action authorization reader unavailable")?;
+    let state = read(request)?;
+    let fail = || "AA action identity is not currently authorized for this target".to_string();
+    let hash32 = |value: &str| -> bool {
+        let Some(raw) = value.strip_prefix("0x") else {
+            return false;
+        };
+        raw.len() == 64
+            && raw
+                .bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+            && raw.bytes().any(|c| c != b'0')
+    };
+    if state.protocol_version != 4
+        || state.vm_state != "HALT"
+        || !state.action_allowed
+        || !hash32(&state.core_state_root)
+        || state.core_state_root != state.verifier_state_root
+        || resolve_aa_hash160(Some(&json!(state.canonical_core)), "canonical_core")?
+            != request.aa_contract
+        || resolve_aa_hash160(Some(&json!(state.installed_verifier)), "installed_verifier")?
+            != request.verifier_contract
+        || resolve_aa_hash160(Some(&json!(state.account_id_raw)), "account_id_raw")?
+            != request.account_id_raw
+        || resolve_aa_hash160(Some(&json!(state.owner)), "owner").is_err()
+        || state.network != request.network
+        || state.account_id != request.account_id
+        || state.master_nullifier != request.master_nullifier
+        || state.authorization_epoch != request.authorization_epoch
+        || state.authorization_epoch == "0"
+        || state.session_nonce != request.session_nonce
+    {
+        return Err(fail());
+    }
+    let now = resolve_decimal_text(Some(&json!(state.observed_time_ms)), "observed_time_ms")?;
+    let expiry =
+        num_bigint::BigUint::parse_bytes(request.expires_at.as_bytes(), 10).ok_or_else(fail)?;
+    let now = num_bigint::BigUint::parse_bytes(now.as_bytes(), 10).ok_or_else(fail)?;
+    if expiry <= now {
+        return Err(fail());
+    }
+    Ok(())
+}
+
+/// Authoritative callback-v4 packet. Signature bytes are supplied by the host;
+/// this encoder does not sign or accept a posted authorization snapshot.
+pub fn encode_aa_action_v4_callback(
+    master: &str,
+    epoch: &str,
+    nullifier: &str,
+    signature: &[u8],
+) -> Result<String, String> {
+    use base64::Engine;
+    let decode = |value: &str| -> Result<Vec<u8>, String> {
+        let raw = value.strip_prefix("0x").ok_or("invalid action-v4 hash")?;
+        if raw.len() != 64 || !raw.bytes().all(|c| c.is_ascii_hexdigit()) {
+            return Err("invalid action-v4 hash".to_string());
+        }
+        Ok(hex_decode_stop_at_invalid(raw))
+    };
+    let epoch = resolve_decimal_text(Some(&json!(epoch)), "authorization_epoch")?;
+    if epoch == "0" || signature.len() != 64 {
+        return Err("invalid action-v4 epoch or signature length".to_string());
+    }
+    let b64 = base64::engine::general_purpose::STANDARD;
+    Ok(format!(
+        "4|{}|{}|{}|{}",
+        b64.encode(decode(master)?),
+        epoch,
+        b64.encode(decode(nullifier)?),
+        b64.encode(signature)
+    ))
 }
 
 fn normalize_provider_text(lowercased: &str) -> String {
@@ -608,6 +727,15 @@ fn resolve_required_text(value: Option<&Json>, field_name: &str) -> Result<Strin
     finish_required_text(js_trim_string(value), field_name)
 }
 
+fn resolve_aa_signing_text(value: Option<&Json>, field_name: &str) -> Result<String, String> {
+    let text = value
+        .and_then(Json::as_str)
+        .filter(|_| !js_trim_string(value).is_empty())
+        .ok_or_else(|| format!("{field_name} is required"))?;
+    // Preserve the stored UTF-8 identity while retaining the existing byte bound.
+    finish_required_text(text.to_owned(), field_name)
+}
+
 fn resolve_decimal_text(value: Option<&Json>, field_name: &str) -> Result<String, String> {
     let text = resolve_required_text(value, field_name)?;
     if !text.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -630,6 +758,10 @@ fn callback_encoding(payload: &Json) -> String {
 
 pub fn is_aa_action_v3_payload(payload: &Json) -> bool {
     callback_encoding(payload) == "neo_n3_action_v3"
+}
+
+pub fn is_aa_action_v4_payload(payload: &Json) -> bool {
+    callback_encoding(payload) == "neo_n3_action_v4"
 }
 
 pub fn is_aa_recovery_v3_payload(payload: &Json) -> bool {
@@ -802,11 +934,13 @@ struct AaActionTicket {
     action_id: String,
     expires_at: String,
     action_nullifier: String,
+    master_nullifier: String,
+    authorization_epoch: String,
 }
 
-fn build_aa_action_digest_bytes(ticket: &AaActionTicket) -> Result<[u8; 32], String> {
+fn build_aa_action_v4_digest_bytes(ticket: &AaActionTicket) -> Result<[u8; 32], String> {
     let mut input = Vec::new();
-    input.extend_from_slice(NEODID_AA_ACTION_DOMAIN);
+    input.extend_from_slice(NEODID_AA_ACTION_V4_DOMAIN);
     input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.network)?);
     input.extend_from_slice(&hex_bytes_0x(&ticket.aa_contract));
     input.extend_from_slice(&hex_bytes_0x(&ticket.account_id_raw));
@@ -816,6 +950,8 @@ fn build_aa_action_digest_bytes(ticket: &AaActionTicket) -> Result<[u8; 32], Str
     input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.action_id)?);
     input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.expires_at)?);
     input.extend_from_slice(&hex_decode_stop_at_invalid(&ticket.action_nullifier));
+    input.extend_from_slice(&hex_bytes_0x(&ticket.master_nullifier));
+    input.extend_from_slice(&encode_length_prefixed_ascii(&ticket.authorization_epoch)?);
     Ok(Sha256::digest(&input).into())
 }
 
@@ -951,11 +1087,42 @@ pub fn neodid_bind(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Result<Json, S
 /// `handleNeoDidActionTicket` — note the verification context is the DEFAULT
 /// 'bind' (low assurance): only recovery/zklogin fail closed per-provider.
 pub fn neodid_action_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Result<Json, String> {
+    let encoding = callback_encoding(resolved_payload);
+    let alternate = resolved_payload
+        .get("result_encoding")
+        .and_then(Json::as_str)
+        .unwrap_or("")
+        .trim();
+    if !alternate.is_empty() && !encoding.is_empty() && alternate != encoding {
+        return Err("conflicting action callback encodings".to_string());
+    }
+    let aa_v4 = is_aa_action_v4_payload(resolved_payload);
+    let registry_v1 = encoding.is_empty() || encoding == "neo_n3_action_v1";
+    if aa_v4
+        && ["callback_encoding", "result_encoding"].iter().any(|key| {
+            resolved_payload
+                .get(*key)
+                .is_some_and(|value| !value.is_null() && !value.is_string())
+        })
+    {
+        return Err("invalid action callback encoding".to_string());
+    }
+    if !aa_v4
+        && (is_aa_action_v3_payload(resolved_payload)
+            || resolved_payload.get("aa_contract").is_some()
+            || resolved_payload.get("account_id_raw").is_some()
+            || !registry_v1)
+    {
+        return Err("AA action issuance requires action-v4 enrollment".to_string());
+    }
     let salt_bytes = resolve_neo_did_salt(io.env, io.derive_key_bytes)?;
     let twitter = json!("twitter");
     let provider = require_supported_provider(
         js_first_truthy(resolved_payload, &["provider"]).or(Some(&twitter)),
     )?;
+    if aa_v4 && provider != "web3auth" {
+        return Err("AA actions require a TEE-verified provider identity".to_string());
+    }
     let provider_uid = resolve_verified_provider_uid(
         io.env,
         io.verify_id_token,
@@ -964,8 +1131,8 @@ pub fn neodid_action_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Resul
         "bind",
     )?;
 
-    if is_aa_action_v3_payload(resolved_payload) {
-        let network = resolve_required_text(resolved_payload.get("network"), "network")?;
+    if aa_v4 {
+        let network = resolve_aa_signing_text(resolved_payload.get("network"), "network")?;
         let aa_contract = resolve_aa_hash160(resolved_payload.get("aa_contract"), "aa_contract")?;
         let account_id_raw =
             resolve_aa_hash160(resolved_payload.get("account_id_raw"), "account_id_raw")?;
@@ -973,7 +1140,7 @@ pub fn neodid_action_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Resul
             resolved_payload.get("verifier_contract"),
             "verifier_contract",
         )?;
-        let account_id = resolve_required_text(resolved_payload.get("account_id"), "account_id")?;
+        let account_id = resolve_aa_signing_text(resolved_payload.get("account_id"), "account_id")?;
         let disposable_account = resolve_aa_hash160(
             js_first_truthy(
                 resolved_payload,
@@ -1003,6 +1170,28 @@ pub fn neodid_action_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Resul
         )?;
         let action_nullifier =
             compute_action_nullifier(&provider, &provider_uid, &action_id, &salt_bytes);
+        let master_nullifier = format!(
+            "0x{}",
+            compute_master_nullifier(&provider, &provider_uid, &salt_bytes)
+        );
+        let authorization_epoch = resolve_decimal_text(
+            resolved_payload.get("authorization_epoch"),
+            "authorization_epoch",
+        )?;
+        require_aa_action_authorization(
+            io,
+            &AaActionAuthorizationRequest {
+                network: network.clone(),
+                aa_contract: aa_contract.clone(),
+                account_id_raw: account_id_raw.clone(),
+                verifier_contract: verifier_contract.clone(),
+                account_id: account_id.clone(),
+                master_nullifier: master_nullifier.clone(),
+                authorization_epoch: authorization_epoch.clone(),
+                session_nonce,
+                expires_at: expires_at.clone(),
+            },
+        )?;
         let ticket = AaActionTicket {
             network,
             aa_contract,
@@ -1013,12 +1202,17 @@ pub fn neodid_action_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Resul
             action_id,
             expires_at,
             action_nullifier: action_nullifier.clone(),
+            master_nullifier,
+            authorization_epoch,
         };
-        let digest_bytes = build_aa_action_digest_bytes(&ticket)?;
+        let digest_bytes = build_aa_action_v4_digest_bytes(&ticket)?;
         return Ok(json!({
             "disposable_account": ticket.disposable_account,
             "action_id": ticket.action_id,
             "action_nullifier": format!("0x{action_nullifier}"),
+            "ticket_version": 4,
+            "master_nullifier": ticket.master_nullifier,
+            "authorization_epoch": ticket.authorization_epoch,
             "digest": format!("0x{}", hex_encode(&digest_bytes)),
         }));
     }
@@ -1070,7 +1264,13 @@ pub fn neodid_recovery_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Res
     )?;
 
     let neo_n3 = json!("neo_n3");
-    let network = resolve_required_text(
+    let resolve_identity_text: fn(Option<&Json>, &str) -> Result<String, String> =
+        if is_aa_recovery_v3_payload(resolved_payload) {
+            resolve_aa_signing_text
+        } else {
+            resolve_required_text
+        };
+    let network = resolve_identity_text(
         js_first_truthy(resolved_payload, &["network", "target_chain"]).or(Some(&neo_n3)),
         "network",
     )?;
@@ -1099,7 +1299,7 @@ pub fn neodid_recovery_ticket(io: &NeoDidIo<'_>, resolved_payload: &Json) -> Res
         js_first_truthy(resolved_payload, &["account_id_raw", "accountIdRaw"]),
         "account_id_raw",
     )?;
-    let account_id = resolve_required_text(
+    let account_id = resolve_identity_text(
         js_first_truthy(resolved_payload, &["account_id", "accountId", "wallet_id"]),
         "account_id",
     )?;
@@ -1301,13 +1501,13 @@ mod tests {
     const GOLDEN_AA_ACTION_ID_DIGEST: &str =
         "ca0d3b5865caf8b07c0a2b2eb7ea05ded9b7f4eb81a657ed64316af587553557";
     const GOLDEN_AA_ACTION_NULL: &str =
-        "41a081d59869e15b50c01d3143eeddbcf46c27e804240d83516c9c5325335d05";
+        "4011bc9801d54d878b70e386c76e06ff23f89620d4ef288b1e860e74a988275d";
     const GOLDEN_AA_ACTION_DIGEST: &str =
-        "6997b70a6dd9a8d54c56c9c5792ebec5c780ee884d73464ec4d9eed6b9b405ae";
+        "5119adbc3c6064fabd06b320a16faece452f628919823a84422286174f5fa3c8";
     const GOLDEN_AA_DEFAULT_NONCE_ACTION_ID_DIGEST: &str =
         "23c9db0c12665b099e7e384173cd2474110a94c7d73b87a27b22b139650d66ae";
     const GOLDEN_AA_DEFAULT_NONCE_DIGEST: &str =
-        "7dec99dc9584272e21cd46e5780dd33667e70ff18ad8433cbab6ef1d05e5dadb";
+        "fecb49e1e88c224f09bd45e279a51af76716f71562ec7209d43c8f05b6c83478";
     const GOLDEN_REC_ACTION_ID_DIGEST: &str =
         "a01b356e0ca61b0e9d44433ff86628e8d299bb045ae410a000e0bac5cfef80f8";
     const GOLDEN_REC_NULL: &str =
@@ -1345,6 +1545,7 @@ mod tests {
             env,
             verify_id_token: verify,
             derive_key_bytes: derive,
+            read_aa_action_authorization: None,
         }
     }
 
@@ -1357,6 +1558,106 @@ mod tests {
             .collect();
         let expected: Vec<String> = expected.iter().map(|key| key.to_string()).collect();
         assert_eq!(keys, expected);
+    }
+
+    #[test]
+    fn opaque_aa_action_network_matches_the_raw_explicit_action_id() {
+        let env = host_env(None);
+        let io = aa_io(&env);
+        for network in [" neo3-testnet", "neo3-testnet ", "\tneo3-testnet\n"] {
+            let mut payload = aa_action_v4_payload();
+            payload["network"] = json!(network);
+            let expected = resolve_aa_proxy_action_id(
+                &json!({}),
+                network,
+                payload["aa_contract"].as_str().unwrap(),
+                payload["account_id_raw"].as_str().unwrap(),
+                payload["disposable_account"].as_str().unwrap(),
+                "7",
+                "1735689600",
+            )
+            .unwrap();
+            payload["action_id"] = json!(expected);
+            let result = neodid_action_ticket(&io, &payload);
+            assert!(
+                result.is_ok(),
+                "stored network must not be normalized: {result:?}"
+            );
+            assert_eq!(result.unwrap()["action_id"], expected);
+        }
+    }
+
+    #[test]
+    fn opaque_aa_recovery_preserves_both_identity_fields_and_encoding_aliases() {
+        let env = recovery_env();
+        let io = io_with(&env, unreachable_verify(), unreachable_derive());
+        for alias in ["callback_encoding", "result_encoding"] {
+            let mut payload = recovery_v3_payload();
+            payload.as_object_mut().unwrap().remove("callback_encoding");
+            payload[alias] = json!("neo_n3_recovery_v3");
+            payload["network"] = json!(" neo3-testnet ");
+            payload["account_id"] = json!(" stored-account ");
+            let result = neodid_recovery_ticket(&io, &payload).unwrap();
+            assert_eq!(result["network"], payload["network"]);
+            assert_eq!(result["account_id"], payload["account_id"]);
+            assert_eq!(
+                result["action_id"],
+                resolve_recovery_action_id(
+                    &json!({}),
+                    " neo3-testnet ",
+                    payload["aa_contract"].as_str().unwrap(),
+                    payload["account_id_raw"].as_str().unwrap(),
+                    payload["new_owner"].as_str().unwrap(),
+                    "7",
+                )
+                .unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn opaque_aa_account_digest_distinguishes_padding_and_unicode_spelling() {
+        let env = host_env(None);
+        let io = aa_io(&env);
+        let mut payload = aa_action_v4_payload();
+        let ordinary = neodid_action_ticket(&io, &payload).unwrap();
+        payload["account_id"] = json!(" acct-1 ");
+        assert_ne!(
+            neodid_action_ticket(&io, &payload).unwrap()["digest"],
+            ordinary["digest"]
+        );
+        payload["account_id"] = json!("e\u{301}");
+        let decomposed = neodid_action_ticket(&io, &payload).unwrap();
+        payload["account_id"] = json!("é");
+        assert_ne!(
+            neodid_action_ticket(&io, &payload).unwrap()["digest"],
+            decomposed["digest"]
+        );
+    }
+
+    #[test]
+    fn opaque_aa_text_byte_bounds_and_legacy_normalization_remain_explicit() {
+        let env = recovery_env();
+        let io = io_with(&env, unreachable_verify(), unreachable_derive());
+        for field in ["network", "account_id"] {
+            let mut payload = recovery_v3_payload();
+            payload[field] = json!(format!("{}abc", "😀".repeat(63)));
+            assert!(neodid_recovery_ticket(&io, &payload).is_ok());
+            for bad in [json!(format!(" {}", "x".repeat(255))), json!(7), json!({})] {
+                payload[field] = bad;
+                assert!(
+                    neodid_recovery_ticket(&io, &payload).is_err(),
+                    "{field} invalid raw text"
+                );
+            }
+        }
+        let mut legacy = recovery_v3_payload();
+        legacy.as_object_mut().unwrap().remove("callback_encoding");
+        legacy["network"] = json!(" neo_n3 ");
+        legacy["account_id"] = json!(" acct-1 ");
+        let result = neodid_recovery_ticket(&io, &legacy).unwrap();
+        assert_eq!(result["network"], "neo_n3");
+        assert_eq!(result["account_id"], "acct-1");
     }
 
     #[test]
@@ -1662,6 +1963,48 @@ mod tests {
         let mut explicit_v1 = payload.clone();
         explicit_v1["callback_encoding"] = json!("neo_n3_action_v1");
         assert_eq!(result, neodid_action_ticket(&io, &explicit_v1).unwrap());
+        let mut alias_v1 = payload.clone();
+        alias_v1["result_encoding"] = json!("neo_n3_action_v1");
+        assert_eq!(result, neodid_action_ticket(&io, &alias_v1).unwrap());
+        // Registry-v1 compatibility never authorizes an AA target or downgrades
+        // a v3/future AA ticket into the independent registry digest domain.
+        for alias in ["callback_encoding", "result_encoding"] {
+            for field in ["aa_contract", "account_id_raw"] {
+                let mut spoof = payload.clone();
+                spoof[alias] = json!("neo_n3_action_v1");
+                spoof[field] = json!(format!("0x{}", "11".repeat(20)));
+                assert!(neodid_action_ticket(&io, &spoof).is_err());
+            }
+        }
+        let mut shared = explicit_v1.clone();
+        shared["account_id"] = json!(" shared identity ");
+        shared["verifier_contract"] = json!(format!("0x{}", "33".repeat(20)));
+        assert_eq!(result, neodid_action_ticket(&io, &shared).unwrap());
+        assert_eq!(
+            resolve_provider_uid(&json!({"account_id": " shared "})).unwrap(),
+            "shared"
+        );
+        for (first, second) in [
+            ("neo_n3_action_v1", "neo_n3_action_v3"),
+            ("neo_n3_action_v4", "neo_n3_action_v1"),
+        ] {
+            let mut mixed = payload.clone();
+            mixed["callback_encoding"] = json!(first);
+            mixed["result_encoding"] = json!(second);
+            assert!(neodid_action_ticket(&io, &mixed).is_err());
+        }
+        for encoding in [
+            "neo_n3_action_v2",
+            "neo_n3_action_v3",
+            "neo_n3_action_v5",
+            "neo_n3_action_v10",
+            "neo_n3_action_v1-extra",
+            "NEO_N3_ACTION_V1",
+        ] {
+            let mut unsupported = payload.clone();
+            unsupported["callback_encoding"] = json!(encoding);
+            assert!(neodid_action_ticket(&io, &unsupported).is_err());
+        }
     }
 
     fn ticket_payload(network: Option<&str>) -> Json {
@@ -1682,6 +2025,7 @@ mod tests {
         let mut pairs = vec![
             ("NEODID_SECRET_SALT", "unit-test-salt-text"),
             ("MORPHEUS_NEODID_ALLOW_UNVERIFIED_UID", "true"),
+            ("WEB3AUTH_CLIENT_ID", "fixture-client"),
         ];
         if let Some(network) = network {
             pairs.push(("MORPHEUS_NETWORK", network));
@@ -1689,10 +2033,44 @@ mod tests {
         env_from(&pairs)
     }
 
-    fn aa_action_v3_payload() -> Json {
+    fn fake_aa_snapshot(
+        request: &AaActionAuthorizationRequest,
+    ) -> Result<AaActionAuthorizationSnapshot, String> {
+        Ok(AaActionAuthorizationSnapshot {
+            protocol_version: 4,
+            vm_state: "HALT".to_string(),
+            canonical_core: request.aa_contract.clone(),
+            installed_verifier: request.verifier_contract.clone(),
+            core_state_root: format!("0x{}", "aa".repeat(32)),
+            verifier_state_root: format!("0x{}", "aa".repeat(32)),
+            account_id_raw: request.account_id_raw.clone(),
+            network: request.network.clone(),
+            account_id: request.account_id.clone(),
+            owner: format!("0x{}", "99".repeat(20)),
+            master_nullifier: request.master_nullifier.clone(),
+            authorization_epoch: request.authorization_epoch.clone(),
+            session_nonce: request.session_nonce.clone(),
+            observed_time_ms: "1000".to_string(),
+            action_allowed: true,
+        })
+    }
+
+    // Explicit fake host capability for the v4 unit controls. Never used by the
+    // production adapter or reconstructed from a request body.
+    fn aa_io(env: EnvReader<'_>) -> NeoDidIo<'_> {
+        NeoDidIo {
+            env,
+            verify_id_token: &|_| Ok(json!({"sub": "user-42"})),
+            derive_key_bytes: unreachable_derive(),
+            read_aa_action_authorization: Some(&fake_aa_snapshot),
+        }
+    }
+
+    fn aa_action_v4_payload() -> Json {
         json!({
-            "provider": "twitter",
-            "provider_uid": "user-42",
+            "provider": "web3auth",
+            "provider_uid": "web3auth:user:user-42",
+            "id_token": "fake-valid",
             "network": "neo3-testnet",
             "aa_contract": format!("0x{}", "11".repeat(20)),
             "verifier_contract": format!("0x{}", "33".repeat(20)),
@@ -1701,7 +2079,8 @@ mod tests {
             "disposable_account": format!("0x{}", "44".repeat(20)),
             "expires_at": "1735689600",
             "session_nonce": "7",
-            "callback_encoding": "neo_n3_action_v3",
+            "authorization_epoch": "2",
+            "callback_encoding": "neo_n3_action_v4",
         })
     }
 
@@ -1733,10 +2112,10 @@ mod tests {
     }
 
     #[test]
-    fn aa_action_v2_matches_node_golden_and_binds_the_raw_account() {
+    fn aa_action_v4_matches_independent_golden_and_binds_identity_epoch() {
         let env = host_env(None);
-        let io = io_with(&env, unreachable_verify(), unreachable_derive());
-        let payload = aa_action_v3_payload();
+        let io = aa_io(&env);
+        let payload = aa_action_v4_payload();
         let result = neodid_action_ticket(&io, &payload).unwrap();
         assert_keys(
             &result,
@@ -1744,6 +2123,9 @@ mod tests {
                 "disposable_account",
                 "action_id",
                 "action_nullifier",
+                "ticket_version",
+                "master_nullifier",
+                "authorization_epoch",
                 "digest",
             ],
         );
@@ -1791,9 +2173,9 @@ mod tests {
     }
 
     #[test]
-    fn aa_action_v3_rejects_missing_or_zero_context_and_non_decimal_numbers() {
+    fn aa_action_v4_rejects_missing_or_zero_context_and_non_decimal_numbers() {
         let env = host_env(None);
-        let io = io_with(&env, unreachable_verify(), unreachable_derive());
+        let io = aa_io(&env);
         for field in [
             "network",
             "aa_contract",
@@ -1803,7 +2185,7 @@ mod tests {
             "disposable_account",
             "expires_at",
         ] {
-            let mut payload = aa_action_v3_payload();
+            let mut payload = aa_action_v4_payload();
             payload
                 .as_object_mut()
                 .expect("payload object")
@@ -1817,7 +2199,7 @@ mod tests {
             "account_id_raw",
             "disposable_account",
         ] {
-            let mut payload = aa_action_v3_payload();
+            let mut payload = aa_action_v4_payload();
             payload[field] = json!(format!("0x{}", "00".repeat(20)));
             assert_eq!(
                 neodid_action_ticket(&io, &payload).unwrap_err(),
@@ -1825,13 +2207,78 @@ mod tests {
             );
         }
         for field in ["session_nonce", "expires_at"] {
-            let mut payload = aa_action_v3_payload();
+            let mut payload = aa_action_v4_payload();
             payload[field] = json!("not-decimal");
             assert_eq!(
                 neodid_action_ticket(&io, &payload).unwrap_err(),
                 format!("{field} must be a decimal string")
             );
         }
+    }
+
+    #[test]
+    fn action_v4_refuses_missing_reader_recovery_only_and_incoherent_grants() {
+        let env = host_env(None);
+        let payload = aa_action_v4_payload();
+        let mut io = aa_io(&env);
+        assert!(neodid_action_ticket(&io, &payload).is_ok());
+        io.read_aa_action_authorization = None;
+        assert!(neodid_action_ticket(&io, &payload)
+            .unwrap_err()
+            .contains("reader unavailable"));
+        for kind in 0..7 {
+            let read = |request: &AaActionAuthorizationRequest| {
+                let mut snapshot = fake_aa_snapshot(request)?;
+                match kind {
+                    0 => snapshot.action_allowed = false,
+                    1 => snapshot.authorization_epoch = "3".to_string(),
+                    2 => snapshot.installed_verifier = format!("0x{}", "ff".repeat(20)),
+                    3 => snapshot.verifier_state_root = format!("0x{}", "bb".repeat(32)),
+                    4 => snapshot.vm_state = "FAULT".to_string(),
+                    5 => snapshot.master_nullifier = format!("0x{}", "ff".repeat(32)),
+                    _ => snapshot.network = request.network.trim().to_string() + "wrong",
+                }
+                Ok(snapshot)
+            };
+            let mut io = aa_io(&env);
+            io.read_aa_action_authorization = Some(&read);
+            assert!(neodid_action_ticket(&io, &payload).is_err(), "case {kind}");
+        }
+    }
+
+    #[test]
+    fn action_v4_rejects_v3_and_forgeable_provider_and_encodes_exact_packet() {
+        let env = host_env(None);
+        let io = aa_io(&env);
+        let mut payload = aa_action_v4_payload();
+        payload["callback_encoding"] = json!("neo_n3_action_v3");
+        assert!(neodid_action_ticket(&io, &payload)
+            .unwrap_err()
+            .contains("requires action-v4"));
+        payload["callback_encoding"] = json!("neo_n3_action_v4");
+        payload["provider"] = json!("twitter");
+        assert!(neodid_action_ticket(&io, &payload)
+            .unwrap_err()
+            .contains("TEE-verified"));
+        let packet = encode_aa_action_v4_callback(
+            &format!("0x{}", "12".repeat(32)),
+            "2",
+            &format!("0x{}", "34".repeat(32)),
+            &[0xab; 64],
+        )
+        .unwrap();
+        let parts: Vec<&str> = packet.split('|').collect();
+        assert_eq!(parts.len(), 5);
+        assert_eq!(parts[0], "4");
+        assert_eq!(parts[2], "2");
+        assert!(encode_aa_action_v4_callback("0x00", "2", "0x00", &[0; 64]).is_err());
+        assert!(encode_aa_action_v4_callback(
+            &format!("0x{}", "12".repeat(32)),
+            "0",
+            &format!("0x{}", "34".repeat(32)),
+            &[0; 64]
+        )
+        .is_err());
     }
 
     #[test]

@@ -209,6 +209,7 @@ fn bind_without_a_label_binds_the_host_network() {
         env: &env_reader,
         verify_id_token: &verify,
         derive_key_bytes: &derive,
+        read_aa_action_authorization: None,
     };
     let mut labelled = payload.clone();
     labelled["network"] = json!("mainnet");
@@ -357,12 +358,12 @@ fn action_ticket_returns_the_action_nullifier() {
 }
 
 #[test]
-fn aa_action_v3_raw_network_reaches_the_fold_without_changing_custody_network() {
+fn aa_action_v3_cannot_issue_ownerless_tickets_or_call_the_signer() {
     let mut overlay = salted_overlay();
     overlay.retain(|(name, _)| *name != "NEODID_SECRET_SALT");
     overlay.push(("NEODID_SECRET_SALT", "unit-test-salt-text"));
     let harness = neodid_harness(&overlay);
-    let response = post(
+    let (status, message) = error_body(
         &harness.state,
         "/neodid/action-ticket",
         &json!({
@@ -378,22 +379,10 @@ fn aa_action_v3_raw_network_reaches_the_fold_without_changing_custody_network() 
             "session_nonce": "7",
             "callback_encoding": "neo_n3_action_v3",
         }),
-    )
-    .expect("AA action v3 lane executes");
-    assert_eq!(
-        response["action_id"],
-        "aa_proxy:ca0d3b5865caf8b07c0a2b2eb7ea05ded9b7f4eb81a657ed64316af587553557"
     );
-    assert_eq!(
-        response["digest"],
-        "0x6997b70a6dd9a8d54c56c9c5792ebec5c780ee884d73464ec4d9eed6b9b405ae"
-    );
-    assert_eq!(response["callback_encoding"], "neo_n3_action_v3");
-    let calls = harness.signer.sign_calls();
-    assert_eq!(calls.len(), 2);
-    assert!(calls
-        .iter()
-        .all(|(network, role, _)| network == TEST_NETWORK && role == "worker"));
+    assert_eq!(status, 400);
+    assert_eq!(message, "AA action issuance requires action-v4 enrollment");
+    assert!(harness.signer.sign_calls().is_empty());
 }
 
 #[test]

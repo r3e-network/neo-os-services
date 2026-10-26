@@ -35,8 +35,9 @@ use base64::Engine;
 use neo_os_compute::core::{normalize_target_chain, sanitize_error_message, EnvReader};
 use neo_os_compute::js::{js_first_truthy, js_trim_string};
 use neo_os_compute::neodid::{
-    is_aa_action_v3_payload, is_aa_recovery_v3_payload, neodid_action_ticket, neodid_bind,
-    neodid_recovery_ticket, neodid_zklogin_ticket, NeoDidIo, Web3AuthVerifyRequest,
+    is_aa_action_v3_payload, is_aa_action_v4_payload, is_aa_recovery_v3_payload,
+    neodid_action_ticket, neodid_bind, neodid_recovery_ticket, neodid_zklogin_ticket, NeoDidIo,
+    ReadAaActionAuthorization, Web3AuthVerifyRequest,
 };
 use neo_os_compute::stable_stringify::stable_stringify;
 
@@ -53,7 +54,7 @@ pub fn handle_neo_did_bind(
     state: &AppState,
     body: &serde_json::Value,
 ) -> Result<serde_json::Value, RuntimeError> {
-    handle_ticket(state, body, "neodid_bind", neodid_bind)
+    handle_ticket(state, body, "neodid_bind", neodid_bind, None)
 }
 
 /// `handleNeoDidActionTicket` — the low-assurance action ticket.
@@ -61,7 +62,29 @@ pub fn handle_neo_did_action_ticket(
     state: &AppState,
     body: &serde_json::Value,
 ) -> Result<serde_json::Value, RuntimeError> {
-    handle_ticket(state, body, "neodid_action_ticket", neodid_action_ticket)
+    handle_ticket(
+        state,
+        body,
+        "neodid_action_ticket",
+        neodid_action_ticket,
+        None,
+    )
+}
+
+/// Services composes this with a server-owned, canonical-core reader. The
+/// callback must never be reconstructed from body proofs, caller RPC or owner.
+pub fn handle_neo_did_action_ticket_with_authorization(
+    state: &AppState,
+    body: &serde_json::Value,
+    read: ReadAaActionAuthorization<'_>,
+) -> Result<serde_json::Value, RuntimeError> {
+    handle_ticket(
+        state,
+        body,
+        "neodid_action_ticket",
+        neodid_action_ticket,
+        Some(read),
+    )
 }
 
 /// `handleNeoDidRecoveryTicket` — the high-assurance recovery ticket.
@@ -74,6 +97,7 @@ pub fn handle_neo_did_recovery_ticket(
         body,
         "neodid_recovery_ticket",
         neodid_recovery_ticket,
+        None,
     )
 }
 
@@ -84,7 +108,13 @@ pub fn handle_neo_did_zklogin_ticket(
     state: &AppState,
     body: &serde_json::Value,
 ) -> Result<serde_json::Value, RuntimeError> {
-    handle_ticket(state, body, "neodid_zklogin_ticket", neodid_zklogin_ticket)
+    handle_ticket(
+        state,
+        body,
+        "neodid_zklogin_ticket",
+        neodid_zklogin_ticket,
+        None,
+    )
 }
 
 /// One ticket flow end to end: confidential resolution, the ported flow,
@@ -96,6 +126,7 @@ fn handle_ticket(
     body: &serde_json::Value,
     mode: &str,
     flow: fn(&NeoDidIo<'_>, &serde_json::Value) -> Result<serde_json::Value, String>,
+    read_aa_action_authorization: Option<ReadAaActionAuthorization<'_>>,
 ) -> Result<serde_json::Value, RuntimeError> {
     let overlay = state.overlay.read().expect("overlay lock");
     let overlay_map = overlay.merged_map();
@@ -134,6 +165,7 @@ fn handle_ticket(
         env: env_reader,
         verify_id_token: &verify_id_token,
         derive_key_bytes: &refuse_derive_key_bytes,
+        read_aa_action_authorization,
     };
     let result = flow(&io, &resolved)
         .map_err(|message| http_error(400, sanitize_error_message(&message)))?;
@@ -217,7 +249,8 @@ fn resolve_signing_network(
             });
     let is_aa_ticket_text = (mode == "neodid_recovery_ticket"
         && is_aa_recovery_v3_payload(resolved))
-        || (mode == "neodid_action_ticket" && is_aa_action_v3_payload(resolved));
+        || (mode == "neodid_action_ticket"
+            && (is_aa_action_v3_payload(resolved) || is_aa_action_v4_payload(resolved)));
     if names_chain_family || is_aa_ticket_text {
         let mut payload = resolved.clone();
         if let Some(object) = payload.as_object_mut() {

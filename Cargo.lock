@@ -2000,6 +2000,7 @@ dependencies = [
  "http",
  "k256",
  "neo-os-chain-evm",
+ "neo-os-chain-n3",
  "neo-os-compute",
  "neo-os-core",
  "neo-os-games",

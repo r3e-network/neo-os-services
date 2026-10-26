@@ -245,9 +245,7 @@ fn aa_v4_opaque_network_preserves_all_deployment_assertions() {
                 encoding_key: "neo_n3_action_v4",
             });
             let before = payload.clone();
-            assert!(
-                assert_payload_network(deployment, "/neodid/action-ticket", &payload).is_ok()
-            );
+            assert!(assert_payload_network(deployment, "/neodid/action-ticket", &payload).is_ok());
             assert_eq!(payload, before);
             for alias in ["morpheus_network", "runtime_network", "environment"] {
                 let mut conflicting = payload.clone();
@@ -256,14 +254,18 @@ fn aa_v4_opaque_network_preserves_all_deployment_assertions() {
                 } else {
                     "mainnet"
                 });
-                assert!(assert_payload_network(deployment, "/neodid/action-ticket", &conflicting)
-                    .is_err());
+                assert!(
+                    assert_payload_network(deployment, "/neodid/action-ticket", &conflicting)
+                        .is_err()
+                );
             }
             let malformed = serde_json::json!({"network": false, encoding_key: "neo_n3_action_v4"});
-            assert!(assert_payload_network(deployment, "/neodid/action-ticket", &malformed)
-                .is_err());
-            assert!(assert_payload_network(deployment, "/neodid/recovery-ticket", &payload)
-                .is_err());
+            assert!(
+                assert_payload_network(deployment, "/neodid/action-ticket", &malformed).is_err()
+            );
+            assert!(
+                assert_payload_network(deployment, "/neodid/recovery-ticket", &payload).is_err()
+            );
         }
     }
 }

@@ -32,7 +32,7 @@ const NEODID_BINDING_DOMAIN = Buffer.from('neodid-binding-v1', 'utf8');
 const NEODID_CLAIM_COMMITMENT_DOMAIN = Buffer.from('neodid-claim-secret-v1', 'utf8');
 const NEODID_BINDING_COMMITMENT_DOMAIN = Buffer.from('neodid-claim-commitment-v1', 'utf8');
 const NEODID_ACTION_DOMAIN = Buffer.from('neodid-action-v1', 'utf8');
-const NEODID_AA_ACTION_DOMAIN = Buffer.from('neodid-action-v2', 'utf8');
+const NEODID_AA_ACTION_DOMAIN = Buffer.from('neodid-aa-action-v3', 'utf8');
 const NEODID_RECOVERY_DOMAIN = Buffer.from('neodid-recovery-v2', 'utf8');
 const NEODID_ZKLOGIN_DOMAIN = Buffer.from('neodid-zklogin-v1', 'utf8');
 
@@ -486,6 +486,8 @@ function buildAaActionDigestBytes(ticket) {
         encodeLengthPrefixedAscii(ticket.action_id),
         encodeLengthPrefixedAscii(ticket.expires_at),
         Buffer.from(ticket.action_nullifier, 'hex'),
+        Buffer.from(ticket.master_nullifier.replace(/^0x/i, ''), 'hex'),
+        encodeLengthPrefixedAscii(ticket.authorization_epoch),
       ])
     )
     .digest();
@@ -567,6 +569,13 @@ function resolveRequiredText(value, fieldName) {
   return text;
 }
 
+function resolveAaSigningText(value, fieldName) {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${fieldName} is required`);
+  if (Buffer.byteLength(value, 'utf8') > 255) throw new Error(`${fieldName} is too long`);
+  // Network and account text are stored signing material, not display labels.
+  return value;
+}
+
 function resolveDecimalText(value, fieldName) {
   const text = resolveRequiredText(value, fieldName);
   if (!/^[0-9]+$/.test(text)) throw new Error(`${fieldName} must be a decimal string`);
@@ -577,6 +586,41 @@ function isAaActionV3Payload(payload = {}) {
   return (
     trimString(payload.callback_encoding || payload.result_encoding || '') === 'neo_n3_action_v3'
   );
+}
+
+function isAaActionV4Payload(payload = {}) {
+  return trimString(payload.callback_encoding || payload.result_encoding || '') === 'neo_n3_action_v4';
+}
+
+/** A host capability argument, never taken from request JSON. The host pins the
+ * canonical core/RPC and reads installation plus grant at one chain state. */
+async function requireAaActionAuthorization(readAuthorization, request) {
+  if (typeof readAuthorization !== 'function') throw new Error('trusted AA action authorization reader unavailable');
+  const state = await readAuthorization(Object.freeze({ ...request }));
+  const denied = () => { throw new Error('AA action identity is not currently authorized for this target'); };
+  const root = state?.core_state_root;
+  if (!state || state.protocol_version !== 4 || state.vm_state !== 'HALT' || state.action_allowed !== true ||
+      typeof root !== 'string' || !/^0x[0-9a-f]{64}$/.test(root) || /^0x0+$/.test(root) || root !== state.verifier_state_root) denied();
+  for (const [field, value] of [['canonical_core', request.aa_contract], ['installed_verifier', request.verifier_contract], ['account_id_raw', request.account_id_raw]]) {
+    if (resolveAaHash160(state[field], field) !== value) denied();
+  }
+  resolveAaHash160(state.owner, 'owner');
+  for (const field of ['network', 'account_id', 'master_nullifier', 'authorization_epoch', 'session_nonce']) {
+    if (state[field] !== request[field]) denied();
+  }
+  if (request.authorization_epoch === '0' || BigInt(request.expires_at) <= BigInt(resolveDecimalText(state.observed_time_ms, 'observed_time_ms'))) denied();
+}
+
+// Public owner-source encoder used by callback adapters after real signing.
+// It performs no signing and accepts no posted grant/owner proof.
+export function encodeAaActionV4Callback(master, epoch, nullifier, signatureBytes) {
+  const hash = value => {
+    if (typeof value !== 'string' || !/^0x[0-9a-f]{64}$/i.test(value)) throw new Error('invalid action-v4 hash');
+    return Buffer.from(value.slice(2), 'hex').toString('base64');
+  };
+  const canonicalEpoch = resolveDecimalText(epoch, 'authorization_epoch');
+  if (canonicalEpoch === '0' || !Buffer.isBuffer(signatureBytes) || signatureBytes.length !== 64) throw new Error('invalid action-v4 epoch or signature length');
+  return `4|${hash(master)}|${canonicalEpoch}|${hash(nullifier)}|${signatureBytes.toString('base64')}`;
 }
 
 function resolveUint256Text(value, fieldName) {
@@ -814,19 +858,30 @@ export async function handleNeoDidBind(payload = {}) {
   return buildNeoDidResponse('neodid_bind', result, resolvedPayload);
 }
 
-export async function handleNeoDidActionTicket(payload = {}) {
+export async function handleNeoDidActionTicket(payload = {}, readAuthorization = null) {
   const resolvedPayload = await resolveConfidentialPayload(payload);
+  const encoding = trimString(resolvedPayload.callback_encoding || resolvedPayload.result_encoding || '');
+  const alternate = trimString(resolvedPayload.result_encoding || '');
+  if (alternate && encoding && alternate !== encoding) throw new Error('conflicting action callback encodings');
+  const aaV4 = isAaActionV4Payload(resolvedPayload);
+  const registryV1 = encoding === '' || encoding === 'neo_n3_action_v1';
+  if (aaV4 && ['callback_encoding', 'result_encoding'].some(key => resolvedPayload[key] !== undefined && resolvedPayload[key] !== null && typeof resolvedPayload[key] !== 'string')) throw new Error('invalid action callback encoding');
+  if (!aaV4 && (isAaActionV3Payload(resolvedPayload) || resolvedPayload.aa_contract !== undefined ||
+      resolvedPayload.account_id_raw !== undefined || !registryV1)) {
+    throw new Error('AA action issuance requires action-v4 enrollment');
+  }
   const saltBytes = await resolveNeoDidSalt();
   const provider = requireSupportedProvider(resolvedPayload.provider || 'twitter');
+  if (aaV4 && !PROVIDERS_WITH_TEE_UID.has(provider)) throw new Error('AA actions require a TEE-verified provider identity');
   const providerUid = await resolveVerifiedProviderUid(provider, resolvedPayload);
   let ticket;
   let digestBytes;
-  if (isAaActionV3Payload(resolvedPayload)) {
-    const network = resolveRequiredText(resolvedPayload.network, 'network');
+  if (aaV4) {
+    const network = resolveAaSigningText(resolvedPayload.network, 'network');
     const aaContract = resolveAaHash160(resolvedPayload.aa_contract, 'aa_contract');
     const accountIdRaw = resolveAaHash160(resolvedPayload.account_id_raw, 'account_id_raw');
     const verifierContract = resolveAaHash160(resolvedPayload.verifier_contract, 'verifier_contract');
-    const accountId = resolveRequiredText(resolvedPayload.account_id, 'account_id');
+    const accountId = resolveAaSigningText(resolvedPayload.account_id, 'account_id');
     const disposableAccount = resolveAaHash160(
       resolvedPayload.disposable_account || resolvedPayload.disposable_script_hash,
       'disposable_account'
@@ -842,7 +897,16 @@ export async function handleNeoDidActionTicket(payload = {}) {
       sessionNonce,
       expiresAt
     );
+    const masterNullifier = `0x${computeMasterNullifier(provider, providerUid, saltBytes)}`;
+    const authorizationEpoch = resolveDecimalText(resolvedPayload.authorization_epoch, 'authorization_epoch');
+    await requireAaActionAuthorization(readAuthorization, {
+      network, aa_contract: aaContract, account_id_raw: accountIdRaw, verifier_contract: verifierContract,
+      account_id: accountId, master_nullifier: masterNullifier, authorization_epoch: authorizationEpoch,
+      session_nonce: sessionNonce, expires_at: expiresAt,
+    });
     ticket = {
+      master_nullifier: masterNullifier,
+      authorization_epoch: authorizationEpoch,
       network,
       aa_contract: aaContract,
       account_id_raw: accountIdRaw,
@@ -876,6 +940,7 @@ export async function handleNeoDidActionTicket(payload = {}) {
     action_id: ticket.action_id,
     action_nullifier: `0x${ticket.action_nullifier}`,
     digest: `0x${Buffer.from(digestBytes).toString('hex')}`,
+    ...(aaV4 ? { ticket_version: 4, master_nullifier: ticket.master_nullifier, authorization_epoch: ticket.authorization_epoch } : {}),
     ...signer,
   };
   return buildNeoDidResponse('neodid_action_ticket', result, resolvedPayload);
@@ -890,7 +955,12 @@ export async function handleNeoDidRecoveryTicket(payload = {}) {
   const saltBytes = await resolveNeoDidSalt();
   const provider = requireSupportedProvider(resolvedPayload.provider || 'twitter');
   const providerUid = await resolveVerifiedProviderUid(provider, resolvedPayload, 'recovery');
-  const network = resolveRequiredText(
+  const resolveIdentityText =
+    trimString(resolvedPayload.callback_encoding || resolvedPayload.result_encoding || '') ===
+    'neo_n3_recovery_v3'
+      ? resolveAaSigningText
+      : resolveRequiredText;
+  const network = resolveIdentityText(
     resolvedPayload.network || resolvedPayload.target_chain || 'neo_n3',
     'network'
   );
@@ -908,7 +978,7 @@ export async function handleNeoDidRecoveryTicket(payload = {}) {
     resolvedPayload.account_address || resolvedPayload.aa_address || resolvedPayload.wallet_address,
     'account_address'
   );
-  const accountId = resolveRequiredText(
+  const accountId = resolveIdentityText(
     resolvedPayload.account_id || resolvedPayload.accountId || resolvedPayload.wallet_id,
     'account_id'
   );
