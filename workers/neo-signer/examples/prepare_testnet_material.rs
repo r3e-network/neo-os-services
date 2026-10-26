@@ -898,6 +898,162 @@ mod tool {
             Zeroizing::new(serde_json::to_vec(&json!({"KeyId":CMK,"EncryptionAlgorithm":"SYMMETRIC_DEFAULT","CiphertextBlob":STANDARD.encode([n;64])})).unwrap())
         }
 
+        fn neutral_test_child(command: &mut Command) -> &mut Command {
+            use std::os::unix::process::CommandExt;
+
+            // Snapshot before fork, outside the private fixture. The directory iterator
+            // has closed its own CLOEXEC descriptor before these live-FD checks.
+            // Stdio, including the alias test's release/witness handshake, stays intact.
+            let incoming: Vec<_> = open_fds()
+                .unwrap()
+                .into_iter()
+                .filter(|fd| *fd > 2)
+                .filter_map(|fd| {
+                    if unsafe { fcntl(fd, 1) } < 0 {
+                        assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(9));
+                        return None;
+                    }
+                    let status = unsafe { fcntl(fd, 3) };
+                    if status < 0 {
+                        assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(9));
+                        return None;
+                    }
+                    Some((fd, status))
+                })
+                .collect();
+            // SAFETY: only fcntl and errno-based error construction run after fork;
+            // no allocation, directory traversal, environment access or logging.
+            // This changes child descriptor flags only. exec closes the incoming
+            // foreign handles BEFORE any private fixture or call under test exists.
+            unsafe {
+                command.pre_exec(move || {
+                    for &(fd, status) in &incoming {
+                        let flags = fcntl(fd, 1);
+                        if flags < 0 {
+                            let error = std::io::Error::last_os_error();
+                            if error.raw_os_error() == Some(9) {
+                                continue;
+                            }
+                            return Err(error);
+                        }
+                        // Recheck captured slots: a CLOEXEC descriptor may now be
+                        // Rust's exec-error pipe. Never close it or touch stdio.
+                        if flags & 1 != 0 {
+                            continue;
+                        }
+                        if fcntl(fd, 3) != status {
+                            return Err(std::io::Error::from_raw_os_error(9));
+                        }
+                        if fcntl(fd, 2, flags | 1) < 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                    }
+                    Ok(())
+                });
+            }
+            command
+        }
+
+        #[test]
+        fn dedicated_child_fd_baseline_preserves_parent_and_strict_guard() {
+            const CHILD: &str = "NEOOS_SYNTHETIC_FD_BASELINE_CHILD";
+            const COMPLETE: &[u8] = b"ISOLATED_FD_BASELINE_COMPLETE";
+            if std::env::var_os(CHILD).as_deref() == Some(std::ffi::OsStr::new("1")) {
+                // The startup hook has run before any private fixture exists.
+                refuse_inheritable_fds().unwrap();
+                let dev: u64 = std::env::var("NEOOS_SYNTHETIC_FOREIGN_DEV")
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                let ino: u64 = std::env::var("NEOOS_SYNTHETIC_FOREIGN_INO")
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                for fd in open_fds().unwrap() {
+                    if let Ok(metadata) = opened_metadata(fd) {
+                        assert!(metadata.dev() != dev || metadata.ino() != ino);
+                    }
+                }
+
+                // A leak introduced AFTER the neutral baseline must still refuse.
+                let d = directory();
+                let dir = canonical(&d);
+                let (leak, _) = file(&dir, "inside-child.json");
+                let fd = leak.as_raw_fd();
+                assert_eq!(unsafe { fcntl(fd, 2, 0) }, 0);
+                let refused = bounded_child(
+                    Command::new("/bin/cat").env_clear(),
+                    b"PUBLIC_SYNTHETIC_ECHO",
+                    Duration::from_secs(2),
+                );
+                assert_eq!(unsafe { fcntl(fd, 2, 1) }, 0);
+                assert_eq!(
+                    refused.unwrap_err().to_string(),
+                    "inheritable descriptor refused"
+                );
+                assert_eq!(
+                    bounded_child(
+                        Command::new("/bin/cat").env_clear(),
+                        b"PUBLIC_SYNTHETIC_ECHO",
+                        Duration::from_secs(2),
+                    )
+                    .unwrap()
+                    .as_slice(),
+                    b"PUBLIC_SYNTHETIC_ECHO"
+                );
+                println!("ISOLATED_FD_BASELINE_COMPLETE");
+                return;
+            }
+
+            let d = directory();
+            let dir = canonical(&d);
+            let (foreign, _) = file(&dir, "foreign-incoming.json");
+            let fd = foreign.as_raw_fd();
+            let metadata = foreign.metadata().unwrap();
+            let flags = unsafe { fcntl(fd, 1) };
+            assert!(flags >= 0);
+            assert_eq!(flags & 1, 1);
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "tool::tests::dedicated_child_fd_baseline_preserves_parent_and_strict_guard",
+                    "--nocapture",
+                ])
+                .env_clear()
+                .env(CHILD, "1")
+                .env("NEOOS_SYNTHETIC_FOREIGN_DEV", metadata.dev().to_string())
+                .env("NEOOS_SYNTHETIC_FOREIGN_INO", metadata.ino().to_string());
+            // Simulate an incoming inheritable FD only in the forked child.
+            // The parent canary remains CLOEXEC throughout parallel libtest.
+            unsafe {
+                use std::os::unix::process::CommandExt;
+                command.pre_exec(move || {
+                    if fcntl(fd, 2, 0) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            let output = neutral_test_child(&mut command).output().unwrap();
+            assert_eq!(unsafe { fcntl(fd, 1) }, flags);
+            assert!(same(&metadata, &foreign.metadata().unwrap()));
+            assert!(
+                output.status.success(),
+                "isolated FD baseline failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(output.stdout.windows(COMPLETE.len()).any(|w| w == COMPLETE));
+
+            // A captured slot may be closed and reused for Rust's exec-error pipe.
+            // A missing executable must still report NotFound instead of false success.
+            let (stale, _) = file(&dir, "stale-slot.json");
+            let mut missing = Command::new(dir.join("missing-executable"));
+            neutral_test_child(&mut missing);
+            drop(stale);
+            assert_eq!(missing.output().unwrap_err().kind(), std::io::ErrorKind::NotFound);
+        }
+
         #[test]
         fn actual_native_validators_and_independent_known_vectors_join() {
             let (_, _, bundle, public) = fixture();
@@ -1023,16 +1179,16 @@ mod tool {
                 // A closed descriptor number may be reused by another test running in
                 // this process, and the intentional CLOEXEC leak test must not share
                 // its address space. Run the actual assertions in an isolated process.
-                let output = Command::new(std::env::current_exe().unwrap())
+                let mut command = Command::new(std::env::current_exe().unwrap());
+                command
                     .args([
                         "--exact",
                         "tool::tests::private_file_is_durable_and_closed_before_any_child",
                         "--nocapture",
                     ])
                     .env_clear()
-                    .env(CHILD, "1")
-                    .output()
-                    .unwrap();
+                    .env(CHILD, "1");
+                let output = neutral_test_child(&mut command).output().unwrap();
                 assert!(
                     output.status.success(),
                     "isolated private-file test failed: {}",
@@ -1093,11 +1249,38 @@ mod tool {
         fn private_alias_permissions_paths_and_inheritance_refuse() {
             const CHILD: &str = "NEOOS_SYNTHETIC_CLOEXEC_CHILD";
             const COMPLETE: &[u8] = b"ISOLATED_CLOEXEC_WITNESS_COMPLETE";
+            const HARNESS: &str = "NEOOS_SYNTHETIC_CLOEXEC_HARNESS";
+            const HARNESS_COMPLETE: &[u8] = b"ISOLATED_CLOEXEC_HARNESS_COMPLETE";
+            if std::env::var_os(HARNESS).is_none() && std::env::var_os(CHILD).is_none() {
+                // The positive parent-side echoes need the same neutral baseline
+                // as the leak child. Neither role runs in shared libtest.
+                let mut command = Command::new(std::env::current_exe().unwrap());
+                command
+                    .args([
+                        "--exact",
+                        "tool::tests::private_alias_permissions_paths_and_inheritance_refuse",
+                        "--nocapture",
+                    ])
+                    .env_clear()
+                    .env(HARNESS, "1");
+                let output = neutral_test_child(&mut command).output().unwrap();
+                assert!(
+                    output.status.success(),
+                    "isolated CLOEXEC harness failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(output
+                    .stdout
+                    .windows(HARNESS_COMPLETE.len())
+                    .any(|w| w == HARNESS_COMPLETE));
+                return;
+            }
             if std::env::var_os(CHILD).as_deref() != Some(std::ffi::OsStr::new("1")) {
                 // The intentional process-wide FD leak must never share the default-parallel
                 // harness with positive child-spawn tests. Match the existing private-child
                 // test pattern, and require a witness so zero selected tests cannot pass.
-                let mut child = Command::new(std::env::current_exe().unwrap())
+                let mut command = Command::new(std::env::current_exe().unwrap());
+                command
                     .args([
                         "--exact",
                         "tool::tests::private_alias_permissions_paths_and_inheritance_refuse",
@@ -1107,9 +1290,8 @@ mod tool {
                     .env(CHILD, "1")
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                    .unwrap();
+                    .stderr(Stdio::piped());
+                let mut child = neutral_test_child(&mut command).spawn().unwrap();
                 use std::io::BufRead;
                 let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
                 loop {
@@ -1142,6 +1324,7 @@ mod tool {
                 for echoed in echoes {
                     assert_eq!(echoed.unwrap().as_slice(), b"PUBLIC_SYNTHETIC_ECHO");
                 }
+                println!("ISOLATED_CLOEXEC_HARNESS_COMPLETE");
                 return;
             }
             assert!(PrivateFile::take(1, Path::new("/unused"), true).is_err());
@@ -1447,6 +1630,27 @@ mod tool {
 
         #[test]
         fn aws_command_uses_no_plaintext_argv_and_no_ambient_configuration() {
+            const CHILD: &str = "NEOOS_SYNTHETIC_AWS_COMMAND_CHILD";
+            const COMPLETE: &[u8] = b"ISOLATED_AWS_COMMAND_COMPLETE";
+            if std::env::var_os(CHILD).is_none() {
+                let mut command = Command::new(std::env::current_exe().unwrap());
+                command
+                    .args([
+                        "--exact",
+                        "tool::tests::aws_command_uses_no_plaintext_argv_and_no_ambient_configuration",
+                        "--nocapture",
+                    ])
+                    .env_clear()
+                    .env(CHILD, "1");
+                let output = neutral_test_child(&mut command).output().unwrap();
+                assert!(
+                    output.status.success(),
+                    "isolated AWS command test failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(output.stdout.windows(COMPLETE.len()).any(|w| w == COMPLETE));
+                return;
+            }
             let (_, _, b, public) = fixture();
             let d = directory();
             let dir = canonical(&d);
@@ -1524,10 +1728,32 @@ mod tool {
                 aws.encrypt(&request).unwrap().as_slice(),
                 request.as_slice()
             );
+            println!("ISOLATED_AWS_COMMAND_COMPLETE");
         }
 
         #[test]
         fn fake_child_error_output_is_bounded_and_redacted() {
+            const CHILD: &str = "NEOOS_SYNTHETIC_ERROR_OUTPUT_CHILD";
+            const COMPLETE: &[u8] = b"ISOLATED_ERROR_OUTPUT_COMPLETE";
+            if std::env::var_os(CHILD).is_none() {
+                let mut command = Command::new(std::env::current_exe().unwrap());
+                command
+                    .args([
+                        "--exact",
+                        "tool::tests::fake_child_error_output_is_bounded_and_redacted",
+                        "--nocapture",
+                    ])
+                    .env_clear()
+                    .env(CHILD, "1");
+                let output = neutral_test_child(&mut command).output().unwrap();
+                assert!(
+                    output.status.success(),
+                    "isolated error-output test failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(output.stdout.windows(COMPLETE.len()).any(|w| w == COMPLETE));
+                return;
+            }
             let d = directory();
             let dir = canonical(&d);
             let script = dir.join("fake-failure");
@@ -1539,7 +1765,9 @@ mod tool {
                 Duration::from_secs(2),
             )
             .unwrap_err();
+            assert_eq!(error.to_string(), "Encrypt child failed");
             assert!(!error.to_string().contains("SYNTHETIC_PRIVATE_CANARY"));
+            println!("ISOLATED_ERROR_OUTPUT_COMPLETE");
         }
     }
 }
