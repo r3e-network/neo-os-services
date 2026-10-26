@@ -46,7 +46,8 @@ def public_fixture(source):
         overlays[n] = {'MORPHEUS_NETWORK': n, 'MORPHEUS_CUSTODY_PROFILE_FILE': '/app/config/custody/'+n+'.json',
             'MORPHEUS_CUSTODY_PROFILE_SHA256': spec['profile_sha256'], 'MORPHEUS_CUSTODY_DATA_DIR': '/var/lib/neoos-custody/'+n,
             'MORPHEUS_CUSTODY_WORKLOAD_AUDIENCE': spec['workload_audience'], 'SIGNER_SERVICE_URL': 'http://127.0.0.1:0/'+n,
-            'NEO_RPC_URL': spec['neo_n3_rpc'], 'NEOX_RPC_URL': spec['neo_x_rpc'], 'NEOX_RPC': spec['neo_x_rpc'],
+            'NEO_RPC_URL': spec['neo_n3_rpc'], 'NEO_RPC_URLS_' + n.upper(): spec['neo_n3_rpc'],
+            'NEOX_RPC_URL': spec['neo_x_rpc'], 'NEOX_RPC': spec['neo_x_rpc'],
             'EVM_RPC_URL': spec['neo_x_rpc'], 'AWS_REGION': spec['aws_region'], 'FRONTIER_KMS_KEY_ARN': spec['frontier_kms_key_arn'],
             **{'SIGNER_ROLE_'+r+'_KEY_ID': spec['roles'][r] for r in ROLES}}
     return profiles, specs, overlays
@@ -130,7 +131,8 @@ def fixture(mutate_public=None, enrollment=False, mutate_enrollment=None,
                        for name, data in cross_objects.items()).encode()
         files['cross-inputs/SHA256SUMS'] = v.sha(sums)
     files['Dockerfile'] = v.sha(source[recipe][1].decode().replace(
-        '# DUAL_NETWORK_ENV', 'ENV MORPHEUS_NETWORK_PROFILES_JSON='+json.dumps(map_bytes.decode().strip())).encode())
+        '# DUAL_NETWORK_ENV', 'ENV MORPHEUS_NETWORK_PROFILES_JSON='+json.dumps(map_bytes.decode().strip()) +
+        ' MORPHEUS_EMBEDDED_RELAYER=false').encode())
     context = {'schema': 'neoos/dual-image-context/v1', 'release': release, 'git_commit':'a'*40,
         'source_archive_sha256':v.sha(b'unit-only archive'),'reviewed_input_sha256':v.sha(v.encoded(spec)),
         'map_sha256':v.sha(map_bytes),'networks':v.NETWORKS,'files':files,'status':'fixture only, not admission'}
@@ -264,6 +266,29 @@ class Validation(unittest.TestCase):
                 else: overlays['mainnet']['FEED_PRICE_PLANE'] = 'ambient-must-not-inherit'
             m, files, source, _, _ = fixture(mutate_public=mutate,
                 price_planes={'mainnet': 'public-quorum', 'testnet': 'twelvedata'})
+            with self.subTest(action=action), self.assertRaisesRegex(ValueError, 'exact generated network map'):
+                v.validate_bundle(v.encoded(m), files, source)
+
+    def test_selected_rpc_alias_is_explicit_in_the_independent_public_fixture(self):
+        _, files, _, _, _ = fixture()
+        mapping = v.parse(next(data for name, (_, data) in files.items()
+                               if name.endswith('/network-profiles.json')))
+        for network in v.NETWORKS:
+            key = 'NEO_RPC_URLS_' + network.upper()
+            self.assertEqual(mapping[network][key], 'https://n3.example.invalid/' + network)
+            other = 'testnet' if network == 'mainnet' else 'mainnet'
+            self.assertNotIn('NEO_RPC_URLS_' + other.upper(), mapping[network])
+
+    def test_selected_rpc_alias_substitution_refuses_after_outer_hashes_are_updated(self):
+        for action in ('missing', 'wrong', 'other-network'):
+            def mutate(spec, profiles, overlays, source):
+                key = 'NEO_RPC_URLS_MAINNET'
+                if action == 'missing': del overlays['mainnet'][key]
+                elif action == 'wrong': overlays['mainnet'][key] = 'https://foreign.example.invalid'
+                else:
+                    del overlays['mainnet'][key]
+                    overlays['mainnet']['NEO_RPC_URLS_TESTNET'] = spec['networks']['testnet']['neo_n3_rpc']
+            m, files, source, _, _ = fixture(mutate_public=mutate)
             with self.subTest(action=action), self.assertRaisesRegex(ValueError, 'exact generated network map'):
                 v.validate_bundle(v.encoded(m), files, source)
 

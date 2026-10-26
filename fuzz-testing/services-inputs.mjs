@@ -257,7 +257,13 @@ function exerciseDelivery(kind, text, decoded, index) {
     ...overrides,
   });
   const digest = buildFulfillmentDigestBytes(
-    String(index), kind, true, text, '', '', withPayload(text)
+    String(index),
+    kind,
+    true,
+    text,
+    '',
+    '',
+    withPayload(text)
   );
   assert.equal(digest.length, 32);
   // Binding: a different request id, result or envelope tuple changes the digest.
@@ -269,14 +275,25 @@ function exerciseDelivery(kind, text, decoded, index) {
   assert(
     !digest.equals(
       buildFulfillmentDigestBytes(
-        String(index), kind, true, `${text} `, '', '', withPayload(`${text} `)
+        String(index),
+        kind,
+        true,
+        `${text} `,
+        '',
+        '',
+        withPayload(`${text} `)
       )
     )
   );
   assert(
     !digest.equals(
       buildFulfillmentDigestBytes(
-        String(index), kind, true, text, '', '',
+        String(index),
+        kind,
+        true,
+        text,
+        '',
+        '',
         withPayload(text, { operation: `${options.operation}.other` })
       )
     )

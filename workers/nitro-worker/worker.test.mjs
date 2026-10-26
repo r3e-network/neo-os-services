@@ -1095,60 +1095,48 @@ test('neodid action-ticket preserves the legacy v1 golden with default and expli
   }
 });
 
-test('neodid action v3 matches the Rust golden and binds action id and digest to the raw account', async () => {
+// AA-v3 codec vectors remain protocol compatibility inputs; its public
+// issuance route now refuses enrollmentless AA tickets before custody.
+test('neodid action v3 refuses formerly valid issuance contexts before custody', async (t) => {
   process.env.MORPHEUS_NEODID_ALLOW_UNVERIFIED_UID = 'true';
   process.env.NEODID_SECRET_SALT = 'unit-test-salt-text';
-  const actionId = 'aa_proxy:ca0d3b5865caf8b07c0a2b2eb7ea05ded9b7f4eb81a657ed64316af587553557';
-  const res = await issueNeoDidTicket('action-ticket', aaActionV3Payload());
-  assert.equal(res.status, 200);
-  const body = await res.json();
-  assert.equal(body.action_id, actionId);
-  assert.equal(
-    body.action_nullifier,
-    '0x41a081d59869e15b50c01d3143eeddbcf46c27e804240d83516c9c5325335d05'
-  );
-  assert.equal(body.digest, '0x6997b70a6dd9a8d54c56c9c5792ebec5c780ee884d73464ec4d9eed6b9b405ae');
-
-  const explicitRes = await issueNeoDidTicket('action-ticket', {
-    ...aaActionV3Payload(),
-    action_id: actionId,
+  const custodyCalls = [];
+  __setCustodyTransportForTests(async (...args) => {
+    custodyCalls.push(args);
+    throw new Error('legacy AA issuance must not reach custody');
   });
-  assert.equal(explicitRes.status, 200);
-  assert.equal((await explicitRes.json()).digest, body.digest);
-
-  const defaultNoncePayload = aaActionV3Payload();
-  delete defaultNoncePayload.session_nonce;
-  const defaultNonceRes = await issueNeoDidTicket('action-ticket', defaultNoncePayload);
-  assert.equal(defaultNonceRes.status, 200);
-  const defaultNonce = await defaultNonceRes.json();
-  assert.equal(
-    defaultNonce.action_id,
-    'aa_proxy:23c9db0c12665b099e7e384173cd2474110a94c7d73b87a27b22b139650d66ae'
-  );
-  assert.equal(
-    defaultNonce.digest,
-    '0x7dec99dc9584272e21cd46e5780dd33667e70ff18ad8433cbab6ef1d05e5dadb'
-  );
-
-  const otherRawRes = await issueNeoDidTicket('action-ticket', {
-    ...aaActionV3Payload(),
-    account_id_raw: `0x${'55'.repeat(20)}`,
-  });
-  assert.equal(otherRawRes.status, 200);
-  const otherRaw = await otherRawRes.json();
-  assert.notEqual(otherRaw.action_id, body.action_id);
-  assert.notEqual(otherRaw.digest, body.digest);
-
-  const foreignRes = await issueNeoDidTicket('action-ticket', {
-    ...aaActionV3Payload(),
-    action_id: 'aa_proxy:foreign',
-  });
-  assert.equal(foreignRes.status, 400);
-  assert.match((await foreignRes.json()).error, /action_id.*derived AA action/);
+  t.after(installCustodyTransportForTests);
+  const defaultNonce = aaActionV3Payload();
+  delete defaultNonce.session_nonce;
+  for (const payload of [
+    aaActionV3Payload(),
+    {
+      ...aaActionV3Payload(),
+      action_id: 'aa_proxy:ca0d3b5865caf8b07c0a2b2eb7ea05ded9b7f4eb81a657ed64316af587553557',
+    },
+    defaultNonce,
+    { ...aaActionV3Payload(), account_id_raw: `0x${'55'.repeat(20)}` },
+    { ...aaActionV3Payload(), action_id: 'aa_proxy:foreign' },
+  ]) {
+    const response = await issueNeoDidTicket('action-ticket', payload);
+    assert.equal(response.status, 400);
+    const body = await response.json();
+    assert.equal(body.error, 'AA action issuance requires action-v4 enrollment');
+    assert.equal(body.digest, undefined);
+    assert.equal(body.signature, undefined);
+  }
+  assert.deepEqual(custodyCalls, []);
 });
 
-test('neodid action v3 rejects missing or zero context and non-decimal nonce or expiry', async () => {
+test('neodid action v3 refuses before parsing legacy missing, zero or malformed context', async (t) => {
   process.env.MORPHEUS_NEODID_ALLOW_UNVERIFIED_UID = 'true';
+  const custodyCalls = [];
+  __setCustodyTransportForTests(async (...args) => {
+    custodyCalls.push(args);
+    throw new Error('legacy AA issuance must not reach custody');
+  });
+  t.after(installCustodyTransportForTests);
+  const cases = [];
   for (const field of [
     'network',
     'aa_contract',
@@ -1160,30 +1148,34 @@ test('neodid action v3 rejects missing or zero context and non-decimal nonce or 
   ]) {
     const payload = aaActionV3Payload();
     delete payload[field];
-    const res = await issueNeoDidTicket('action-ticket', payload);
-    assert.equal(res.status, 400, field);
-    assert.match((await res.json()).error, new RegExp(field), field);
+    cases.push({ label: `missing ${field}`, payload });
   }
-  for (const field of ['aa_contract', 'verifier_contract', 'account_id_raw', 'disposable_account']) {
-    const res = await issueNeoDidTicket('action-ticket', {
-      ...aaActionV3Payload(),
-      [field]: `0x${'00'.repeat(20)}`,
+  for (const field of [
+    'aa_contract',
+    'verifier_contract',
+    'account_id_raw',
+    'disposable_account',
+  ]) {
+    cases.push({
+      label: `zero ${field}`,
+      payload: { ...aaActionV3Payload(), [field]: `0x${'00'.repeat(20)}` },
     });
-    assert.equal(res.status, 400, field);
-    assert.match(
-      (await res.json()).error,
-      new RegExp(`${field} must be a non-zero 20-byte hash160`),
-      field
-    );
   }
   for (const field of ['session_nonce', 'expires_at']) {
-    const res = await issueNeoDidTicket('action-ticket', {
-      ...aaActionV3Payload(),
-      [field]: 'not-decimal',
+    cases.push({
+      label: `malformed ${field}`,
+      payload: { ...aaActionV3Payload(), [field]: 'not-decimal' },
     });
-    assert.equal(res.status, 400, field);
-    assert.match((await res.json()).error, new RegExp(`${field} must be a decimal string`));
   }
+  for (const { label, payload } of cases) {
+    const response = await issueNeoDidTicket('action-ticket', payload);
+    assert.equal(response.status, 400, label);
+    const body = await response.json();
+    assert.equal(body.error, 'AA action issuance requires action-v4 enrollment', label);
+    assert.equal(body.digest, undefined, label);
+    assert.equal(body.signature, undefined, label);
+  }
+  assert.deepEqual(custodyCalls, []);
 });
 
 test('neodid recovery-ticket rejects an unverified provider_uid by default (E3 fail-closed)', async () => {

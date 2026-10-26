@@ -42,6 +42,11 @@ with tempfile.TemporaryDirectory(prefix='dual-rust-check-') as tmp:
     env = {k: os.environ[k] for k in ('PATH','HOME','CARGO_HOME','RUSTUP_HOME') if k in os.environ}
     target = args.target_dir.resolve() if args.target_dir else tmp / 'target'
     env.update(CARGO_BUILD_JOBS='1', RUST_TEST_THREADS='1', CARGO_NET_OFFLINE='true', CARGO_TARGET_DIR=str(target))
-    dual.run(['cargo','build','--locked','--offline','-p','nitro-enclave-host','--example','dual_prepare'],env,cwd=source,timeout=900)
-    dual.run(['cargo','test','--locked','--offline','-p','nitro-enclave-host','--example','dual_prepare','--','--test-threads=1'],env,cwd=source,timeout=900)
-    print(dual.run(['python3','-B',str(source/'deploy/nitro/dual_prepare_test.py'),str(target/'debug/examples/dual_prepare')],env,cwd=source,timeout=120).decode())
+    dual.run(['cargo','build','--locked','--offline','-p','nitro-enclave-host','--example','dual_prepare','--features','nitro-enclave-host/embedded-relayer'],env,cwd=source,timeout=900)
+    dual.run(['cargo','test','--locked','--offline','-p','nitro-enclave-host','--example','dual_prepare','--features','nitro-enclave-host/embedded-relayer','--','--test-threads=1'],env,cwd=source,timeout=900)
+    try:
+        print(dual.run(['python3','-B',str(source/'deploy/nitro/dual_prepare_test.py'),str(target/'debug/examples/dual_prepare')],env,cwd=source,timeout=120).decode())
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        # The existing helper emits fixed diagnostic codes, never captured text.
+        print('DUAL-PREPARATION-TEST-FAILURE ' + dual.encoded(dual.failure_diagnostic(error)).decode(), file=sys.stderr)
+        raise

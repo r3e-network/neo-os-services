@@ -31,7 +31,11 @@ function createFixture(t) {
 }
 
 function runWithNetwork(fixture, network) {
-  const env = { ...process.env, PATH: `${fixture.binDir}:/usr/bin:/bin`, LOG_FILE: fixture.logFile };
+  const env = {
+    ...process.env,
+    PATH: `${fixture.binDir}:/usr/bin:/bin`,
+    LOG_FILE: fixture.logFile,
+  };
   delete env.MORPHEUS_NETWORK;
   delete env.NEXT_PUBLIC_MORPHEUS_NETWORK;
   if (network !== undefined) env.MORPHEUS_NETWORK = network;

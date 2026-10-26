@@ -144,7 +144,17 @@ let hostC;
 before(async () => {
   const build = spawnSync(
     'cargo',
-    ['build', '--offline', '-p', 'nitro-enclave-host', '--bin', 'enclave_host'],
+    [
+      'build',
+      '--locked',
+      '--offline',
+      '--jobs',
+      '1',
+      '-p',
+      'nitro-enclave-host',
+      '--bin',
+      'enclave_host',
+    ],
     { stdio: 'inherit', cwd: REPO_ROOT }
   );
   assert.equal(build.status, 0, 'cargo build for enclave_host must succeed');
