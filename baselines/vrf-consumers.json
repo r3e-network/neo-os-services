@@ -2267,6 +2267,9 @@
       "owner": "services lead",
       "justification": "Exact-file economic-randomness review of tracked-build helpers, module/workflow checks, routing and security regression tests and repository verification entrypoints. These inputs inspect builds, routing, rendering, imports and policy or run local quality gates; they do not consume VRF/random output to allocate economic value. Randomized-input workflow assertions exercise rejection and robustness, not winner or payout selection. This classification does not authorize CI runner admission, deployment, custody, dependency implementations or downstream economic consumers.",
       "inputs": {
+        "scripts/create-rust-release-snapshot.test.mjs": {
+          "sha256": "2be58b14894b7784bf2f6a68dadf80b7d6b688166238809a07e791405d72784b"
+        },
         "scripts/lib/tracked-build-outputs.mjs": {
           "sha256": "d4c91f9522ce59811bc860a94d21f9fddf947fed6a936032d82e497bf048ec90"
         },
