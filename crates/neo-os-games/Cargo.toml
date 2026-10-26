@@ -13,7 +13,7 @@ description = "Game lane: 11 hash-pinned engines, registry, parity driver and ge
 base64 = "0.22"
 hmac = "0.12"
 neo-os-core = { path = "../neo-os-core" }
-num-bigint = "0.4"
+num-bigint = "0.5"
 # Player witness verification: the wallet signs the session canonical with
 # its secp256r1 account key (NEP dAPI signMessage framing); the session host
 # checks it in-process. Same version/features the enclave host already links.

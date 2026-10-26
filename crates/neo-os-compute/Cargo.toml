@@ -15,7 +15,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 # BigInt for the oracle decimal lane (`BigInt(wholePart) * 10n ** decimals`)
 # and the message-reveal BigInt grammar.
-num-bigint = "0.4"
+num-bigint = "0.5"
 num-traits = "0.2"
 sha2 = "0.10"
 # Lenient `Buffer.from(x, 'base64')` decoding for Neo ByteString stack items.
