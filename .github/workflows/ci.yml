@@ -208,6 +208,10 @@ jobs:
       - run: node scripts/check-rust-format.mjs
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --all-targets --locked
+      - name: Embedded relayer owning Clippy
+        run: cargo clippy --locked --offline -p nitro-enclave-host --features embedded-relayer --all-targets -j 2 -- -D warnings
+      - name: Embedded relayer owning tests
+        run: cargo test --offline --locked -p nitro-enclave-host -p neo-os-relayer -p neo-os-relayer-store --features nitro-enclave-host/embedded-relayer --all-targets -j 2 -- --test-threads=1
       - name: Install private-chain test binary
         run: |
           GOBIN="$RUNNER_TEMP/local-chain-bin" go install -ldflags="-X github.com/nspcc-dev/neo-go/pkg/config.Version=0.121.0" github.com/nspcc-dev/neo-go/cli@v0.121.0
