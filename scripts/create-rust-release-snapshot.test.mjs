@@ -20,6 +20,7 @@ function git(root, args) {
 async function write(root, file, value, mode = 0o644) {
   await fs.mkdir(path.dirname(path.join(root, file)), { recursive: true });
   await fs.writeFile(path.join(root, file), value, { mode });
+  await fs.chmod(path.join(root, file), mode);
 }
 
 async function fixture(t) {
