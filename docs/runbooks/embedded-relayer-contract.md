@@ -6,6 +6,15 @@ relayers. It does not authorize deployment, migration, issuance or provisioning.
 The production delivery protocol remains v2. Existing single-context and
 standalone maintenance interfaces retain their current defaults.
 
+Public relayer profiles are checked by the build-only planner and, when the
+measured gate is enabled, before runtime custody boot. The selected N3 endpoint
+uses the existing network-scoped RPC configuration; registry fallbacks retain
+their existing policy. Host health merges relayer readiness using the same
+route classification as dispatch, including its accepted trailing slash.
+An inner chain termination notifies the host before local shutdown awaits:
+both networks stop accepting work and become draining while frontier/custody
+dependencies remain owned until every strict drain completes.
+
 ## Durable authorization
 
 The protected bearer is an issuer-signed JWT accepted and verified by the

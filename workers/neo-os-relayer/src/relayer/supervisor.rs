@@ -206,7 +206,9 @@ where
     supervise_chain_tasks_with_runtime(config,children,tasks,stop,crate::transport::LoopRuntime::default(),shutdown).await
 }
 
-async fn supervise_chain_tasks_with_runtime<F>(
+/// Compose already-owned chain tasks with the same lifecycle as the v2 loop.
+#[doc(hidden)]
+pub async fn supervise_chain_tasks_with_runtime<F>(
     config:&RelayerConfig,children:&[RelayerConfig],mut tasks:JoinSet<Result<(),String>>,
     stop:watch::Sender<Stop>,runtime:crate::transport::LoopRuntime,shutdown:F,
 )->Result<(),String>
@@ -255,11 +257,12 @@ where F:Future<Output=neo_os_service_runtime::ShutdownReason> {
         }
     };
     // Heartbeat and filesystem work cannot postpone signaling the workers.
+    if let Some(context) = runtime.context.as_ref() { context.notify_stopping(reason); }
+    let _ = stop.send(Some(reason));
     if let Some(task) = heartbeat_task {
         task.abort();
         if runtime.strict_drain { let _=task.await; }
     }
-    let _ = stop.send(Some(reason));
     let drain_ms = config
         .raw
         .get("shutdownDrainMs")

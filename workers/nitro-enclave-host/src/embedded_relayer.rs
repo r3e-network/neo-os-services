@@ -69,6 +69,12 @@ impl Controller {
         json!({"healthy":healthy,"phase":match phase {WAITING=>"awaiting-provision",RUNNING=>"running",DRAINING=>"draining",_=>"closed"},"networks":lanes})
     }
     pub fn is_draining(&self)->bool {self.phase.load(Ordering::SeqCst)>=DRAINING}
+    pub fn begin_draining(&self,reason:ShutdownReason) {
+        self.phase.fetch_max(DRAINING,Ordering::SeqCst);
+        self.stop.send_if_modified(|current| {
+            if current.is_some() {false} else {*current=Some(reason);true}
+        });
+    }
 }
 impl Default for Controller {fn default()->Self {Self::new()}}
 
@@ -80,14 +86,14 @@ where S:Future<Output=Result<(),String>>,F:Future<Output=ShutdownReason> {
     let (reason,mut failure,server_done)=tokio::select! {
         biased;
         reason=&mut shutdown=>(reason,None,false),
+        reason=control.stop_reason()=>(reason,Some("relayer runtime requested shutdown".into()),false),
         result=lanes.join_next()=>{
             let message=match result {Some(Ok(Err(_)))=>"relayer lane failed",Some(Err(_))=>"relayer lane panicked",_=>"relayer lane terminated"};
             (ShutdownReason::Terminate,Some(message.to_string()),false)
         },
         _=&mut server=>(ShutdownReason::Terminate,Some("frontier terminated before relayer shutdown".into()),true),
     };
-    control.phase.store(DRAINING,Ordering::SeqCst);
-    control.stop.send_replace(Some(reason));
+    control.begin_draining(reason);
     while let Some(result)=lanes.join_next().await {
         if !matches!(result,Ok(Ok(()))) {failure.get_or_insert_with(||"relayer drain failed".into());}
     }
@@ -99,6 +105,7 @@ where S:Future<Output=Result<(),String>>,F:Future<Output=ShutdownReason> {
 }
 
 struct Bridge {
+    control:Controller,
     network:String,
     prefix:String,
     app:Arc<AppState>,
@@ -108,6 +115,7 @@ struct Bridge {
     body_cap:usize,
 }
 impl RuntimeContext for Bridge {
+    fn notify_stopping(&self,reason:ShutdownReason) {self.control.begin_draining(reason);}
     fn refresh_config(&self,base:&RelayerConfig)->Result<RelayerConfig,String> {
         let child=["neo_n3","neox"].into_iter().find(|chain|
             base.state_file==format!("{}.{chain}.json",self.base.state_file)
@@ -260,6 +268,7 @@ pub fn prepare(apps:&BTreeMap<String,Arc<AppState>>,custody:&BTreeMap<String,Rou
     let gates:Vec<_>=apps.values().map(|app|crate::relayer_auth::enabled(&app.overlay.read().expect("overlay lock"))).collect::<Result<_,_>>()?;
     if gates.iter().all(|v|!*v) {return Ok(None);}
     if !explicit || gates.len()!=2 || gates.iter().any(|v|!*v) {return Err("embedded relayer requires both explicit network profiles".into());}
+    let control=Controller::new();
     let mut bridges=Vec::new();let mut identities=std::collections::BTreeSet::new();
     for network in ["mainnet","testnet"] {
         let app=apps.get(network).ok_or("embedded network is missing")?.clone();
@@ -279,9 +288,20 @@ pub fn prepare(apps:&BTreeMap<String,Arc<AppState>>,custody:&BTreeMap<String,Rou
         }
         drop(overlay);
         let native=custody.get(network).ok_or("embedded custody dependency is missing")?.clone();
-        bridges.push(Arc::new(Bridge{network:network.into(),prefix,app,custody:InProcessCustodyTransport::new(network,native).map_err(str::to_string)?,base,slots:slots.clone(),body_cap:body_cap.min(crate::embedded_custody::MAX_CUSTODY_BODY_BYTES)}));
+        bridges.push(Arc::new(Bridge{control:control.clone(),network:network.into(),prefix,app,custody:InProcessCustodyTransport::new(network,native).map_err(str::to_string)?,base,slots:slots.clone(),body_cap:body_cap.min(crate::embedded_custody::MAX_CUSTODY_BODY_BYTES)}));
     }
-    Ok(Some(Prepared{controller:Controller::new(),bridges}))
+    Ok(Some(Prepared{controller:control,bridges}))
+}
+
+/// Merge readiness only for the exact route identity accepted by dispatch.
+pub fn merge_health_outcome(method:&str,raw_url:&str,headers:&http::HeaderMap,
+    mut outcome:crate::DispatchOutcome,control:&Controller)->crate::DispatchOutcome {
+    if matches!(crate::dispatch::classify_request(method,raw_url,headers),Ok(crate::routes::Target::Health)) {
+        let health=control.health();
+        if health["healthy"]!=Value::Bool(true) {outcome.status=503;outcome.body["ready"]=Value::Bool(false);}
+        outcome.body["embedded_relayer"]=health;
+    }
+    outcome
 }
 
 #[cfg(test)]

@@ -267,6 +267,7 @@ def public_inputs(path, expected_sha, registry):
             'MORPHEUS_CUSTODY_WORKLOAD_AUDIENCE': audience,
             'SIGNER_SERVICE_URL': 'http://127.0.0.1:0/' + network,
             'NEO_RPC_URL': public_url(spec['neo_n3_rpc']),
+            'NEO_RPC_URLS_' + network.upper(): public_url(spec['neo_n3_rpc']),
             'NEOX_RPC_URL': public_url(spec['neo_x_rpc']),
             'NEOX_RPC': spec['neo_x_rpc'],
             'EVM_RPC_URL': spec['neo_x_rpc'],

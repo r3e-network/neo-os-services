@@ -12,6 +12,8 @@ use std::time::Duration;
 /// Host-owned capability. It supplies current credentials and only the
 /// selected network's closed in-process routes; it never exposes host state.
 pub trait RuntimeContext: Send + Sync {
+    /// Notify the dependency owner before any local shutdown join can block.
+    fn notify_stopping(&self, _reason: neo_os_service_runtime::ShutdownReason) {}
     fn refresh_config(&self, base: &crate::config::RelayerConfig) -> Result<crate::config::RelayerConfig,String>;
     fn local_request(&self, method: &str, url: &str, bearer: Option<&str>, body: Option<&str>) -> Option<Result<(u16,String),String>>;
 }

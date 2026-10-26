@@ -61,6 +61,8 @@ fn validate(path: &Path) -> Result<serde_json::Value, ()> {
             }
         }
     }
+    #[cfg(feature = "embedded-relayer")]
+    nitro_enclave_host::embedded_relayer::validate_public_profiles(&profiles).map_err(|_| ())?;
     let plans = custody_bootstrap::prepare(&profiles).map_err(|_| ())?;
     let networks: Vec<_> = plans.keys().map(String::as_str).collect();
     if networks != ["mainnet", "testnet"] {

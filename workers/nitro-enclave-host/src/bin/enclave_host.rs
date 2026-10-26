@@ -113,6 +113,23 @@ fn main() {
             std::process::exit(1);
         });
     let explicit_network = profiles.explicit;
+    #[cfg(feature = "embedded-relayer")]
+    {
+        let gates=profiles.overlays.values().map(nitro_enclave_host::relayer_auth::enabled)
+            .collect::<Result<Vec<_>,_>>().unwrap_or_else(|error| {
+                eprintln!("enclave_host: refusing embedded relayer gate — {error}");std::process::exit(1)
+            });
+        if gates.iter().any(|enabled|*enabled) && (!profiles.explicit || gates.len()!=2 || gates.iter().any(|enabled|!*enabled)
+            || !nitro_enclave_host::embedded_relayer::validate_public_profiles(&profiles).unwrap_or_else(|error| {
+                eprintln!("enclave_host: refusing embedded public profiles — {error}");std::process::exit(1)
+            })) {
+            eprintln!("enclave_host: embedded relayer requires both public profiles");std::process::exit(1);
+        }
+    }
+    #[cfg(not(feature = "embedded-relayer"))]
+    if profiles.overlays.values().any(|overlay|!matches!(overlay.get("MORPHEUS_EMBEDDED_RELAYER"),None|Some("false"))) {
+        eprintln!("enclave_host: this image does not include the embedded relayer");std::process::exit(1);
+    }
     let custody = custody_bootstrap::boot(&profiles).unwrap_or_else(|error| {
         eprintln!("enclave_host: refusing to serve — {error}");
         std::process::exit(1);
@@ -123,10 +140,6 @@ fn main() {
     #[cfg(feature = "embedded-relayer")]
     let prepared=nitro_enclave_host::embedded_relayer::prepare(&apps,&custody,explicit_network,request_slots.clone(),max_body_bytes)
         .unwrap_or_else(|error|{eprintln!("enclave_host: refusing embedded relayer boot — {error}");std::process::exit(1)});
-    #[cfg(not(feature = "embedded-relayer"))]
-    if apps.values().any(|app|!matches!(app.overlay.read().expect("overlay lock").get("MORPHEUS_EMBEDDED_RELAYER"),None|Some("false"))) {
-        eprintln!("enclave_host: this image does not include the embedded relayer");std::process::exit(1);
-    }
     let networks: Vec<String> = apps.keys().cloned().collect();
     let network = if explicit_network {
         "dual".to_string()
@@ -465,16 +478,9 @@ async fn serve(State(shim): State<ShimState>, request: Request<Body>) -> Respons
         let _permit = permit;
         let outcome=dispatch(&app, &method, &raw_url, &headers, &body_text);
         #[cfg(feature = "embedded-relayer")]
-        let outcome={
-            let mut outcome=outcome;
-            if raw_url.split('?').next()==Some("/health") {
-                if let Some(control)=relayer {
-                    let health=control.health();
-                    if health["healthy"]!=serde_json::Value::Bool(true) {outcome.status=503;outcome.body["ready"]=serde_json::Value::Bool(false);}
-                    outcome.body["embedded_relayer"]=health;
-                }
-            }
-            outcome
+        let outcome=match relayer {
+            Some(control)=>nitro_enclave_host::embedded_relayer::merge_health_outcome(&method,&raw_url,&headers,outcome,&control),
+            None=>outcome,
         };
         outcome
     })

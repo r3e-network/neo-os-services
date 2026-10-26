@@ -118,3 +118,95 @@ fn awaiting_provision_controller_is_unhealthy_and_exposes_no_auth_material() {
         assert!(!health.to_string().contains(field));
     }
 }
+
+#[path="support.rs"]
+#[allow(clippy::duplicate_mod)]
+mod support;
+
+#[test]
+fn health_aliases_share_real_dispatch_identity_and_readiness_merge() {
+    let harness=support::test_state(&support::healthy_overlay(),support::FakeAttest::with_document(b"doc"),
+        support::FakeSigner::healthy(),support::FakeBridge::new(),support::FakeKms::default());
+    let headers=http::HeaderMap::new();
+    let control=Controller::new();
+    for draining in [false,true] {
+        if draining {control.begin_draining(ShutdownReason::Terminate);}
+        for path in ["/health","/health/","/health/?probe=1","/mainnet/health/"] {
+            let base=crate::dispatch::dispatch(&harness.state,"GET",path,&headers,"");
+            assert_eq!(base.status,200,"healthy signing stub: {path}");
+            let merged=merge_health_outcome("GET",path,&headers,base,&control);
+            assert_eq!(merged.status,503,"{path}");
+            assert_eq!(merged.body["ready"],false);
+            assert_eq!(merged.body["embedded_relayer"]["healthy"],false);
+        }
+    }
+    for (method,path) in [("HEAD","/health/"),("POST","/health"),("GET","/health//")] {
+        let base=crate::dispatch::dispatch(&harness.state,method,path,&headers,"");
+        let status=base.status;
+        let merged=merge_health_outcome(method,path,&headers,base,&control);
+        assert_eq!(merged.status,status);
+        assert!(merged.body.get("embedded_relayer").is_none());
+    }
+}
+
+#[test]
+fn scoped_chosen_rpc_reaches_actual_each_network_config_without_generic_fallback() {
+    for network in ["mainnet","testnet"] {
+        let chosen=format!("https://chosen-{network}.example.invalid");
+        let env=BTreeMap::from([
+            ("NODE_ENV".into(),"test".into()),
+            ("MORPHEUS_NETWORK".into(),network.into()),
+            (format!("NEO_RPC_URLS_{}",network.to_ascii_uppercase()),chosen.clone()),
+        ]);
+        let config=neo_os_relayer::create_relayer_config_from_env(&env).unwrap();
+        assert_eq!(config.network,network);
+        assert!(config.raw["neo_n3"]["rpcUrls"].as_array().unwrap().iter().any(|v|v.as_str()==Some(chosen.as_str())));
+        let other=if network=="mainnet"{"testnet"}else{"mainnet"};
+        assert!(!config.raw["neo_n3"]["rpcUrls"].to_string().contains(&format!("chosen-{other}")));
+    }
+}
+
+#[tokio::test]
+async fn nested_chain_exit_notifies_outer_while_local_sibling_is_held() {
+    struct Notify(Controller);
+    impl RuntimeContext for Notify {
+        fn notify_stopping(&self,reason:ShutdownReason) {self.0.begin_draining(reason);}
+        fn refresh_config(&self,base:&RelayerConfig)->Result<RelayerConfig,String> {Ok(base.clone())}
+        fn local_request(&self,_:&str,_:&str,_:Option<&str>,_:Option<&str>)->Option<Result<(u16,String),String>> {None}
+    }
+    struct Dependency(Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for Dependency {fn drop(&mut self){self.0.store(true,Ordering::SeqCst);}}
+    let temp=tempfile::tempdir().unwrap();
+    let cfg=RelayerConfig {
+        repo_root:String::new(),instance_id:"nested-mainnet".into(),
+        state_file:temp.path().join("state.json").to_string_lossy().into_owned(),network:"mainnet".into(),node_env:"test".into(),
+        mode:"combined".into(),active_chains:vec!["neo_n3".into(),"neox".into()],poll_interval_ms:250,
+        concurrency:1,max_blocks_per_tick:1,discovery_idle_backoff_ms:1,state_persist_min_interval_ms:1,
+        raw:json!({"deliveryProtocol":"v2","heartbeats":{}}),
+    };
+    let control=Controller::new();
+    let (stop,mut local_stop)=watch::channel(None);
+    let mut inner=JoinSet::new();inner.spawn(async {Err("mainnet N3 terminated".to_string())});
+    let (entered,held_started)=tokio::sync::oneshot::channel();
+    let (release,held)=tokio::sync::oneshot::channel();
+    inner.spawn(async move {
+        local_stop.changed().await.unwrap();entered.send(()).unwrap();held.await.unwrap();Ok(())
+    });
+    let mut outer=JoinSet::new();let c=control.clone();
+    outer.spawn(async move {
+        let runtime=neo_os_relayer::transport::LoopRuntime{context:Some(Arc::new(Notify(c.clone()))),strict_drain:true};
+        neo_os_relayer::relayer::supervise_chain_tasks_with_runtime(&cfg,&[],inner,stop,runtime,c.stop_reason()).await
+    });
+    let c=control.clone();let (stopped,testnet_stopped)=tokio::sync::oneshot::channel();
+    outer.spawn(async move {c.stop_reason().await;stopped.send(()).unwrap();Ok(())});
+    let dropped=Arc::new(std::sync::atomic::AtomicBool::new(false));let dependency=Dependency(dropped.clone());
+    let c=control.clone();let server=async move {c.frontier_shutdown().await;drop(dependency);Ok(())};
+    let joined=tokio::spawn(supervise(outer,control.clone(),server,pending()));
+    tokio::time::timeout(Duration::from_secs(5),held_started).await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(5),testnet_stopped).await.unwrap().unwrap();
+    assert!(control.is_draining());assert_eq!(control.health()["healthy"],false);
+    assert!(!*control.frontier_closed.borrow());assert!(!dropped.load(Ordering::SeqCst));assert!(!joined.is_finished());
+    release.send(()).unwrap();
+    assert!(tokio::time::timeout(Duration::from_secs(5),joined).await.unwrap().unwrap().is_err());
+    assert!(dropped.load(Ordering::SeqCst));assert_eq!(control.phase.load(Ordering::SeqCst),CLOSED);
+}

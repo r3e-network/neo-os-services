@@ -49,6 +49,31 @@ class RustPreparation(Packaging):
             path.write_bytes(dual.encoded(good))
             with self.subTest(value=value): self.assertEqual(self.call(path).returncode, 0)
 
+    def test_rust_relayer_public_profiles_are_validated_without_booting(self):
+        for network in dual.NETWORKS:
+            self.input['networks'][network]['relayer'] = {
+                'state_file': f'/var/lib/neoos-relayer/{network}/state.json',
+                'instance_id': f'{network}-instance', 'caller_id': f'{network}-caller',
+                'store_url': 'https://store.example', 'store_api_key': 'sb_publishable_' + 'a' * 40,
+                'issuer': 'https://issuer.example/auth/v1', 'mode': 'combined',
+                'active_chains': ['neo_n3', 'neox'], 'feed_sync_enabled': True,
+            }
+        self.write()
+        path, original = self.map_file()
+        self.assertEqual(self.call(path).returncode, 0)
+        for field, value in [('MORPHEUS_RELAYER_STORE_URL', 'https://user:pass@store.example'),
+                             ('MORPHEUS_RELAYER_STORE_API_KEY', 'sb_secret_' + 'a' * 40),
+                             ('MORPHEUS_RELAYER_CALLER_ID', original['testnet']['MORPHEUS_RELAYER_CALLER_ID'])]:
+            bad = json.loads(json.dumps(original))
+            bad['mainnet'][field] = value
+            path.write_bytes(dual.encoded(bad))
+            with self.subTest(field=field):
+                self.assertNotEqual(self.call(path).returncode, 0)
+        bad = json.loads(json.dumps(original))
+        del bad['mainnet']['MORPHEUS_RELAYER_STATE_FILE']
+        path.write_bytes(dual.encoded(bad))
+        self.assertNotEqual(self.call(path).returncode, 0)
+
     def test_rust_map_boundaries(self):
         path,original=self.map_file()
         for key,value in [('MORPHEUS_CUSTODY_PROFILE_SHA256','00'*32),('SIGNER_SERVICE_URL','http://127.0.0.1:0/mainnet'),('MORPHEUS_CUSTODY_DATA_DIR',original['mainnet']['MORPHEUS_CUSTODY_DATA_DIR']),('MORPHEUS_CUSTODY_WORKLOAD_AUDIENCE','HTTPS://CUSTODY-MAINNET.EXAMPLE:443/')]:
@@ -63,5 +88,5 @@ class RustPreparation(Packaging):
 
 
 if __name__=='__main__':
-    suite=unittest.TestSuite(RustPreparation(name) for name in ('test_rust_positive_exact_receipt','test_rust_invalid_curve_point_rejected_by_authoritative_parser','test_rust_map_boundaries','test_rust_roles_match_native_route'))
+    suite=unittest.TestSuite(RustPreparation(name) for name in ('test_rust_positive_exact_receipt','test_rust_invalid_curve_point_rejected_by_authoritative_parser','test_rust_map_boundaries','test_rust_roles_match_native_route','test_rust_relayer_public_profiles_are_validated_without_booting'))
     raise SystemExit(not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful())

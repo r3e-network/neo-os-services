@@ -555,6 +555,8 @@ pub async fn run_relayer_loop(
 }
 
 mod supervisor;
+#[doc(hidden)]
+pub use supervisor::supervise_chain_tasks_with_runtime;
 #[cfg(test)]
 use supervisor::{prepare_chain_workers, supervise_chain_tasks};
 

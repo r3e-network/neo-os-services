@@ -58,6 +58,18 @@ fn request_path(url: &url::Url) -> String {
     }
 }
 
+fn request_url(raw_url:&str,headers:&http::HeaderMap)->Result<url::Url,RuntimeError> {
+    let host=headers.get(http::header::HOST).and_then(|v|v.to_str().ok())
+        .map(str::trim).filter(|v|!v.is_empty()).unwrap_or("127.0.0.1");
+    parse_url(raw_url,host)
+}
+
+/// Shared identity for dispatch and host-owned readiness composition.
+pub fn classify_request(method:&str,raw_url:&str,headers:&http::HeaderMap)->Result<Target,RuntimeError> {
+    let method=if method.is_empty(){"GET"}else{method};
+    Ok(classify(method,&request_path(&request_url(raw_url,headers)?)))
+}
+
 /// `Object.fromEntries(url.searchParams)` — every query parameter as a
 /// string, later duplicates winning.
 fn query_params(url: &url::Url) -> Value {
@@ -149,17 +161,10 @@ fn run(
     } else {
         method.trim().to_ascii_uppercase()
     };
-    let host_header = headers
-        .get(http::header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("127.0.0.1")
-        .to_string();
-    let url = parse_url(raw_url, &host_header)?;
+    let url = request_url(raw_url, headers)?;
     let path = request_path(&url);
 
-    match classify(&http_method, &path) {
+    match classify_request(method, raw_url, headers)? {
         Target::Health => {
             let health = handle_health(state);
             let status = if health["ready"] == Value::Bool(true) {
