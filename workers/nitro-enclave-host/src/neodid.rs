@@ -128,8 +128,12 @@ fn handle_ticket(
     flow: fn(&NeoDidIo<'_>, &serde_json::Value) -> Result<serde_json::Value, String>,
     read_aa_action_authorization: Option<ReadAaActionAuthorization<'_>>,
 ) -> Result<serde_json::Value, RuntimeError> {
-    let overlay = state.overlay.read().expect("overlay lock");
-    let overlay_map = overlay.merged_map();
+    // Own one ticket environment snapshot; no overlay guard may survive into
+    // provider/authorization callbacks or the signer/attestation re-reads.
+    let overlay_map = {
+        let overlay = state.overlay.read().expect("overlay lock");
+        overlay.merged_map()
+    };
     let env_trim = |name: &str| -> String {
         overlay_map
             .get(name)
