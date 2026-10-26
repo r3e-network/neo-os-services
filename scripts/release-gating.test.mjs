@@ -17,6 +17,42 @@ const repoRoot = process.env.NEOOS_WORKFLOW_POLICY_ROOT
   : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workflowDir = path.join(repoRoot, '.github', 'workflows');
 
+test('nitro-host replaces chain-n3 stub before the original release build', async () => {
+  const dockerfile = await fs.readFile(
+    path.join(repoRoot, 'deploy/nitro/Dockerfile.enclave'),
+    'utf8'
+  );
+  const stub = 'echo "pub fn placeholder() {}" > crates/neo-os-chain-n3/src/lib.rs';
+  const copy = 'COPY crates/neo-os-chain-n3/src crates/neo-os-chain-n3/src';
+  const build = [
+    'RUN cargo build --release --locked \\',
+    '      -p nitro-enclave-host --bin enclave_host \\',
+    '      -p nitro-init --bin nitro_init',
+  ].join('\n');
+  const assertReplacementOrder = (source) => {
+    const stubAt = source.indexOf(stub);
+    const copyAt = source.indexOf('\n' + copy + '\n');
+    const buildAt = source.indexOf(build);
+    assert.ok(stubAt >= 0, 'chain-n3 fetch placeholder is missing');
+    assert.ok(buildAt >= 0, 'original host release Cargo RUN is missing');
+    assert.ok(copyAt >= 0, 'nitro-host Dockerfile omits real chain-n3 source COPY');
+    assert.ok(copyAt > stubAt, 'real chain-n3 COPY must follow the placeholder');
+    assert.ok(copyAt < buildAt, 'real chain-n3 COPY must precede the original Cargo RUN');
+  };
+
+  assertReplacementOrder(dockerfile);
+  const withoutCopy = dockerfile.replace(copy + '\n', '');
+  assert.throws(() => assertReplacementOrder(withoutCopy), /omits real chain-n3 source COPY/);
+  assert.throws(
+    () => assertReplacementOrder(withoutCopy.replace('RUN mkdir -p', copy + '\nRUN mkdir -p')),
+    /must follow the placeholder/
+  );
+  assert.throws(
+    () => assertReplacementOrder(withoutCopy.replace(build, build + '\n' + copy)),
+    /must precede the original Cargo RUN/
+  );
+});
+
 async function readWorkflows() {
   const entries = await fs.readdir(workflowDir);
   const files = entries.filter((name) => name.endsWith('.yml') || name.endsWith('.yaml')).sort();

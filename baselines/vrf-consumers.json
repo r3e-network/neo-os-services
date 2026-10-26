@@ -113,7 +113,7 @@
           "sha256": "3cf46516c3d97fa56d1d72b6cc9a476fff54a0c28c6d58f236e993ff6ae57f6a"
         },
         "deploy/nitro/Dockerfile.enclave": {
-          "sha256": "76c33be144d761c0b5d95b32d5677409a6a87154191cf161a1b1df2c2d7e5ea2"
+          "sha256": "35dec1e58061c65d22dbcf0306cb636141ea6eb568667ad73e96b891cd923646"
         },
         "deploy/nitro/Dockerfile.signer": {
           "sha256": "e04e8d6b68295301c634d6a349efee67333195fc778b980dfbbbd876fc74016f"
@@ -1865,7 +1865,7 @@
           "sha256": "cf99bee432a319fb915a6de987d15c2a43d7680c952d0c6fdb0f2d6ddf6f1c36"
         },
         "scripts/release-gating.test.mjs": {
-          "sha256": "fda7238df3c2c007fae55865aedfbfcfe66fe9438b30c3a936dcc49f279460b9"
+          "sha256": "c3be4160ae2422d0397cf0a17ba256248a649bc52b6bfc4fb1119aacbc6dbad3"
         }
       }
     },

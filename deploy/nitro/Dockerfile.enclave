@@ -106,6 +106,7 @@ COPY crates/nitro-attest/src crates/nitro-attest/src
 COPY crates/nitro-init/src crates/nitro-init/src
 COPY crates/neo-os-compute/src crates/neo-os-compute/src
 COPY crates/neo-os-games/src crates/neo-os-games/src
+COPY crates/neo-os-chain-n3/src crates/neo-os-chain-n3/src
 COPY crates/neo-os-chain-evm/src crates/neo-os-chain-evm/src
 COPY crates/neo-os-service-runtime/src crates/neo-os-service-runtime/src
 COPY workers/neo-signer/src workers/neo-signer/src
