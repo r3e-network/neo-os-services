@@ -12,6 +12,10 @@ use serde_json::json;
 mod support;
 use support::*;
 
+#[cfg(feature = "embedded-relayer")]
+#[path = "relayer_caller.rs"]
+mod relayer_caller;
+
 const RUNTIME_CIPHERTEXT: &str = "runtime-token-ciphertext";
 const ORACLE_CIPHERTEXT: &str = "oracle-key-ciphertext";
 const NEODID_CIPHERTEXT: &str = "neodid-salt-ciphertext";
