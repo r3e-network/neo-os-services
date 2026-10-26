@@ -1051,7 +1051,10 @@ mod tool {
             let mut missing = Command::new(dir.join("missing-executable"));
             neutral_test_child(&mut missing);
             drop(stale);
-            assert_eq!(missing.output().unwrap_err().kind(), std::io::ErrorKind::NotFound);
+            assert_eq!(
+                missing.output().unwrap_err().kind(),
+                std::io::ErrorKind::NotFound
+            );
         }
 
         #[test]
