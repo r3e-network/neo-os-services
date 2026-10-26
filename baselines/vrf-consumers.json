@@ -1687,7 +1687,7 @@
           "sha256": "8ea600f0088e35ad1dbe042ebc04e83e996ef691de5b7b111772154d9e1ffd87"
         },
         "deploy/nitro/dual_image_test.py": {
-          "sha256": "6f40eb47631610eec22c74134b3b39295aeb3219ce981d7353914fd4a2facca0"
+          "sha256": "e34ee35188204a1ab9eca38772c2b13d3ba206c1d90577590740f8e5443011f8"
         },
         "deploy/nitro/dual_prepare_test.py": {
           "sha256": "329b4cae19ca949ac11e0bc7414986663b18fe1ccabcb1495513baf35b175729"
@@ -1710,7 +1710,7 @@
           "sha256": "548e43b27a74211f6b1cbb4cbe3f420f00855432a4c4c1b02967127f7e729c5b"
         },
         "deploy/nitro/build-dual-enclave.py": {
-          "sha256": "f20a80aea3d85fd158c7eed48a7c92f86d00213e2fa292a258f4b95a5dd42b93"
+          "sha256": "e0d9458c74e1be86b1dc59ca35d5145496fe470461f3b086a2b1745e86f1b766"
         },
         "deploy/nitro/cross-inputs.lock.json": {
           "sha256": "a5086fffb3db277aa47b3ab475b0da0dc35d16ac070729b2a89a5ac6de3f824e"
