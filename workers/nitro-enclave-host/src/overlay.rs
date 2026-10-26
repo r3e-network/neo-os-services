@@ -213,11 +213,18 @@ impl EnvOverlay {
     }
 
     #[cfg(feature = "embedded-relayer")]
-    pub(crate) fn install_relayer_auth(&mut self, credential: crate::relayer_auth::RelayerCredential) -> Result<(), &'static str> {
-        if self.relayer_auth.as_ref().is_some_and(|old| credential.version<=old.version) {
+    pub(crate) fn install_relayer_auth(
+        &mut self,
+        credential: crate::relayer_auth::RelayerCredential,
+    ) -> Result<(), &'static str> {
+        if self
+            .relayer_auth
+            .as_ref()
+            .is_some_and(|old| credential.version <= old.version)
+        {
             return Err("relayer envelope version must strictly increase");
         }
-        self.relayer_auth=Some(credential);
+        self.relayer_auth = Some(credential);
         Ok(())
     }
 

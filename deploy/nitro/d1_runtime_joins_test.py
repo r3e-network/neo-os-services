@@ -24,8 +24,8 @@ class D1RuntimeJoins(unittest.TestCase):
         host = self.text('workers/nitro-enclave-host/src/embedded_relayer.rs')
         shim = self.text('workers/nitro-enclave-host/src/bin/enclave_host.rs')
         self.assertIn('match classify_request(method, raw_url, headers)?', dispatch)
-        self.assertIn('crate::dispatch::classify_request(method,raw_url,headers)', host)
-        self.assertNotIn('raw_url.split(\'?\').next()==Some("/health")', shim)
+        self.assertRegex(host, r'crate::dispatch::classify_request\(\s*method,\s*raw_url,\s*headers\s*\)')
+        self.assertNotRegex(shim, r'raw_url\.split\(\x27\?\x27\)\.next\(\)\s*==\s*Some\("/health"\)')
 
     def test_builder_emits_existing_scoped_n3_alias(self):
         fixture = fixtures.Packaging('runTest')

@@ -213,9 +213,9 @@ fn run_relayer_once_blocking(
             .unwrap_or(false)
         && config.should_run_request_processing()
     {
-        let store_auth=crate::store_auth::settings(config,(now_ms()/1000.0) as u64).ok();
-        let supabase_url=store_auth.as_ref().map(|s|s.url.clone());
-        let supabase_key=store_auth.as_ref().map(|s|s.api_key.clone());
+        let store_auth = crate::store_auth::settings(config, (now_ms() / 1000.0) as u64).ok();
+        let supabase_url = store_auth.as_ref().map(|s| s.url.clone());
+        let supabase_key = store_auth.as_ref().map(|s| s.api_key.clone());
         if let (Some(url), Some(key)) = (supabase_url, supabase_key) {
             let client = neo_os_relayer_store::supabase::SupabaseClient::new(
                 transport.clone(),
@@ -303,9 +303,9 @@ fn run_relayer_once_blocking(
             .unwrap_or(false)
         && config.should_run_request_processing()
     {
-        let store_auth=crate::store_auth::settings(config,(now_ms()/1000.0) as u64).ok();
-        let supabase_url=store_auth.as_ref().map(|s|s.url.clone());
-        let supabase_key=store_auth.as_ref().map(|s|s.api_key.clone());
+        let store_auth = crate::store_auth::settings(config, (now_ms() / 1000.0) as u64).ok();
+        let supabase_url = store_auth.as_ref().map(|s| s.url.clone());
+        let supabase_key = store_auth.as_ref().map(|s| s.api_key.clone());
         if let (Some(url), Some(key)) = (supabase_url, supabase_key) {
             let client = neo_os_relayer_store::supabase::SupabaseClient::new(
                 transport.clone(),
@@ -459,22 +459,27 @@ async fn run_relayer_once_cancellable(
     config: &RelayerConfig,
     stopping: Arc<AtomicBool>,
 ) -> Result<RelayerRunResult, String> {
-    run_relayer_once_with_runtime(config,stopping,None).await
+    run_relayer_once_with_runtime(config, stopping, None).await
 }
 
 async fn run_relayer_once_with_runtime(
     config: &RelayerConfig,
     stopping: Arc<AtomicBool>,
     context: Option<Arc<dyn crate::transport::RuntimeContext>>,
-) -> Result<RelayerRunResult,String> {
+) -> Result<RelayerRunResult, String> {
     config.ensure_runtime_ready()?;
     let blocking_config = config.clone();
     let outcome = tokio::task::spawn_blocking(move || {
-        let effective_config=match &context {
-            Some(context)=>context.refresh_config(&blocking_config)?,
-            None=>blocking_config.clone(),
+        let effective_config = match &context {
+            Some(context) => context.refresh_config(&blocking_config)?,
+            None => blocking_config.clone(),
         };
-        if context.is_some() { crate::store_auth::ensure_embedded_ready(&effective_config,(now_ms()/1000.0) as u64)?; }
+        if context.is_some() {
+            crate::store_auth::ensure_embedded_ready(
+                &effective_config,
+                (now_ms() / 1000.0) as u64,
+            )?;
+        }
         let transport = RelayerHttpTransport::with_runtime(
             if crate::durable_v2::enabled(&blocking_config) {
                 5000
@@ -567,25 +572,39 @@ pub async fn run_relayer_loop_until<F>(
 where
     F: Future<Output = neo_os_service_runtime::ShutdownReason>,
 {
-    run_relayer_loop_with_runtime_until(config,crate::transport::LoopRuntime::default(),shutdown).await
+    run_relayer_loop_with_runtime_until(config, crate::transport::LoopRuntime::default(), shutdown)
+        .await
 }
 
 pub async fn run_embedded_relayer_loop_until<F>(
     config: &RelayerConfig,
     context: Arc<dyn crate::transport::RuntimeContext>,
     shutdown: F,
-) -> Result<(),Box<dyn std::error::Error+Send+Sync>>
-where F: Future<Output=neo_os_service_runtime::ShutdownReason> {
-    crate::store_auth::ensure_embedded_ready(config,(now_ms()/1000.0) as u64).map_err(std::io::Error::other)?;
-    run_relayer_loop_with_runtime_until(config,crate::transport::LoopRuntime{context:Some(context),strict_drain:true},shutdown).await
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+where
+    F: Future<Output = neo_os_service_runtime::ShutdownReason>,
+{
+    crate::store_auth::ensure_embedded_ready(config, (now_ms() / 1000.0) as u64)
+        .map_err(std::io::Error::other)?;
+    run_relayer_loop_with_runtime_until(
+        config,
+        crate::transport::LoopRuntime {
+            context: Some(context),
+            strict_drain: true,
+        },
+        shutdown,
+    )
+    .await
 }
 
 async fn run_relayer_loop_with_runtime_until<F>(
     config: &RelayerConfig,
     runtime: crate::transport::LoopRuntime,
     shutdown: F,
-) -> Result<(),Box<dyn std::error::Error+Send+Sync>>
-where F: Future<Output=neo_os_service_runtime::ShutdownReason> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+where
+    F: Future<Output = neo_os_service_runtime::ShutdownReason>,
+{
     config
         .ensure_runtime_ready()
         .map_err(std::io::Error::other)?;
@@ -594,15 +613,17 @@ where F: Future<Output=neo_os_service_runtime::ShutdownReason> {
             .await
             .map_err(|e| std::io::Error::other(e).into());
     }
-    run_single_relayer_loop_with_runtime_until(config,runtime,shutdown).await
+    run_single_relayer_loop_with_runtime_until(config, runtime, shutdown).await
 }
 
 async fn run_single_relayer_loop_with_runtime_until<F>(
-    config:&RelayerConfig,
-    runtime:crate::transport::LoopRuntime,
-    shutdown:F,
-)->Result<(),Box<dyn std::error::Error+Send+Sync>>
-where F:Future<Output=neo_os_service_runtime::ShutdownReason> {
+    config: &RelayerConfig,
+    runtime: crate::transport::LoopRuntime,
+    shutdown: F,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+where
+    F: Future<Output = neo_os_service_runtime::ShutdownReason>,
+{
     config
         .ensure_runtime_ready()
         .map_err(std::io::Error::other)?;
@@ -619,7 +640,7 @@ where F:Future<Output=neo_os_service_runtime::ShutdownReason> {
     tokio::pin!(shutdown);
     loop {
         let stopping = Arc::new(AtomicBool::new(false));
-        let tick = run_relayer_once_with_runtime(config, stopping.clone(),runtime.context.clone());
+        let tick = run_relayer_once_with_runtime(config, stopping.clone(), runtime.context.clone());
         tokio::pin!(tick);
         let (tick_result, shutdown_after_tick) = tokio::select! {
             // Poll the tick first so a signal received during a tick drains

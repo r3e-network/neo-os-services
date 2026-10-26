@@ -210,8 +210,8 @@ impl<T: HttpTransport> DeliveryStore<'_, T> {
     }
     fn rpc(&self, name: &str, mut body: Value, now_ms: u64) -> Result<Value, String> {
         if self.client.is_rpc_scoped() {
-            body["p_network"]=json!(self.client.config().network);
-            if name=="feed_baseline" && body.get("p_snapshot").is_some_and(|p|!p.is_null()) {
+            body["p_network"] = json!(self.client.config().network);
+            if name == "feed_baseline" && body.get("p_snapshot").is_some_and(|p| !p.is_null()) {
                 return Err("baseline seeding requires maintenance authority".into());
             }
         }

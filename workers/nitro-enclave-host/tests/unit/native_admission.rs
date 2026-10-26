@@ -37,6 +37,8 @@ fn dual_shim(routers: BTreeMap<String, Router>) -> ShimState {
         explicit_network: true,
         max_body_bytes: 262144,
         request_slots: Arc::new(tokio::sync::Semaphore::new(MAX_INFLIGHT_REQUESTS)),
+        #[cfg(feature = "embedded-relayer")]
+        relayer: None,
     }
 }
 

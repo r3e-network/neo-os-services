@@ -238,7 +238,10 @@ pub fn create_relayer_config_from_env(
     let instance_id = if !instance_id_override.is_empty() {
         instance_id_override
     } else {
-        let hostname = env.get("HOSTNAME").cloned().unwrap_or_else(|| "localhost".to_string());
+        let hostname = env
+            .get("HOSTNAME")
+            .cloned()
+            .unwrap_or_else(|| "localhost".to_string());
         let pid = std::process::id();
         format!("{hostname}:{pid}")
     };

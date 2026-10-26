@@ -58,16 +58,27 @@ fn request_path(url: &url::Url) -> String {
     }
 }
 
-fn request_url(raw_url:&str,headers:&http::HeaderMap)->Result<url::Url,RuntimeError> {
-    let host=headers.get(http::header::HOST).and_then(|v|v.to_str().ok())
-        .map(str::trim).filter(|v|!v.is_empty()).unwrap_or("127.0.0.1");
-    parse_url(raw_url,host)
+fn request_url(raw_url: &str, headers: &http::HeaderMap) -> Result<url::Url, RuntimeError> {
+    let host = headers
+        .get(http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("127.0.0.1");
+    parse_url(raw_url, host)
 }
 
 /// Shared identity for dispatch and host-owned readiness composition.
-pub fn classify_request(method:&str,raw_url:&str,headers:&http::HeaderMap)->Result<Target,RuntimeError> {
-    let method=if method.is_empty(){"GET"}else{method};
-    Ok(classify(method,&request_path(&request_url(raw_url,headers)?)))
+pub fn classify_request(
+    method: &str,
+    raw_url: &str,
+    headers: &http::HeaderMap,
+) -> Result<Target, RuntimeError> {
+    let method = if method.is_empty() { "GET" } else { method };
+    Ok(classify(
+        method,
+        &request_path(&request_url(raw_url, headers)?),
+    ))
 }
 
 /// `Object.fromEntries(url.searchParams)` — every query parameter as a
@@ -205,14 +216,33 @@ fn run(
         }
 
         Target::ProvisionRelayerAuth => {
-            if state.overlay.read().expect("overlay lock").get("MORPHEUS_EMBEDDED_RELAYER")!=Some("true") {
-                return Ok(DispatchOutcome{status:404,body:serde_json::json!({"error":"not found","path":path})});
+            if state
+                .overlay
+                .read()
+                .expect("overlay lock")
+                .get("MORPHEUS_EMBEDDED_RELAYER")
+                != Some("true")
+            {
+                return Ok(DispatchOutcome {
+                    status: 404,
+                    body: serde_json::json!({"error":"not found","path":path}),
+                });
             }
-            assert_authorized(&state.overlay.read().expect("overlay lock"),headers)?;
+            assert_authorized(&state.overlay.read().expect("overlay lock"), headers)?;
             #[cfg(feature = "embedded-relayer")]
-            { Ok(DispatchOutcome::ok(crate::relayer_auth::refresh(state,&parse_body(body)?)?)) }
+            {
+                Ok(DispatchOutcome::ok(crate::relayer_auth::refresh(
+                    state,
+                    &parse_body(body)?,
+                )?))
+            }
             #[cfg(not(feature = "embedded-relayer"))]
-            { Err(crate::http_error(503,"this image does not include the embedded relayer")) }
+            {
+                Err(crate::http_error(
+                    503,
+                    "this image does not include the embedded relayer",
+                ))
+            }
         }
 
         Target::OracleFulfill => {

@@ -190,10 +190,13 @@ pub fn client(
     config: &RelayerConfig,
     transport: &RelayerHttpTransport,
 ) -> Result<SupabaseClient<RelayerHttpTransport>, String> {
-    let store_auth=crate::store_auth::settings(config,now()/1000)?;
+    let store_auth = crate::store_auth::settings(config, now() / 1000)?;
     let config = SupabaseConfig::new(&store_auth.url, &store_auth.api_key, &config.network);
-    let cache_key=store_auth.claims.as_ref().map(|claims|crate::store_auth::backoff_identity(&config.rest_url,claims))
-        .unwrap_or_else(||format!("{}|{}",config.rest_url,config.network));
+    let cache_key = store_auth
+        .claims
+        .as_ref()
+        .map(|claims| crate::store_auth::backoff_identity(&config.rest_url, claims))
+        .unwrap_or_else(|| format!("{}|{}", config.rest_url, config.network));
     let backoff = BACKOFFS
         .get_or_init(Default::default)
         .lock()
@@ -201,14 +204,10 @@ pub fn client(
         .entry(cache_key)
         .or_insert_with(|| Arc::new(Mutex::new(BackoffState::new())))
         .clone();
-    let client=SupabaseClient::with_backoff(
-        transport.clone(),
-        config,
-        backoff,
-    );
+    let client = SupabaseClient::with_backoff(transport.clone(), config, backoff);
     Ok(match store_auth.bearer {
-        Some(token)=>client.with_rpc_auth(token,crate::store_auth::PROFILE.into()),
-        None=>client,
+        Some(token) => client.with_rpc_auth(token, crate::store_auth::PROFILE.into()),
+        None => client,
     })
 }
 pub fn identity(config: &RelayerConfig, chain: &str) -> Result<(String, String), String> {

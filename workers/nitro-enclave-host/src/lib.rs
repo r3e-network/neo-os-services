@@ -33,6 +33,8 @@ pub mod custody;
 pub mod custody_bootstrap;
 pub mod dispatch;
 pub mod embedded_custody;
+#[cfg(feature = "embedded-relayer")]
+pub mod embedded_relayer;
 pub mod feed_public_quorum;
 pub mod feed_sign;
 pub mod feed_status;
@@ -48,8 +50,6 @@ pub mod paymaster;
 pub mod provision;
 #[cfg(feature = "embedded-relayer")]
 pub mod relayer_auth;
-#[cfg(feature = "embedded-relayer")]
-pub mod embedded_relayer;
 pub mod routes;
 pub mod secret_root;
 pub mod session;
