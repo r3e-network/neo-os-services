@@ -1,5 +1,8 @@
 """Synthetic public fixtures only. Fake tools prove orchestration, never EIFs."""
+import ast
 import copy
+import io
+from contextlib import redirect_stderr
 import errno
 import importlib.util
 import json
@@ -40,7 +43,7 @@ elif args[:2] == ['image', 'inspect']:
     if '{{.Id}}' in args: print('sha256:' + 'a' * 64)
     else:
         mapping = (pathlib.Path(cfg['context']) / 'public/network-profiles.json').read_text()
-        print(json.dumps(['NODE_ENV=production', 'MORPHEUS_ATTESTED_BOOT=require', 'MORPHEUS_ALLOW_EPHEMERAL_KEY=0', 'MORPHEUS_NETWORK_PROFILES_JSON=' + mapping]))
+        print(json.dumps(['NODE_ENV=production', 'MORPHEUS_ATTESTED_BOOT=require', 'MORPHEUS_ALLOW_EPHEMERAL_KEY=0', 'MORPHEUS_NETWORK_PROFILES_JSON=' + mapping, 'MORPHEUS_EMBEDDED_RELAYER=false']))
 elif args[:1] == ['create']:
     name = args[args.index('--name') + 1] if '--name' in args else 'untracked'
     labels = dict([args[args.index('--label') + 1].split('=', 1)]) if '--label' in args else {}
@@ -808,7 +811,9 @@ m.build(root / 'source', root / 'context', manifest, root / 'result', m.safe_env
                 if fault=='runtime-price-plane':
                     mapping=json.loads(m);mapping['testnet']['FEED_PRICE_PLANE']='twelvedata'
                     m=dual.encoded(mapping).decode().strip()
-                return dual.encoded(['NODE_ENV=production','MORPHEUS_ATTESTED_BOOT=require','MORPHEUS_ALLOW_EPHEMERAL_KEY=0','MORPHEUS_NETWORK_PROFILES_JSON='+m])
+                enabled = all('MORPHEUS_RELAYER_STATE_FILE' in json.loads(m).get(n, {}) for n in dual.NETWORKS)
+                gate = str(not enabled if fault=='runtime-relayer-gate' else enabled).lower()
+                return dual.encoded(['NODE_ENV=production','MORPHEUS_ATTESTED_BOOT=require','MORPHEUS_ALLOW_EPHEMERAL_KEY=0','MORPHEUS_NETWORK_PROFILES_JSON='+m, 'MORPHEUS_EMBEDDED_RELAYER=' + gate])
             if 'build-enclave' in a or 'describe-eif' in a:
                 if 'build-enclave' in a:Path(a[-1]).write_bytes(b'synthetic EIF control '+str(counter).encode())
                 v='22' if (fault=='repro' and counter==2) or (fault=='readback' and 'describe-eif' in a) else '11'
@@ -825,6 +830,67 @@ m.build(root / 'source', root / 'context', manifest, root / 'result', m.safe_env
         self.enable_enrollment()
         result, _ = self.simulate()
         self.assertIn('public/custody/testnet-enrollment.json', result['files'])
+
+    def test_native_test_runner_preserves_original_fixture_failure(self):
+        # Execute the actual imports and failure-handler AST only. No wrapper
+        # setup, native compiler, helper process or network is allowed here.
+        program = ast.parse((HERE / 'test-dual-preparation.py').read_text())
+        scope = {}
+        imports = [node for node in program.body if isinstance(node, (ast.Import, ast.ImportFrom))]
+        exec(compile(ast.Module(body=imports, type_ignores=[]), '<runner-imports>', 'exec'), scope)
+        handler = next(node for node in ast.walk(program) if isinstance(node, ast.Try))
+        failure = ValueError('synthetic original helper failure')
+        observed = []
+        class Probe:
+            def run(self, *args, **kwargs): raise failure
+            def failure_diagnostic(self, error):
+                observed.append(error)
+                return {'kind': 'command_failed'}
+            def encoded(self, value): return json.dumps(value).encode()
+        scope.update(dual=Probe(), source=self.root, target=self.root, env={})
+        stderr = io.StringIO()
+        with redirect_stderr(stderr), self.assertRaises(ValueError) as caught:
+            exec(compile(ast.Module(body=[handler], type_ignores=[]), '<runner-handler>', 'exec'), scope)
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(observed, [failure])
+        self.assertIn('DUAL-PREPARATION-TEST-FAILURE', stderr.getvalue())
+        self.assertNotIn(str(failure), stderr.getvalue())
+
+    def test_measured_public_environment_is_retained_without_widening_build_records(self):
+        result, _ = self.simulate()
+        self.assertEqual(len(result['image_readbacks']), 2)
+        # The actual hosted consumer retains the original three-field build
+        # schema. Read-only validation of synthetic artifacts starts no tools.
+        with patch.object(__import__('sys'), 'path', [str(HERE.parent.parent / 'scripts'), *__import__('sys').path]):
+            import hosted_native_candidate as hosted
+            self.assertEqual(hosted.validate_candidate(self.root / 'result', self.commit, self.hash, dual), result)
+        for build, readback in zip(result['builds'], result['image_readbacks']):
+            self.assertEqual(set(build), {'image_id', 'pcrs', 'eif_sha256'})
+            self.assertEqual(set(readback), {'image_id', 'environment', 'environment_sha256'})
+            self.assertEqual(build['image_id'], readback['image_id'])
+            self.assertEqual(set(readback['environment']), {'NODE_ENV', 'MORPHEUS_ATTESTED_BOOT',
+                'MORPHEUS_ALLOW_EPHEMERAL_KEY', 'MORPHEUS_NETWORK_PROFILES_JSON', 'MORPHEUS_EMBEDDED_RELAYER'})
+            self.assertEqual(readback['environment']['MORPHEUS_EMBEDDED_RELAYER'], 'false')
+            self.assertEqual(readback['environment_sha256'], dual.sha(dual.encoded(readback['environment'])))
+
+    def test_enabled_relayer_public_environment_is_retained(self):
+        for n in dual.NETWORKS:
+            self.input['networks'][n]['relayer'] = {
+                'state_file': '/var/lib/neoos-relayer/' + n + '/state.json',
+                'instance_id': n + '-instance', 'caller_id': n + '-caller',
+                'store_url': 'https://store.example.invalid', 'store_api_key': 'sb_publishable_' + 'a' * 40,
+                'issuer': 'https://issuer.example.invalid/auth/v1', 'mode': 'combined',
+                'active_chains': ['neo_n3', 'neox'], 'feed_sync_enabled': True}
+        self.write()
+        result, _ = self.simulate()
+        for readback in result['image_readbacks']:
+            self.assertEqual(readback['environment']['MORPHEUS_EMBEDDED_RELAYER'], 'true')
+            self.assertEqual(readback['environment_sha256'], dual.sha(dual.encoded(readback['environment'])))
+
+    def test_measured_relayer_gate_substitution_refuses_publication(self):
+        with self.assertRaisesRegex(ValueError, 'image relayer measurement gate mismatch'):
+            self.simulate('runtime-relayer-gate')
+        self.assertFalse((self.root / 'result').exists())
 
     def test_selected_price_planes_survive_recorded_image_readback(self):
         for network in dual.NETWORKS:

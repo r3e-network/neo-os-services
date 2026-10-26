@@ -713,6 +713,7 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
     Path(env['NITRO_CLI_ARTIFACTS']).mkdir()
     docker_args = [docker, '--host', 'unix:///var/run/docker.sock']
     images, containers, evidence = [], [], []
+    image_readbacks = []
     payloads = []
     try:
         payload = payload_diagnostics()
@@ -766,7 +767,14 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
             require(encoded(parse(env_map.get('MORPHEUS_NETWORK_PROFILES_JSON', 'null'))) == regular(exported / 'network-profiles.json'), 'image runtime map differs from measured map')
             profiles_map = parse(regular(exported / 'network-profiles.json'))
             expected_gate = all('MORPHEUS_RELAYER_STATE_FILE' in profiles_map[n] for n in NETWORKS)
-            require(env_map.get('MORPHEUS_EMBEDDED_RELAYER','false') == str(expected_gate).lower(), 'image relayer measurement gate mismatch')
+            require(env_map.get('MORPHEUS_EMBEDDED_RELAYER') == str(expected_gate).lower(), 'image relayer measurement gate mismatch')
+            # Persist only these public, already-verified image values. The
+            # existing three-field build/diagnostic record remains unchanged.
+            public_environment = {name: env_map[name] for name in (
+                'NODE_ENV', 'MORPHEUS_ATTESTED_BOOT', 'MORPHEUS_ALLOW_EPHEMERAL_KEY',
+                'MORPHEUS_NETWORK_PROFILES_JSON', 'MORPHEUS_EMBEDDED_RELAYER')}
+            image_readbacks.append({'image_id': image_id, 'environment': public_environment,
+                'environment_sha256': sha(encoded(public_environment))})
             receipt = parse(regular(exported / 'custody-build-validation.json'))
             require(receipt == {'schema': 'neoos/dual-custody-build/v1', 'networks': list(NETWORKS), 'map_sha256': manifest['map_sha256']}, 'authoritative Rust preparation receipt mismatch')
             eif = context.parent / ('build-' + str(attempt) + '.eif')
@@ -789,7 +797,7 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
             print(payload.frame(payloads), file=__import__('sys').stderr)
         diagnostic_stage('measurements')
         require(evidence[0]['pcrs'] == evidence[1]['pcrs'], 'independent builds are not reproducible')
-        result = {**manifest, 'schema': 'neoos/dual-image-build-evidence/v1', 'status': 'measured-candidate; independent review and release admission required', 'canonical_main': tip, 'hash_algorithm': 'SHA384', 'reproducible_verified': True, 'builds': evidence}
+        result = {**manifest, 'schema': 'neoos/dual-image-build-evidence/v1', 'status': 'measured-candidate; independent review and release admission required', 'canonical_main': tip, 'hash_algorithm': 'SHA384', 'reproducible_verified': True, 'builds': evidence, 'image_readbacks': image_readbacks}
     except BaseException as error:
         failure_diagnostic(error)
         raise

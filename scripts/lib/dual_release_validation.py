@@ -3,6 +3,7 @@
 These functions bind recorded evidence to bytes; they do not establish that a
 builder ran, authorize publication, or satisfy independent KMS/policy gates.
 """
+import base64
 import hashlib
 import json
 import re
@@ -173,12 +174,19 @@ def validate_build_evidence(e, m, context, current_inventory):
         require(build['pcrs'] == triple and build['describe_pcrs'] == triple, 'build/describe/cross-build PCR agreement')
         require(build['profile_sha256'] == {n: m['contexts'][n]['profile_sha256'] for n in NETWORKS}, 'image profile readback')
         require(build['map_sha256'] == e['map_sha256'], 'image map readback')
-        fields(build['environment'], 'NODE_ENV MORPHEUS_ATTESTED_BOOT MORPHEUS_ALLOW_EPHEMERAL_KEY MORPHEUS_NETWORK_PROFILES_JSON')
+        fields(build['environment'], 'NODE_ENV MORPHEUS_ATTESTED_BOOT MORPHEUS_ALLOW_EPHEMERAL_KEY MORPHEUS_NETWORK_PROFILES_JSON MORPHEUS_EMBEDDED_RELAYER')
+        require(all(type(value) is str for value in build['environment'].values()), 'image environment values must be strings')
         require(build['environment']['NODE_ENV'] == 'production' and
                 build['environment']['MORPHEUS_ATTESTED_BOOT'] == 'require' and
                 build['environment']['MORPHEUS_ALLOW_EPHEMERAL_KEY'] == '0', 'image boot policy readback')
-        require(sha(encoded(parse(build['environment']['MORPHEUS_NETWORK_PROFILES_JSON'].encode()))) ==
-                e['map_sha256'], 'image ENV map readback')
+        image_map = parse(build['environment']['MORPHEUS_NETWORK_PROFILES_JSON'].encode())
+        fields(image_map, 'mainnet testnet')
+        require(all(type(image_map[n]) is dict for n in NETWORKS), 'image map shape')
+        relayers = ['MORPHEUS_RELAYER_STATE_FILE' in image_map[n] for n in NETWORKS]
+        require(all(relayers) or not any(relayers), 'image relayer contexts must be paired')
+        require(build['environment']['MORPHEUS_EMBEDDED_RELAYER'] == str(all(relayers)).lower(),
+                'image relayer measurement gate readback')
+        require(sha(encoded(image_map)) == e['map_sha256'], 'image ENV map readback')
         require(sha(encoded(build['environment'])) == build['environment_sha256'], 'environment digest')
         for key in ('environment_sha256', 'toolchain_sha256', 'nitro_blobs_sha256'):
             digest(build[key])
@@ -261,11 +269,15 @@ def validate_public_inputs(docs, source_files):
     overlays = {}
     enrollment_files = {}
     role_ids = set()
+    relayers = [n for n in NETWORKS if type(value['networks'][n]) is dict and
+                'relayer' in value['networks'][n]]
+    require(not relayers or relayers == NETWORKS, 'embedded relayer requires both explicit network specifications')
+    relayer_ids = {'instance_id': set(), 'caller_id': set()}
     distinct = {k: set() for k in ('vault_id', 'root_key_commitment', 'audience', 'origin', 'snapshot')}
     for network in NETWORKS:
         spec = value['networks'][network]
         spec_fields = ('profile_file', 'profile_sha256', 'workload_audience', 'roles', 'neo_n3_rpc', 'neo_x_rpc', 'frontier_kms_key_arn', 'aws_region')
-        public_fields(spec, spec_fields + tuple(k for k in ('enrollment', 'feed_price_plane')
+        public_fields(spec, spec_fields + tuple(k for k in ('enrollment', 'feed_price_plane', 'relayer')
                                                if type(spec) is dict and k in spec))
         if 'feed_price_plane' in spec:
             require(type(spec['feed_price_plane']) is str and
@@ -323,6 +335,7 @@ def validate_public_inputs(docs, source_files):
             'MORPHEUS_CUSTODY_WORKLOAD_AUDIENCE': audience,
             'SIGNER_SERVICE_URL': 'http://127.0.0.1:0/' + network,
             'NEO_RPC_URL': public_url(spec['neo_n3_rpc']),
+            'NEO_RPC_URLS_' + network.upper(): public_url(spec['neo_n3_rpc']),
             'NEOX_RPC_URL': public_url(spec['neo_x_rpc']),
             'NEOX_RPC': spec['neo_x_rpc'],
             'EVM_RPC_URL': spec['neo_x_rpc'],
@@ -331,6 +344,48 @@ def validate_public_inputs(docs, source_files):
         }
         if 'feed_price_plane' in spec:
             overlay['FEED_PRICE_PLANE'] = spec['feed_price_plane']
+        if 'relayer' in spec:
+            relay = spec['relayer']
+            public_fields(relay, ('state_file', 'instance_id', 'caller_id', 'store_url',
+                'store_api_key', 'issuer', 'mode', 'active_chains', 'feed_sync_enabled'))
+            require(type(relay['state_file']) is str and re.fullmatch(
+                '/var/lib/neoos-relayer/' + network + r'/[A-Za-z0-9_-]+\.json', relay['state_file']),
+                'invalid relayer state path')
+            for name in ('instance_id', 'caller_id'):
+                identity = identifier(relay[name])
+                require(identity not in relayer_ids[name], 'relayer identities must be independent')
+                relayer_ids[name].add(identity)
+            require(relay['mode'] in ('combined', 'requests_only', 'feed_only'), 'invalid embedded relayer mode')
+            require(relay['active_chains'] == ['neo_n3', 'neox'], 'embedded relayer requires both reviewed chain families')
+            require(type(relay['feed_sync_enabled']) is bool and
+                    (relay['mode'] == 'requests_only' or relay['feed_sync_enabled']),
+                    'embedded feed processing requires explicit feed sync')
+            require(type(relay['issuer']) is str and re.fullmatch(r'[A-Za-z0-9:/._-]{1,2048}', relay['issuer']),
+                    'invalid pinned relayer issuer')
+            key = relay['store_api_key']
+            public_key = type(key) is str and re.fullmatch(r'sb_publishable_[A-Za-z0-9_-]{16,480}', key) is not None
+            if not public_key and type(key) is str and len(key) <= 16384 and re.fullmatch(
+                    r'[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', key):
+                try:
+                    part = key.split('.')[1]
+                    claims = parse(base64.b64decode(part + '=' * ((-len(part)) % 4), altchars=b'-_', validate=True))
+                    public_key = type(claims) is dict and claims.get('role') == 'anon'
+                except ValueError:
+                    public_key = False
+            require(public_key, 'relayer store API key must be public, never a service/admin key')
+            overlay.update({
+                'MORPHEUS_RELAYER_STATE_FILE': relay['state_file'],
+                'MORPHEUS_RELAYER_INSTANCE_ID': relay['instance_id'],
+                'MORPHEUS_RELAYER_CALLER_ID': relay['caller_id'],
+                'MORPHEUS_RELAYER_STORE_URL': public_url(relay['store_url']),
+                'MORPHEUS_RELAYER_STORE_API_KEY': key,
+                'MORPHEUS_RELAYER_JWT_ISSUER': relay['issuer'],
+                'MORPHEUS_RELAYER_MODE': relay['mode'],
+                'MORPHEUS_ACTIVE_CHAINS': 'neo_n3,neox',
+                'MORPHEUS_FEED_SYNC_ENABLED': str(relay['feed_sync_enabled']).lower(),
+                'MORPHEUS_DELIVERY_PROTOCOL': 'v2', 'MORPHEUS_RELAYER_CONCURRENCY': '1',
+                'MORPHEUS_AUTOMATION_ENABLED': 'false',
+            })
         if 'enrollment' in spec:
             enrollment = spec['enrollment']
             public_fields(enrollment, ('mode', 'manifest_file', 'manifest_sha256'))
@@ -440,7 +495,9 @@ def validate_bundle(manifest_bytes, files, source_files):
     template = source_files[recipe][1].decode()
     require(template.count('# DUAL_NETWORK_ENV') == 1, 'Docker marker')
     # Exact encoding used by the reviewed Python builder, including JSON escaping.
-    env_line = 'ENV MORPHEUS_NETWORK_PROFILES_JSON=' + json.dumps(map_bytes.decode().strip())
+    enabled = all('relayer' in spec['networks'][n] for n in NETWORKS)
+    env_line = ('ENV MORPHEUS_NETWORK_PROFILES_JSON=' + json.dumps(map_bytes.decode().strip()) +
+                ' MORPHEUS_EMBEDDED_RELAYER=' + str(enabled).lower())
     expected['Dockerfile'] = sha(template.replace('# DUAL_NETWORK_ENV', env_line).encode())
     require(context['files'] == expected, 'generated selected context closure')
     fields(spec, 'schema release source_commit networks')

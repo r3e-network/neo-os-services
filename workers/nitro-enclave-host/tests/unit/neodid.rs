@@ -1586,19 +1586,20 @@ fn admission_controls_preserve_another_urls_rotated_jwks() {
     );
 }
 
-
 #[test]
 fn action_authorization_callback_releases_overlay_before_both_signatures() {
     let fixture = signed_token(&base_claims(), "overlay-release-v4");
     let mut overlay = salted_overlay();
     overlay.extend([
         ("WEB3AUTH_CLIENT_ID", "client-id"),
-        ("WEB3AUTH_JWKS_URL", "https://overlay-release-v4.example.test/jwks"),
+        (
+            "WEB3AUTH_JWKS_URL",
+            "https://overlay-release-v4.example.test/jwks",
+        ),
         ("AWS_ACCESS_KEY_ID", "credential-before"),
     ]);
     let mut harness = neodid_harness(&overlay);
-    harness.state.jwks_fetcher =
-        Box::new(ScriptedJwksFetcher::new(vec![Ok(fixture.jwks)]));
+    harness.state.jwks_fetcher = Box::new(ScriptedJwksFetcher::new(vec![Ok(fixture.jwks)]));
     let calls = AtomicUsize::new(0);
     let read = |request: &neo_os_compute::neodid::AaActionAuthorizationRequest| {
         // A bounded real lock assertion: the old handler fails immediately;
@@ -1606,7 +1607,10 @@ fn action_authorization_callback_releases_overlay_before_both_signatures() {
         assert!(harness.signer.sign_calls().is_empty());
         assert_eq!(request.network, "opaque network e\u{301} ");
         assert_eq!(request.account_id, " account e\u{301} ");
-        let mut writer = harness.state.overlay.try_write()
+        let mut writer = harness
+            .state
+            .overlay
+            .try_write()
             .expect("credential writer must acquire before authorization returns/signing");
         assert!(writer.apply("AWS_ACCESS_KEY_ID", &json!("credential-after")));
         assert!(!writer.apply("MORPHEUS_NETWORK", &json!("mainnet")));
@@ -1643,13 +1647,15 @@ fn action_authorization_callback_releases_overlay_before_both_signatures() {
         "authorization_epoch": "2", "callback_encoding": "neo_n3_action_v4",
         "include_attestation": true,
     });
-    let response = handle_neo_did_action_ticket_with_authorization(
-        &harness.state, &payload, &read,
-    ).expect("real action flow retains valid ticket and both signatures");
+    let response = handle_neo_did_action_ticket_with_authorization(&harness.state, &payload, &read)
+        .expect("real action flow retains valid ticket and both signatures");
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(response["ticket_version"], 4);
     assert_eq!(response["authorization_epoch"], "2");
-    assert_eq!(recomputed_output_hash(&response), response["output_hash"].as_str().unwrap());
+    assert_eq!(
+        recomputed_output_hash(&response),
+        response["output_hash"].as_str().unwrap()
+    );
     assert!(response["tee_attestation"].is_object());
     let signed = harness.signer.sign_calls();
     assert_eq!(signed.len(), 2, "digest + signed result envelope");
@@ -1657,9 +1663,23 @@ fn action_authorization_callback_releases_overlay_before_both_signatures() {
         assert_eq!(call.0, TEST_NETWORK);
         assert_eq!(call.1, "worker");
     }
-    assert_eq!(signed[0].2, response["digest"].as_str().unwrap().trim_start_matches("0x"));
+    assert_eq!(
+        signed[0].2,
+        response["digest"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("0x")
+    );
     assert_eq!(harness.state.resolve_network().unwrap(), TEST_NETWORK);
-    assert_eq!(harness.state.overlay.read().unwrap().get("AWS_ACCESS_KEY_ID"), Some("credential-after"));
+    assert_eq!(
+        harness
+            .state
+            .overlay
+            .read()
+            .unwrap()
+            .get("AWS_ACCESS_KEY_ID"),
+        Some("credential-after")
+    );
     assert!(harness.bridge.forwards().is_empty());
 }
 
@@ -1672,19 +1692,41 @@ fn ticket_environment_snapshot_remains_owned_after_credential_refresh() {
     // provider/custody implementation intact, while observing the EnvReader
     // after a real write at the injected authorization callback boundary.
     fn flow(io: &NeoDidIo<'_>, payload: &serde_json::Value) -> Result<serde_json::Value, String> {
-        assert_eq!((io.env)("AWS_ACCESS_KEY_ID").as_deref(), Some("credential-before"));
+        assert_eq!(
+            (io.env)("AWS_ACCESS_KEY_ID").as_deref(),
+            Some("credential-before")
+        );
         let request = neo_os_compute::neodid::AaActionAuthorizationRequest {
-            network: String::new(), aa_contract: String::new(), account_id_raw: String::new(),
-            verifier_contract: String::new(), account_id: String::new(), master_nullifier: String::new(),
-            authorization_epoch: String::new(), session_nonce: String::new(), expires_at: String::new(),
+            network: String::new(),
+            aa_contract: String::new(),
+            account_id_raw: String::new(),
+            verifier_contract: String::new(),
+            account_id: String::new(),
+            master_nullifier: String::new(),
+            authorization_epoch: String::new(),
+            session_nonce: String::new(),
+            expires_at: String::new(),
         };
-        assert_eq!(io.read_aa_action_authorization.unwrap()(&request).unwrap_err(), "probe only");
-        assert_eq!((io.env)("AWS_ACCESS_KEY_ID").as_deref(), Some("credential-before"));
-        assert_eq!((io.env)("NEODID_SECRET_SALT").as_deref(), Some(TEST_NEODID_SALT));
+        assert_eq!(
+            io.read_aa_action_authorization.unwrap()(&request).unwrap_err(),
+            "probe only"
+        );
+        assert_eq!(
+            (io.env)("AWS_ACCESS_KEY_ID").as_deref(),
+            Some("credential-before")
+        );
+        assert_eq!(
+            (io.env)("NEODID_SECRET_SALT").as_deref(),
+            Some(TEST_NEODID_SALT)
+        );
         neodid_bind(io, payload)
     }
     let read = |_: &neo_os_compute::neodid::AaActionAuthorizationRequest| {
-        let mut writer = harness.state.overlay.try_write().expect("snapshot guard is released");
+        let mut writer = harness
+            .state
+            .overlay
+            .try_write()
+            .expect("snapshot guard is released");
         assert!(writer.apply("AWS_ACCESS_KEY_ID", &json!("credential-after")));
         Err("probe only".to_string())
     };
@@ -1692,8 +1734,21 @@ fn ticket_environment_snapshot_remains_owned_after_credential_refresh() {
         "vault_account":"0x11223344556677889900aabbccddeeff00112233"});
     let response = handle_ticket(&harness.state, &payload, "neodid_bind", flow, Some(&read))
         .expect("snapshot flow signs normally after refresh");
-    assert_eq!(response["master_nullifier"], format!("0x{}",
-        neo_os_compute::neodid::compute_master_nullifier("twitter", "uid-1", &expected_salt())));
+    assert_eq!(
+        response["master_nullifier"],
+        format!(
+            "0x{}",
+            neo_os_compute::neodid::compute_master_nullifier("twitter", "uid-1", &expected_salt())
+        )
+    );
     assert_eq!(harness.signer.sign_calls().len(), 2);
-    assert_eq!(harness.state.overlay.read().unwrap().get("AWS_ACCESS_KEY_ID"), Some("credential-after"));
+    assert_eq!(
+        harness
+            .state
+            .overlay
+            .read()
+            .unwrap()
+            .get("AWS_ACCESS_KEY_ID"),
+        Some("credential-after")
+    );
 }

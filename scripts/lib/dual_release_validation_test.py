@@ -1,4 +1,5 @@
 """Unit fixtures only. No fixture is written under the production measurement registry."""
+import base64
 import copy
 import importlib.util
 import json
@@ -62,7 +63,7 @@ def packaging_module():
 
 
 def fixture(mutate_public=None, enrollment=False, mutate_enrollment=None,
-            enrollment_encoder=v.encoded, cross=False, price_planes=None):
+            enrollment_encoder=v.encoded, cross=False, price_planes=None, relayer=False):
     # Reuse recorded public PCRs, never invent or register production measurements.
     old = v.parse((ROOT / 'deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.10.json').read_bytes())
     source = {p: ('100644', b'unit fixture only\n') for p in (*v.SOURCE_FILES, *v.RECIPE_FILES)}
@@ -84,6 +85,26 @@ def fixture(mutate_public=None, enrollment=False, mutate_enrollment=None,
     for network, plane in (price_planes or {}).items():
         specs[network]['feed_price_plane'] = plane
         overlays[network]['FEED_PRICE_PLANE'] = plane
+    if relayer:
+        for n in v.NETWORKS:
+            relay = {'state_file': '/var/lib/neoos-relayer/' + n + '/state.json',
+                'instance_id': n + '-instance', 'caller_id': n + '-caller',
+                'store_url': 'https://store.example.invalid',
+                'store_api_key': 'sb_publishable_' + 'a' * 40,
+                'issuer': 'https://issuer.example.invalid/auth/v1', 'mode': 'combined',
+                'active_chains': ['neo_n3', 'neox'], 'feed_sync_enabled': True}
+            specs[n]['relayer'] = relay
+            overlays[n].update({
+                'MORPHEUS_RELAYER_STATE_FILE': relay['state_file'],
+                'MORPHEUS_RELAYER_INSTANCE_ID': relay['instance_id'],
+                'MORPHEUS_RELAYER_CALLER_ID': relay['caller_id'],
+                'MORPHEUS_RELAYER_STORE_URL': relay['store_url'],
+                'MORPHEUS_RELAYER_STORE_API_KEY': relay['store_api_key'],
+                'MORPHEUS_RELAYER_JWT_ISSUER': relay['issuer'],
+                'MORPHEUS_RELAYER_MODE': relay['mode'],
+                'MORPHEUS_ACTIVE_CHAINS': 'neo_n3,neox',
+                'MORPHEUS_FEED_SYNC_ENABLED': 'true', 'MORPHEUS_DELIVERY_PROTOCOL': 'v2',
+                'MORPHEUS_RELAYER_CONCURRENCY': '1', 'MORPHEUS_AUTOMATION_ENABLED': 'false'})
     enrollment_docs = {}
     if enrollment:
         profile = v.parse(profiles['testnet'])
@@ -132,7 +153,7 @@ def fixture(mutate_public=None, enrollment=False, mutate_enrollment=None,
         files['cross-inputs/SHA256SUMS'] = v.sha(sums)
     files['Dockerfile'] = v.sha(source[recipe][1].decode().replace(
         '# DUAL_NETWORK_ENV', 'ENV MORPHEUS_NETWORK_PROFILES_JSON='+json.dumps(map_bytes.decode().strip()) +
-        ' MORPHEUS_EMBEDDED_RELAYER=false').encode())
+        ' MORPHEUS_EMBEDDED_RELAYER=' + str(relayer).lower()).encode())
     context = {'schema': 'neoos/dual-image-context/v1', 'release': release, 'git_commit':'a'*40,
         'source_archive_sha256':v.sha(b'unit-only archive'),'reviewed_input_sha256':v.sha(v.encoded(spec)),
         'map_sha256':v.sha(map_bytes),'networks':v.NETWORKS,'files':files,'status':'fixture only, not admission'}
@@ -165,7 +186,8 @@ def fixture(mutate_public=None, enrollment=False, mutate_enrollment=None,
            'profile_sha256':{n:m['contexts'][n]['profile_sha256'] for n in v.NETWORKS},
            'map_sha256':context['map_sha256'],
            'environment':{'NODE_ENV':'production','MORPHEUS_ATTESTED_BOOT':'require',
-            'MORPHEUS_ALLOW_EPHEMERAL_KEY':'0','MORPHEUS_NETWORK_PROFILES_JSON':map_bytes.decode()},
+            'MORPHEUS_ALLOW_EPHEMERAL_KEY':'0','MORPHEUS_NETWORK_PROFILES_JSON':map_bytes.decode(),
+            'MORPHEUS_EMBEDDED_RELAYER':str(relayer).lower()},
            'environment_sha256':'1'*64,
            'rust_preparation':{'schema':'neoos/dual-custody-build/v1','networks':v.NETWORKS,'map_sha256':context['map_sha256']},
            'toolchain_sha256':'2'*64,'nitro_blobs_sha256':'3'*64,'base_images':['4'*64]}
@@ -238,6 +260,125 @@ class Validation(unittest.TestCase):
                     rebind_context(m, files, evidence, actual)
                     self.assertEqual(v.validate_bundle(v.encoded(m), files, source), m)
                     self.assertEqual(len(m['public_bundle_files']), 8 if enrollment else 7)
+
+    def test_relayer_builder_and_independent_validator_join(self):
+        for enabled in (False, True):
+            m, files, source, _, context = fixture(relayer=enabled)
+            packaging = packaging_module()
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                for name, (_, data) in files.items():
+                    (root / name.rsplit('/', 1)[-1]).write_bytes(data)
+                registry = {n: v.parse(source['config/networks/' + n + '.json'][1]) for n in v.NETWORKS}
+                _, _, overlays = packaging.public_inputs(root / 'public-input.json', m['reviewed_input_sha256'], registry)
+                expected = next(data for name, (_, data) in files.items() if name.endswith('/network-profiles.json'))
+                self.assertEqual(packaging.encoded(overlays), expected)
+                class Publication:
+                    def __init__(self): self.files = {}; self.published = False
+                    def write(self, name, chunks): self.files[name] = b''.join(chunks)
+                    def publish(self): self.published = True
+                publication = Publication()
+                captured = {name: data for name, (_, data) in source.items() if v.selected(name)}
+                with patch.object(packaging, 'source', return_value=(captured, m['source_archive_sha256'])):
+                    actual = packaging.stage_into(root, root / 'public-input.json',
+                        m['reviewed_input_sha256'], {}, publication)
+                self.assertTrue(publication.published)
+                self.assertEqual(actual['files'], context['files'])
+            with self.subTest(enabled=enabled):
+                self.assertEqual(v.validate_bundle(v.encoded(m), files, source), m)
+
+    def test_relayer_positive_modes_and_public_anon_keys(self):
+        anon = 'e30.' + base64.urlsafe_b64encode(b'{"role":"anon"}').decode().rstrip('=') + '.sig'
+        for mode, feed in [('combined', True), ('feed_only', True), ('requests_only', False)]:
+            for key in ['sb_publishable_' + 'a' * 40, anon]:
+                def mutate(spec, profiles, overlays, source):
+                    for n in v.NETWORKS:
+                        spec['networks'][n]['relayer'].update(mode=mode, feed_sync_enabled=feed, store_api_key=key)
+                        overlays[n].update(MORPHEUS_RELAYER_MODE=mode,
+                            MORPHEUS_FEED_SYNC_ENABLED=str(feed).lower(), MORPHEUS_RELAYER_STORE_API_KEY=key)
+                m, files, source, _, _ = fixture(relayer=True, mutate_public=mutate)
+                with self.subTest(mode=mode, feed=feed, key_kind=key.split('.')[0]):
+                    self.assertEqual(v.validate_bundle(v.encoded(m), files, source), m)
+
+    def test_relayer_public_boundaries_refuse_rehashed_inputs(self):
+        cases = [
+            ('state_file', '/var/lib/neoos-relayer/testnet/state.json'),
+            ('state_file', '/var/lib/neoos-relayer/mainnet/../state.json'),
+            ('instance_id', 'testnet-instance'), ('caller_id', 'testnet-caller'),
+            ('store_url', 'https://user:pass@store.example.invalid'),
+            ('store_url', 'https://store.example.invalid?key=secret'),
+            ('store_api_key', 'sb_secret_' + 'a' * 40),
+            ('store_api_key', 'sb_publishable_short'),
+            ('issuer', ''), ('issuer', 'issuer\nsecret'), ('issuer', 'x' * 2049),
+            ('mode', 'unknown'), ('mode', False),
+            ('active_chains', ['neox', 'neo_n3']), ('active_chains', ['neo_n3']),
+            ('active_chains', 'neo_n3,neox'),
+            ('feed_sync_enabled', False), ('feed_sync_enabled', 'true'),
+            ('extra', True),
+        ]
+        service_payload = base64.urlsafe_b64encode(b'{"role":"service_role"}').decode().rstrip('=')
+        cases.append(('store_api_key', 'e30.' + service_payload + '.sig'))
+        for field, value in cases:
+            def mutate(spec, profiles, overlays, source):
+                spec['networks']['mainnet']['relayer'][field] = value
+                # Keep generated bytes coherent even for the invalid spec, so
+                # semantic guards cannot be masked by an unrelated map mismatch.
+                mapped = {'state_file': 'STATE_FILE', 'instance_id': 'INSTANCE_ID',
+                    'caller_id': 'CALLER_ID', 'store_url': 'STORE_URL',
+                    'store_api_key': 'STORE_API_KEY', 'issuer': 'JWT_ISSUER', 'mode': 'MODE'}
+                if field in mapped:
+                    overlays['mainnet']['MORPHEUS_RELAYER_' + mapped[field]] = value
+                elif field == 'feed_sync_enabled':
+                    overlays['mainnet']['MORPHEUS_FEED_SYNC_ENABLED'] = str(value).lower()
+            m, files, source, _, _ = fixture(relayer=True, mutate_public=mutate)
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                v.validate_bundle(v.encoded(m), files, source)
+        for network in v.NETWORKS:
+            for value in (None, False, [], {}):
+                def mutate(spec, profiles, overlays, source):
+                    spec['networks'][network]['relayer'] = value
+                m, files, source, _, _ = fixture(relayer=True, mutate_public=mutate)
+                with self.subTest(network=network, value=value), self.assertRaises(ValueError):
+                    v.validate_bundle(v.encoded(m), files, source)
+            def mutate(spec, profiles, overlays, source):
+                del spec['networks'][network]['relayer']
+            m, files, source, _, _ = fixture(relayer=True, mutate_public=mutate)
+            with self.subTest(network=network), self.assertRaises(ValueError):
+                v.validate_bundle(v.encoded(m), files, source)
+
+    def test_relayer_generated_map_is_exact(self):
+        for action in ('missing', 'wrong', 'extra', 'gate-field'):
+            def mutate(spec, profiles, overlays, source):
+                if action == 'missing': del overlays['mainnet']['MORPHEUS_RELAYER_STATE_FILE']
+                elif action == 'wrong': overlays['mainnet']['MORPHEUS_RELAYER_CALLER_ID'] = 'other'
+                elif action == 'extra': overlays['mainnet']['UNREVIEWED'] = 'true'
+                else: overlays['mainnet']['MORPHEUS_EMBEDDED_RELAYER'] = 'true'
+            m, files, source, _, _ = fixture(relayer=True, mutate_public=mutate)
+            with self.subTest(action=action), self.assertRaisesRegex(ValueError, 'exact generated network map'):
+                v.validate_bundle(v.encoded(m), files, source)
+
+    def test_image_relayer_gate_is_exact_and_rehashed(self):
+        for enabled in (False, True):
+            m, files, source, evidence, context = fixture(relayer=enabled)
+            v.validate_build_evidence(evidence, m, context, v.inventory(source))
+            for value in (None, '', True, False, 'TRUE', str(not enabled).lower()):
+                altered = copy.deepcopy(evidence)
+                if value is None: del altered['builds'][0]['environment']['MORPHEUS_EMBEDDED_RELAYER']
+                else: altered['builds'][0]['environment']['MORPHEUS_EMBEDDED_RELAYER'] = value
+                altered['builds'][0]['environment_sha256'] = v.sha(v.encoded(altered['builds'][0]['environment']))
+                with self.subTest(enabled=enabled, value=value), self.assertRaises(ValueError):
+                    v.validate_build_evidence(altered, m, context, v.inventory(source))
+            for malformed in (None, False, 0, [], {}):
+                altered = copy.deepcopy(evidence)
+                altered['builds'][0]['environment']['MORPHEUS_NETWORK_PROFILES_JSON'] = malformed
+                altered['builds'][0]['environment_sha256'] = v.sha(v.encoded(altered['builds'][0]['environment']))
+                with self.subTest(malformed=malformed), self.assertRaises(ValueError):
+                    v.validate_build_evidence(altered, m, context, v.inventory(source))
+            altered = copy.deepcopy(evidence)
+            altered['builds'][0]['environment']['UNREVIEWED'] = 'false'
+            altered['builds'][0]['environment_sha256'] = v.sha(v.encoded(altered['builds'][0]['environment']))
+            with self.assertRaises(ValueError):
+                v.validate_build_evidence(altered, m, context, v.inventory(source))
 
     def test_price_plane_independent_validator_accepts_explicit_network_choices(self):
         for selected in ({}, {'mainnet': 'public-quorum'}, {'testnet': 'public-quorum'},
