@@ -499,6 +499,26 @@ class Packaging(unittest.TestCase):
             env = dual.safe_env(self.root / 'epoch-home')
         self.assertEqual(env['SOURCE_DATE_EPOCH'], '1749859200')
 
+    def test_buildx_012_create_uses_buildkit_config_and_preserves_limits(self):
+        creates = []
+        def supported_create(args):
+            if args[3:5] != ['buildx', 'create']:
+                return
+            # Buildx v0.12.1 exposes --config as the BuildKit config file.
+            if '--buildkitd-config' in args:
+                raise subprocess.CalledProcessError(125, args, stderr=b'unknown flag: --buildkitd-config')
+            self.assertEqual(args.count('--config'), 1)
+            config = Path(args[args.index('--config') + 1])
+            self.assertEqual(config, self.root / 'buildkit.toml')
+            self.assertEqual(config.read_text(), '[worker.oci]\n  max-parallelism = 1\n')
+            self.assertEqual(args[args.index('--driver') + 1], 'docker-container')
+            options = [args[i + 1] for i, value in enumerate(args) if value == '--driver-opt']
+            self.assertEqual(options, ['memory=4g', 'cpu-period=100000', 'cpu-quota=100000'])
+            creates.append(args)
+        result, _ = self.simulate(observe=supported_create)
+        self.assertEqual(len(creates), 1)
+        self.assertTrue(result['reproducible_verified'])
+
     def test_build_timeout_cancels_owned_daemon_work(self):
         with self.assertRaises(subprocess.TimeoutExpired): self.simulate('timeout')
         creates = [a for a in self.calls if 'buildx' in a and 'create' in a]
@@ -508,7 +528,7 @@ class Packaging(unittest.TestCase):
         self.assertEqual(creates[0][creates[0].index('--driver') + 1], 'docker-container')
         for bound in ('memory=4g', 'cpu-period=100000', 'cpu-quota=100000'):
             self.assertIn(bound, creates[0])
-        config = Path(creates[0][creates[0].index('--buildkitd-config') + 1])
+        config = Path(creates[0][creates[0].index('--config') + 1])
         self.assertEqual(config.read_text(), '[worker.oci]\n  max-parallelism = 1\n')
         builds = [a for a in self.calls if a[3:5] == ['buildx', 'build']]
         self.assertEqual(len(builds), 1)

@@ -728,7 +728,7 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
         diagnostic_stage('buildkit-create')
         run([*docker_args, 'buildx', 'create', '--name', builder, '--driver', 'docker-container',
              '--driver-opt', 'memory=4g', '--driver-opt', 'cpu-period=100000', '--driver-opt', 'cpu-quota=100000',
-             '--buildkitd-config', config], env)
+             '--config', config], env)
         for attempt in (1, 2):
             diagnostic_stage('image-build', attempt)
             image = 'neoos-dual-local:' + sha(str(context.parent).encode())[:16] + '-' + str(attempt)
