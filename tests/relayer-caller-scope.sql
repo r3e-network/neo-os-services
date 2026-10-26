@@ -27,11 +27,13 @@ reset role;
 rollback;
 
 -- Exercise the exact migration source, not a copied configuration guard. The
--- disposable runner supplies this local fixture path; this is not a cloud read.
-\getenv caller_scope_migration NEOOS_CALLER_SCOPE_MIGRATION_FIXTURE
+-- disposable client supplies only base64 of its fixed public migration source.
+\getenv caller_scope_migration_source_base64 NEOOS_CALLER_SCOPE_MIGRATION_SOURCE_BASE64
 begin;
 create temporary table caller_scope_migration_fixture(source text not null) on commit drop;
-insert into caller_scope_migration_fixture values (pg_read_file(:'caller_scope_migration'));
+insert into caller_scope_migration_fixture values (
+  convert_from(decode(:'caller_scope_migration_source_base64','base64'),'UTF8')
+);
 
 create function pg_temp.check_caller_schema_preimage(
   database_preimage text, global_preimage text, prior_hook text,

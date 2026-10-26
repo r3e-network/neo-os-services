@@ -180,3 +180,83 @@ for (const deployment of ['mainnet', 'testnet']) {
     });
   }
 }
+
+test('action-v4 present network requires nonempty text without changing raw bytes', () => {
+  for (const deployment of ['mainnet', 'testnet']) {
+    for (const key of ['callback_encoding', 'result_encoding']) {
+      const resolve = resolver(deployment);
+      const base = { [key]: 'neo_n3_action_v4' };
+      assert.equal(resolve(base), deployment); // A genuinely absent assertion stays optional.
+      for (const invalid of [
+        undefined,
+        null,
+        [],
+        ['opaque'],
+        {},
+        true,
+        false,
+        0,
+        1,
+        '',
+        ' \t\n ',
+      ]) {
+        assert.throws(() => resolve({ ...base, network: invalid }), /network/);
+      }
+      for (const network of ['opaque', ' neo_n3 e\u0301 ', 'e\u0301', '\u00e9']) {
+        const payload = { ...base, network };
+        const before = structuredClone(payload);
+        assert.equal(resolve(payload), deployment);
+        assert.deepEqual(payload, before);
+      }
+    }
+  }
+});
+
+test('action-v4 present deployment aliases require exact string identity', () => {
+  for (const deployment of ['mainnet', 'testnet']) {
+    for (const key of ['callback_encoding', 'result_encoding']) {
+      const resolve = resolver(deployment);
+      const base = { [key]: 'neo_n3_action_v4', network: 'opaque' };
+      for (const alias of ['morpheus_network', 'runtime_network', 'environment']) {
+        assert.equal(resolve({ ...base, [alias]: deployment }), deployment);
+        for (const invalid of [
+          undefined,
+          null,
+          [],
+          [deployment],
+          {},
+          true,
+          false,
+          0,
+          1,
+          '',
+          ' ',
+          ` ${deployment} `,
+          deployment.toUpperCase(),
+        ]) {
+          assert.throws(() => resolve({ ...base, [alias]: invalid }), /network/);
+        }
+      }
+    }
+  }
+});
+
+test('legacy v1-v3 ref assertion coercion and optional fields remain unchanged', () => {
+  for (const deployment of ['mainnet', 'testnet']) {
+    const resolve = resolver(deployment);
+    for (const encoding of ['neo_n3_action_v3', 'neo_n3_recovery_v3']) {
+      assert.equal(
+        resolve({ callback_encoding: encoding, network: false, environment: [deployment] }),
+        deployment
+      );
+      assert.equal(
+        resolve({ callback_encoding: encoding, network: null, environment: '' }),
+        deployment
+      );
+    }
+    for (const encoding of ['neo_n3_action_v1', 'neo_n3_action_v2']) {
+      assert.equal(resolve({ callback_encoding: encoding, network: deployment }), deployment);
+      assert.throws(() => resolve({ callback_encoding: encoding, network: 'opaque' }), /network/);
+    }
+  }
+});

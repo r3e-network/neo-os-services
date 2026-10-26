@@ -339,11 +339,22 @@ function resolveEncryptedRefNetwork(payload, { networkNamesChainFamily = false }
     env('MORPHEUS_NETWORK') || env('NEXT_PUBLIC_MORPHEUS_NETWORK') || 'testnet'
   );
   const encoding = trimString(payload?.callback_encoding || payload?.result_encoding || '');
-  if (
-    encoding === 'neo_n3_action_v3' ||
-    encoding === 'neo_n3_recovery_v3' ||
-    encoding === 'neo_n3_action_v4'
-  ) {
+  if (encoding === 'neo_n3_action_v4') {
+    // Match native JSON assertions before any String coercion. The opaque AA
+    // text stays untouched; only the deployment aliases identify this worker.
+    for (const key of ['network', 'morpheus_network', 'runtime_network', 'environment']) {
+      if (!Object.hasOwn(payload, key)) continue;
+      const value = payload[key];
+      if (typeof value !== 'string' || !value.trim()) {
+        throw new Error(`encrypted ref ${key} is not valid network text`);
+      }
+      if (key !== 'network' && value !== workerNetwork) {
+        throw new Error(`encrypted ref ${key} does not match worker network`);
+      }
+    }
+    return workerNetwork;
+  }
+  if (encoding === 'neo_n3_action_v3' || encoding === 'neo_n3_recovery_v3') {
     // AA network text is an opaque signed domain, never a storage deployment.
     // Check every actual deployment assertion; do not let first-alias wins
     // hide a conflict or use a ticket label to read another deployment's refs.
