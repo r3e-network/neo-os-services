@@ -9,10 +9,27 @@ use std::sync::{
 };
 use std::time::Duration;
 
-#[derive(Debug, Clone)]
+/// Host-owned capability. It supplies current credentials and only the
+/// selected network's closed in-process routes; it never exposes host state.
+pub trait RuntimeContext: Send + Sync {
+    fn refresh_config(&self, base: &crate::config::RelayerConfig) -> Result<crate::config::RelayerConfig,String>;
+    fn local_request(&self, method: &str, url: &str, bearer: Option<&str>, body: Option<&str>) -> Option<Result<(u16,String),String>>;
+}
+
+#[derive(Clone, Default)]
+pub struct LoopRuntime {
+    pub context: Option<Arc<dyn RuntimeContext>>,
+    pub strict_drain: bool,
+}
+
+#[derive(Clone)]
 pub struct RelayerHttpTransport {
     client: reqwest::blocking::Client,
     cancelled: Arc<AtomicBool>,
+    context: Option<Arc<dyn RuntimeContext>>,
+}
+impl std::fmt::Debug for RelayerHttpTransport {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result { f.write_str("RelayerHttpTransport") }
 }
 
 impl RelayerHttpTransport {
@@ -28,12 +45,25 @@ impl RelayerHttpTransport {
         RelayerHttpTransport {
             client,
             cancelled: Arc::new(AtomicBool::new(false)),
+            context: None,
         }
     }
     pub fn with_cancellation(timeout_ms: u64, cancelled: Arc<AtomicBool>) -> Self {
         let mut transport = Self::with_timeout_ms(timeout_ms);
         transport.cancelled = cancelled;
         transport
+    }
+    pub fn with_runtime(timeout_ms: u64, cancelled: Arc<AtomicBool>, context: Option<Arc<dyn RuntimeContext>>) -> Self {
+        let mut transport=Self::with_cancellation(timeout_ms,cancelled);
+        if context.is_some() {
+            transport.client=reqwest::blocking::Client::builder().redirect(reqwest::redirect::Policy::none())
+                .timeout(Duration::from_millis(timeout_ms)).build().expect("Reqwest blocking client must build");
+        }
+        transport.context=context;
+        transport
+    }
+    fn local(&self,method:&str,url:&str,bearer:Option<&str>,body:Option<&str>)->Option<Result<(u16,String),String>> {
+        self.context.as_ref().and_then(|c|c.local_request(method,url,bearer,body))
     }
     fn check_cancelled(&self) -> Result<(), String> {
         if self.cancelled.load(Ordering::Acquire) {
@@ -74,6 +104,7 @@ impl neo_os_chain_n3::HttpTransport for RelayerHttpTransport {
 
     fn post(&self, url: &str, body: &str) -> Result<(u16, String), String> {
         self.check_cancelled()?;
+        if let Some(result)=self.local("POST",url,None,Some(body)) { return result; }
         let response = self
             .client
             .post(url)
@@ -88,6 +119,7 @@ impl neo_os_chain_n3::HttpTransport for RelayerHttpTransport {
 
     fn get(&self, url: &str) -> Result<(u16, String), String> {
         self.check_cancelled()?;
+        if let Some(result)=self.local("GET",url,None,None) { return result; }
         let response = self
             .client
             .get(url)
@@ -107,6 +139,7 @@ impl neo_os_chain_n3::HttpTransport for RelayerHttpTransport {
         body: &str,
     ) -> Result<(u16, String), String> {
         self.check_cancelled()?;
+        if let Some(result)=self.local("POST",url,Some(token),Some(body)) { return result; }
         let response = self
             .client
             .post(url)
@@ -129,6 +162,7 @@ impl neo_os_chain_n3::HttpTransport for RelayerHttpTransport {
         timeout_ms: u64,
     ) -> Result<(u16, String), String> {
         self.check_cancelled()?;
+        if let Some(result)=self.local("GET",url,Some(token),None) { return result; }
         let response = self
             .client
             .get(url)
@@ -147,6 +181,7 @@ impl neo_os_chain_n3::HttpTransport for RelayerHttpTransport {
 impl neo_os_chain_evm::HttpTransport for RelayerHttpTransport {
     fn post(&self, url: &str, body: &str) -> Result<(u16, String), String> {
         self.check_cancelled()?;
+        if let Some(result)=self.local("POST",url,None,Some(body)) { return result; }
         let response = self
             .client
             .post(url)
@@ -161,6 +196,7 @@ impl neo_os_chain_evm::HttpTransport for RelayerHttpTransport {
 
     fn get(&self, url: &str) -> Result<(u16, String), String> {
         self.check_cancelled()?;
+        if let Some(result)=self.local("GET",url,None,None) { return result; }
         let response = self
             .client
             .get(url)

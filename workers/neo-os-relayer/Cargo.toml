@@ -13,6 +13,7 @@ name = "neo-os-relayer"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "0.22"
 neo-os-core = { path = "../../crates/neo-os-core" }
 neo-os-chain-n3 = { path = "../../crates/neo-os-chain-n3", features = ["http"] }
 neo-os-chain-evm = { path = "../../crates/neo-os-chain-evm" }

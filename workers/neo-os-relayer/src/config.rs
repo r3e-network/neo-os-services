@@ -238,7 +238,7 @@ pub fn create_relayer_config_from_env(
     let instance_id = if !instance_id_override.is_empty() {
         instance_id_override
     } else {
-        let hostname = std::env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string());
+        let hostname = env.get("HOSTNAME").cloned().unwrap_or_else(|| "localhost".to_string());
         let pid = std::process::id();
         format!("{hostname}:{pid}")
     };
@@ -312,6 +312,13 @@ pub fn create_relayer_config_from_env(
         raw_val["neo_n3"]["networkMagic"] = Value::from(894710606u32);
     }
     if let Value::Object(ref mut map) = raw_val {
+        // Snapshot the caller's explicit environment once. Library consumers
+        // must not resolve another network's process-global credentials later.
+        map.insert("storeAuth".into(), serde_json::json!({
+            "mode":"legacy_admin",
+            "url":env.get("SUPABASE_URL").or_else(||env.get("morpheus_SUPABASE_URL")).cloned().unwrap_or_default(),
+            "apiKey":env.get("SUPABASE_SERVICE_ROLE_KEY").or_else(||env.get("morpheus_SUPABASE_SERVICE_ROLE_KEY")).cloned().unwrap_or_default()
+        }));
         map.insert(
             "deliveryProtocol".into(),
             Value::String(env_source.env(&["MORPHEUS_DELIVERY_PROTOCOL"])),

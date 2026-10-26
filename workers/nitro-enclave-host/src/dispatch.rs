@@ -199,6 +199,17 @@ fn run(
             )?))
         }
 
+        Target::ProvisionRelayerAuth => {
+            if state.overlay.read().expect("overlay lock").get("MORPHEUS_EMBEDDED_RELAYER")!=Some("true") {
+                return Ok(DispatchOutcome{status:404,body:serde_json::json!({"error":"not found","path":path})});
+            }
+            assert_authorized(&state.overlay.read().expect("overlay lock"),headers)?;
+            #[cfg(feature = "embedded-relayer")]
+            { Ok(DispatchOutcome::ok(crate::relayer_auth::refresh(state,&parse_body(body)?)?)) }
+            #[cfg(not(feature = "embedded-relayer"))]
+            { Err(crate::http_error(503,"this image does not include the embedded relayer")) }
+        }
+
         Target::OracleFulfill => {
             let (payload, _slot) = admit!(state, headers, Target::OracleFulfill, body);
             Ok(DispatchOutcome::ok(crate::fulfill::handle_oracle_fulfill(

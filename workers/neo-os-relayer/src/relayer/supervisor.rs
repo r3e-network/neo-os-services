@@ -161,10 +161,8 @@ async fn persist_progress(
         .map_err(|e| format!("supervisor progress task failed: {e}"))?
 }
 
-pub(super) async fn run_v2_loop_until<F>(config: &RelayerConfig, shutdown: F) -> Result<(), String>
-where
-    F: Future<Output = neo_os_service_runtime::ShutdownReason>,
-{
+pub(super) async fn run_v2_loop_with_runtime_until<F>(config:&RelayerConfig,runtime:crate::transport::LoopRuntime,shutdown:F)->Result<(),String>
+where F:Future<Output=neo_os_service_runtime::ShutdownReason> {
     let source = config.clone();
     let children = tokio::task::spawn_blocking(move || prepare_chain_workers(&source))
         .await
@@ -173,6 +171,7 @@ where
     let mut tasks = JoinSet::new();
     for child in &children {
         let child = child.clone();
+        let runtime=runtime.clone();
         let mut stop = stop_rx.clone();
         tasks.spawn(async move {
             let signal = async move {
@@ -185,24 +184,33 @@ where
                     }
                 }
             };
-            super::run_single_relayer_loop_until(&child, signal)
+            super::run_single_relayer_loop_with_runtime_until(&child, runtime, signal)
                 .await
                 .map_err(|e| e.to_string())
         });
     }
-    supervise_chain_tasks(config, &children, tasks, stop_tx, shutdown).await
+    supervise_chain_tasks_with_runtime(config, &children, tasks, stop_tx, runtime, shutdown).await
 }
 
+#[cfg(test)]
 pub(super) async fn supervise_chain_tasks<F>(
     config: &RelayerConfig,
     children: &[RelayerConfig],
-    mut tasks: JoinSet<Result<(), String>>,
+    tasks: JoinSet<Result<(), String>>,
     stop: watch::Sender<Stop>,
     shutdown: F,
 ) -> Result<(), String>
 where
     F: Future<Output = neo_os_service_runtime::ShutdownReason>,
 {
+    supervise_chain_tasks_with_runtime(config,children,tasks,stop,crate::transport::LoopRuntime::default(),shutdown).await
+}
+
+async fn supervise_chain_tasks_with_runtime<F>(
+    config:&RelayerConfig,children:&[RelayerConfig],mut tasks:JoinSet<Result<(),String>>,
+    stop:watch::Sender<Stop>,runtime:crate::transport::LoopRuntime,shutdown:F,
+)->Result<(),String>
+where F:Future<Output=neo_os_service_runtime::ShutdownReason> {
     let started = now_ms();
     let mut interval = tokio::time::interval(Duration::from_millis(
         config.poll_interval_ms.clamp(250, 5000),
@@ -249,6 +257,7 @@ where
     // Heartbeat and filesystem work cannot postpone signaling the workers.
     if let Some(task) = heartbeat_task {
         task.abort();
+        if runtime.strict_drain { let _=task.await; }
     }
     let _ = stop.send(Some(reason));
     let drain_ms = config
@@ -257,7 +266,7 @@ where
         .and_then(Value::as_u64)
         .unwrap_or(30000)
         .clamp(100, 120000);
-    let drained = tokio::time::timeout(Duration::from_millis(drain_ms), async {
+    let drain = async {
         while let Some(result) = tasks.join_next().await {
             match result {
                 Ok(Ok(())) => {}
@@ -281,8 +290,11 @@ where
             }
         }
         persist_progress(config, children, started, true).await
-    })
-    .await;
+    };
+    // Embedded dependencies must outlive every blocking operation. A deadline
+    // may diagnose an unhealthy process, but cannot authorize detaching work.
+    let drained = if runtime.strict_drain { Ok(drain.await) }
+        else { tokio::time::timeout(Duration::from_millis(drain_ms),drain).await };
     match drained {
         Ok(Ok(_)) => {}
         Ok(Err(error)) => {

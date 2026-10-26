@@ -190,28 +190,26 @@ pub fn client(
     config: &RelayerConfig,
     transport: &RelayerHttpTransport,
 ) -> Result<SupabaseClient<RelayerHttpTransport>, String> {
-    let url = std::env::var("SUPABASE_URL")
-        .or_else(|_| std::env::var("morpheus_SUPABASE_URL"))
-        .map_err(|_| "durable v2 requires SUPABASE_URL")?;
-    let key = std::env::var("SUPABASE_SERVICE_ROLE_KEY")
-        .or_else(|_| std::env::var("morpheus_SUPABASE_SERVICE_ROLE_KEY"))
-        .map_err(|_| "durable v2 requires SUPABASE_SERVICE_ROLE_KEY")?;
-    if url.trim().is_empty() || key.trim().is_empty() {
-        return Err("durable v2 credentials are empty".into());
-    }
-    let config = SupabaseConfig::new(&url, &key, &config.network);
+    let store_auth=crate::store_auth::settings(config,now()/1000)?;
+    let config = SupabaseConfig::new(&store_auth.url, &store_auth.api_key, &config.network);
+    let cache_key=store_auth.claims.as_ref().map(|claims|crate::store_auth::backoff_identity(&config.rest_url,claims))
+        .unwrap_or_else(||format!("{}|{}",config.rest_url,config.network));
     let backoff = BACKOFFS
         .get_or_init(Default::default)
         .lock()
         .map_err(|_| "backoff lock poisoned")?
-        .entry(format!("{}|{}", config.rest_url, config.network))
+        .entry(cache_key)
         .or_insert_with(|| Arc::new(Mutex::new(BackoffState::new())))
         .clone();
-    Ok(SupabaseClient::with_backoff(
+    let client=SupabaseClient::with_backoff(
         transport.clone(),
         config,
         backoff,
-    ))
+    );
+    Ok(match store_auth.bearer {
+        Some(token)=>client.with_rpc_auth(token,crate::store_auth::PROFILE.into()),
+        None=>client,
+    })
 }
 pub fn identity(config: &RelayerConfig, chain: &str) -> Result<(String, String), String> {
     let lane = config

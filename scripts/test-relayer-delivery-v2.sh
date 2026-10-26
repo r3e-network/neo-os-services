@@ -29,7 +29,7 @@ pg_ctl -D "$test_dir/data" -l "$test_dir/server.log" -o "-k $test_dir -h 127.0.0
 export PGHOST="$test_dir" PGPORT="$port" PGDATABASE=postgres PGUSER="$(id -un)"
 # The API-role default grants are a hostile fixture: a migration that forgets to
 # revoke them is refused by the sponsor acceptance rather than shipped.
-psql -X -v ON_ERROR_STOP=1 -q -c 'create role service_role bypassrls; create role anon; create role authenticated; alter default privileges in schema public grant execute on functions to anon, authenticated; alter default privileges in schema public grant all on tables to anon, authenticated;'
+psql -X -v ON_ERROR_STOP=1 -q -c 'create role service_role bypassrls; create role anon; create role authenticated; create role authenticator nologin noinherit; alter default privileges in schema public grant execute on functions to anon, authenticated; alter default privileges in schema public grant all on tables to anon, authenticated;'
 migrations=("$repo"/db/services/migrations/*_relayer_delivery_*.sql)
 if [ ! -f "${migrations[0]}" ]; then
   echo "no *_relayer_delivery_*.sql migrations under $repo/db/services/migrations" >&2
@@ -42,6 +42,7 @@ done
 psql -X -v ON_ERROR_STOP=1 -q -f "$repo/tests/relayer-delivery-v2.sql"
 psql -X -v ON_ERROR_STOP=1 -q -f "$repo/tests/relayer-delivery-evidence.sql"
 psql -X -v ON_ERROR_STOP=1 -q -f "$repo/tests/relayer-delivery-sponsor.sql"
+psql -X -v ON_ERROR_STOP=1 -q -f "$repo/tests/relayer-caller-scope.sql"
 python3 "$repo/scripts/test-relayer-delivery-sponsor.py"
 psql -X -v ON_ERROR_STOP=1 -q -c "select morpheus_delivery_enqueue('testnet','neox','0x01','99','race-account','{\"requestId\":\"99\"}');" >/dev/null
 psql -X -v ON_ERROR_STOP=1 -At -c "select morpheus_delivery_claim('testnet','neox','race-account','race-A',60000);" >"$test_dir/a" &

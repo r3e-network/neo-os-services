@@ -58,6 +58,9 @@ COPY crates/nitro-init/src crates/nitro-init/src
 COPY crates/neo-os-compute/src crates/neo-os-compute/src
 COPY crates/neo-os-games/src crates/neo-os-games/src
 COPY crates/neo-os-chain-evm/src crates/neo-os-chain-evm/src
+COPY crates/neo-os-chain-n3/src crates/neo-os-chain-n3/src
+COPY crates/neo-os-relayer-store/src crates/neo-os-relayer-store/src
+COPY workers/neo-os-relayer/src workers/neo-os-relayer/src
 COPY crates/neo-os-service-runtime/src crates/neo-os-service-runtime/src
 COPY workers/neo-signer/src workers/neo-signer/src
 COPY workers/neo-signer/build.rs workers/neo-signer/build.rs
@@ -72,7 +75,7 @@ COPY deploy/nitro/dual-prepare.rs workers/nitro-enclave-host/examples/dual_prepa
 # inputs + toolchain (edition/workspace settings are committed; no volatile
 # -C metadata inputs).
 RUN cargo build --release --locked \
-      -p nitro-enclave-host --bin enclave_host --example dual_prepare \
+      -p nitro-enclave-host --bin enclave_host --example dual_prepare --features nitro-enclave-host/embedded-relayer \
       -p nitro-init --bin nitro_init
 
 # This build-only helper calls the exact host parser and custody_bootstrap::prepare.

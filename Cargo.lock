@@ -1873,6 +1873,7 @@ dependencies = [
 name = "neo-os-relayer"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "axum 0.8.9",
  "hex",
  "http",
@@ -1989,6 +1990,7 @@ dependencies = [
 name = "nitro-enclave-host"
 version = "0.1.0"
 dependencies = [
+ "neo-os-relayer",
  "aws-lc-rs",
  "axum 0.8.9",
  "base64",

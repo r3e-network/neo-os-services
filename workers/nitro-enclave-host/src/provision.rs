@@ -256,7 +256,7 @@ pub fn materialize_provision_runtime_token(
     Ok(MaterializedToken { token, version })
 }
 
-fn release_context_envelope(
+pub(crate) fn release_context_envelope(
     state: &AppState,
     env: &serde_json::Map<String, Value>,
     ciphertext_env: &str,
@@ -651,10 +651,25 @@ pub fn handle_provision(
     let neodid_salt = materialize_neodid_salt(state, env)?;
     let custody_token = materialize_custody_token(state, env)?;
     let game_secret_root = materialize_game_secret_root(state, env)?;
+    #[cfg(feature = "embedded-relayer")]
+    let relayer_credential=crate::relayer_auth::materialize(state,env)?;
+    #[cfg(not(feature = "embedded-relayer"))]
+    if env.contains_key("MORPHEUS_RELAYER_AUTH_KMS_CIPHERTEXT_BASE64") {
+        return Err(http_error(503,"this image does not include the embedded relayer"));
+    }
 
     let mut applied: Vec<String> = Vec::new();
     {
         let mut overlay = state.overlay.write().expect("overlay lock");
+        // Serialize initial provisioning with credential refresh and another
+        // initial request; no rejected envelope may leave a partial install.
+        if state.runtime_token_kms_version.load(std::sync::atomic::Ordering::SeqCst)>0 {
+            return Err(http_error(409,"provisioning is one-shot per enclave boot"));
+        }
+        #[cfg(feature = "embedded-relayer")]
+        if let Some(credential)=relayer_credential {
+            overlay.install_relayer_auth(credential).map_err(|e|http_error(409,e))?;
+        }
         for (key, value) in env {
             if overlay.apply(key, value) {
                 applied.push(key.clone());
@@ -673,11 +688,8 @@ pub fn handle_provision(
         if let Some(secret_root) = &game_secret_root {
             overlay.set_game_secret_root(secret_root);
         }
+        state.runtime_token_kms_version.store(next_runtime_token.version,std::sync::atomic::Ordering::SeqCst);
     }
-    state.runtime_token_kms_version.store(
-        next_runtime_token.version,
-        std::sync::atomic::Ordering::SeqCst,
-    );
 
     let diag = run_kms_diag(state);
     *state.kms_diag.lock().expect("kms diag lock") = crate::state::KmsDiag { value: diag };

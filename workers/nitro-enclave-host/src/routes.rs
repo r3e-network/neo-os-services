@@ -44,6 +44,7 @@ pub enum Target {
     Attestation,
     Provision,
     ProvisionCredentials,
+    ProvisionRelayerAuth,
     OracleFulfill,
     FeedSign,
     SignPayload,
@@ -83,6 +84,9 @@ pub fn classify(method: &str, path: &str) -> Target {
         return Target::Attestation;
     }
     if method == "POST" {
+        if matches_route(path, "/provision/relayer-auth") {
+            return Target::ProvisionRelayerAuth;
+        }
         if matches_route(path, "/provision/credentials") {
             return Target::ProvisionCredentials;
         }
@@ -230,6 +234,7 @@ impl Target {
             | Target::Attestation
             | Target::Provision
             | Target::ProvisionCredentials
+            | Target::ProvisionRelayerAuth
             | Target::NotFound => return None,
         })
     }

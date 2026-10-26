@@ -52,6 +52,8 @@ struct ShimState {
     explicit_network: bool,
     max_body_bytes: usize,
     request_slots: Arc<tokio::sync::Semaphore>,
+    #[cfg(feature = "embedded-relayer")]
+    relayer: Option<nitro_enclave_host::embedded_relayer::Controller>,
 }
 
 // The existing enclave has a fixed memory/CPU budget. This process-wide cap
@@ -115,7 +117,16 @@ fn main() {
         eprintln!("enclave_host: refusing to serve — {error}");
         std::process::exit(1);
     });
-    let apps = build_apps(profiles, &custody);
+    let apps = Arc::new(build_apps(profiles, &custody));
+    let custody=Arc::new(custody);
+    let request_slots=Arc::new(tokio::sync::Semaphore::new(MAX_INFLIGHT_REQUESTS));
+    #[cfg(feature = "embedded-relayer")]
+    let prepared=nitro_enclave_host::embedded_relayer::prepare(&apps,&custody,explicit_network,request_slots.clone(),max_body_bytes)
+        .unwrap_or_else(|error|{eprintln!("enclave_host: refusing embedded relayer boot — {error}");std::process::exit(1)});
+    #[cfg(not(feature = "embedded-relayer"))]
+    if apps.values().any(|app|!matches!(app.overlay.read().expect("overlay lock").get("MORPHEUS_EMBEDDED_RELAYER"),None|Some("false"))) {
+        eprintln!("enclave_host: this image does not include the embedded relayer");std::process::exit(1);
+    }
     let networks: Vec<String> = apps.keys().cloned().collect();
     let network = if explicit_network {
         "dual".to_string()
@@ -134,11 +145,13 @@ fn main() {
         })
         .collect();
     let router = Router::new().fallback(any(serve)).with_state(ShimState {
-        apps: Arc::new(apps),
-        custody: Arc::new(custody),
+        apps: apps.clone(),
+        custody: custody.clone(),
         explicit_network,
         max_body_bytes,
-        request_slots: Arc::new(tokio::sync::Semaphore::new(MAX_INFLIGHT_REQUESTS)),
+        request_slots,
+        #[cfg(feature = "embedded-relayer")]
+        relayer: prepared.as_ref().map(|p|p.controller.clone()),
     });
 
     // Only the serve loop is async, so the runtime is built here, after every
@@ -147,7 +160,7 @@ fn main() {
     // runtime-carrying values of its own at that point, and a server that
     // stops serving is process-exit territory anyway.)
     let runtime = host_runtime();
-    runtime.block_on(async move {
+    let result=runtime.block_on(async move {
         let listener = tokio::net::TcpListener::bind((host.as_str(), port))
             .await
             .unwrap_or_else(|error| panic!("cannot bind {host}:{port}: {error}"));
@@ -165,14 +178,28 @@ fn main() {
                 "price_planes": price_planes,
             })
         );
-        axum::serve(listener, router)
-            .with_graceful_shutdown(async {
+        #[cfg(feature = "embedded-relayer")]
+        let close=prepared.as_ref().map(|p|p.controller.clone());
+        let server=async move {
+            axum::serve(listener, router).with_graceful_shutdown(async move {
+                #[cfg(feature = "embedded-relayer")]
+                if let Some(control)=close {control.frontier_shutdown().await;return;}
                 let reason = neo_os_service_runtime::shutdown_signal().await;
                 eprintln!("nitro enclave host: {reason}");
             })
             .await
-            .expect("enclave host server");
+            .map_err(|_|"enclave host server failed".to_string())
+        };
+        #[cfg(feature = "embedded-relayer")]
+        if let Some(prepared)=prepared {return prepared.run(server,neo_os_service_runtime::shutdown_signal()).await;}
+        server.await
     });
+    // Keep strong dependency owners outside the async future. Runtime drop
+    // joins blocking work before custody/frontier clients and vault leases drop.
+    drop(runtime);
+    drop(apps);
+    drop(custody);
+    if let Err(error)=result {eprintln!("enclave_host: {error}");std::process::exit(1);}
 }
 
 fn build_apps(
@@ -301,6 +328,10 @@ fn build_app(base: EnvOverlay, transport: Box<dyn CustodyTransport>) -> Arc<AppS
 }
 
 async fn serve(State(shim): State<ShimState>, request: Request<Body>) -> Response {
+    #[cfg(feature = "embedded-relayer")]
+    if shim.relayer.as_ref().is_some_and(|control|control.is_draining()) {
+        return render(DispatchOutcome{status:503,body:serde_json::json!({"ready":false,"error":"runtime is draining"})},request.method()==Method::HEAD);
+    }
     let (parts, body) = request.into_parts();
     let is_head = parts.method == Method::HEAD;
     let skip_body = parts.method == Method::GET || is_head;
@@ -426,11 +457,26 @@ async fn serve(State(shim): State<ShimState>, request: Request<Body>) -> Respons
     }
     // The dispatch core is synchronous (blocking loopback IO, NSM ioctls);
     // run it off the async workers so concurrent requests keep flowing.
+    #[cfg(feature = "embedded-relayer")]
+    let relayer=shim.relayer.clone();
     let outcome = tokio::task::spawn_blocking(move || {
         // A disconnected HTTP client cannot release capacity while its
         // non-cancellable blocking dispatch is still running.
         let _permit = permit;
-        dispatch(&app, &method, &raw_url, &headers, &body_text)
+        let outcome=dispatch(&app, &method, &raw_url, &headers, &body_text);
+        #[cfg(feature = "embedded-relayer")]
+        let outcome={
+            let mut outcome=outcome;
+            if raw_url.split('?').next()==Some("/health") {
+                if let Some(control)=relayer {
+                    let health=control.health();
+                    if health["healthy"]!=serde_json::Value::Bool(true) {outcome.status=503;outcome.body["ready"]=serde_json::Value::Bool(false);}
+                    outcome.body["embedded_relayer"]=health;
+                }
+            }
+            outcome
+        };
+        outcome
     })
     .await
     .unwrap_or_else(|error| DispatchOutcome {
@@ -573,6 +619,8 @@ mod runtime_tests {
             explicit_network: true,
             max_body_bytes: 256 * 1024,
             request_slots: Arc::new(tokio::sync::Semaphore::new(MAX_INFLIGHT_REQUESTS)),
+            #[cfg(feature = "embedded-relayer")]
+            relayer: None,
         };
         host_runtime().block_on(async {
             for network in ["mainnet", "testnet"] {

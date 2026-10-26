@@ -25,6 +25,7 @@ const DELIVERY_MIGRATIONS = [
   '20260908040427_relayer_delivery_v2.sql',
   '20260920102300_relayer_delivery_completion_identity.sql',
   '20261012120000_relayer_delivery_sponsor.sql',
+  '20261026090000_relayer_delivery_caller_scope.sql',
 ];
 
 test('no tracked file points at the retired top-level migration directory', () => {

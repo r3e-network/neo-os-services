@@ -46,6 +46,10 @@ pub mod oracle_read;
 pub mod overlay;
 pub mod paymaster;
 pub mod provision;
+#[cfg(feature = "embedded-relayer")]
+pub mod relayer_auth;
+#[cfg(feature = "embedded-relayer")]
+pub mod embedded_relayer;
 pub mod routes;
 pub mod secret_root;
 pub mod session;

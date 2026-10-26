@@ -108,7 +108,7 @@ fn run_relayer_once_blocking(
 ) -> Result<RelayerRunResult, String> {
     let mut state = load_or_init_state(&config.state_file)?;
     let delivery_v2 = crate::durable_v2::enabled(config);
-    if delivery_v2 {
+    if delivery_v2 && !crate::store_auth::is_scoped(config) {
         crate::durable_v2::import_recovery(config, &mut state, transport)?;
     }
     if delivery_v2 && config.should_run_request_processing() {
@@ -213,14 +213,9 @@ fn run_relayer_once_blocking(
             .unwrap_or(false)
         && config.should_run_request_processing()
     {
-        let supabase_url = std::env::var("SUPABASE_URL")
-            .or_else(|_| std::env::var("morpheus_SUPABASE_URL"))
-            .ok()
-            .filter(|s| !s.trim().is_empty());
-        let supabase_key = std::env::var("SUPABASE_SERVICE_ROLE_KEY")
-            .or_else(|_| std::env::var("morpheus_SUPABASE_SERVICE_ROLE_KEY"))
-            .ok()
-            .filter(|s| !s.trim().is_empty());
+        let store_auth=crate::store_auth::settings(config,(now_ms()/1000.0) as u64).ok();
+        let supabase_url=store_auth.as_ref().map(|s|s.url.clone());
+        let supabase_key=store_auth.as_ref().map(|s|s.api_key.clone());
         if let (Some(url), Some(key)) = (supabase_url, supabase_key) {
             let client = neo_os_relayer_store::supabase::SupabaseClient::new(
                 transport.clone(),
@@ -308,14 +303,9 @@ fn run_relayer_once_blocking(
             .unwrap_or(false)
         && config.should_run_request_processing()
     {
-        let supabase_url = std::env::var("SUPABASE_URL")
-            .or_else(|_| std::env::var("morpheus_SUPABASE_URL"))
-            .ok()
-            .filter(|s| !s.trim().is_empty());
-        let supabase_key = std::env::var("SUPABASE_SERVICE_ROLE_KEY")
-            .or_else(|_| std::env::var("morpheus_SUPABASE_SERVICE_ROLE_KEY"))
-            .ok()
-            .filter(|s| !s.trim().is_empty());
+        let store_auth=crate::store_auth::settings(config,(now_ms()/1000.0) as u64).ok();
+        let supabase_url=store_auth.as_ref().map(|s|s.url.clone());
+        let supabase_key=store_auth.as_ref().map(|s|s.api_key.clone());
         if let (Some(url), Some(key)) = (supabase_url, supabase_key) {
             let client = neo_os_relayer_store::supabase::SupabaseClient::new(
                 transport.clone(),
@@ -469,18 +459,32 @@ async fn run_relayer_once_cancellable(
     config: &RelayerConfig,
     stopping: Arc<AtomicBool>,
 ) -> Result<RelayerRunResult, String> {
+    run_relayer_once_with_runtime(config,stopping,None).await
+}
+
+async fn run_relayer_once_with_runtime(
+    config: &RelayerConfig,
+    stopping: Arc<AtomicBool>,
+    context: Option<Arc<dyn crate::transport::RuntimeContext>>,
+) -> Result<RelayerRunResult,String> {
     config.ensure_runtime_ready()?;
     let blocking_config = config.clone();
     let outcome = tokio::task::spawn_blocking(move || {
-        let transport = RelayerHttpTransport::with_cancellation(
+        let effective_config=match &context {
+            Some(context)=>context.refresh_config(&blocking_config)?,
+            None=>blocking_config.clone(),
+        };
+        if context.is_some() { crate::store_auth::ensure_embedded_ready(&effective_config,(now_ms()/1000.0) as u64)?; }
+        let transport = RelayerHttpTransport::with_runtime(
             if crate::durable_v2::enabled(&blocking_config) {
                 5000
             } else {
                 30000
             },
             stopping,
+            context,
         );
-        run_relayer_once_blocking(&blocking_config, &transport)
+        run_relayer_once_blocking(&effective_config, &transport)
     })
     .await
     .map_err(|error| format!("relayer blocking task failed: {error}"))?;
@@ -554,31 +558,49 @@ mod supervisor;
 #[cfg(test)]
 use supervisor::{prepare_chain_workers, supervise_chain_tasks};
 
-async fn run_relayer_loop_until<F>(
+pub async fn run_relayer_loop_until<F>(
     config: &RelayerConfig,
     shutdown: F,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
     F: Future<Output = neo_os_service_runtime::ShutdownReason>,
 {
+    run_relayer_loop_with_runtime_until(config,crate::transport::LoopRuntime::default(),shutdown).await
+}
+
+pub async fn run_embedded_relayer_loop_until<F>(
+    config: &RelayerConfig,
+    context: Arc<dyn crate::transport::RuntimeContext>,
+    shutdown: F,
+) -> Result<(),Box<dyn std::error::Error+Send+Sync>>
+where F: Future<Output=neo_os_service_runtime::ShutdownReason> {
+    crate::store_auth::ensure_embedded_ready(config,(now_ms()/1000.0) as u64).map_err(std::io::Error::other)?;
+    run_relayer_loop_with_runtime_until(config,crate::transport::LoopRuntime{context:Some(context),strict_drain:true},shutdown).await
+}
+
+async fn run_relayer_loop_with_runtime_until<F>(
+    config: &RelayerConfig,
+    runtime: crate::transport::LoopRuntime,
+    shutdown: F,
+) -> Result<(),Box<dyn std::error::Error+Send+Sync>>
+where F: Future<Output=neo_os_service_runtime::ShutdownReason> {
     config
         .ensure_runtime_ready()
         .map_err(std::io::Error::other)?;
     if crate::durable_v2::enabled(config) {
-        return supervisor::run_v2_loop_until(config, shutdown)
+        return supervisor::run_v2_loop_with_runtime_until(config, runtime, shutdown)
             .await
             .map_err(|e| std::io::Error::other(e).into());
     }
-    run_single_relayer_loop_until(config, shutdown).await
+    run_single_relayer_loop_with_runtime_until(config,runtime,shutdown).await
 }
 
-async fn run_single_relayer_loop_until<F>(
-    config: &RelayerConfig,
-    shutdown: F,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-where
-    F: Future<Output = neo_os_service_runtime::ShutdownReason>,
-{
+async fn run_single_relayer_loop_with_runtime_until<F>(
+    config:&RelayerConfig,
+    runtime:crate::transport::LoopRuntime,
+    shutdown:F,
+)->Result<(),Box<dyn std::error::Error+Send+Sync>>
+where F:Future<Output=neo_os_service_runtime::ShutdownReason> {
     config
         .ensure_runtime_ready()
         .map_err(std::io::Error::other)?;
@@ -595,7 +617,7 @@ where
     tokio::pin!(shutdown);
     loop {
         let stopping = Arc::new(AtomicBool::new(false));
-        let tick = run_relayer_once_cancellable(config, stopping.clone());
+        let tick = run_relayer_once_with_runtime(config, stopping.clone(),runtime.context.clone());
         tokio::pin!(tick);
         let (tick_result, shutdown_after_tick) = tokio::select! {
             // Poll the tick first so a signal received during a tick drains

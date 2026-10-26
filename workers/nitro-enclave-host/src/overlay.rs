@@ -13,7 +13,8 @@ use std::collections::BTreeMap;
 /// The complete `/provision` allowlist. Security mode, network, endpoints,
 /// custody routing, policy toggles, and trust anchors are deliberately absent:
 /// those values belong to the measured image, not to its untrusted parent.
-pub const PROVISIONABLE_NAMES: [&str; 13] = [
+pub const PROVISIONABLE_NAMES: [&str; 14] = [
+    "MORPHEUS_RELAYER_AUTH_KMS_CIPHERTEXT_BASE64",
     "MORPHEUS_RUNTIME_TOKEN_KMS_CIPHERTEXT_BASE64",
     "SIGNER_SERVICE_TOKEN_KMS_CIPHERTEXT_BASE64",
     "MORPHEUS_ORACLE_KMS_CIPHERTEXT_BASE64",
@@ -43,6 +44,8 @@ pub fn is_provisionable_name(name: &str) -> bool {
 pub struct EnvOverlay {
     base: BTreeMap<String, String>,
     overlay: BTreeMap<String, String>,
+    #[cfg(feature = "embedded-relayer")]
+    relayer_auth: Option<crate::relayer_auth::RelayerCredential>,
 }
 
 impl EnvOverlay {
@@ -53,6 +56,8 @@ impl EnvOverlay {
         EnvOverlay {
             base: std::env::vars().collect(),
             overlay: BTreeMap::new(),
+            #[cfg(feature = "embedded-relayer")]
+            relayer_auth: None,
         }
     }
 
@@ -70,6 +75,8 @@ impl EnvOverlay {
                 .map(|(k, v)| (k.into(), v.into()))
                 .collect(),
             overlay: BTreeMap::new(),
+            #[cfg(feature = "embedded-relayer")]
+            relayer_auth: None,
         }
     }
 
@@ -198,6 +205,20 @@ impl EnvOverlay {
     /// way `Object.entries` saw them. The caller sorts.
     pub fn applied_keys(&self) -> impl Iterator<Item = &str> {
         self.overlay.keys().map(String::as_str)
+    }
+
+    #[cfg(feature = "embedded-relayer")]
+    pub(crate) fn relayer_auth(&self) -> Option<&crate::relayer_auth::RelayerCredential> {
+        self.relayer_auth.as_ref()
+    }
+
+    #[cfg(feature = "embedded-relayer")]
+    pub(crate) fn install_relayer_auth(&mut self, credential: crate::relayer_auth::RelayerCredential) -> Result<(), &'static str> {
+        if self.relayer_auth.as_ref().is_some_and(|old| credential.version<=old.version) {
+            return Err("relayer envelope version must strictly increase");
+        }
+        self.relayer_auth=Some(credential);
+        Ok(())
     }
 
     /// The full view (base shadowed by provisioned) as an owned map — the

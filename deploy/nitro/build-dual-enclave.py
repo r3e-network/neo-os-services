@@ -6,6 +6,7 @@
 No process environment is configuration. See README.dual-image.md.
 """
 import argparse
+import base64
 from contextlib import contextmanager
 import ctypes
 import hashlib
@@ -201,11 +202,14 @@ def public_inputs(path, expected_sha, registry):
     fields(value['networks'], NETWORKS)
     profiles, overlays = {}, {}
     role_ids = set()
+    relayers = [n for n in NETWORKS if 'relayer' in value['networks'][n]]
+    require(not relayers or tuple(relayers) == NETWORKS, 'embedded relayer requires both explicit network specifications')
+    relayer_ids = {'instance_id': set(), 'caller_id': set()}
     distinct = {k: set() for k in ('vault_id', 'root_key_commitment', 'audience', 'origin', 'snapshot')}
     for network in NETWORKS:
         spec = value['networks'][network]
         spec_fields = ('profile_file', 'profile_sha256', 'workload_audience', 'roles', 'neo_n3_rpc', 'neo_x_rpc', 'frontier_kms_key_arn', 'aws_region')
-        fields(spec, spec_fields + tuple(k for k in ('enrollment', 'feed_price_plane') if k in spec))
+        fields(spec, spec_fields + tuple(k for k in ('enrollment', 'feed_price_plane', 'relayer') if k in spec))
         if 'feed_price_plane' in spec:
             require(type(spec['feed_price_plane']) is str and
                     spec['feed_price_plane'] in ('twelvedata', 'public-quorum'),
@@ -271,6 +275,41 @@ def public_inputs(path, expected_sha, registry):
         }
         if 'feed_price_plane' in spec:
             overlay['FEED_PRICE_PLANE'] = spec['feed_price_plane']
+        if 'relayer' in spec:
+            relay = spec['relayer']
+            fields(relay, ('state_file','instance_id','caller_id','store_url','store_api_key','issuer','mode','active_chains','feed_sync_enabled'))
+            require(isinstance(relay['state_file'], str) and re.fullmatch('/var/lib/neoos-relayer/' + network + r'/[A-Za-z0-9_-]+\.json', relay['state_file']), 'invalid relayer state path')
+            for name in ('instance_id','caller_id'):
+                identity = token(relay[name])
+                require(identity not in relayer_ids[name], 'relayer identities must be independent')
+                relayer_ids[name].add(identity)
+            require(relay['mode'] in ('combined','requests_only','feed_only'), 'invalid embedded relayer mode')
+            require(relay['active_chains'] == ['neo_n3','neox'], 'embedded relayer requires both reviewed chain families')
+            require(type(relay['feed_sync_enabled']) is bool and (relay['mode']=='requests_only' or relay['feed_sync_enabled']), 'embedded feed processing requires explicit feed sync')
+            require(isinstance(relay['issuer'],str) and re.fullmatch(r'[A-Za-z0-9:/._-]{1,2048}',relay['issuer']), 'invalid pinned relayer issuer')
+            key = relay['store_api_key']
+            public_key = isinstance(key,str) and re.fullmatch(r'sb_publishable_[A-Za-z0-9_-]{16,480}',key) is not None
+            if not public_key and isinstance(key,str) and len(key)<=16384 and re.fullmatch(r'[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+',key):
+                try:
+                    part=key.split('.')[1]
+                    public_key=parse(base64.b64decode(part+'='*((-len(part))%4),altchars=b'-_',validate=True)).get('role')=='anon'
+                except Exception:
+                    public_key=False
+            require(public_key, 'relayer store API key must be public, never a service/admin key')
+            overlay.update({
+                'MORPHEUS_RELAYER_STATE_FILE': relay['state_file'],
+                'MORPHEUS_RELAYER_INSTANCE_ID': relay['instance_id'],
+                'MORPHEUS_RELAYER_CALLER_ID': relay['caller_id'],
+                'MORPHEUS_RELAYER_STORE_URL': public_url(relay['store_url']),
+                'MORPHEUS_RELAYER_STORE_API_KEY': key,
+                'MORPHEUS_RELAYER_JWT_ISSUER': relay['issuer'],
+                'MORPHEUS_RELAYER_MODE': relay['mode'],
+                'MORPHEUS_ACTIVE_CHAINS': 'neo_n3,neox',
+                'MORPHEUS_FEED_SYNC_ENABLED': str(relay['feed_sync_enabled']).lower(),
+                'MORPHEUS_DELIVERY_PROTOCOL': 'v2',
+                'MORPHEUS_RELAYER_CONCURRENCY': '1',
+                'MORPHEUS_AUTOMATION_ENABLED': 'false',
+            })
         if 'enrollment' in spec:
             enrollment = spec['enrollment']
             fields(enrollment, ('mode', 'manifest_file', 'manifest_sha256'))
@@ -581,7 +620,8 @@ def stage_into(repo, input_path, input_sha, env, publication, builder_platform="
     require(template.count(marker) == 1, 'dual Dockerfile marker missing/ambiguous')
     # JSON double quoting is Docker ENV escaping; values are ASCII and cannot
     # carry expansion, newlines, comments or build instructions.
-    env_line = 'ENV MORPHEUS_NETWORK_PROFILES_JSON=' + json.dumps(map_bytes.decode().strip())
+    enabled = all('relayer' in spec['networks'][n] for n in NETWORKS)
+    env_line = 'ENV MORPHEUS_NETWORK_PROFILES_JSON=' + json.dumps(map_bytes.decode().strip()) + ' MORPHEUS_EMBEDDED_RELAYER=' + str(enabled).lower()
     files['Dockerfile'] = template.replace(marker, env_line).encode()
     files['public/network-profiles.json'] = map_bytes
     for n, data in profiles.items():
@@ -723,6 +763,9 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
             env_map = unique([v.split('=', 1) for v in image_env])
             require(env_map.get('NODE_ENV') == 'production' and env_map.get('MORPHEUS_ATTESTED_BOOT') == 'require' and env_map.get('MORPHEUS_ALLOW_EPHEMERAL_KEY') == '0', 'image boot policy mismatch')
             require(encoded(parse(env_map.get('MORPHEUS_NETWORK_PROFILES_JSON', 'null'))) == regular(exported / 'network-profiles.json'), 'image runtime map differs from measured map')
+            profiles_map = parse(regular(exported / 'network-profiles.json'))
+            expected_gate = all('MORPHEUS_RELAYER_STATE_FILE' in profiles_map[n] for n in NETWORKS)
+            require(env_map.get('MORPHEUS_EMBEDDED_RELAYER','false') == str(expected_gate).lower(), 'image relayer measurement gate mismatch')
             receipt = parse(regular(exported / 'custody-build-validation.json'))
             require(receipt == {'schema': 'neoos/dual-custody-build/v1', 'networks': list(NETWORKS), 'map_sha256': manifest['map_sha256']}, 'authoritative Rust preparation receipt mismatch')
             eif = context.parent / ('build-' + str(attempt) + '.eif')

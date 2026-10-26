@@ -13,7 +13,8 @@ use crate::routes::{classify, Target};
 use crate::{http_error, RuntimeError};
 
 pub const PROFILES_ENV: &str = "MORPHEUS_NETWORK_PROFILES_JSON";
-const BOOT_POLICY: [&str; 3] = [
+const BOOT_POLICY: [&str; 4] = [
+    "MORPHEUS_EMBEDDED_RELAYER",
     "NODE_ENV",
     "MORPHEUS_ATTESTED_BOOT",
     "MORPHEUS_ALLOW_EPHEMERAL_KEY",
@@ -169,6 +170,7 @@ pub fn select_request(
         Target::Attestation => Some("/attestation"),
         Target::Provision => Some("/provision"),
         Target::ProvisionCredentials => Some("/provision/credentials"),
+        Target::ProvisionRelayerAuth => Some("/provision/relayer-auth"),
         _ => target.canonical_path(),
     };
     if exact != Some(route_path) && crate::custody_bootstrap::native_path(route_path).is_none() {

@@ -205,6 +205,7 @@ pub struct SupabaseClient<T: HttpTransport> {
     transport: T,
     config: SupabaseConfig,
     backoff: Arc<Mutex<BackoffState>>,
+    rpc_auth: Option<(String, String)>,
 }
 
 impl<T: HttpTransport> SupabaseClient<T> {
@@ -213,6 +214,7 @@ impl<T: HttpTransport> SupabaseClient<T> {
             transport,
             config,
             backoff: Arc::new(Mutex::new(BackoffState::new())),
+            rpc_auth: None,
         }
     }
 
@@ -225,8 +227,18 @@ impl<T: HttpTransport> SupabaseClient<T> {
             transport,
             config,
             backoff,
+            rpc_auth: None,
         }
     }
+
+    /// Scoped REST profile + bearer are independent of the public API key.
+    /// This narrows client use; the server still verifies JWT and SQL scope.
+    pub fn with_rpc_auth(mut self, bearer: String, profile: String) -> Self {
+        self.rpc_auth = Some((bearer, profile));
+        self
+    }
+
+    pub fn is_rpc_scoped(&self) -> bool { self.rpc_auth.is_some() }
 
     pub fn config(&self) -> &SupabaseConfig {
         &self.config
@@ -249,6 +261,14 @@ impl<T: HttpTransport> SupabaseClient<T> {
         options: &RequestOptions,
         now_ms: u64,
     ) -> Result<String, String> {
+        if self.is_rpc_scoped() {
+            let name=table.strip_prefix("rpc/morpheus_delivery_").ok_or("scoped caller cannot access tables")?;
+            if method!="POST" || !matches!(name,"enqueue"|"claim"|"transition"|"checkpoint"|"feed_baseline"|"account_health")
+                || payload.and_then(|p|p.get("p_network")).and_then(Value::as_str)!=Some(self.config.network.as_str())
+                || !options.query.is_empty() || options.on_conflict.is_some() {
+                return Err("scoped caller RPC is not permitted".into());
+            }
+        }
         if self.is_backed_off(now_ms) {
             return Err("supabase persistence unavailable during backoff".into());
         }
@@ -267,12 +287,17 @@ impl<T: HttpTransport> SupabaseClient<T> {
             }
         }
 
-        let auth_header = format!("Bearer {}", self.config.api_key);
+        let bearer=self.rpc_auth.as_ref().map(|(token,_)|token.as_str()).unwrap_or(&self.config.api_key);
+        let auth_header = format!("Bearer {bearer}");
         let mut headers = vec![
             ("apikey", self.config.api_key.as_str()),
             ("authorization", auth_header.as_str()),
             ("accept", "application/json"),
         ];
+        if let Some((_,profile))=&self.rpc_auth {
+            headers.push(("content-profile",profile.as_str()));
+            headers.push(("accept-profile",profile.as_str()));
+        }
 
         let mut prefer_tokens = Vec::new();
         let resolution_str;
