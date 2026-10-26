@@ -46,3 +46,9 @@ Optional:
 - built-in compute function catalog
 - RLS policies for project-owned data
 - network-scoped project registry and network-separated operational data for mainnet vs testnet
+
+### Caller migration: explicit PostgREST schema preimage
+
+Migration `20261026090000_relayer_delivery_caller_scope.sql` refuses a missing, empty or whitespace-only role-scoped `pgrst.db_schemas` preimage. An absent catalog entry does not establish the effective API configuration: owner configuration can supply additional schemas. Before any future migration, the operator must independently compare the effective API configuration and explicitly seed its exact schema list on the authenticator role at the intended database/global scope. The migration preserves that text/order and appends `neoos_relayer_v2` only when absent; an unknown pre-request hook still requires separate composition admission. No production default or automatic owner-configuration lookup is supplied. Cloud DDL, old-worker shutdown and new-caller activation remain held.
+
+The existing disposable PostgreSQL runner explicitly seeds its own known `public,graphql_public` fixture. Its caller acceptance reads the exact migration source using the test-only `NEOOS_CALLER_SCOPE_MIGRATION_FIXTURE` path, executes the body in rollback-controlled subtransactions, and checks unknown/empty refusal, whole-migration rollback, known-schema/order preservation, v2 duplicate avoidance and unknown-hook refusal. These SQL regressions require the disposable suite's local test-owner privileges; source/static checks are not PostgreSQL execution evidence.

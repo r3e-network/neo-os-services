@@ -191,8 +191,13 @@ begin
     where s.setrole=(select oid from pg_roles where rolname='authenticator')
       and s.setdatabase in (0,database_oid) and setting like 'pgrst.db_schemas=%'
     order by s.setdatabase desc limit 1;
-  schemas:=coalesce(nullif(schemas,''),'public');
-  if not('neoos_relayer_v2'=any(string_to_array(replace(schemas,' ',''),','))) then schemas:=schemas||',neoos_relayer_v2'; end if;
+  if schemas is null or schemas ~ '^[[:space:]]*$' then
+    raise exception 'known role-scoped PostgREST db_schemas preimage required; admission held';
+  end if;
+  if not exists(select 1 from unnest(string_to_array(schemas,',')) as entry(schema_name)
+      where entry.schema_name ~ '^[[:space:]]*neoos_relayer_v2[[:space:]]*$') then
+    schemas:=schemas||',neoos_relayer_v2';
+  end if;
   execute format('alter role authenticator in database %I set pgrst.db_pre_request=%L',current_database(),'public.neoos_relayer_pre_request');
   execute format('alter role authenticator in database %I set pgrst.db_schemas=%L',current_database(),schemas);
 end $$;

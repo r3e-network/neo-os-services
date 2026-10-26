@@ -30,6 +30,10 @@ export PGHOST="$test_dir" PGPORT="$port" PGDATABASE=postgres PGUSER="$(id -un)"
 # The API-role default grants are a hostile fixture: a migration that forgets to
 # revoke them is refused by the sponsor acceptance rather than shipped.
 psql -X -v ON_ERROR_STOP=1 -q -c 'create role service_role bypassrls; create role anon; create role authenticated; create role authenticator nologin noinherit; alter default privileges in schema public grant execute on functions to anon, authenticated; alter default privileges in schema public grant all on tables to anon, authenticated;'
+# Explicit known preimage for this disposable fixture, never a production default.
+psql -X -v ON_ERROR_STOP=1 -q -c "alter role authenticator set pgrst.db_schemas='public,graphql_public';"
+# The SQL acceptance reads this exact local source as its migration fixture.
+export NEOOS_CALLER_SCOPE_MIGRATION_FIXTURE="$repo/db/services/migrations/20261026090000_relayer_delivery_caller_scope.sql"
 migrations=("$repo"/db/services/migrations/*_relayer_delivery_*.sql)
 if [ ! -f "${migrations[0]}" ]; then
   echo "no *_relayer_delivery_*.sql migrations under $repo/db/services/migrations" >&2
