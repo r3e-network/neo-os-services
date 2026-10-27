@@ -10,10 +10,10 @@
     "test": "node --import ./src/test-support/isolate-aws-credentials.mjs --test --test-concurrency=1 worker.test.mjs src/*.test.mjs src/*/*.test.mjs"
   },
   "dependencies": {
-    "@aws-sdk/client-secrets-manager": "^3.700.0",
-    "@cityofzion/neon-js": "^5.8.1",
+    "@aws-sdk/client-secrets-manager": "^3.1156.0",
+    "@cityofzion/neon-js": "^5.10.1",
     "ethers": "^6.16.0",
-    "jose": "^6.2.1",
-    "undici": "8.12.2"
+    "jose": "^6.2.13",
+    "undici": "8.12.3"
   }
 }

@@ -15,7 +15,7 @@
     "test": "node --test relayer.test.mjs src/*.test.mjs src/*/*.test.mjs"
   },
   "dependencies": {
-    "@cityofzion/neon-js": "^5.8.1",
+    "@cityofzion/neon-js": "^5.10.1",
     "@r3e-network/neo-os-nitro-worker": "*",
     "@r3e-network/neo-os-services-shared": "*",
     "ethers": "^6.16.0"
