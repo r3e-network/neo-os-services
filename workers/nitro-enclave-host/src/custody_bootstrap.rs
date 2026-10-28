@@ -34,6 +34,9 @@ const MIGRATION_OVERRIDE_KEYS: [&str; 4] = [
     "MORPHEUS_CUSTODY_MIGRATION_SHA256",
     "NEOOS_LEGACY_N3_MIGRATION_SHA256",
 ];
+/// Opaque measured-runtime handle; custody implementation stays in this module.
+pub type InternalRawBridge = neo_signer::embedded::InternalRawBridge;
+
 const MAX_PROFILE_BYTES: u64 = 64 * 1024;
 
 fn absolute_path(value: &str) -> Result<PathBuf, &'static str> {

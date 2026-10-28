@@ -900,7 +900,7 @@
           "sha256": "61339dbade97261c9a55c7a3a7d0f3da504d08cf8303831da9252ef732d90b9d"
         },
         "workers/nitro-enclave-host/src/bin/enclave_host.rs": {
-          "sha256": "fe1d38d1e33fc1a082611dae904e1b753336c88066655db08511518ad36a7a4c"
+          "sha256": "baad35ec47cd061a6409f0f82601610d668f608b4b4a16794bab869a570e9146"
         },
         "workers/nitro-enclave-host/src/feed_sign.rs": {
           "sha256": "98b6aa7b7934206d264628dad59d0ba8a27cd2dbe8665998c817f10fea9479fd"
@@ -1517,7 +1517,7 @@
       "justification": "New fail-closed plan validates network, absolute paths, bounded profile bytes/digest, environment, internal URL and canonical workload audience. All plans are checked for cross-vault identity/root/path/audience reuse before guarded native boot. Plan validation and boot/router construction contain no random-output allocation rule. Deduplicating canonical audience protects authentication; it does not classify the transactions custody can authorize. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers. Genesis source update: The measured network map must provide the explicit TestNet enrollment mode and a bounded manifest with exact hash/profile binding before boot. Trusted measured configuration can authorize custody initialization, but does not consume VRF output for economic selection. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval.",
       "inputs": {
         "workers/nitro-enclave-host/src/custody_bootstrap.rs": {
-          "sha256": "c1fbb1a148e1317835e9cf079371e40db19806fbf44e6959868279d9c1d8bd51"
+          "sha256": "eba0d542d048a956609ff65d502a101b44e6db8ff80a649b2416598fa697d017"
         }
       }
     },
@@ -1528,7 +1528,7 @@
       "justification": "New in-process transport binds a literal network-specific internal origin to one router; preserves bearer and body; restricts host-facing methods/routes; bounds request/response sizes and refuses malformed replies. The adapter transports explicitly requested operations without interpreting random output. No award or transfer selection is performed by its routing/serialization logic. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "workers/nitro-enclave-host/src/embedded_custody.rs": {
-          "sha256": "c0fbc8334a10a09331e64235d6de93eda220d6daae29d76b94ca06aee709efa3"
+          "sha256": "74aaa7034edead98299c16f206c243b563fb1dd85118c190316c8a11cf97e998"
         }
       }
     },
@@ -2568,7 +2568,7 @@
       "consumer": "measured-legacy-n3-migration-kernel-and-regressions",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Exact-file review limited to these eight inputs: constant-time caller-digest visibility, legacy WIF/NEP2 identity decoding, measured two-role import and restore admission, atomic key/policy staging, and synthetic regression fixtures. Cryptographic randomness derives or protects credentials and synthetic keys; it does not select an economic winner, recipient, payout, refund, reward or settlement. Caller/key authorization, attested Recipient release, durable coordinator fencing, original identity preservation, downstream signing and deployment remain separate security boundaries. This classification grants no custody release, runtime, deployment, spend or overall security approval.",
+      "justification": "Exact-file review limited to these eight inputs: constant-time caller-digest visibility, legacy compressed-WIF/closed-legacy-JSON (NEP-2 refused) identity decoding, measured two-role import and restore admission, atomic key/policy staging, and synthetic regression fixtures. Cryptographic randomness derives or protects credentials and synthetic keys; it does not select an economic winner, recipient, payout, refund, reward or settlement. Caller/key authorization, attested Recipient release, durable coordinator fencing, original identity preservation, downstream signing and deployment remain separate security boundaries. This classification grants no custody release, runtime, deployment, spend or overall security approval.",
       "inputs": {
         "workers/neo-signer/src/auth.rs": {
           "sha256": "5162fa0a569de8eb1e8ad3fa180c095e0693a0dea742d6dc07994661eb2e666a"

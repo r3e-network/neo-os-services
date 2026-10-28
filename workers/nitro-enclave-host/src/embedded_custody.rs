@@ -26,7 +26,7 @@ pub fn embedded_base_url(network: &str) -> Result<String, &'static str> {
 pub struct InProcessCustodyTransport {
     prefix: String,
     router: Router,
-    internal_raw: Option<neo_signer::embedded::InternalRawBridge>,
+    internal_raw: Option<crate::custody_bootstrap::InternalRawBridge>,
 }
 
 impl InProcessCustodyTransport {
@@ -43,7 +43,7 @@ impl InProcessCustodyTransport {
     /// This typed handle can only originate in a measured custody runtime.
     pub fn with_internal_raw(
         mut self,
-        bridge: neo_signer::embedded::InternalRawBridge,
+        bridge: crate::custody_bootstrap::InternalRawBridge,
     ) -> Result<Self, &'static str> {
         if self.prefix != embedded_base_url("mainnet")? {
             return Err("internal raw migration requires mainnet");

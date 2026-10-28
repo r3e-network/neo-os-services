@@ -268,7 +268,7 @@ fn build_apps(
 fn build_apps_with_internal_raw(
     profiles: NetworkProfiles,
     custody: &BTreeMap<String, Router>,
-    bridges: &BTreeMap<String, neo_signer::embedded::InternalRawBridge>,
+    bridges: &BTreeMap<String, custody_bootstrap::InternalRawBridge>,
 ) -> BTreeMap<String, Arc<AppState>> {
     profiles
         .overlays
