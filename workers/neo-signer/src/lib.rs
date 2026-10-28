@@ -20,6 +20,8 @@ pub mod enrollment;
 pub mod evm_tx;
 pub mod legacy_material;
 pub mod metrics;
+// Preparation-only: deliberately no public migration/provision entry point.
+mod migration;
 pub mod model;
 pub mod neo_block;
 pub mod network;

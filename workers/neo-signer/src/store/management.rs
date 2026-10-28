@@ -132,3 +132,34 @@ impl Store {
         Ok(())
     }
 }
+
+impl Store {
+    /// Preparation-only primitive, not wired to any runtime caller. The opaque
+    /// permit currently has no production constructor. Coordinator integration
+    /// must keep this store private until a complete durable receipt is verified.
+    pub(crate) fn stage_legacy_migration(
+        &self,
+        prepared: &crate::migration::PreparedMigration,
+        permit: &crate::migration::MigrationGenesisPermit,
+    ) -> Result<()> {
+        prepared.check_permit(permit)?;
+        let mut connection = self.connection()?;
+        let transaction =
+            connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        Self::check_enrollment_tables(&transaction, false)?;
+        for key in prepared.keys() {
+            Self::create_signer_key_on(&transaction, key)?;
+            Self::save_signer_policy_on(
+                &transaction,
+                &key.id,
+                prepared.policy(),
+                prepared.audit().recorded_at_unix,
+            )?;
+        }
+        Self::create_signer_caller_on(&transaction, prepared.caller())?;
+        let id = super::audit::insert_signer_audit(&transaction, prepared.audit())?;
+        anyhow::ensure!(id == 1, "migration audit sequence is not virgin");
+        transaction.commit()?;
+        Ok(())
+    }
+}
