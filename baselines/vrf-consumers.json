@@ -2595,6 +2595,17 @@
           "sha256": "2567f8d1908f0c9d0f384bf1f9302fc129f942393dc6c99941ad361def1d1968"
         }
       }
+    },
+    {
+      "consumer": "workers/nitro-enclave-host/src/sign.rs",
+      "classification": "non-value",
+      "owner": "services lead",
+      "justification": "Exact-file economic-randomness classification: this legacy N3 sign/payload and keys/derived shim validates explicit caller role, full unsigned transaction and measured network magic before canonical semantic custody dispatch, or reports pinned public identity. It does not consume VRF/random output to select a winner, recipient, payout, refund, reward or settlement. The explicit measured-v2 adapter admission is security-critical and remains subject to independent caller/key/policy/revocation/durability review; this classification grants no signing, custody, runtime, deployment, spend or overall security approval. Only this exact file hash is bound.",
+      "inputs": {
+        "workers/nitro-enclave-host/src/sign.rs": {
+          "sha256": "ff70b50eb9bf26806c94018423721fd12caabd066f04e261db652fa0c0127887"
+        }
+      }
     }
   ]
 }
