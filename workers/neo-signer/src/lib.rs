@@ -20,7 +20,7 @@ pub mod enrollment;
 pub mod evm_tx;
 pub mod legacy_material;
 pub mod metrics;
-// Preparation-only: deliberately no public migration/provision entry point.
+// Measured migration core stays private; boot/provision use opaque adapters.
 mod migration;
 pub mod model;
 pub mod neo_block;

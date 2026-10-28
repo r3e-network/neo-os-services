@@ -1487,3 +1487,156 @@ fn migration_genesis_two_owners_cannot_both_release_or_commit() {
     assert_eq!(releases.load(Ordering::SeqCst), 1);
     assert_eq!(authority.candidates.lock().unwrap().len(), 1);
 }
+
+#[test]
+fn migration_internal_attachment_requires_ready_and_preserves_revocations() {
+    let (dir, profile, migration, authority) = migration_genesis_fixture();
+    let service = migration_genesis_run(
+        profile.clone(),
+        &migration,
+        authority,
+        &dir.path().join("raw.db"),
+        &|| Ok(crate::migration::tests::material()),
+    )
+    .unwrap()
+    .with_vault_binding(profile.clone(), None);
+    assert!(service.migration_internal_raw_token(&migration).is_ok());
+    let unready = SignerService::new(
+        service.repository().clone(),
+        MasterKey::from_bytes([0x5a; 32]),
+    )
+    .with_vault_binding(profile, None);
+    assert!(unready.migration_internal_raw_token(&migration).is_err());
+    let caller = service
+        .repository()
+        .list_signer_callers()
+        .unwrap()
+        .remove(0);
+    service
+        .repository()
+        .set_signer_caller_disabled(&caller.id, true)
+        .unwrap();
+    assert!(service.migration_internal_raw_token(&migration).is_err());
+    service
+        .repository()
+        .set_signer_caller_disabled(&caller.id, false)
+        .unwrap();
+    service
+        .repository()
+        .set_signer_caller_digest(&caller.id, &[7; 32])
+        .unwrap();
+    assert!(service.migration_internal_raw_token(&migration).is_err());
+    service
+        .repository()
+        .delete_signer_caller(&caller.id)
+        .unwrap();
+    assert!(service.migration_internal_raw_token(&migration).is_err());
+    assert!(service
+        .repository()
+        .list_signer_callers()
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn migration_internal_bridge_uses_canonical_auth_and_never_exposes_other_lanes() {
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Request, StatusCode},
+    };
+    let (dir, profile, migration, authority) = migration_genesis_fixture();
+    let service = migration_genesis_run(
+        profile.clone(),
+        &migration,
+        authority.clone(),
+        &dir.path().join("bridge.db"),
+        &|| Ok(crate::migration::tests::material()),
+    )
+    .unwrap()
+    .with_vault_binding(profile, None);
+    let state = crate::api::ApiState::new(service.clone());
+    let bridge = crate::embedded::InternalRawBridge::fixture(state.clone(), migration);
+    let request = || {
+        Request::builder()
+            .method("POST")
+            .uri("/signer/api/v1/sign/raw")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"key_id":"mn-updater-r1","data_hex":"0102"}"#,
+            ))
+            .unwrap()
+    };
+    // The very same ordinary router remains unauthenticated without a token.
+    use tower::ServiceExt;
+    let refused = crate::api::router(state).oneshot(request()).await.unwrap();
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    let refused: serde_json::Value =
+        serde_json::from_slice(&to_bytes(refused.into_body(), 65536).await.unwrap()).unwrap();
+    assert_eq!(refused["code"], "missing-token");
+    let response = bridge.dispatch(request()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["allowed"], true);
+    assert_eq!(body["key_id"], "mn-updater-r1");
+    assert!(!String::from_utf8_lossy(&bytes).contains("nci1_"));
+    for id in ["mn-oracle-verifier-r1", "mn-updater-r1"] {
+        let response = bridge
+            .dispatch(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/signer/api/v1/keys/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    let response = bridge
+        .dispatch(
+            Request::builder()
+                .method("POST")
+                .uri("/signer/api/v1/sign/raw")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"key_id":"foreign","data_hex":"0102"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    for path in [
+        "/provision",
+        "/signer/api/v1/callers",
+        "/signer/api/v1/sign/transaction",
+        "/signer/api/v1/keys/foreign",
+        "/signer/api/v1/sign/raw?network=testnet",
+    ] {
+        assert!(bridge
+            .dispatch(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap()
+            )
+            .await
+            .is_err());
+    }
+    for header in ["authorization", "origin"] {
+        let mut req = request();
+        req.headers_mut()
+            .insert(header, "unexpected".parse().unwrap());
+        assert!(bridge.dispatch(req).await.is_err());
+    }
+    let caller = service
+        .repository()
+        .list_signer_callers()
+        .unwrap()
+        .remove(0);
+    service
+        .repository()
+        .set_signer_caller_disabled(&caller.id, true)
+        .unwrap();
+    assert!(bridge.dispatch(request()).await.is_err());
+}

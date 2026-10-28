@@ -26,6 +26,7 @@ pub fn embedded_base_url(network: &str) -> Result<String, &'static str> {
 pub struct InProcessCustodyTransport {
     prefix: String,
     router: Router,
+    internal_raw: Option<neo_signer::embedded::InternalRawBridge>,
 }
 
 impl InProcessCustodyTransport {
@@ -35,7 +36,20 @@ impl InProcessCustodyTransport {
         Ok(Self {
             prefix: embedded_base_url(network)?,
             router,
+            internal_raw: None,
         })
+    }
+
+    /// This typed handle can only originate in a measured custody runtime.
+    pub fn with_internal_raw(
+        mut self,
+        bridge: neo_signer::embedded::InternalRawBridge,
+    ) -> Result<Self, &'static str> {
+        if self.prefix != embedded_base_url("mainnet")? {
+            return Err("internal raw migration requires mainnet");
+        }
+        self.internal_raw = Some(bridge);
+        Ok(self)
     }
 
     fn request(&self, request: CustodyRequest) -> Result<Request<Body>, String> {
@@ -60,7 +74,7 @@ impl InProcessCustodyTransport {
             .method(request.method)
             .uri(path)
             .header(header::CONTENT_TYPE, "application/json");
-        if let Some(token) = request.token {
+        if let Some(token) = request.token.filter(|value| !value.is_empty()) {
             let value = axum::http::HeaderValue::from_str(&format!("Bearer {token}"))
                 .map_err(|_| "invalid custody credential header".to_string())?;
             builder = builder.header(header::AUTHORIZATION, value);
@@ -75,12 +89,15 @@ impl InProcessCustodyTransport {
     /// retain separate capacity for the custody router's own blocking tasks.
     pub async fn send_async(&self, request: CustodyRequest) -> Result<CustodyReply, String> {
         let request = self.request(request)?;
-        let response = self
-            .router
-            .clone()
-            .oneshot(request)
-            .await
-            .expect("Router's error type is Infallible");
+        let response = match &self.internal_raw {
+            Some(bridge) => bridge.dispatch(request).await.map_err(str::to_string)?,
+            None => self
+                .router
+                .clone()
+                .oneshot(request)
+                .await
+                .expect("Router's error type is Infallible"),
+        };
         let status = response.status().as_u16();
         let bytes = to_bytes(response.into_body(), MAX_CUSTODY_BODY_BYTES)
             .await
@@ -92,6 +109,10 @@ impl InProcessCustodyTransport {
 }
 
 impl CustodyTransport for InProcessCustodyTransport {
+    fn has_private_raw_lane(&self) -> bool {
+        self.internal_raw.is_some()
+    }
+
     fn send(&self, request: CustodyRequest) -> Result<CustodyReply, String> {
         let runtime = tokio::runtime::Handle::try_current()
             .map_err(|_| "embedded custody requires the host runtime".to_string())?;

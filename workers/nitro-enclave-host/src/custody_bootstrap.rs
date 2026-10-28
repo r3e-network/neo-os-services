@@ -10,7 +10,7 @@ use std::sync::Arc;
 use axum::Router;
 use neo_signer::attestation::BootGuard;
 use neo_signer::auth::WorkloadAuthPolicy;
-use neo_signer::embedded::{EmbeddedCustodyConfig, EmbeddedCustodyRuntime};
+use neo_signer::embedded::{EmbeddedCustodyConfig, EmbeddedCustodyRuntime, MeasuredMigration};
 use neo_signer::network::Network;
 use neo_signer::vault_profile::VaultProfile;
 use sha2::{Digest, Sha256};
@@ -28,6 +28,12 @@ pub const ENROLLMENT_MODE: &str = "MORPHEUS_CUSTODY_ENROLLMENT_MODE";
 pub const ENROLLMENT_FILE: &str = "MORPHEUS_CUSTODY_ENROLLMENT_FILE";
 pub const ENROLLMENT_HASH: &str = "MORPHEUS_CUSTODY_ENROLLMENT_SHA256";
 const ENROLLMENT_KEYS: [&str; 3] = [ENROLLMENT_MODE, ENROLLMENT_FILE, ENROLLMENT_HASH];
+const MIGRATION_OVERRIDE_KEYS: [&str; 4] = [
+    "MORPHEUS_CUSTODY_MIGRATION_MODE",
+    "MORPHEUS_CUSTODY_MIGRATION_FILE",
+    "MORPHEUS_CUSTODY_MIGRATION_SHA256",
+    "NEOOS_LEGACY_N3_MIGRATION_SHA256",
+];
 const MAX_PROFILE_BYTES: u64 = 64 * 1024;
 
 fn absolute_path(value: &str) -> Result<PathBuf, &'static str> {
@@ -44,6 +50,13 @@ fn absolute_path(value: &str) -> Result<PathBuf, &'static str> {
 }
 
 fn plan(network: &str, overlay: &EnvOverlay) -> Result<EmbeddedCustodyConfig, &'static str> {
+    // Migration has no runtime overlay mode/path/hash. Its optional opt-in is a
+    // compiler input and fixed image file in neo-signer, never provision data.
+    for name in MIGRATION_OVERRIDE_KEYS {
+        if overlay.get(name).is_some() {
+            return Err("migration configuration must be compiled into the measured image");
+        }
+    }
     let value = |key| {
         overlay
             .get(key)
@@ -90,6 +103,8 @@ fn plan(network: &str, overlay: &EnvOverlay) -> Result<EmbeddedCustodyConfig, &'
     let audience = value(AUDIENCE)?;
     let policy = WorkloadAuthPolicy::new(audience, false)
         .map_err(|_| "invalid embedded custody workload audience")?;
+    let migration = MeasuredMigration::from_image_owned(&profile)
+        .map_err(|_| "image migration manifest/profile binding invalid")?;
     let enrollment = if ENROLLMENT_KEYS.iter().any(|key| overlay.get(key).is_some()) {
         use neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES};
         if expected_network != Network::Testnet
@@ -123,6 +138,7 @@ fn plan(network: &str, overlay: &EnvOverlay) -> Result<EmbeddedCustodyConfig, &'
     Ok(EmbeddedCustodyConfig {
         profile: Arc::new(profile),
         enrollment,
+        migration,
         expected_network,
         data_dir,
         workload_audience: policy.audience().to_string(),
@@ -140,6 +156,7 @@ pub fn prepare(
         CONFIG_KEYS
             .iter()
             .chain(ENROLLMENT_KEYS.iter())
+            .chain(MIGRATION_OVERRIDE_KEYS.iter())
             .any(|k| o.get(k).is_some())
     });
     let production_dual = profiles.explicit
@@ -169,30 +186,52 @@ pub fn prepare(
     Ok(plans)
 }
 
+pub struct BootedCustody {
+    pub routers: BTreeMap<String, Router>,
+    pub internal_raw: BTreeMap<String, neo_signer::embedded::InternalRawBridge>,
+}
+
 pub fn boot(profiles: &NetworkProfiles) -> Result<BTreeMap<String, Router>, &'static str> {
-    boot_using(profiles, |config, guard| {
+    Ok(boot_with_internal_raw(profiles)?.routers)
+}
+
+pub fn boot_with_internal_raw(profiles: &NetworkProfiles) -> Result<BootedCustody, &'static str> {
+    boot_handles_using(profiles, |config, guard| {
         EmbeddedCustodyRuntime::boot(config, guard)
             .map_err(|_| "embedded custody measured boot failed")
     })
 }
 
+#[cfg(test)]
 fn boot_using(
+    profiles: &NetworkProfiles,
+    start: impl FnMut(EmbeddedCustodyConfig, BootGuard) -> Result<EmbeddedCustodyRuntime, &'static str>,
+) -> Result<BTreeMap<String, Router>, &'static str> {
+    Ok(boot_handles_using(profiles, start)?.routers)
+}
+
+fn boot_handles_using(
     profiles: &NetworkProfiles,
     mut start: impl FnMut(
         EmbeddedCustodyConfig,
         BootGuard,
     ) -> Result<EmbeddedCustodyRuntime, &'static str>,
-) -> Result<BTreeMap<String, Router>, &'static str> {
+) -> Result<BootedCustody, &'static str> {
     let plans = prepare(profiles)?;
-    plans
-        .into_iter()
-        .map(|(network, config)| {
-            let guard =
-                BootGuard::required(None).map_err(|_| "embedded custody boot policy is invalid")?;
-            let runtime = start(config, guard)?;
-            Ok((network, runtime.router()))
-        })
-        .collect()
+    let mut result = BootedCustody {
+        routers: BTreeMap::new(),
+        internal_raw: BTreeMap::new(),
+    };
+    for (network, config) in plans {
+        let guard =
+            BootGuard::required(None).map_err(|_| "embedded custody boot policy is invalid")?;
+        let runtime = start(config, guard)?;
+        if let Some(bridge) = runtime.internal_raw_bridge() {
+            result.internal_raw.insert(network.clone(), bridge);
+        }
+        result.routers.insert(network, runtime.router());
+    }
+    Ok(result)
 }
 
 /// Separate namespace; native router remains the authority for methods/auth.

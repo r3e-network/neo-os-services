@@ -63,6 +63,7 @@ fn profile(master: &MasterKey) -> VaultProfile {
 
 fn config(dir: &Path) -> EmbeddedCustodyConfig {
     EmbeddedCustodyConfig {
+        migration: None,
         enrollment: None,
         profile: Arc::new(profile(&MasterKey::from_bytes([9; 32])).validate().unwrap()),
         expected_network: Network::Testnet,

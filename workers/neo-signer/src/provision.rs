@@ -54,6 +54,15 @@ pub const MASTER_KEY_CIPHERTEXT_ENV: &str = "SIGNER_SERVICE_MASTER_KEY_KMS_CIPHE
 /// Separate envelope used only by measured TestNet genesis enrollment.
 pub const ADMIN_CIPHERTEXT_ENV: &str = "SIGNER_SERVICE_FIRST_ADMIN_KMS_CIPHERTEXT";
 
+/// Only these two legacy role envelopes may accompany measured migration.
+/// They are never a plaintext/ref/metadata override or a genesis authority.
+pub const LEGACY_ROLE_CIPHERTEXT_ENVS: [&str; 2] = [
+    "MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64",
+    "MORPHEUS_UPDATER_NEO_N3_KMS_CIPHERTEXT_BASE64",
+];
+const MAX_LEGACY_CIPHERTEXT_BYTES: usize = 6 * 1024;
+const MAX_LEGACY_CIPHERTEXT_BASE64: usize = 8192;
+
 /// Region override, falling back through the standard AWS names.
 pub const REGION_ENV: &str = "SIGNER_SERVICE_KMS_REGION";
 
@@ -115,12 +124,21 @@ impl ProvisionEnv {
     /// string. The plaintext master key is refused before anything else so its
     /// specific error is the one an operator sees.
     pub fn from_body(body: ProvisionBody) -> Result<Self, ProvisionError> {
+        Self::from_body_for_migration(body, None)
+    }
+
+    pub(crate) fn from_body_for_migration(
+        body: ProvisionBody,
+        migration: Option<&crate::embedded::MeasuredMigration>,
+    ) -> Result<Self, ProvisionError> {
         if body.env.contains_key("SIGNER_SERVICE_MASTER_KEY") {
             return Err(ProvisionError::PlaintextMasterKey);
         }
         let mut fields = Vec::with_capacity(body.env.len());
         for (name, value) in body.env {
-            if !ALLOWED_ENV_KEYS.contains(&name.as_str()) {
+            if !ALLOWED_ENV_KEYS.contains(&name.as_str())
+                && !(migration.is_some() && LEGACY_ROLE_CIPHERTEXT_ENVS.contains(&name.as_str()))
+            {
                 return Err(ProvisionError::UnknownKey(name));
             }
             let value = match value {
@@ -132,7 +150,51 @@ impl ProvisionEnv {
             }
             fields.push((name, value));
         }
-        Ok(ProvisionEnv { fields })
+        let env = ProvisionEnv { fields };
+        env.validate_legacy_ciphertexts(migration)?;
+        Ok(env)
+    }
+
+    fn validate_legacy_ciphertexts(
+        &self,
+        migration: Option<&crate::embedded::MeasuredMigration>,
+    ) -> Result<(), ProvisionError> {
+        let present = LEGACY_ROLE_CIPHERTEXT_ENVS.map(|name| self.get(name));
+        if present.iter().all(Option::is_none) {
+            return Ok(());
+        }
+        if migration.is_none() {
+            let name = LEGACY_ROLE_CIPHERTEXT_ENVS
+                .iter()
+                .find(|name| self.get(name).is_some())
+                .expect("a legacy field is present");
+            return Err(ProvisionError::UnknownKey((*name).to_string()));
+        }
+        // Restore needs no original envelopes. If supplied for future genesis
+        // composition, require the exact complete bounded pair, never a hint.
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let mut decoded = Vec::new();
+        for (name, value) in LEGACY_ROLE_CIPHERTEXT_ENVS.iter().zip(present) {
+            let value = value.ok_or(ProvisionError::MissingField(name))?;
+            if value.len() > MAX_LEGACY_CIPHERTEXT_BASE64 {
+                return Err(ProvisionError::Release(
+                    "legacy role ciphertext size refused".into(),
+                ));
+            }
+            let bytes = STANDARD
+                .decode(value)
+                .map_err(|_| ProvisionError::Release("invalid legacy role ciphertext".into()))?;
+            if bytes.is_empty()
+                || bytes.len() > MAX_LEGACY_CIPHERTEXT_BYTES
+                || decoded.contains(&bytes)
+            {
+                return Err(ProvisionError::Release(
+                    "legacy role ciphertext pair refused".into(),
+                ));
+            }
+            decoded.push(bytes);
+        }
+        Ok(())
     }
 
     pub fn get(&self, name: &str) -> Option<&str> {
@@ -286,6 +348,27 @@ pub type VaultRecoverer = Arc<
         + Sync,
 >;
 
+/// Separate ABI so the existing Testnet/ordinary recoverer stays unchanged.
+/// This request carries a delayed release, never a bool/hash authority proof.
+pub struct MigrationAttempt<'a> {
+    pub(crate) restore_only: bool,
+    pub(crate) manifest: &'a crate::embedded::MeasuredMigration,
+    pub(crate) release_roles:
+        &'a (dyn Fn() -> Result<[crate::migration::DecodedRoleMaterial; 2], String> + Sync),
+}
+
+pub type MigrationRecoverer = Arc<
+    dyn Fn(
+            Arc<ValidatedVaultProfile>,
+            AwsCredentials,
+            MasterKey,
+            &Path,
+            &MigrationAttempt<'_>,
+        ) -> Result<SignerService, String>
+        + Send
+        + Sync,
+>;
+
 /// Borrowed authorization deferred until authenticated recovery selects genesis.
 /// Restore never calls this closure or requires the original Admin ciphertext.
 pub struct EnrollmentAttempt<'a> {
@@ -360,6 +443,8 @@ pub struct ProvisionGate {
     pub releaser: EnvelopeReleaser,
     pub recoverer: VaultRecoverer,
     pub enrollment: Option<Arc<crate::enrollment::ValidatedGenesisEnrollment>>,
+    pub migration: Option<Arc<crate::embedded::MeasuredMigration>>,
+    pub migration_recoverer: MigrationRecoverer,
     /// Serializes direct release calls. The API's Provisioning state owns the
     /// wider lifecycle, including publication after this lock is released.
     pub mutex: Mutex<()>,
@@ -446,6 +531,85 @@ pub fn coordinator_recoverer() -> VaultRecoverer {
     )
 }
 
+/// The parent-owned coordinator must authorize genesis and invoke the delayed
+/// release only there. A committed HEAD restores with receipt validation and
+/// never inspects the original role envelopes. There is no recovery fallback.
+/// This wiring requires the separately composed genesis/Recipient checkpoint.
+pub fn migration_recoverer() -> MigrationRecoverer {
+    Arc::new(|profile, credentials, master_key, database_path, attempt| {
+        attempt
+            .manifest
+            .validate_profile(&profile)
+            .map_err(|error| error.to_string())?;
+        if attempt.restore_only {
+            return coordinator::recover_with_migration_restore(
+                profile,
+                credentials,
+                master_key,
+                database_path,
+                Arc::new(nitro_attest::release::NsmAttestation),
+                attempt.manifest.core(),
+            )
+            .map_err(|error| error.to_string());
+        }
+        coordinator::recover_with_migration(
+            profile,
+            credentials,
+            master_key,
+            database_path,
+            Arc::new(nitro_attest::release::NsmAttestation),
+            attempt.manifest.core(),
+            attempt.release_roles,
+        )
+        .map_err(|error| error.to_string())
+    })
+}
+
+/// No caller can request this helper through an HTTP method or select a role
+/// ARN/context. The closure in run is its only caller, after transport/root
+/// authentication, and coordinator alone decides whether to invoke it.
+fn release_legacy_pair(
+    migration: &crate::embedded::MeasuredMigration,
+    env: &ProvisionEnv,
+) -> Result<[crate::migration::DecodedRoleMaterial; 2], String> {
+    let credentials = env
+        .credentials()
+        .map_err(|_| "missing migration release credentials")?;
+    let region = env
+        .region()
+        .map_err(|_| "missing migration release region")?;
+    let release = |index: usize| {
+        let request = migration
+            .core()
+            .release_request(index)
+            .map_err(|_| "invalid measured migration role")?;
+        if request.role != ["oracle_verifier", "updater"][index]
+            || request.ciphertext_slot != LEGACY_ROLE_CIPHERTEXT_ENVS[index]
+        {
+            return Err("measured migration role selector mismatch".into());
+        }
+        let ciphertext = env
+            .get(request.ciphertext_slot)
+            .ok_or_else(|| "missing migration role ciphertext".to_string())?;
+        let params = nitro_attest::release::ReleaseParams {
+            region,
+            credentials: &credentials,
+            ciphertext_b64: ciphertext,
+            amz_date: &nitro_attest::kms::utc_amz_date_now(),
+        };
+        migration
+            .core()
+            .release_legacy_role(
+                index,
+                &nitro_attest::release::NsmAttestation,
+                &nitro_attest::release::HttpKmsTransport,
+                &params,
+            )
+            .map_err(|_| "attested migration role release refused".to_string())
+    };
+    Ok([release(0)?, release(1)?])
+}
+
 /// The whole provision transaction: validate, check the transport token,
 /// release the master key, open the vault. The API must own its Provisioning
 /// claim before calling this function and publish Ready in the same blocking
@@ -458,6 +622,17 @@ pub fn run(
     let _guard = gate.mutex.lock().map_err(|_| {
         ProvisionError::Release("the provision lock is poisoned; restart the service".to_string())
     })?;
+    if let Some(migration) = &gate.migration {
+        if gate.enrollment.is_some() {
+            return Err(ProvisionError::Release(
+                "migration conflicts with enrollment".into(),
+            ));
+        }
+        migration
+            .validate_profile(&gate.profile)
+            .map_err(|error| ProvisionError::Release(error.to_string()))?;
+    }
+    env.validate_legacy_ciphertexts(gate.migration.as_deref())?;
     if gate.enrollment.is_none() && env.get(ADMIN_CIPHERTEXT_ENV).is_some() {
         return Err(ProvisionError::UnknownKey(ADMIN_CIPHERTEXT_ENV.to_string()));
     }
@@ -497,6 +672,22 @@ pub fn run(
         .verify_master(&master_key)
         .map_err(|error| ProvisionError::Release(error.to_string()))?;
     let credentials = env.coordinator_credentials()?;
+    if let Some(manifest) = &gate.migration {
+        let release_roles = || release_legacy_pair(manifest, env);
+        let attempt = MigrationAttempt {
+            manifest,
+            release_roles: &release_roles,
+            restore_only: env.get(LEGACY_ROLE_CIPHERTEXT_ENVS[0]).is_none(),
+        };
+        return (gate.migration_recoverer)(
+            Arc::clone(&gate.profile),
+            credentials,
+            master_key,
+            &gate.database_path,
+            &attempt,
+        )
+        .map_err(ProvisionError::Release);
+    }
     let authorize = || -> Result<(), String> {
         let manifest = gate.enrollment.as_ref().ok_or("enrollment is disabled")?;
         let ciphertext = env

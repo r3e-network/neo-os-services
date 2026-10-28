@@ -635,7 +635,7 @@ pub fn origin_matches(allowed: &[String], presented: Option<&str>) -> bool {
 /// Folding the XOR of every byte and testing the accumulator once means the
 /// running time does not depend on how early a mismatch appears, so neither the
 /// position of the first differing byte nor a shared prefix leaks.
-fn digest_matches(expected: &[u8; 32], candidate: &[u8; 32]) -> bool {
+pub(crate) fn digest_matches(expected: &[u8; 32], candidate: &[u8; 32]) -> bool {
     let difference = expected
         .iter()
         .zip(candidate.iter())

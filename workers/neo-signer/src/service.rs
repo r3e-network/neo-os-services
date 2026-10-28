@@ -430,6 +430,34 @@ impl SignerService {
             .ensure_ready()
     }
 
+    /// No credential leaves the crate. The opaque embedded dispatcher uses it
+    /// only after Ready and current caller checks, then the normal API
+    /// authenticates it again for the actual operation.
+    pub(crate) fn migration_internal_raw_token(
+        &self,
+        migration: &crate::migration::MeasuredMigration,
+    ) -> Result<Zeroizing<String>> {
+        let _operation = self
+            .operation_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("internal raw operation lock unavailable"))?;
+        let _decision = self
+            .decision_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("internal raw decision lock unavailable"))?;
+        self.ensure_durable_ready()?;
+        let profile = self
+            .vault_profile
+            .as_ref()
+            .context("internal raw vault profile missing")?;
+        migration.validate_profile(profile)?;
+        let caller = self
+            .repository
+            .find_signer_caller(migration.caller_id())?
+            .context("current internal raw caller missing")?;
+        migration.current_raw_token(&self.master_key, &caller)
+    }
+
     pub fn durable_status(&self) -> Option<DurableStatus> {
         self.durable.as_ref().map(|durable| durable.status())
     }

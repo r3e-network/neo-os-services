@@ -72,6 +72,9 @@ zeroize = "1"
 # Metrics and observability
 prometheus = "0.14"
 
+# Existing locked Tower util is also needed by the non-listening internal bridge.
+tower = { version = "0.5", features = ["util"] }
+
 [build-dependencies]
 # Keep the checked-in Neo SignClient protocol reproducible on developer and CI
 # hosts that do not install protoc globally.
@@ -80,9 +83,6 @@ tonic-build = "0.12"
 
 [dev-dependencies]
 aws-lc-rs = "1.18"
-# `util` for `ServiceExt::oneshot`, which is how the API tests reach the router
-# without binding a port: a custody service whose tests need a socket is a
-# service whose tests can be blocked by a firewall.
 http-body-util = "0.1"
 http-body = "1"
 # Same pins as [build-dependencies]: proto identity regenerates SignClient
@@ -90,4 +90,3 @@ http-body = "1"
 protoc-bin-vendored = "3"
 tempfile = "3"
 tonic-build = "0.12"
-tower = { version = "0.5", features = ["util"] }

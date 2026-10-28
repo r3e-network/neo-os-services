@@ -49,6 +49,11 @@ LIMIT = 65536
 SCHEMA = 'neoos/dual-image-input/v1'
 SOURCE_DIRS = ('vendor/', 'crates/', 'workers/neo-signer/', 'workers/nitro-enclave-host/', 'workers/neo-os-relayer/')
 PROFILE_FIELDS = ('profile_version vault_id environment networks custody_kms_key_arn root_key_version root_key_commitment snapshot_format_version signer_schema_version coordinator release_policy_version').split()
+MIGRATION_MODE = 'legacy-n3-two-role-root-caller/v1'
+MIGRATION_FILE = 'legacy-n3-migration.json'
+MIGRATION_SHA_ENV = 'NEOOS_LEGACY_N3_MIGRATION_SHA256'
+MIGRATION_RUNTIME_KEYS = (MIGRATION_SHA_ENV, 'MORPHEUS_CUSTODY_MIGRATION_MODE',
+                          'MORPHEUS_CUSTODY_MIGRATION_FILE', 'MORPHEUS_CUSTODY_MIGRATION_SHA256')
 
 DIAGNOSTIC_STAGES = frozenset(('admission', 'staging', 'canonical', 'buildkit-create',
     'image-build', 'image-inspect', 'image-export', 'image-verify', 'enclave-build',
@@ -209,7 +214,8 @@ def public_inputs(path, expected_sha, registry):
     for network in NETWORKS:
         spec = value['networks'][network]
         spec_fields = ('profile_file', 'profile_sha256', 'workload_audience', 'roles', 'neo_n3_rpc', 'neo_x_rpc', 'frontier_kms_key_arn', 'aws_region')
-        fields(spec, spec_fields + tuple(k for k in ('enrollment', 'feed_price_plane', 'relayer') if k in spec))
+        fields(spec, spec_fields + tuple(k for k in ('enrollment', 'migration', 'feed_price_plane', 'relayer') if k in spec))
+        require(not ('migration' in spec and 'enrollment' in spec), 'migration and enrollment are mutually exclusive per network')
         if 'feed_price_plane' in spec:
             require(type(spec['feed_price_plane']) is str and
                     spec['feed_price_plane'] in ('twelvedata', 'public-quorum'),
@@ -328,6 +334,19 @@ def public_inputs(path, expected_sha, registry):
                 'MORPHEUS_CUSTODY_ENROLLMENT_FILE': '/app/config/custody/testnet-enrollment.json',
                 'MORPHEUS_CUSTODY_ENROLLMENT_SHA256': sha(manifest),
             })
+        if 'migration' in spec:
+            migration = spec['migration']
+            fields(migration, ('mode', 'manifest_file', 'manifest_sha256'))
+            require(network == 'mainnet' and migration['mode'] == MIGRATION_MODE,
+                    'migration requires explicit Mainnet two-role opt-in')
+            require(migration['manifest_file'] == MIGRATION_FILE, 'migration file must use fixed basename')
+            manifest = regular(Path(path).parent / MIGRATION_FILE)
+            require(0 < len(manifest) <= 16384, 'migration manifest exceeds bound or is empty')
+            require(sha(manifest) == digest(migration['manifest_sha256']), 'migration manifest SHA mismatch')
+            # Independent of release_policy_version. The Rust dual_prepare
+            # checks the canonical profile hash and cryptographic identities.
+            validate_migration(parse(manifest), profile, spec['roles'])
+            profiles['legacy-n3-migration'] = manifest
         overlay.update({'SIGNER_ROLE_' + role + '_KEY_ID': spec['roles'][role] for role in ROLES})
         profiles[network], overlays[network] = data, overlay
     return value, profiles, overlays
@@ -349,6 +368,55 @@ def validate_enrollment(manifest, profile):
 
 
 OUTPUT_LIMIT = 256 * 1024 * 1024
+
+
+def validate_migration(manifest, profile, role_map):
+    # Packaging shape checks only: the image's exact Rust implementation is
+    # authoritative for canonical profile/P256/script-hash semantics.
+    fields(manifest, ('schema', 'purpose', 'ceremony_id', 'profile_sha256', 'credential_epoch',
+                      'caller_id', 'legacy_checkpoint_sha256', 'external_authority_map_sha256', 'roles'))
+    require(profile['environment'] == 'mainnet' and manifest['schema'] == 'neoos/legacy-n3-migration/v1'
+            and manifest['purpose'] == MIGRATION_MODE, 'invalid migration contract')
+    for key in ('ceremony_id', 'credential_epoch', 'caller_id'):
+        role_id(manifest[key])
+    for key in ('profile_sha256', 'legacy_checkpoint_sha256', 'external_authority_map_sha256'):
+        digest(manifest[key])
+    roles = manifest['roles']
+    require(isinstance(roles, list) and len(roles) == 2, 'migration requires exactly two roles')
+    public_keys = set()
+    for role, name, key_id, selector, slot in zip(roles,
+            ('oracle_verifier', 'updater'), ('mn-oracle-verifier-r1', 'mn-updater-r1'),
+            ('ORACLE_VERIFIER', 'UPDATER'),
+            ('MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64', 'MORPHEUS_UPDATER_NEO_N3_KMS_CIPHERTEXT_BASE64')):
+        fields(role, ('role', 'key_id', 'public_key', 'script_hash', 'ciphertext_slot',
+                      'expected_kms_key_arn', 'encryption_context', 'material_provenance_sha256'))
+        require(role['role'] == name and role['key_id'] == key_id and role_map[selector] == key_id
+                and role['ciphertext_slot'] == slot, 'migration role order or route mismatch')
+        public = role['public_key']
+        require(isinstance(public, str) and re.fullmatch(r'0[23][0-9a-f]{64}', public)
+                and public not in public_keys, 'invalid or duplicate migration public key encoding')
+        public_keys.add(public)
+        script = role['script_hash']
+        require(isinstance(script, str) and script.startswith('0x'), 'invalid migration script hash')
+        digest(script[2:], 40)
+        kms(role['expected_kms_key_arn'], profile['coordinator']['aws_region'])
+        require(role['encryption_context'] == 'explicit-empty-legacy-n3/v1', 'invalid legacy migration context')
+        digest(role['material_provenance_sha256'])
+
+
+def migration_recipe(template, manifest_sha=None):
+    # A literal command-local assignment reaches cargo/rustc only. It is never
+    # an ARG, persisted ENV, host environment input or dual_prepare runtime key.
+    marker = '# DUAL_MIGRATION_BUILD_INPUT'
+    anchor = marker + '\nRUN cargo build '
+    require(MIGRATION_SHA_ENV not in template, 'migration SHA must not be a Docker ENV/ARG')
+    if manifest_sha is None and marker not in template:
+        # Preserve staging of historical recipes when migration is not opted in.
+        return template
+    require(template.count(marker) == 1 and template.count(anchor) == 1,
+            'migration cargo marker missing/ambiguous')
+    prefix = '' if manifest_sha is None else MIGRATION_SHA_ENV + '=' + digest(manifest_sha) + ' '
+    return template.replace(anchor, 'RUN ' + prefix + 'cargo build ')
 
 
 def diagnostic_tail(stream):
@@ -623,6 +691,8 @@ def stage_into(repo, input_path, input_sha, env, publication, builder_platform="
     # carry expansion, newlines, comments or build instructions.
     enabled = all('relayer' in spec['networks'][n] for n in NETWORKS)
     env_line = 'ENV MORPHEUS_NETWORK_PROFILES_JSON=' + json.dumps(map_bytes.decode().strip()) + ' MORPHEUS_EMBEDDED_RELAYER=' + str(enabled).lower()
+    migration = spec['networks']['mainnet'].get('migration')
+    template = migration_recipe(template, migration['manifest_sha256'] if migration else None)
     files['Dockerfile'] = template.replace(marker, env_line).encode()
     files['public/network-profiles.json'] = map_bytes
     for n, data in profiles.items():
@@ -759,10 +829,20 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
             enrollment_file = 'public/custody/testnet-enrollment.json'
             if enrollment_file in manifest['files']:
                 require(sha(regular(exported / 'custody/testnet-enrollment.json')) == manifest['files'][enrollment_file], 'image enrollment digest mismatch')
+            migration_file = 'public/custody/' + MIGRATION_FILE
+            if migration_file in manifest['files']:
+                expected = manifest['files'][migration_file]
+                require(sha(regular(exported / 'custody' / MIGRATION_FILE)) == expected, 'image migration mirror digest mismatch')
+                # Verify the path actually consumed by measured boot, not only
+                # its /app/config staging mirror. Copy by verified full ID.
+                measured = context.parent / ('image-custody-' + str(attempt))
+                run([*docker_args, 'cp', cid + ':/opt/neoos/custody', measured], env)
+                require(sha(regular(measured / MIGRATION_FILE)) == expected, 'image measured migration digest mismatch')
             require(sha(regular(exported / 'network-profiles.json')) == manifest['map_sha256'], 'image map digest mismatch')
             image_env = parse(run([*docker_args, 'image', 'inspect', '--format', '{{json .Config.Env}}', image_id], env))
             require(isinstance(image_env, list) and all(isinstance(v, str) and '=' in v for v in image_env), 'invalid image environment')
             env_map = unique([v.split('=', 1) for v in image_env])
+            require(not any(key in env_map for key in MIGRATION_RUNTIME_KEYS), 'migration input must not be a runtime environment key')
             require(env_map.get('NODE_ENV') == 'production' and env_map.get('MORPHEUS_ATTESTED_BOOT') == 'require' and env_map.get('MORPHEUS_ALLOW_EPHEMERAL_KEY') == '0', 'image boot policy mismatch')
             require(encoded(parse(env_map.get('MORPHEUS_NETWORK_PROFILES_JSON', 'null'))) == regular(exported / 'network-profiles.json'), 'image runtime map differs from measured map')
             profiles_map = parse(regular(exported / 'network-profiles.json'))

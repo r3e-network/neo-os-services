@@ -768,3 +768,33 @@ fn deleted_audit_history_is_not_a_virgin_migration_and_rolls_back_every_row() {
         assert_eq!(n, 0);
     }
 }
+
+#[test]
+fn migration_internal_raw_credential_requires_exact_current_caller() {
+    let profile = profile();
+    let migration = validated(&manifest(&profile), &profile).unwrap();
+    let root = MasterKey::from_bytes(ROOT);
+    let caller = migration.initial_caller(&root, 123).unwrap();
+    assert!(migration.current_raw_token(&root, &caller).is_ok());
+    for change in 0..8 {
+        let mut changed = caller.clone();
+        match change {
+            0 => changed.disabled = true,
+            1 => changed.token_digest = [1; 32],
+            2 => changed.capabilities = vec![CallerCapability::Sign],
+            3 => changed.capabilities.push(CallerCapability::Admin),
+            4 => changed.key_grant = KeyGrant::Any,
+            5 => changed.key_grant = KeyGrant::Only(vec![ROLE_IDS[0].into()]),
+            6 => changed.allowed_origins = vec!["https://unexpected.example".into()],
+            7 => changed.id = "foreign-caller".into(),
+            _ => unreachable!(),
+        }
+        assert!(
+            migration.current_raw_token(&root, &changed).is_err(),
+            "change {change}"
+        );
+    }
+    assert!(migration
+        .current_raw_token(&MasterKey::from_bytes([9; 32]), &caller)
+        .is_err());
+}

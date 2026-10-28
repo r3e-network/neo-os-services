@@ -99,6 +99,12 @@ pub struct CustodyReply {
 /// connect, timeout, an answer that is not JSON — as strings; custody's own
 /// refusals arrive as [`CustodyReply`]s.
 pub trait CustodyTransport: Send + Sync {
+    /// Only an opaque measured embedded dispatcher can supply this lane. This
+    /// selects transport configuration, never bypasses custody authentication.
+    fn has_private_raw_lane(&self) -> bool {
+        false
+    }
+
     fn send(&self, request: CustodyRequest) -> Result<CustodyReply, String>;
 }
 
@@ -306,6 +312,12 @@ impl CustodySigner {
         let Some(base_url) = overlay.get_trimmed(SIGNER_SERVICE_URL) else {
             return Ok(None);
         };
+        if self.transport.has_private_raw_lane() {
+            return match lane {
+                CustodyLane::Raw => CustodyConfig::new(&base_url, String::new()).map(Some),
+                CustodyLane::Semantic => Ok(None),
+            };
+        }
         let Some(token) = overlay.get_trimmed(SIGNER_SERVICE_TOKEN) else {
             return Ok(None);
         };

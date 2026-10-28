@@ -1,9 +1,8 @@
-//! Dormant preparation kernel for one measured, identity-preserving migration.
+//! Identity-preserving migration under an authenticated coordinator lease.
 //!
-//! No HTTP/provision/bootstrap path calls this module. In particular, there is
-//! deliberately no production constructor for `MigrationGenesisPermit`. A
-//! reviewed coordinator/attested-release adapter must supply that integration;
-//! a manifest digest, root possession or decoded key alone is not admission.
+//! Image-owned input selects the contract; only the coordinator can admit
+//! genesis and commit it. Existing authenticated snapshots are restored without
+//! repeating release or overwriting current caller/key state.
 
 use std::fmt::Write;
 
@@ -526,6 +525,32 @@ impl MeasuredMigration {
         })
     }
 
+    /// Reattach only the still-current original RawSign caller. This is a
+    /// read-only check: rotation, disable, deletion or grant changes refuse.
+    pub(crate) fn current_raw_token(
+        &self,
+        root: &MasterKey,
+        caller: &SignerCaller,
+    ) -> Result<Zeroizing<String>> {
+        let token = self.derive_internal_token(root, InternalLane::Raw)?;
+        ensure!(
+            caller.id == self.manifest.caller_id
+                && !caller.disabled
+                && caller.workload_identity.is_none()
+                && caller.capabilities == [CallerCapability::RawSign]
+                && caller.key_grant
+                    == KeyGrant::Only(ROLE_IDS.iter().map(|id| id.to_string()).collect())
+                && caller.allowed_origins.is_empty()
+                && auth::digest_matches(&caller.token_digest, &auth::token_digest(token.as_str())),
+            "current internal raw caller is not admitted"
+        );
+        Ok(token)
+    }
+
+    pub(crate) fn caller_id(&self) -> &str {
+        &self.manifest.caller_id
+    }
+
     fn derive_internal_token(
         &self,
         root: &MasterKey,
@@ -562,12 +587,14 @@ impl MeasuredMigration {
 // The initial prepared state below contains RawSign only, never Sign/Admin.
 enum InternalLane {
     Raw,
+    #[cfg(test)]
     Semantic,
 }
 impl InternalLane {
     fn label(&self) -> &'static str {
         match self {
             Self::Raw => "raw_sign",
+            #[cfg(test)]
             Self::Semantic => "sign",
         }
     }

@@ -57,6 +57,26 @@ fn complete_dual_plan_pins_profile_network_root_and_state() {
 }
 
 #[test]
+fn migration_manifest_path_mode_and_digest_are_not_runtime_overlays() {
+    let directory = tempfile::tempdir().unwrap();
+    let original = fixture(directory.path());
+    for name in MIGRATION_OVERRIDE_KEYS {
+        let mut map = original.clone();
+        map["mainnet"][name] = json!("untrusted-override");
+        let mut started = 0;
+        let result = boot_using(&profiles(&map), |_, _| {
+            started += 1;
+            Err("runtime override reached boot")
+        });
+        assert_eq!(started, 0);
+        assert_eq!(
+            result.err(),
+            Some("migration configuration must be compiled into the measured image")
+        );
+    }
+}
+
+#[test]
 fn equivalent_audiences_refuse_before_any_vault_boot() {
     let dir = tempfile::tempdir().unwrap();
     let original = fixture(dir.path());

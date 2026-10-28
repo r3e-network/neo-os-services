@@ -86,8 +86,13 @@ elif args[:1] == ['rm']:
 elif args[:1] == ['cp']:
     assert args[-2].split(':')[0] in state, 'copy must use an existing full ID'
     dest = pathlib.Path(args[-1])
-    shutil.copytree(pathlib.Path(cfg['context']) / 'public', dest)
-    (dest / 'custody-build-validation.json').write_text(json.dumps({'schema': 'neoos/dual-custody-build/v1', 'networks': ['mainnet', 'testnet'], 'map_sha256': cfg['map']}))
+    public = pathlib.Path(cfg['context']) / 'public'
+    if args[-2].endswith(':/opt/neoos/custody'):
+        shutil.copytree(public / 'custody', dest)
+    else:
+        assert args[-2].endswith(':/app/config')
+        shutil.copytree(public, dest)
+        (dest / 'custody-build-validation.json').write_text(json.dumps({'schema': 'neoos/dual-custody-build/v1', 'networks': ['mainnet', 'testnet'], 'map_sha256': cfg['map']}))
 elif args[:1] in (['build-enclave'], ['describe-eif']):
     if args[0] == 'build-enclave': pathlib.Path(args[-1]).write_bytes(b'synthetic EIF, not release evidence')
     print(json.dumps({'Measurements': {'HashAlgorithm': 'SHA384', 'PCR0': '1' * 96, 'PCR1': '2' * 96, 'PCR2': '3' * 96}}))
@@ -158,6 +163,157 @@ class Packaging(unittest.TestCase):
         profile['release_policy_version'] = dual.sha(raw)
         self.write()
         return manifest, raw
+
+    def enable_migration(self):
+        # Shape-only fixtures. No key generation, KMS or real Rust image receipt
+        # is involved; the surrogate below is not semantic validation evidence.
+        roles = []
+        for index, (name, key_id, selector, slot) in enumerate(zip(
+                ('oracle_verifier', 'updater'), ('mn-oracle-verifier-r1', 'mn-updater-r1'),
+                ('ORACLE_VERIFIER', 'UPDATER'),
+                ('MORPHEUS_ORACLE_VERIFIER_KMS_CIPHERTEXT_BASE64', 'MORPHEUS_UPDATER_NEO_N3_KMS_CIPHERTEXT_BASE64'))):
+            self.input['networks']['mainnet']['roles'][selector] = key_id
+            roles.append({'role': name, 'key_id': key_id,
+                'public_key': ('03' if index else '02') + POINT[2:66],
+                'script_hash': '0x' + str(index + 1) * 40,
+                'ciphertext_slot': slot, 'expected_kms_key_arn': ARN,
+                'encryption_context': 'explicit-empty-legacy-n3/v1',
+                'material_provenance_sha256': '44' * 32})
+        manifest = {'schema': 'neoos/legacy-n3-migration/v1', 'purpose': dual.MIGRATION_MODE,
+            'ceremony_id': 'synthetic-migration', 'profile_sha256': '11' * 32,
+            'credential_epoch': 'raw-r1', 'caller_id': 'internal-n3-raw-r1',
+            'legacy_checkpoint_sha256': '22' * 32,
+            'external_authority_map_sha256': '33' * 32, 'roles': roles}
+        raw = dual.encoded(manifest)
+        (self.root / dual.MIGRATION_FILE).write_bytes(raw)
+        self.input['networks']['mainnet']['migration'] = {'mode': dual.MIGRATION_MODE,
+            'manifest_file': dual.MIGRATION_FILE, 'manifest_sha256': dual.sha(raw)}
+        self.write()
+        return manifest, raw
+
+    def test_migration_exact_staging_compile_pin_and_original_profiles(self):
+        before = {n: dual.encoded(p) for n, p in self.profiles.items()}
+        _, raw = self.enable_migration()
+        with patch.dict(os.environ, {dual.MIGRATION_SHA_ENV: '99' * 32}):
+            result = self.stage()
+        context = self.root / 'context'
+        self.assertEqual((context / 'public/custody/legacy-n3-migration.json').read_bytes(), raw)
+        self.assertEqual(result['files']['public/custody/legacy-n3-migration.json'], dual.sha(raw))
+        for network in dual.NETWORKS:
+            self.assertEqual((context / 'public/custody' / (network + '.json')).read_bytes(), before[network])
+            self.assertEqual(self.profiles[network]['release_policy_version'], 'synthetic-only')
+        mapping = json.loads((context / 'public/network-profiles.json').read_bytes())
+        self.assertFalse(any('MIGRATION' in key for values in mapping.values() for key in values))
+        docker = (context / 'Dockerfile').read_text()
+        self.assertIn('RUN ' + dual.MIGRATION_SHA_ENV + '=' + dual.sha(raw) + ' cargo build ', docker)
+        self.assertEqual(docker.count(dual.MIGRATION_SHA_ENV), 1)
+        self.assertNotIn('99' * 32, docker)
+        self.assertNotIn('\nARG ', docker)
+
+    def test_migration_optional_absent_keeps_original_cargo_command_and_map(self):
+        result = self.stage()
+        self.assertNotIn('public/custody/legacy-n3-migration.json', result['files'])
+        docker = (self.root / 'context/Dockerfile').read_text()
+        self.assertIn('RUN cargo build --release --locked ', docker)
+        self.assertNotIn(dual.MIGRATION_SHA_ENV, docker)
+        self.assertNotIn('MIGRATION', (self.root / 'context/public/network-profiles.json').read_text())
+
+    def test_migration_and_testnet_enrollment_coexist_without_profile_rewrite(self):
+        _, enrollment = self.enable_enrollment()
+        before = {n: dual.encoded(p) for n, p in self.profiles.items()}
+        _, migration = self.enable_migration()
+        result = self.stage()
+        self.assertEqual(result['files']['public/custody/testnet-enrollment.json'], dual.sha(enrollment))
+        self.assertEqual(result['files']['public/custody/legacy-n3-migration.json'], dual.sha(migration))
+        for n in dual.NETWORKS:
+            self.assertEqual((self.root / 'context/public/custody' / (n + '.json')).read_bytes(), before[n])
+
+    def test_migration_descriptor_is_closed_mainnet_only_and_exclusive(self):
+        self.enable_migration()
+        original = copy.deepcopy(self.input)
+        for change in ('testnet', 'mode', 'basename', 'extra', 'enrollment', 'null'):
+            with self.subTest(change=change):
+                self.input = copy.deepcopy(original)
+                descriptor = self.input['networks']['mainnet']['migration']
+                if change == 'testnet':
+                    self.input['networks']['testnet']['migration'] = self.input['networks']['mainnet'].pop('migration')
+                if change == 'mode': descriptor['mode'] = 'disabled'
+                if change == 'basename': descriptor['manifest_file'] = '../legacy-n3-migration.json'
+                if change == 'extra': descriptor['sha_env'] = 'not-accepted'
+                if change == 'enrollment': self.input['networks']['mainnet']['enrollment'] = {}
+                if change == 'null': self.input['networks']['mainnet']['migration'] = None
+                self.write()
+                with self.assertRaises(ValueError): self.stage()
+                self.assertFalse((self.root / 'context').exists())
+
+    def test_migration_tamper_empty_oversize_and_duplicate_refuse_before_publication(self):
+        _, raw = self.enable_migration()
+        for change in ('tamper', 'empty', 'oversize', 'duplicate', 'symlink'):
+            with self.subTest(change=change):
+                path = self.root / dual.MIGRATION_FILE
+                if path.is_symlink(): path.unlink()
+                candidate = raw
+                if change == 'tamper': candidate = raw.replace(b'synthetic-migration', b'tampered-migration')
+                if change == 'empty': candidate = b''
+                if change == 'oversize': candidate = raw + b' ' * 16384
+                if change == 'duplicate': candidate = raw.replace(b'"schema":', b'"schema":"duplicate","schema":')
+                path.write_bytes(candidate)
+                if change == 'symlink':
+                    path.unlink(); path.symlink_to(self.root / 'mainnet.json')
+                self.input['networks']['mainnet']['migration']['manifest_sha256'] = dual.sha(raw if change in ('tamper', 'symlink') else candidate)
+                self.write()
+                with self.assertRaises(ValueError): self.stage()
+                self.assertFalse((self.root / 'context').exists())
+
+    def test_migration_closed_roles_and_basic_bindings_refuse(self):
+        manifest, _ = self.enable_migration()
+        for change in ('top-extra', 'role-extra', 'order', 'count', 'duplicate-key', 'point',
+                       'script', 'slot', 'key-id', 'arn-alias', 'context', 'digest', 'route'):
+            with self.subTest(change=change):
+                value = copy.deepcopy(manifest)
+                role = value['roles'][0]
+                if change == 'top-extra': value['admin'] = True
+                if change == 'role-extra': role['plaintext'] = 'synthetic-refused'
+                if change == 'order': value['roles'].reverse()
+                if change == 'count': value['roles'].pop()
+                if change == 'duplicate-key': role['public_key'] = value['roles'][1]['public_key']
+                if change == 'point': role['public_key'] = POINT
+                if change == 'script': role['script_hash'] = '0x' + '00' * 20
+                if change == 'slot': role['ciphertext_slot'] = 'MORPHEUS_NEO_N3_WIF'
+                if change == 'key-id': role['key_id'] = 'other-key'
+                if change == 'arn-alias': role['expected_kms_key_arn'] = ARN.split(':key/')[0] + ':alias/legacy'
+                if change == 'context': role['encryption_context'] = 'auto'
+                if change == 'digest': value['profile_sha256'] = '00' * 32
+                self.input['networks']['mainnet']['roles']['ORACLE_VERIFIER'] = 'other-route' if change == 'route' else 'mn-oracle-verifier-r1'
+                raw = dual.encoded(value)
+                (self.root / dual.MIGRATION_FILE).write_bytes(raw)
+                self.input['networks']['mainnet']['migration']['manifest_sha256'] = dual.sha(raw)
+                self.write()
+                with self.assertRaises(ValueError): self.validate()
+
+    def test_both_recipes_copy_fixed_path_before_cargo_and_mirror_runtime(self):
+        for recipe in ('Dockerfile.dual-enclave', 'Dockerfile.dual-enclave.cross'):
+            with self.subTest(recipe=recipe):
+                template = (HERE / recipe).read_text()
+                rendered = dual.migration_recipe(template, '12' * 32)
+                self.assertLess(rendered.index('COPY public/custody /opt/neoos/custody'), rendered.index('RUN ' + dual.MIGRATION_SHA_ENV))
+                self.assertLess(rendered.index('RUN ' + dual.MIGRATION_SHA_ENV), rendered.index('/release/examples/dual_prepare'))
+                self.assertIn('COPY --from=rustbuild /opt/neoos/custody /opt/neoos/custody', rendered)
+                self.assertIn('COPY public /app/config', rendered)
+                self.assertEqual(rendered.count(dual.MIGRATION_SHA_ENV), 1)
+                self.assertNotIn(dual.MIGRATION_SHA_ENV, dual.migration_recipe(template))
+
+    def test_migration_compile_marker_and_pin_injection_refuse(self):
+        template = (HERE / 'Dockerfile.dual-enclave').read_text()
+        legacy = template.replace('# DUAL_MIGRATION_BUILD_INPUT\n', '')
+        self.assertEqual(dual.migration_recipe(legacy), legacy)
+        for bad in (template.replace('# DUAL_MIGRATION_BUILD_INPUT', ''),
+                    template + '\n# DUAL_MIGRATION_BUILD_INPUT\n',
+                    template + '\nENV ' + dual.MIGRATION_SHA_ENV + '=runtime\n'):
+            with self.subTest(template=bad[-100:]), self.assertRaises(ValueError):
+                dual.migration_recipe(bad, '12' * 32)
+        for pin in ('12' * 31, 'AA' * 32, '00' * 32, '12' * 32 + ' cargo bad'):
+            with self.subTest(pin=pin), self.assertRaises(ValueError): dual.migration_recipe(template, pin)
 
     def test_measured_enrollment_stages_exact_bytes_optin_and_profile_binding(self):
         mainnet = dual.encoded(self.profiles['mainnet'])
@@ -818,12 +974,19 @@ m.build(root / 'source', root / 'context', manifest, root / 'result', m.safe_env
             if a[3:5] == ['container','inspect']:return dual.encoded([containers[a[-1]]])
             if a[3:4] == ['rm']:containers.pop(a[-1]);return b''
             if 'cp' in a:
+                if a[-2].endswith(':/opt/neoos/custody'):
+                    out=Path(a[-1]);shutil.copytree(context/'public/custody',out)
+                    if fault=='migration-fixed':(out/dual.MIGRATION_FILE).write_text('{}')
+                    if fault=='migration-missing':(out/dual.MIGRATION_FILE).unlink()
+                    return b''
+                self.assertTrue(a[-2].endswith(':/app/config'))
                 out=Path(a[-1]);shutil.copytree(context/'public',out)
                 receipt={'schema':'neoos/dual-custody-build/v1','networks':list(dual.NETWORKS),'map_sha256':manifest['map_sha256']}
                 if fault=='receipt':receipt['map_sha256']='99'*32
                 (out/'custody-build-validation.json').write_bytes(dual.encoded(receipt))
                 if fault=='payload':(out/'custody/testnet.json').write_text('{}')
                 if fault=='enrollment':(out/'custody/testnet-enrollment.json').write_text('{}')
+                if fault=='migration-mirror':(out/'custody'/dual.MIGRATION_FILE).write_text('{}')
                 return b''
             if '{{json .Config.Env}}' in a:
                 m=(context/'public/network-profiles.json').read_text().strip()
@@ -833,7 +996,10 @@ m.build(root / 'source', root / 'context', manifest, root / 'result', m.safe_env
                     m=dual.encoded(mapping).decode().strip()
                 enabled = all('MORPHEUS_RELAYER_STATE_FILE' in json.loads(m).get(n, {}) for n in dual.NETWORKS)
                 gate = str(not enabled if fault=='runtime-relayer-gate' else enabled).lower()
-                return dual.encoded(['NODE_ENV=production','MORPHEUS_ATTESTED_BOOT=require','MORPHEUS_ALLOW_EPHEMERAL_KEY=0','MORPHEUS_NETWORK_PROFILES_JSON='+m, 'MORPHEUS_EMBEDDED_RELAYER=' + gate])
+                image_env=['NODE_ENV=production','MORPHEUS_ATTESTED_BOOT=require','MORPHEUS_ALLOW_EPHEMERAL_KEY=0','MORPHEUS_NETWORK_PROFILES_JSON='+m, 'MORPHEUS_EMBEDDED_RELAYER=' + gate]
+                if fault=='migration-env':image_env.append(dual.MIGRATION_SHA_ENV+'=12')
+                if fault=='migration-mode-env':image_env.append('MORPHEUS_CUSTODY_MIGRATION_MODE='+dual.MIGRATION_MODE)
+                return dual.encoded(image_env)
             if 'build-enclave' in a or 'describe-eif' in a:
                 if 'build-enclave' in a:Path(a[-1]).write_bytes(b'synthetic EIF control '+str(counter).encode())
                 v='22' if (fault=='repro' and counter==2) or (fault=='readback' and 'describe-eif' in a) else '11'
@@ -850,6 +1016,30 @@ m.build(root / 'source', root / 'context', manifest, root / 'result', m.safe_env
         self.enable_enrollment()
         result, _ = self.simulate()
         self.assertIn('public/custody/testnet-enrollment.json', result['files'])
+
+    def test_migration_both_exported_paths_hashes_and_cargo_only_pin(self):
+        _, raw = self.enable_migration()
+        result, calls = self.simulate()
+        self.assertEqual(result['files']['public/custody/legacy-n3-migration.json'], dual.sha(raw))
+        copies = [a for a in calls if a[3:4] == ['cp']]
+        self.assertEqual(len(copies), 4)
+        self.assertEqual(len([a for a in copies if a[-2].endswith(':/opt/neoos/custody')]), 2)
+        for attempt in (1, 2):
+            self.assertEqual((self.root / ('image-custody-' + str(attempt)) / dual.MIGRATION_FILE).read_bytes(), raw)
+        for readback in result['image_readbacks']:
+            self.assertFalse(any(key in readback['environment'] for key in dual.MIGRATION_RUNTIME_KEYS))
+        self.assertFalse(any('--build-arg' in call for call in calls))
+
+    def test_migration_export_substitutions_missing_and_runtime_env_refuse(self):
+        self.enable_migration()
+        for fault in ('migration-mirror', 'migration-fixed', 'migration-missing', 'migration-env', 'migration-mode-env'):
+            with self.subTest(fault=fault):
+                with self.assertRaises((ValueError, FileNotFoundError)): self.simulate(fault)
+                self.assertFalse((self.root / 'result').exists())
+                self.assertFalse(any('build-enclave' in a for a in self.calls))
+                for p in list(self.root.iterdir()):
+                    if p.name.startswith(('context', 'image-config-', 'image-custody-', 'nitro-artifacts', 'build-')):
+                        shutil.rmtree(p) if p.is_dir() else p.unlink()
 
     def test_native_test_runner_preserves_original_fixture_failure(self):
         # Execute the actual imports and failure-handler AST only. No wrapper

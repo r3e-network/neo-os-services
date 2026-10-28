@@ -148,12 +148,16 @@ fn main() {
         eprintln!("enclave_host: this image does not include the embedded relayer");
         std::process::exit(1);
     }
-    let custody = custody_bootstrap::boot(&profiles).unwrap_or_else(|error| {
+    let custody = custody_bootstrap::boot_with_internal_raw(&profiles).unwrap_or_else(|error| {
         eprintln!("enclave_host: refusing to serve — {error}");
         std::process::exit(1);
     });
-    let apps = Arc::new(build_apps(profiles, &custody));
-    let custody = Arc::new(custody);
+    let apps = Arc::new(build_apps_with_internal_raw(
+        profiles,
+        &custody.routers,
+        &custody.internal_raw,
+    ));
+    let custody = Arc::new(custody.routers);
     let request_slots = Arc::new(tokio::sync::Semaphore::new(MAX_INFLIGHT_REQUESTS));
     #[cfg(feature = "embedded-relayer")]
     let prepared = nitro_enclave_host::embedded_relayer::prepare(
@@ -253,19 +257,34 @@ fn main() {
     }
 }
 
+#[cfg(test)]
 fn build_apps(
     profiles: NetworkProfiles,
     custody: &BTreeMap<String, Router>,
+) -> BTreeMap<String, Arc<AppState>> {
+    build_apps_with_internal_raw(profiles, custody, &BTreeMap::new())
+}
+
+fn build_apps_with_internal_raw(
+    profiles: NetworkProfiles,
+    custody: &BTreeMap<String, Router>,
+    bridges: &BTreeMap<String, neo_signer::embedded::InternalRawBridge>,
 ) -> BTreeMap<String, Arc<AppState>> {
     profiles
         .overlays
         .into_iter()
         .map(|(network, overlay)| {
             let transport: Box<dyn CustodyTransport> = match custody.get(&network) {
-                Some(router) => Box::new(
-                    InProcessCustodyTransport::new(&network, router.clone())
-                        .expect("validated network"),
-                ),
+                Some(router) => {
+                    let mut transport = InProcessCustodyTransport::new(&network, router.clone())
+                        .expect("validated network");
+                    if let Some(bridge) = bridges.get(&network) {
+                        transport = transport
+                            .with_internal_raw(bridge.clone())
+                            .expect("measured mainnet raw bridge");
+                    }
+                    Box::new(transport)
+                }
                 None => Box::new(ReqwestCustodyTransport::new()),
             };
             (network, build_app(overlay, transport))

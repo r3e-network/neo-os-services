@@ -287,6 +287,8 @@ impl ApiState {
                     releaser,
                     recoverer,
                     enrollment: None,
+                    migration: None,
+                    migration_recoverer: provision::migration_recoverer(),
                     mutex: std::sync::Mutex::new(()),
                 }))),
                 attested_boot: true,
@@ -312,6 +314,35 @@ impl ApiState {
                 .enrollment = enrollment;
         }
         self
+    }
+
+    pub(crate) fn with_migration(
+        mut self,
+        migration: Option<Arc<crate::embedded::MeasuredMigration>>,
+    ) -> Self {
+        let inner = Arc::get_mut(&mut self.inner).expect("configure before publishing state");
+        let vault = inner.vault.get_mut().expect("unpublished vault lock");
+        if let Vault::Pending(gate) = vault {
+            let gate = Arc::get_mut(gate).expect("unpublished provision gate");
+            gate.migration = migration;
+        }
+        self
+    }
+
+    fn parse_provision_body(
+        &self,
+        body: ProvisionBody,
+    ) -> Result<ProvisionEnv, provision::ProvisionError> {
+        let vault = self
+            .inner
+            .vault
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let migration = match &*vault {
+            Vault::Pending(gate) => gate.migration.as_deref(),
+            _ => None,
+        };
+        ProvisionEnv::from_body_for_migration(body, migration)
     }
 
     pub(crate) fn with_process_lease(
@@ -418,7 +449,7 @@ impl ApiState {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         // Local-only freshness check under the publication lock: a live
         // recovery can expire between return and this final Ready transition.
-        if gate.enrollment.is_some() {
+        if gate.enrollment.is_some() || gate.migration.is_some() {
             result = result.and_then(|service| {
                 service
                     .ensure_durable_ready()
@@ -430,7 +461,10 @@ impl ApiState {
             Ok(service) => Vault::Ready(service.clone()),
             // Preserve abandoned local state as evidence. Never run another
             // initializer into a DB left by a failed or ambiguous attempt.
-            Err(_) if gate.enrollment.is_some() && gate.database_path.exists() => {
+            Err(_)
+                if (gate.enrollment.is_some() || gate.migration.is_some())
+                    && gate.database_path.exists() =>
+            {
                 Vault::Provisioning
             }
             Err(_) => Vault::Pending(gate),
@@ -1674,7 +1708,7 @@ async fn provision_route(
     body: JsonBody<ProvisionBody>,
 ) -> Response {
     let (body, credentials) = body.bind(credentials);
-    let env = match ProvisionEnv::from_body(body) {
+    let env = match state.parse_provision_body(body) {
         Ok(env) => env,
         Err(error) => {
             let (code, status, message) = error.answer();

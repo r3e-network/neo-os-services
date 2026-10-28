@@ -1439,3 +1439,44 @@ fn an_unused_role_report_type_still_defaults_closed() {
     assert_eq!(report.key_source, "none");
     assert_eq!(report.public_key, "");
 }
+
+#[test]
+fn migration_private_raw_transport_does_not_create_env_or_semantic_credential() {
+    struct PrivateRaw;
+    impl crate::custody::CustodyTransport for PrivateRaw {
+        fn has_private_raw_lane(&self) -> bool {
+            true
+        }
+        fn send(
+            &self,
+            _: crate::custody::CustodyRequest,
+        ) -> Result<crate::custody::CustodyReply, String> {
+            panic!("configuration-only test must not dispatch")
+        }
+    }
+    let overlay = Arc::new(RwLock::new(crate::overlay::EnvOverlay::new([
+        ("NODE_ENV", "production"),
+        ("SIGNER_SERVICE_URL", "http://127.0.0.1:0/mainnet"),
+        ("SIGNER_SERVICE_TOKEN", "host-supplied-do-not-use"),
+        ("SIGNER_SERVICE_SEMANTIC_TOKEN", "host-supplied-do-not-use"),
+    ])));
+    let signer = crate::custody::CustodySigner::new(overlay.clone(), Box::new(PrivateRaw));
+    assert!(signer
+        .config_for(crate::custody::CustodyLane::Raw)
+        .unwrap()
+        .unwrap()
+        .token
+        .is_empty());
+    assert!(signer
+        .config_for(crate::custody::CustodyLane::Semantic)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        overlay.read().unwrap().get("SIGNER_SERVICE_TOKEN"),
+        Some("host-supplied-do-not-use")
+    );
+    assert_eq!(
+        overlay.read().unwrap().get("SIGNER_SERVICE_TOKEN_SOURCE"),
+        None
+    );
+}

@@ -79,8 +79,138 @@ fn gate(dir: &Path, releaser: EnvelopeReleaser) -> ProvisionGate {
         releaser,
         recoverer,
         enrollment: None,
+        migration: None,
+        migration_recoverer: migration_recoverer(),
         mutex: Mutex::new(()),
     }
+}
+
+fn legacy_pair_body() -> ProvisionBody {
+    let mut body = full_env();
+    body.env
+        .insert(LEGACY_ROLE_CIPHERTEXT_ENVS[0].into(), json!("b3JhY2xl"));
+    body.env
+        .insert(LEGACY_ROLE_CIPHERTEXT_ENVS[1].into(), json!("dXBkYXRlcg=="));
+    body
+}
+
+#[test]
+fn legacy_pair_is_accepted_only_under_measured_migration_and_is_optional_for_restore() {
+    let (_, migration) = crate::embedded::tests::migration_fixture();
+    assert!(ProvisionEnv::from_body(legacy_pair_body()).is_err());
+    let env = ProvisionEnv::from_body_for_migration(legacy_pair_body(), Some(&migration)).unwrap();
+    assert_eq!(env.get(LEGACY_ROLE_CIPHERTEXT_ENVS[0]), Some("b3JhY2xl"));
+    assert_eq!(
+        env.get(LEGACY_ROLE_CIPHERTEXT_ENVS[1]),
+        Some("dXBkYXRlcg==")
+    );
+    let restore = ProvisionEnv::from_body_for_migration(full_env(), Some(&migration)).unwrap();
+    assert!(LEGACY_ROLE_CIPHERTEXT_ENVS
+        .iter()
+        .all(|name| restore.get(name).is_none()));
+}
+
+#[test]
+fn legacy_pair_refuses_partial_invalid_oversize_and_same_decoded_input() {
+    let (_, migration) = crate::embedded::tests::migration_fixture();
+    for name in LEGACY_ROLE_CIPHERTEXT_ENVS {
+        let mut body = legacy_pair_body();
+        body.env.remove(name);
+        assert!(ProvisionEnv::from_body_for_migration(body, Some(&migration)).is_err());
+    }
+    for value in [
+        "not-base64!".to_string(),
+        "".into(),
+        "b3JhY2xl".into(),
+        "A".repeat(MAX_LEGACY_CIPHERTEXT_BYTES * 2 + 1),
+    ] {
+        let mut body = legacy_pair_body();
+        body.env
+            .insert(LEGACY_ROLE_CIPHERTEXT_ENVS[1].into(), json!(value));
+        assert!(ProvisionEnv::from_body_for_migration(body, Some(&migration)).is_err());
+    }
+}
+
+#[test]
+fn migration_never_accepts_plaintext_reference_metadata_or_manifest_overrides() {
+    let (_, migration) = crate::embedded::tests::migration_fixture();
+    for name in [
+        "MORPHEUS_ORACLE_VERIFIER_WIF",
+        "MORPHEUS_UPDATER_NEO_N3_WIF",
+        "MORPHEUS_ORACLE_VERIFIER_KMS_KEY_ARN",
+        "MORPHEUS_UPDATER_NEO_N3_KEY_REF",
+        "SIGNER_SERVICE_CUSTODY_TOKEN",
+        "MORPHEUS_CUSTODY_MIGRATION_MODE",
+        "MORPHEUS_CUSTODY_MIGRATION_FILE",
+        "MORPHEUS_CUSTODY_MIGRATION_SHA256",
+        "NEOOS_LEGACY_N3_MIGRATION_SHA256",
+        "manifest",
+        "expected_hash",
+        "metadata",
+    ] {
+        let mut body = legacy_pair_body();
+        body.env.insert(name.into(), json!("forbidden"));
+        assert!(
+            matches!(ProvisionEnv::from_body_for_migration(body, Some(&migration)),
+            Err(ProvisionError::UnknownKey(key)) if key == name)
+        );
+    }
+}
+
+#[test]
+fn gate_revalidates_migration_scope_before_any_release_or_recovery() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (_, migration) = crate::embedded::tests::migration_fixture();
+    let directory = tempfile::tempdir().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let called = calls.clone();
+    let releaser: EnvelopeReleaser = Arc::new(move |_, _, _| {
+        called.fetch_add(1, Ordering::SeqCst);
+        Err("invalid scope reached release".into())
+    });
+    let mut gate = gate(directory.path(), releaser);
+    let pair = ProvisionEnv::from_body_for_migration(legacy_pair_body(), Some(&migration)).unwrap();
+    assert!(run(&gate, &pair, Some(RELEASED_TOKEN)).is_err());
+    gate.migration = Some(migration.clone()); // Existing gate profile is Testnet.
+    let env = ProvisionEnv::from_body_for_migration(full_env(), Some(&migration)).unwrap();
+    assert!(run(&gate, &env, Some(RELEASED_TOKEN)).is_err());
+    let (profile, enrollment) = crate::enrollment::tests::fixture();
+    gate.profile = profile;
+    gate.enrollment = Some(enrollment);
+    assert!(run(&gate, &env, Some(RELEASED_TOKEN)).is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn migration_run_uses_dedicated_recoverer_without_eager_role_release_or_fallback() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (profile, migration) = crate::embedded::tests::migration_fixture();
+    let directory = tempfile::tempdir().unwrap();
+    let mut gate = gate(directory.path(), canned_releaser());
+    gate.profile = profile.clone();
+    gate.migration = Some(migration);
+    gate.recoverer = Arc::new(|_, _, _, _, _| panic!("migration used ordinary recovery"));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let called = calls.clone();
+    gate.migration_recoverer = Arc::new(move |received_profile, _, _, _, attempt| {
+        assert_eq!(received_profile.profile_hash(), profile.profile_hash());
+        attempt.manifest.validate_profile(&profile).unwrap();
+        called.fetch_add(1, Ordering::SeqCst);
+        assert!(attempt.restore_only);
+        // No role envelopes were supplied: this models the committed branch.
+        // Do NOT invoke the real release callback from a positive fixture.
+        Err("synthetic committed branch did not request roles".into())
+    });
+    let env = ProvisionEnv::from_body_for_migration(full_env(), gate.migration.as_deref()).unwrap();
+    let error = refused(
+        run(&gate, &env, Some(RELEASED_TOKEN)),
+        "synthetic recovery result",
+    );
+    assert_eq!(
+        error,
+        ProvisionError::Release("synthetic committed branch did not request roles".into())
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -517,4 +647,31 @@ fn duplicate_provision_fields_are_rejected_before_map_conversion() {
     ] {
         assert!(serde_json::from_str::<ProvisionBody>(raw).is_err());
     }
+}
+
+#[test]
+fn migration_role_pair_selects_genesis_capable_recovery_without_eager_decrypt() {
+    let (profile, migration) = crate::embedded::tests::migration_fixture();
+    let directory = tempfile::tempdir().unwrap();
+    let mut gate = gate(directory.path(), canned_releaser());
+    gate.profile = profile;
+    gate.migration = Some(migration);
+    gate.recoverer = Arc::new(|_, _, _, _, _| panic!("ordinary recovery selected"));
+    gate.migration_recoverer = Arc::new(|_, _, _, _, attempt| {
+        assert!(!attempt.restore_only);
+        Err("synthetic authenticated-head admission pending".into())
+    });
+    let mut body = full_env();
+    body.env
+        .insert(LEGACY_ROLE_CIPHERTEXT_ENVS[0].into(), json!("AQ=="));
+    body.env
+        .insert(LEGACY_ROLE_CIPHERTEXT_ENVS[1].into(), json!("Ag=="));
+    let env = ProvisionEnv::from_body_for_migration(body, gate.migration.as_deref()).unwrap();
+    assert_eq!(
+        refused(
+            run(&gate, &env, Some(RELEASED_TOKEN)),
+            "fake recovery must hold"
+        ),
+        ProvisionError::Release("synthetic authenticated-head admission pending".into())
+    );
 }

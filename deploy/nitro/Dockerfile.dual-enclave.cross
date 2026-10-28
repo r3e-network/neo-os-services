@@ -83,11 +83,14 @@ COPY workers/nitro-enclave-host/src workers/nitro-enclave-host/src
 COPY config/networks/mainnet.json config/networks/mainnet.json
 COPY config/networks/testnet.json config/networks/testnet.json
 COPY deploy/nitro/dual-prepare.rs workers/nitro-enclave-host/examples/dual_prepare.rs
+# Fixed measured public files are present for compilation and dual_prepare.
+COPY public/custody /opt/neoos/custody
 # Release build of the two binaries this image runs: the frontier and its PID 1
 # supervisor. --locked fails if Cargo.lock is out of sync (no implicit lockfile
 # mutation of the pinned graph). The binaries are deterministic for identical
 # inputs + toolchain (edition/workspace settings are committed; no volatile
 # -C metadata inputs).
+# DUAL_MIGRATION_BUILD_INPUT
 RUN cargo build --release --locked --target x86_64-unknown-linux-gnu \
       -p nitro-enclave-host --bin enclave_host --example dual_prepare --features nitro-enclave-host/embedded-relayer \
       -p nitro-init --bin nitro_init
@@ -141,6 +144,7 @@ WORKDIR /app
 COPY --from=rustbuild /build/target/x86_64-unknown-linux-gnu/release/enclave_host /app/bin/enclave_host
 COPY --from=rustbuild /build/target/x86_64-unknown-linux-gnu/release/nitro_init /app/bin/nitro_init
 COPY --from=rustbuild /app/config /app/config
+COPY --from=rustbuild /opt/neoos/custody /opt/neoos/custody
 RUN chmod +x /app/bin/enclave_host /app/bin/nitro_init
 
 # --- Reproducibility: strip build-time timestamps across the WHOLE rootfs. ---

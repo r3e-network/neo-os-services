@@ -42,6 +42,91 @@ use crate::{
     vault::MasterKey,
 };
 
+fn migration_provision_body() -> ProvisionBody {
+    serde_json::from_value(json!({"env":{
+        (provision::TOKEN_CIPHERTEXT_ENV):"transport",
+        (provision::MASTER_KEY_CIPHERTEXT_ENV):"root",
+        (provision::REGION_ENV):"us-east-1", "AWS_ACCESS_KEY_ID":"synthetic",
+        "AWS_SECRET_ACCESS_KEY":"synthetic", "AWS_SESSION_TOKEN":"synthetic"
+    }}))
+    .unwrap()
+}
+
+fn migration_test_state(directory: &std::path::Path) -> ApiState {
+    let (profile, migration) = crate::embedded::tests::migration_fixture();
+    let releaser: provision::EnvelopeReleaser = Arc::new(|_, ciphertext, purpose| {
+        let bytes = match (ciphertext, purpose) {
+            ("transport", provision::EnvelopePurpose::TransportToken) => b"test-transport".to_vec(),
+            ("root", provision::EnvelopePurpose::MasterKey) => vec![0x5a; 32],
+            _ => panic!("synthetic migration fixture reached role or unknown release"),
+        };
+        Ok(zeroize::Zeroizing::new(bytes))
+    });
+    let recoverer: provision::MigrationRecoverer = Arc::new(|_, _, root, path, _| {
+        Ok(SignerService::new(
+            Store::open(path).map_err(|error| error.to_string())?,
+            root,
+        ))
+    });
+    let mut state = ApiState::attested_pending_with_components(
+        directory.join("signer.db"),
+        directory.to_path_buf(),
+        profile,
+        releaser,
+        Arc::new(|_, _, _, _, _| panic!("migration fell back to ordinary recovery")),
+    )
+    .with_migration(Some(migration));
+    // Override only this synthetic fixture before publication. Never invoke
+    // the real authority/NSM factory in a positive unit test.
+    let inner = Arc::get_mut(&mut state.inner).unwrap();
+    match inner.vault.get_mut().unwrap() {
+        Vault::Pending(gate) => Arc::get_mut(gate).unwrap().migration_recoverer = recoverer,
+        _ => panic!("new fixture is not pending"),
+    }
+    state
+}
+
+#[test]
+fn migration_native_body_parser_uses_only_the_captured_gate_scope() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = migration_test_state(directory.path());
+    let mut body = migration_provision_body();
+    body.env.insert(
+        provision::LEGACY_ROLE_CIPHERTEXT_ENVS[0].into(),
+        json!("b3JhY2xl"),
+    );
+    body.env.insert(
+        provision::LEGACY_ROLE_CIPHERTEXT_ENVS[1].into(),
+        json!("dXBkYXRlcg=="),
+    );
+    assert!(state.parse_provision_body(body).is_ok());
+    let mut body = migration_provision_body();
+    body.env.insert(
+        "NEOOS_LEGACY_N3_MIGRATION_SHA256".into(),
+        json!("11".repeat(32)),
+    );
+    assert!(state.parse_provision_body(body).is_err());
+    assert!(!directory.path().join("signer.db").exists());
+    assert!(state.service_snapshot().is_none());
+}
+
+#[test]
+fn migration_publication_requires_durable_service_and_preserves_abandoned_database() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = migration_test_state(directory.path());
+    let env = state
+        .parse_provision_body(migration_provision_body())
+        .unwrap();
+    // The synthetic recoverer deliberately returns a non-durable service.
+    assert!(state.provision(&env, Some("test-transport")).is_err());
+    assert!(state.service_snapshot().is_none());
+    assert!(directory.path().join("signer.db").exists());
+    assert!(matches!(
+        state.provision(&env, Some("test-transport")),
+        Err(provision::ProvisionError::InProgress)
+    ));
+}
+
 fn neox_unsigned(nonce: u64, value: u128) -> Vec<u8> {
     let mut amount = [0u8; 32];
     amount[16..].copy_from_slice(&value.to_be_bytes());

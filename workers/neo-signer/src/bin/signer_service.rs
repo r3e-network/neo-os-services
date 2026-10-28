@@ -229,6 +229,7 @@ async fn serve() -> Result<()> {
             let runtime = EmbeddedCustodyRuntime::boot(
                 EmbeddedCustodyConfig {
                     enrollment: None,
+                    migration: neo_signer::embedded::MeasuredMigration::from_image_owned(&profile)?,
                     expected_network: profile.environment(),
                     profile,
                     data_dir: config.data_dir.clone(),
