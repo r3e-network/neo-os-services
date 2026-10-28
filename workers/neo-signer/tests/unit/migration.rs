@@ -798,3 +798,204 @@ fn migration_internal_raw_credential_requires_exact_current_caller() {
         .current_raw_token(&MasterKey::from_bytes([9; 32]), &caller)
         .is_err());
 }
+
+// v2 regression boundary: an explicit measured contract, never an upgrade of v1.
+pub(crate) fn semantic_manifest(p: &ValidatedVaultProfile) -> Value {
+    let mut v = manifest(p);
+    v["schema"] = json!("neoos/legacy-n3-migration/v2");
+    v["purpose"] = json!("legacy-n3-two-role-root-caller/v2");
+    v["semantic"] = json!({"caller_id":"internal-n3-feed-r1",
+        "max_system_fee":150_000_000, "max_network_fee":50_000_000,
+        "max_signatures":60, "window_seconds":3600});
+    v
+}
+
+#[test]
+fn semantic_v2_admits_distinct_updater_only_sign_caller_atomically() {
+    let p = profile();
+    let migration = validated(&semantic_manifest(&p), &p).unwrap();
+    let state = migration
+        .prepare(&p, &MasterKey::from_bytes(ROOT), material(), 123)
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().join("vault.db")).unwrap();
+    store
+        .stage_legacy_migration(&state, &permit(&state))
+        .unwrap();
+    let callers = store.list_signer_callers().unwrap();
+    assert_eq!(callers.len(), 2);
+    let raw = callers
+        .iter()
+        .find(|c| c.id == "internal-n3-raw-r1")
+        .unwrap();
+    assert_eq!(raw.capabilities, vec![CallerCapability::RawSign]);
+    let semantic = callers
+        .iter()
+        .find(|c| c.id == "internal-n3-feed-r1")
+        .unwrap();
+    assert_eq!(semantic.capabilities, vec![CallerCapability::Sign]);
+    assert_eq!(semantic.key_grant, KeyGrant::Only(vec![ROLE_IDS[1].into()]));
+    assert_ne!(raw.token_digest, semantic.token_digest);
+    assert!(semantic.allowed_origins.is_empty());
+    assert!(store
+        .stage_legacy_migration(&state, &permit(&state))
+        .is_err());
+}
+
+#[test]
+fn semantic_v2_installs_bounded_feed_policy_only_on_updater() {
+    let p = profile();
+    let migration = validated(&semantic_manifest(&p), &p).unwrap();
+    let state = migration
+        .prepare(&p, &MasterKey::from_bytes(ROOT), material(), 123)
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().join("vault.db")).unwrap();
+    store
+        .stage_legacy_migration(&state, &permit(&state))
+        .unwrap();
+    let oracle = store.load_signer_policy(ROLE_IDS[0]).unwrap().unwrap();
+    assert!(!oracle.allow_contract_call);
+    let updater = store.load_signer_policy(ROLE_IDS[1]).unwrap().unwrap();
+    assert!(updater.allow_contract_call);
+    assert!(!updater.allow_transfer && !updater.allow_global_scope && !updater.allow_consensus);
+    assert_eq!(updater.max_signers, Some(1));
+    assert_eq!(updater.max_system_fee, Some(150_000_000));
+    assert_eq!(updater.max_network_fee, Some(50_000_000));
+    assert_eq!(updater.contract_whitelist.len(), 1);
+    assert_eq!(
+        updater
+            .contract_method_whitelist
+            .iter()
+            .map(|m| m.method.as_str())
+            .collect::<Vec<_>>(),
+        vec!["updateFeeds"]
+    );
+    assert!(updater.max_signatures.is_some());
+}
+
+#[test]
+fn semantic_v2_receipt_explicitly_records_new_authority() {
+    let p = profile();
+    let migration = validated(&semantic_manifest(&p), &p).unwrap();
+    let state = migration
+        .prepare(&p, &MasterKey::from_bytes(ROOT), material(), 123)
+        .unwrap();
+    let receipt: Value = serde_json::from_str(state.audit().detail.as_ref().unwrap()).unwrap();
+    assert_eq!(
+        receipt["schema"],
+        json!("neoos/legacy-n3-migration-receipt/v2")
+    );
+    assert_eq!(
+        receipt["semantic"]["caller_id"],
+        json!("internal-n3-feed-r1")
+    );
+    assert_eq!(receipt["semantic"]["key_id"], json!(ROLE_IDS[1]));
+    assert_eq!(receipt["semantic"]["capability"], json!("sign"));
+    assert_eq!(receipt["historical_native_actions_restored"], json!(false));
+    migration.validate_receipt(state.audit()).unwrap();
+}
+
+#[test]
+fn semantic_v2_cannot_be_smuggled_into_v1_or_missing_v2_optin() {
+    let p = profile();
+    let mut v = semantic_manifest(&p);
+    v["schema"] = json!("neoos/legacy-n3-migration/v1");
+    v["purpose"] = json!(PURPOSE);
+    assert!(validated(&v, &p).is_err());
+    let mut v = semantic_manifest(&p);
+    v.as_object_mut().unwrap().remove("semantic");
+    assert!(validated(&v, &p).is_err());
+    let old = prepared();
+    assert_eq!(old.caller().capabilities, vec![CallerCapability::RawSign]);
+    let receipt: Value = serde_json::from_str(old.audit().detail.as_ref().unwrap()).unwrap();
+    assert_eq!(
+        receipt["schema"],
+        json!("neoos/legacy-n3-migration-receipt/v1")
+    );
+    assert!(receipt.get("semantic").is_none());
+}
+
+#[test]
+fn semantic_v2_rejects_excess_authority_and_unbounded_limits() {
+    let p = profile();
+    for (field, value) in [
+        ("caller_id", json!("internal-n3-raw-r1")),
+        ("max_system_fee", json!(0)),
+        ("max_system_fee", json!(1_000_000_001i64)),
+        ("max_network_fee", json!(200_000_001i64)),
+        ("max_signatures", json!(0)),
+        ("window_seconds", json!(0)),
+        ("admin", json!(true)),
+        ("key_grant", json!("any")),
+    ] {
+        let mut v = semantic_manifest(&p);
+        v["semantic"][field] = value;
+        assert!(validated(&v, &p).is_err(), "{field}");
+    }
+}
+
+#[test]
+fn semantic_v2_current_caller_rejects_rotation_disable_grant_and_root_changes() {
+    let p = profile();
+    let m = validated(&semantic_manifest(&p), &p).unwrap();
+    let root = MasterKey::from_bytes(ROOT);
+    let caller = m.initial_semantic_caller(&root, 123).unwrap().unwrap();
+    assert!(m.current_semantic_token(&root, &caller).is_ok());
+    for change in 0..8 {
+        let mut c = caller.clone();
+        match change {
+            0 => c.disabled = true,
+            1 => c.token_digest = [7; 32],
+            2 => c.capabilities = vec![CallerCapability::RawSign],
+            3 => c.capabilities.push(CallerCapability::Admin),
+            4 => c.key_grant = KeyGrant::Any,
+            5 => c.key_grant = KeyGrant::Only(vec![ROLE_IDS[0].into()]),
+            6 => c.allowed_origins = vec!["https://foreign.invalid".into()],
+            7 => c.id = "foreign".into(),
+            _ => unreachable!(),
+        }
+        assert!(
+            m.current_semantic_token(&root, &c).is_err(),
+            "change {change}"
+        );
+    }
+    assert!(m
+        .current_semantic_token(&MasterKey::from_bytes([9; 32]), &caller)
+        .is_err());
+    let old = validated(&manifest(&p), &p).unwrap();
+    assert!(old.initial_semantic_caller(&root, 123).unwrap().is_none());
+    assert!(old.current_semantic_token(&root, &caller).is_err());
+    // The raw v1 credential and grant stay exact, including on the v2 build.
+    assert_eq!(
+        m.initial_caller(&root, 123).unwrap(),
+        old.initial_caller(&root, 123).unwrap()
+    );
+}
+
+#[test]
+fn semantic_v2_restore_exact_initial_then_preserves_disabled_deleted_caller() {
+    let p = profile();
+    let m = validated(&semantic_manifest(&p), &p).unwrap();
+    let root = MasterKey::from_bytes(ROOT);
+    let state = m.prepare(&p, &root, material(), 123).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().join("v.db")).unwrap();
+    store
+        .stage_legacy_migration(&state, &permit(&state))
+        .unwrap();
+    validate_snapshot_source(&store, &m, &root, 1).unwrap();
+    let old = validated(&manifest(&p), &p).unwrap();
+    assert!(validate_snapshot_source(&store, &old, &root, 1).is_err());
+    store
+        .set_signer_caller_disabled("internal-n3-feed-r1", true)
+        .unwrap();
+    assert!(validate_snapshot_source(&store, &m, &root, 1).is_err());
+    validate_snapshot_source(&store, &m, &root, 2).unwrap();
+    store.delete_signer_caller("internal-n3-feed-r1").unwrap();
+    validate_snapshot_source(&store, &m, &root, 2).unwrap();
+    assert_eq!(store.list_signer_callers().unwrap().len(), 1);
+    // A v1 receipt cannot be accepted as an implicit v2 authority forward.
+    let old_state = prepared();
+    assert!(m.validate_receipt(old_state.audit()).is_err());
+}

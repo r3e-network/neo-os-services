@@ -104,7 +104,10 @@ pub fn handle_sign_payload(
     // pins. What matters for the vulnerability is that this sits before
     // `sign_payload`: with custody connected and the lane not opted into, no
     // signature is ever produced.
-    if !blind_sign_enabled(state) {
+    // The v2 measured migration is an explicit full-transaction opt-in. It
+    // confers no raw-byte fallback and the separate Sign caller/policy remains
+    // authoritative. v1 and ordinary transports keep the existing image gate.
+    if !blind_sign_enabled(state) && !state.signer.measured_n3_transaction_adapter() {
         return Err(blind_sign_disabled_error());
     }
     let bytes = hex::decode(&data_hex).map_err(|_| http_error(400, "data_hex is required"))?;

@@ -1640,3 +1640,243 @@ async fn migration_internal_bridge_uses_canonical_auth_and_never_exposes_other_l
         .unwrap();
     assert!(bridge.dispatch(request()).await.is_err());
 }
+
+fn semantic_v2_fixture() -> (
+    tempfile::TempDir,
+    Arc<ValidatedVaultProfile>,
+    crate::migration::MeasuredMigration,
+    Arc<super::enrollment_fixture::Authority>,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let p = Arc::new(crate::migration::tests::profile());
+    let m = crate::migration::tests::validated(&crate::migration::tests::semantic_manifest(&p), &p)
+        .unwrap();
+    let authority = super::enrollment_fixture::Authority::new(p.clone());
+    (dir, p, m, authority)
+}
+
+fn semantic_v2_unsigned(method: &str, fee: u64, nonce: u32) -> Vec<u8> {
+    semantic_v2_unsigned_to(
+        "03013f49c42a14546c8bbe58f9d434c3517fccab",
+        method,
+        fee,
+        nonce,
+    )
+}
+
+fn semantic_v2_unsigned_to(contract: &str, method: &str, fee: u64, nonce: u32) -> Vec<u8> {
+    use neo_os_core::n3_tx::{create_invoke_script, FeedSigner, FeedTx};
+    let display: [u8; 20] = hex::decode(contract).unwrap().try_into().unwrap();
+    let script = create_invoke_script(&display, method, &[]).unwrap();
+    let mut scalar = [0u8; 32];
+    scalar[31] = 2;
+    let public = crate::crypto::public_key_from_private(&scalar).unwrap();
+    let mut account = crate::crypto::script_hash(&public);
+    account.reverse();
+    FeedTx {
+        nonce,
+        valid_until_block: 1000,
+        system_fee: fee,
+        network_fee: 1000,
+        signer: FeedSigner {
+            script_hash: account.try_into().unwrap(),
+        },
+        script: &script,
+    }
+    .serialize_unsigned()
+}
+
+#[tokio::test]
+async fn semantic_v2_bridge_fulltx_policy_domain_durable_and_currentcaller() {
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Request, StatusCode},
+    };
+    use p256::ecdsa::{signature::Verifier, Signature, VerifyingKey};
+    let (dir, p, m, authority) = semantic_v2_fixture();
+    let service = migration_genesis_run(
+        p.clone(),
+        &m,
+        authority.clone(),
+        &dir.path().join("v2.db"),
+        &|| Ok(crate::migration::tests::material()),
+    )
+    .unwrap()
+    .with_vault_binding(p.clone(), None);
+    let state = crate::api::ApiState::new(service.clone());
+    let bridge = crate::embedded::InternalSemanticBridge::fixture(state.clone(), m);
+    let unsigned = semantic_v2_unsigned("updateFeeds", 1000, 1);
+    let call = |data: Vec<u8>, id: &str, key: &str| {
+        Request::builder().method("POST").uri("/signer/api/v1/sign/transaction").header("content-type","application/json").body(Body::from(serde_json::json!({"key_id":key,"unsigned_hex":hex::encode(data),"chain_family":"neo-n3","request_id":id}).to_string())).unwrap()
+    };
+    use tower::ServiceExt;
+    assert_eq!(
+        crate::api::router(state)
+            .oneshot(call(unsigned.clone(), "first", "mn-updater-r1"))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let before_generation = authority.head.lock().unwrap().as_ref().unwrap().generation;
+    let response = bridge
+        .dispatch(call(unsigned.clone(), "first", "mn-updater-r1"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+    assert!(!String::from_utf8_lossy(&bytes).contains("nci1_"));
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["allowed"], true);
+    let sigbytes = hex::decode(body["invocation_script"].as_str().unwrap()).unwrap();
+    let verification = hex::decode(body["verification_script"].as_str().unwrap()).unwrap();
+    let vk = VerifyingKey::from_sec1_bytes(&verification[2..35]).unwrap();
+    let sig = Signature::from_slice(&sigbytes[2..]).unwrap();
+    let mut pre = 860833102u32.to_le_bytes().to_vec();
+    pre.extend_from_slice(&crate::crypto::transaction_hash(&unsigned));
+    vk.verify(&pre, &sig).unwrap();
+    pre[..4].copy_from_slice(&894710606u32.to_le_bytes());
+    assert!(vk.verify(&pre, &sig).is_err());
+    assert_eq!(
+        authority.head.lock().unwrap().as_ref().unwrap().generation,
+        before_generation + 1
+    );
+    assert!(service
+        .repository()
+        .list_signer_audit(None, 100)
+        .unwrap()
+        .iter()
+        .any(|a| a.action == crate::model::SignerAuditAction::TransactionSigned));
+    // Request ID cannot be rebound to different transaction bytes.
+    assert_ne!(
+        bridge
+            .dispatch(call(
+                semantic_v2_unsigned("updateFeeds", 1000, 2),
+                "first",
+                "mn-updater-r1"
+            ))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    for (data, id) in [
+        (semantic_v2_unsigned("updateFeed", 1000, 3), "method"),
+        (semantic_v2_unsigned("updateFeeds", 150000001, 4), "fee"),
+        (
+            semantic_v2_unsigned_to(
+                "2222222222222222222222222222222222222222",
+                "updateFeeds",
+                1000,
+                5,
+            ),
+            "contract",
+        ),
+    ] {
+        assert_ne!(
+            bridge
+                .dispatch(call(data, id, "mn-updater-r1"))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+    }
+    let mut wrong_scope = unsigned.clone();
+    wrong_scope[46] = 0x80;
+    assert!(bridge
+        .dispatch(call(wrong_scope, "scope", "mn-updater-r1"))
+        .await
+        .is_err());
+    let mut trailing = unsigned.clone();
+    trailing.push(0);
+    assert!(bridge
+        .dispatch(call(trailing, "trailing", "mn-updater-r1"))
+        .await
+        .is_err());
+    assert!(bridge
+        .dispatch(call(vec![0; 36], "digest", "mn-updater-r1"))
+        .await
+        .is_err());
+    assert!(bridge
+        .dispatch(call(unsigned.clone(), "wrongkey", "mn-oracle-verifier-r1"))
+        .await
+        .is_err());
+    for path in [
+        "/signer/api/v1/sign/raw",
+        "/signer/api/v1/sign/consensus",
+        "/signer/api/v1/callers",
+        "/signer/api/v1/sign/transaction?network=testnet",
+    ] {
+        assert!(bridge
+            .dispatch(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap()
+            )
+            .await
+            .is_err());
+    }
+    for header in ["authorization", "origin"] {
+        let mut req = call(unsigned.clone(), "header", "mn-updater-r1");
+        req.headers_mut().insert(header, "refused".parse().unwrap());
+        assert!(bridge.dispatch(req).await.is_err());
+    }
+    service
+        .repository()
+        .set_signer_caller_disabled("internal-n3-feed-r1", true)
+        .unwrap();
+    assert!(bridge
+        .dispatch(call(unsigned, "disabled", "mn-updater-r1"))
+        .await
+        .is_err());
+}
+
+#[test]
+fn semantic_v2_genesis_restore_never_reimports_or_attaches_revoked_caller() {
+    let (dir, p, m, authority) = semantic_v2_fixture();
+    let service = migration_genesis_run(
+        p.clone(),
+        &m,
+        authority.clone(),
+        &dir.path().join("one.db"),
+        &|| Ok(crate::migration::tests::material()),
+    )
+    .unwrap()
+    .with_vault_binding(p.clone(), None);
+    assert!(service.migration_internal_semantic_token(&m).is_ok());
+    service
+        .execute_observable(crate::model::SignerAuditAction::CallerCreated, None, || {
+            service
+                .repository()
+                .set_signer_caller_disabled("internal-n3-feed-r1", true)?;
+            Ok(crate::service::Outcome::Allowed(()))
+        })
+        .unwrap();
+    authority.expire();
+    let restored = migration_genesis_run(
+        p.clone(),
+        &m,
+        authority.clone(),
+        &dir.path().join("two.db"),
+        &|| panic!("committed restore must never release"),
+    )
+    .unwrap()
+    .with_vault_binding(p, None);
+    assert!(restored.migration_internal_semantic_token(&m).is_err());
+    assert!(
+        restored
+            .repository()
+            .find_signer_caller("internal-n3-feed-r1")
+            .unwrap()
+            .unwrap()
+            .disabled
+    );
+    assert_eq!(
+        restored.repository().list_signer_callers().unwrap().len(),
+        2
+    );
+    assert_eq!(restored.repository().list_signer_keys().unwrap().len(), 2);
+}

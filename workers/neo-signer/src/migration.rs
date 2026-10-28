@@ -8,15 +8,15 @@ use std::fmt::Write;
 
 use anyhow::{ensure, Result};
 use hkdf::Hkdf;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use crate::{
     auth, crypto,
     model::{
-        CallerCapability, KeyGrant, SignerAuditAction, SignerAuditOutcome, SignerAuditRecord,
-        SignerCaller, SignerKey, SignerPolicy,
+        CallerCapability, ContractMethod, KeyGrant, SignatureRateLimit, SignerAuditAction,
+        SignerAuditOutcome, SignerAuditRecord, SignerCaller, SignerKey, SignerPolicy,
     },
     network::{self, ChainFamily, Network},
     vault::MasterKey,
@@ -25,6 +25,7 @@ use crate::{
 
 pub(crate) const MAX_MANIFEST_BYTES: usize = 16 * 1024;
 const PURPOSE: &str = "legacy-n3-two-role-root-caller/v1";
+const PURPOSE_V2: &str = "legacy-n3-two-role-root-caller/v2";
 const HKDF_SALT: &[u8] = b"neoos/custody/internal-caller/root-hkdf/v1";
 const ROLE_IDS: [&str; 2] = ["mn-oracle-verifier-r1", "mn-updater-r1"];
 const ROLES: [&str; 2] = ["oracle_verifier", "updater"];
@@ -45,6 +46,18 @@ struct Manifest {
     legacy_checkpoint_sha256: String,
     external_authority_map_sha256: String,
     roles: Vec<RoleBinding>,
+    #[serde(default)]
+    semantic: Option<SemanticBinding>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SemanticBinding {
+    caller_id: String,
+    max_system_fee: i64,
+    max_network_fee: i64,
+    max_signatures: u64,
+    window_seconds: u64,
 }
 
 #[derive(Deserialize)]
@@ -77,6 +90,17 @@ struct MigrationReceipt {
     caller_id: String,
     capability: String,
     historical_native_actions_restored: bool,
+    #[serde(default)]
+    semantic: Option<SemanticReceipt>,
+}
+
+#[derive(Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct SemanticReceipt {
+    caller_id: String,
+    key_id: String,
+    capability: String,
+    policy_sha256: String,
 }
 
 /// Public source binding for a future Recipient-bound adapter. This is a
@@ -141,10 +165,19 @@ impl MeasuredMigration {
             detail.len() <= MAX_MANIFEST_BYTES,
             "migration receipt size refused"
         );
+        if !self.has_semantic() {
+            let value: serde_json::Value = serde_json::from_str(detail)?;
+            ensure!(
+                !value
+                    .as_object()
+                    .is_some_and(|v| v.contains_key("semantic")),
+                "v1 receipt cannot add semantic authority"
+            );
+        }
         let receipt: MigrationReceipt = serde_json::from_str(detail)
             .map_err(|_| anyhow::anyhow!("invalid migration receipt"))?;
         let expected = MigrationReceipt {
-            schema: "neoos/legacy-n3-migration-receipt/v1".into(),
+            schema: self.receipt_schema().into(),
             manifest_sha256: hex::encode(self.digest),
             profile_sha256: hex::encode(self.profile_hash),
             ceremony_id: self.manifest.ceremony_id.clone(),
@@ -160,6 +193,7 @@ impl MeasuredMigration {
             caller_id: self.manifest.caller_id.clone(),
             capability: "raw_sign".into(),
             historical_native_actions_restored: false,
+            semantic: self.semantic_receipt(),
         };
         ensure!(receipt == expected, "migration historical receipt mismatch");
         Ok(audit.recorded_at_unix)
@@ -175,6 +209,75 @@ impl MeasuredMigration {
             allow_raw: true,
             ..SignerPolicy::default()
         }
+    }
+
+    fn receipt_schema(&self) -> &'static str {
+        if self.manifest.semantic.is_some() {
+            "neoos/legacy-n3-migration-receipt/v2"
+        } else {
+            "neoos/legacy-n3-migration-receipt/v1"
+        }
+    }
+
+    pub(crate) fn has_semantic(&self) -> bool {
+        self.manifest.semantic.is_some()
+    }
+
+    fn semantic_receipt(&self) -> Option<SemanticReceipt> {
+        self.manifest.semantic.as_ref().map(|s| SemanticReceipt {
+            caller_id: s.caller_id.clone(),
+            key_id: ROLE_IDS[1].into(),
+            capability: "sign".into(),
+            policy_sha256: hex::encode(self.initial_policy_for(1).digest()),
+        })
+    }
+
+    pub(crate) fn initial_policy_for(&self, index: usize) -> SignerPolicy {
+        let mut policy = self.initial_policy();
+        if index == 1 {
+            if let Some(s) = &self.manifest.semantic {
+                // Fixed measured Mainnet feed target; never a body/env override.
+                let contract = "0x03013f49c42a14546c8bbe58f9d434c3517fccab"
+                    .parse::<crate::model::ScriptHash>()
+                    .expect("fixed Mainnet feed hash");
+                policy.allow_contract_call = true;
+                policy.contract_whitelist = vec![contract];
+                policy.contract_method_whitelist = vec![ContractMethod {
+                    contract,
+                    method: "updateFeeds".into(),
+                }];
+                policy.max_signers = Some(1);
+                policy.max_system_fee = Some(s.max_system_fee);
+                policy.max_network_fee = Some(s.max_network_fee);
+                policy.max_signatures = Some(SignatureRateLimit {
+                    seconds: s.window_seconds,
+                    count: s.max_signatures,
+                });
+            }
+        }
+        policy
+    }
+
+    pub(crate) fn initial_semantic_caller(
+        &self,
+        root: &MasterKey,
+        imported_at: u64,
+    ) -> Result<Option<SignerCaller>> {
+        let Some(s) = &self.manifest.semantic else {
+            return Ok(None);
+        };
+        let token = self.derive_internal_token(root, InternalLane::Semantic)?;
+        Ok(Some(SignerCaller {
+            id: s.caller_id.clone(),
+            label: "Migrated internal N3 feed transaction lane".into(),
+            token_digest: auth::token_digest(token.as_str()),
+            workload_identity: None,
+            key_grant: KeyGrant::Only(vec![ROLE_IDS[1].into()]),
+            capabilities: vec![CallerCapability::Sign],
+            allowed_origins: Vec::new(),
+            created_at_unix: imported_at,
+            disabled: false,
+        }))
     }
 
     /// Only generation one may compare the initial credential. This derives a
@@ -266,7 +369,14 @@ impl MeasuredMigration {
             "migration requires the explicit Mainnet two-role scope"
         );
         ensure!(
-            manifest.schema == "neoos/legacy-n3-migration/v1" && manifest.purpose == PURPOSE,
+            (manifest.schema == "neoos/legacy-n3-migration/v1"
+                && manifest.purpose == PURPOSE
+                && !serde_json::from_slice::<serde_json::Value>(bytes)?
+                    .as_object()
+                    .is_some_and(|v| v.contains_key("semantic")))
+                || (manifest.schema == "neoos/legacy-n3-migration/v2"
+                    && manifest.purpose == PURPOSE_V2
+                    && manifest.semantic.is_some()),
             "unsupported migration contract"
         );
         ensure!(
@@ -276,6 +386,17 @@ impl MeasuredMigration {
         identifier(&manifest.ceremony_id)?;
         identifier(&manifest.credential_epoch)?;
         identifier(&manifest.caller_id)?;
+        if let Some(s) = &manifest.semantic {
+            identifier(&s.caller_id)?;
+            ensure!(
+                s.caller_id != manifest.caller_id
+                    && (1..=1_000_000_000).contains(&s.max_system_fee)
+                    && (1..=200_000_000).contains(&s.max_network_fee)
+                    && (1..=3600).contains(&s.max_signatures)
+                    && (1..=86400).contains(&s.window_seconds),
+                "semantic caller or bounds refused"
+            );
+        }
         fixed_hex::<32>(&manifest.legacy_checkpoint_sha256)?;
         fixed_hex::<32>(&manifest.external_authority_map_sha256)?;
         ensure!(
@@ -358,7 +479,7 @@ impl MeasuredMigration {
             manifest_digest: self.digest,
             profile_hash: self.profile_hash,
             operation_digest: crate::durable::operation_digest(
-                PURPOSE,
+                &self.manifest.purpose,
                 Some(&hex::encode(self.digest)),
             ),
         })
@@ -479,12 +600,10 @@ impl MeasuredMigration {
             created_at_unix: imported_at_unix,
             disabled: false,
         };
-        let policy = SignerPolicy {
-            chain_family: Some(ChainFamily::NeoN3),
-            allow_raw: true,
-            ..SignerPolicy::default()
-        };
-        let audit = SignerAuditRecord {
+        let policy = self.initial_policy();
+        let semantic_caller = self.initial_semantic_caller(root, imported_at_unix)?;
+        let updater_policy = self.initial_policy_for(1);
+        let mut audit = SignerAuditRecord {
             id: 1,
             recorded_at_unix: imported_at_unix,
             action: SignerAuditAction::CallerCreated,
@@ -510,16 +629,25 @@ impl MeasuredMigration {
                 .to_string(),
             ),
         };
+        if let Some(semantic) = self.semantic_receipt() {
+            let mut receipt: serde_json::Value =
+                serde_json::from_str(audit.detail.as_ref().expect("receipt"))?;
+            receipt["schema"] = self.receipt_schema().into();
+            receipt["semantic"] = serde_json::to_value(semantic)?;
+            audit.detail = Some(receipt.to_string());
+        }
         Ok(PreparedMigration {
             manifest_digest: self.digest,
             profile_hash: self.profile_hash,
             operation_digest: crate::durable::operation_digest(
-                PURPOSE,
+                &self.manifest.purpose,
                 Some(&hex::encode(self.digest)),
             ),
             keys,
             policy,
+            updater_policy,
             caller,
+            semantic_caller,
             audit,
             _internal_token: token,
         })
@@ -547,6 +675,35 @@ impl MeasuredMigration {
         Ok(token)
     }
 
+    pub(crate) fn semantic_caller_id(&self) -> Option<&str> {
+        self.manifest
+            .semantic
+            .as_ref()
+            .map(|s| s.caller_id.as_str())
+    }
+
+    pub(crate) fn current_semantic_token(
+        &self,
+        root: &MasterKey,
+        caller: &SignerCaller,
+    ) -> Result<Zeroizing<String>> {
+        let id = self
+            .semantic_caller_id()
+            .ok_or_else(|| anyhow::anyhow!("semantic migration not enabled"))?;
+        let token = self.derive_internal_token(root, InternalLane::Semantic)?;
+        ensure!(
+            caller.id == id
+                && !caller.disabled
+                && caller.workload_identity.is_none()
+                && caller.capabilities == [CallerCapability::Sign]
+                && caller.key_grant == KeyGrant::Only(vec![ROLE_IDS[1].into()])
+                && caller.allowed_origins.is_empty()
+                && auth::digest_matches(&caller.token_digest, &auth::token_digest(token.as_str())),
+            "current internal semantic caller is not admitted"
+        );
+        Ok(token)
+    }
+
     pub(crate) fn caller_id(&self) -> &str {
         &self.manifest.caller_id
     }
@@ -557,11 +714,19 @@ impl MeasuredMigration {
         lane: InternalLane,
     ) -> Result<Zeroizing<String>> {
         let mut info = Vec::new();
+        let (purpose, caller) = match lane {
+            InternalLane::Raw => (PURPOSE, self.manifest.caller_id.as_str()),
+            InternalLane::Semantic => (
+                PURPOSE_V2,
+                self.semantic_caller_id()
+                    .unwrap_or(&self.manifest.caller_id),
+            ),
+        };
         for field in [
-            PURPOSE.as_bytes(),
+            purpose.as_bytes(),
             self.profile_hash.as_slice(),
             self.manifest.credential_epoch.as_bytes(),
-            self.manifest.caller_id.as_bytes(),
+            caller.as_bytes(),
             lane.label().as_bytes(),
             ROLE_IDS[0].as_bytes(),
             ROLE_IDS[1].as_bytes(),
@@ -583,18 +748,15 @@ impl MeasuredMigration {
     }
 }
 
-// Domain separation can be qualified without installing any semantic caller.
-// The initial prepared state below contains RawSign only, never Sign/Admin.
+// Each internal lane has a separate credential and current-caller grant.
 enum InternalLane {
     Raw,
-    #[cfg(test)]
     Semantic,
 }
 impl InternalLane {
     fn label(&self) -> &'static str {
         match self {
             Self::Raw => "raw_sign",
-            #[cfg(test)]
             Self::Semantic => "sign",
         }
     }
@@ -615,7 +777,9 @@ pub(crate) struct PreparedMigration {
     operation_digest: [u8; 32],
     keys: Vec<SignerKey>,
     policy: SignerPolicy,
+    updater_policy: SignerPolicy,
     caller: SignerCaller,
+    semantic_caller: Option<SignerCaller>,
     audit: SignerAuditRecord,
     _internal_token: Zeroizing<String>,
 }
@@ -638,6 +802,16 @@ impl PreparedMigration {
     }
     pub(crate) fn policy(&self) -> &SignerPolicy {
         &self.policy
+    }
+    pub(crate) fn policy_for(&self, index: usize) -> &SignerPolicy {
+        if index == 1 {
+            &self.updater_policy
+        } else {
+            &self.policy
+        }
+    }
+    pub(crate) fn semantic_caller(&self) -> Option<&SignerCaller> {
+        self.semantic_caller.as_ref()
     }
     pub(crate) fn caller(&self) -> &SignerCaller {
         &self.caller

@@ -191,6 +191,35 @@ class Packaging(unittest.TestCase):
         self.write()
         return manifest, raw
 
+    def test_semantic_v2_migration_is_explicit_bounded_and_profiles_unchanged(self):
+        before = {n: dual.encoded(p) for n, p in self.profiles.items()}
+        manifest, _ = self.enable_migration()
+        manifest.update(schema='neoos/legacy-n3-migration/v2', purpose=dual.MIGRATION_MODE_V2,
+                        semantic={'caller_id': 'internal-n3-feed-r1', 'max_system_fee': 150000000,
+                                  'max_network_fee': 50000000, 'max_signatures': 60, 'window_seconds': 3600})
+        raw = dual.encoded(manifest)
+        (self.root / dual.MIGRATION_FILE).write_bytes(raw)
+        self.input['networks']['mainnet']['migration'].update(mode=dual.MIGRATION_MODE_V2, manifest_sha256=dual.sha(raw))
+        self.write()
+        self.stage()
+        self.assertEqual((self.root / 'context/public/custody' / dual.MIGRATION_FILE).read_bytes(), raw)
+        for n in dual.NETWORKS:
+            self.assertEqual((self.root / 'context/public/custody' / (n + '.json')).read_bytes(), before[n])
+
+    def test_semantic_v2_shape_rejects_unknown_authority_and_v1_smuggling(self):
+        manifest, _ = self.enable_migration()
+        manifest.update(schema='neoos/legacy-n3-migration/v2', purpose=dual.MIGRATION_MODE_V2,
+                        semantic={'caller_id': 'internal-n3-feed-r1', 'max_system_fee': 150000000,
+                                  'max_network_fee': 50000000, 'max_signatures': 60, 'window_seconds': 3600})
+        for field, value in [('admin', True), ('max_system_fee', 0), ('max_network_fee', 200000001),
+                             ('caller_id', manifest['caller_id']), ('max_signatures', False)]:
+            candidate = copy.deepcopy(manifest); candidate['semantic'][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                dual.validate_migration(candidate, self.profiles['mainnet'], self.input['networks']['mainnet']['roles'])
+        manifest.update(schema='neoos/legacy-n3-migration/v1', purpose=dual.MIGRATION_MODE)
+        with self.assertRaises(ValueError):
+            dual.validate_migration(manifest, self.profiles['mainnet'], self.input['networks']['mainnet']['roles'])
+
     def test_migration_exact_staging_compile_pin_and_original_profiles(self):
         before = {n: dual.encoded(p) for n, p in self.profiles.items()}
         _, raw = self.enable_migration()

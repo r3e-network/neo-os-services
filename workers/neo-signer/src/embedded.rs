@@ -220,6 +220,17 @@ impl EmbeddedCustodyRuntime {
         })
     }
 
+    /// A separate measured transaction lane; v1 never produces this handle.
+    pub fn internal_semantic_bridge(&self) -> Option<InternalSemanticBridge> {
+        self.migration
+            .as_ref()
+            .filter(|m| m.core().has_semantic())
+            .map(|migration| InternalSemanticBridge {
+                state: self.state.clone(),
+                migration: migration.clone(),
+            })
+    }
+
     pub fn expected_network(&self) -> Network {
         self.expected_network
     }
@@ -293,6 +304,79 @@ impl InternalRawBridge {
         let value = zeroize::Zeroizing::new(format!("Bearer {}", token.as_str()));
         let mut value = HeaderValue::from_str(value.as_str())
             .map_err(|_| "internal raw credential encoding failed")?;
+        value.set_sensitive(true);
+        request.headers_mut().insert(header::AUTHORIZATION, value);
+        Ok(api::router(self.state.clone())
+            .oneshot(request)
+            .await
+            .expect("Router error is Infallible"))
+    }
+}
+
+/// Opaque, non-listening updater-only transaction dispatcher. The credential
+/// is internal and never upgrades an external runtime bearer.
+#[derive(Clone)]
+pub struct InternalSemanticBridge {
+    state: ApiState,
+    migration: Arc<MeasuredMigration>,
+}
+
+impl InternalSemanticBridge {
+    #[cfg(test)]
+    pub(crate) fn fixture(state: ApiState, core: crate::migration::MeasuredMigration) -> Self {
+        Self {
+            state,
+            migration: Arc::new(MeasuredMigration { core }),
+        }
+    }
+
+    pub async fn dispatch(
+        &self,
+        mut request: axum::http::Request<axum::body::Body>,
+    ) -> Result<axum::response::Response, &'static str> {
+        use axum::http::{header, HeaderValue, Method};
+        use tower::ServiceExt;
+        if request.method() != Method::POST
+            || request.uri().path() != "/signer/api/v1/sign/transaction"
+            || request.uri().query().is_some()
+            || request.headers().contains_key(header::AUTHORIZATION)
+            || request.headers().contains_key(header::ORIGIN)
+        {
+            return Err("internal semantic route or credential refused");
+        }
+        let (parts, body) = request.into_parts();
+        let bytes = axum::body::to_bytes(body, 256 * 1024)
+            .await
+            .map_err(|_| "internal semantic body refused")?;
+        let call: api::SignCall =
+            serde_json::from_slice(&bytes).map_err(|_| "internal semantic transaction refused")?;
+        if call.key_id != "mn-updater-r1"
+            || call.chain_family != "neo-n3"
+            || call.chain_id.is_some()
+        {
+            return Err("internal semantic key or chain refused");
+        }
+        let unsigned = hex::decode(&call.unsigned_hex)
+            .map_err(|_| "internal semantic unsigned transaction refused")?;
+        // This lane admits one CalledByEntry signer only; no Global/custom
+        // scopes, attributes, trailing bytes or caller-selected chain domain.
+        neo_os_core::n3_tx::parse_unsigned_tx(&unsigned)
+            .map_err(|_| "internal semantic transaction scope refused")?;
+        request = axum::http::Request::from_parts(parts, axum::body::Body::from(bytes));
+        let service = self
+            .state
+            .service_snapshot()
+            .ok_or("internal semantic vault not ready")?;
+        let migration = self.migration.clone();
+        let token = tokio::task::spawn_blocking(move || {
+            service.migration_internal_semantic_token(migration.core())
+        })
+        .await
+        .map_err(|_| "internal semantic admission failed")?
+        .map_err(|_| "current internal semantic caller is not admitted")?;
+        let value = zeroize::Zeroizing::new(format!("Bearer {}", token.as_str()));
+        let mut value = HeaderValue::from_str(value.as_str())
+            .map_err(|_| "internal semantic credential encoding failed")?;
         value.set_sensitive(true);
         request.headers_mut().insert(header::AUTHORIZATION, value);
         Ok(api::router(self.state.clone())

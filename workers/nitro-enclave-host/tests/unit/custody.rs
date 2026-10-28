@@ -1480,3 +1480,46 @@ fn migration_private_raw_transport_does_not_create_env_or_semantic_credential() 
         None
     );
 }
+
+#[test]
+fn semantic_v2_private_lane_never_uses_env_token_or_upgrades_raw_only() {
+    struct PrivateBoth;
+    impl crate::custody::CustodyTransport for PrivateBoth {
+        fn has_private_raw_lane(&self) -> bool {
+            true
+        }
+        fn has_private_semantic_lane(&self) -> bool {
+            true
+        }
+        fn send(
+            &self,
+            _: crate::custody::CustodyRequest,
+        ) -> Result<crate::custody::CustodyReply, String> {
+            panic!("config only")
+        }
+    }
+    let overlay = Arc::new(RwLock::new(crate::overlay::EnvOverlay::new([
+        ("NODE_ENV", "production"),
+        ("SIGNER_SERVICE_URL", "http://127.0.0.1:0/mainnet"),
+        ("SIGNER_SERVICE_TOKEN", "untrusted-host-raw"),
+        ("SIGNER_SERVICE_SEMANTIC_TOKEN", "untrusted-host-semantic"),
+    ])));
+    let signer = crate::custody::CustodySigner::new(overlay.clone(), Box::new(PrivateBoth));
+    for lane in [
+        crate::custody::CustodyLane::Raw,
+        crate::custody::CustodyLane::Semantic,
+    ] {
+        assert!(signer.config_for(lane).unwrap().unwrap().token.is_empty());
+    }
+    assert_eq!(
+        overlay.read().unwrap().get("SIGNER_SERVICE_TOKEN_SOURCE"),
+        None
+    );
+    assert_eq!(
+        overlay
+            .read()
+            .unwrap()
+            .get("SIGNER_SERVICE_SEMANTIC_TOKEN_SOURCE"),
+        None
+    );
+}

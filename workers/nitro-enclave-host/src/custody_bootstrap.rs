@@ -36,6 +36,7 @@ const MIGRATION_OVERRIDE_KEYS: [&str; 4] = [
 ];
 /// Opaque measured-runtime handle; custody implementation stays in this module.
 pub type InternalRawBridge = neo_signer::embedded::InternalRawBridge;
+pub type InternalSemanticBridge = neo_signer::embedded::InternalSemanticBridge;
 
 const MAX_PROFILE_BYTES: u64 = 64 * 1024;
 
@@ -191,7 +192,8 @@ pub fn prepare(
 
 pub struct BootedCustody {
     pub routers: BTreeMap<String, Router>,
-    pub internal_raw: BTreeMap<String, neo_signer::embedded::InternalRawBridge>,
+    pub internal_raw: BTreeMap<String, InternalRawBridge>,
+    pub internal_semantic: BTreeMap<String, InternalSemanticBridge>,
 }
 
 pub fn boot(profiles: &NetworkProfiles) -> Result<BTreeMap<String, Router>, &'static str> {
@@ -224,6 +226,7 @@ fn boot_handles_using(
     let mut result = BootedCustody {
         routers: BTreeMap::new(),
         internal_raw: BTreeMap::new(),
+        internal_semantic: BTreeMap::new(),
     };
     for (network, config) in plans {
         let guard =
@@ -231,6 +234,9 @@ fn boot_handles_using(
         let runtime = start(config, guard)?;
         if let Some(bridge) = runtime.internal_raw_bridge() {
             result.internal_raw.insert(network.clone(), bridge);
+        }
+        if let Some(bridge) = runtime.internal_semantic_bridge() {
+            result.internal_semantic.insert(network.clone(), bridge);
         }
         result.routers.insert(network, runtime.router());
     }

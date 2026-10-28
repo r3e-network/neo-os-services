@@ -458,6 +458,34 @@ impl SignerService {
         migration.current_raw_token(&self.master_key, &caller)
     }
 
+    pub(crate) fn migration_internal_semantic_token(
+        &self,
+        migration: &crate::migration::MeasuredMigration,
+    ) -> Result<Zeroizing<String>> {
+        let _operation = self
+            .operation_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("internal semantic operation lock unavailable"))?;
+        let _decision = self
+            .decision_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("internal semantic decision lock unavailable"))?;
+        self.ensure_durable_ready()?;
+        let profile = self
+            .vault_profile
+            .as_ref()
+            .context("internal semantic vault profile missing")?;
+        migration.validate_profile(profile)?;
+        let id = migration
+            .semantic_caller_id()
+            .context("semantic migration not enabled")?;
+        let caller = self
+            .repository
+            .find_signer_caller(id)?
+            .context("current internal semantic caller missing")?;
+        migration.current_semantic_token(&self.master_key, &caller)
+    }
+
     pub fn durable_status(&self) -> Option<DurableStatus> {
         self.durable.as_ref().map(|durable| durable.status())
     }

@@ -156,6 +156,7 @@ fn main() {
         profiles,
         &custody.routers,
         &custody.internal_raw,
+        &custody.internal_semantic,
     ));
     let custody = Arc::new(custody.routers);
     let request_slots = Arc::new(tokio::sync::Semaphore::new(MAX_INFLIGHT_REQUESTS));
@@ -262,13 +263,14 @@ fn build_apps(
     profiles: NetworkProfiles,
     custody: &BTreeMap<String, Router>,
 ) -> BTreeMap<String, Arc<AppState>> {
-    build_apps_with_internal_raw(profiles, custody, &BTreeMap::new())
+    build_apps_with_internal_raw(profiles, custody, &BTreeMap::new(), &BTreeMap::new())
 }
 
 fn build_apps_with_internal_raw(
     profiles: NetworkProfiles,
     custody: &BTreeMap<String, Router>,
     bridges: &BTreeMap<String, custody_bootstrap::InternalRawBridge>,
+    semantic: &BTreeMap<String, custody_bootstrap::InternalSemanticBridge>,
 ) -> BTreeMap<String, Arc<AppState>> {
     profiles
         .overlays
@@ -282,6 +284,11 @@ fn build_apps_with_internal_raw(
                         transport = transport
                             .with_internal_raw(bridge.clone())
                             .expect("measured mainnet raw bridge");
+                    }
+                    if let Some(bridge) = semantic.get(&network) {
+                        transport = transport
+                            .with_internal_semantic(bridge.clone())
+                            .expect("measured mainnet semantic bridge");
                     }
                     Box::new(transport)
                 }

@@ -220,7 +220,7 @@
           "sha256": "7965dcf4bd82d4b2a477d34058c2a4d68c37d310e75203c4d10c5e1306d77e88"
         },
         "workers/nitro-enclave-host/src/custody.rs": {
-          "sha256": "fc5a967b9a4f8b9434ce912990b3ba1424dbb7125d87818eca13c03b4f404399"
+          "sha256": "6a00971d98a10327e448834faeed862a8c790f07390ea8aec11720a12ebdc5eb"
         },
         "workers/nitro-enclave-host/src/kms_release.rs": {
           "sha256": "e9351ec0398259829232f5f017189129b48ef21ff7516656c7c546b590a943b7"
@@ -546,7 +546,7 @@
           "sha256": "0842e8aa6fc1f249483242bd436e6982c4b14942fa19a31f6c1ae38935909d8a"
         },
         "workers/nitro-enclave-host/tests/unit/custody.rs": {
-          "sha256": "1506b9fb8490d676d9d670bd6539153bf5ac4df1686eb09b1f408df4cb2faf55"
+          "sha256": "0ccbce4ac56e3054c9d3f678cecf4e5a65ab30edb8ca633db22ea4ac7ba2ed39"
         },
         "workers/nitro-enclave-host/tests/unit/dispatch.rs": {
           "sha256": "bfdec5533ed82f65aa1cf99d062fafea97c966926b480ba52c4da1e3a4717b52"
@@ -570,7 +570,7 @@
           "sha256": "94ab95f2e4e228ec6b7bbf94a957431ea16d835719335274ecc8d375b4f12ed0"
         },
         "workers/nitro-enclave-host/tests/unit/sign.rs": {
-          "sha256": "a94c7b465a2c52385b2222109aa48ad847b0b459d5a12ec21429d7982f848da4"
+          "sha256": "670f126400ce9fb31395b831288f7e5add03ebb4d70f6c7bef5921e13b3f2d0e"
         },
         "workers/nitro-enclave-host/tests/unit/vrf.rs": {
           "sha256": "c5f7d65512e1841d08fd3236b42c9cc6a912b364df567caddb66ef1d9f27eda1"
@@ -594,7 +594,7 @@
           "sha256": "263f6b94a5e2493d2b5f235e1587fca5a006518985045169ae2a270c181c25d9"
         },
         "workers/nitro-enclave-host/tests/unit/support.rs": {
-          "sha256": "494576659b2064f88fa9e099811732f4c0914a4ca35773c7496853ee56619d9d"
+          "sha256": "82436b9f7642edac75995def76f8f5febd2a830e7b1ad9feb9bbe155306f8eae"
         },
         "workers/nitro-enclave-host/tests/unit/compute_execute.rs": {
           "sha256": "1b1a06ae4d9e83e87d97661dd1fb487f8397a07426a14d257d1538e385bab3a1"
@@ -900,7 +900,7 @@
           "sha256": "61339dbade97261c9a55c7a3a7d0f3da504d08cf8303831da9252ef732d90b9d"
         },
         "workers/nitro-enclave-host/src/bin/enclave_host.rs": {
-          "sha256": "baad35ec47cd061a6409f0f82601610d668f608b4b4a16794bab869a570e9146"
+          "sha256": "824e7b227a8124a9fb47fb54b92e9eca277e9c8cbfde3624656c94bac49ee677"
         },
         "workers/nitro-enclave-host/src/feed_sign.rs": {
           "sha256": "98b6aa7b7934206d264628dad59d0ba8a27cd2dbe8665998c817f10fea9479fd"
@@ -912,7 +912,7 @@
           "sha256": "7f0d1b64d586d22826727d3504865743269259c47446e12ae9e5f1079904c864"
         },
         "workers/nitro-enclave-host/src/state.rs": {
-          "sha256": "ffbaa8b44b133933b13d0eb9f4954fa37823c47ac6b8a90e1e4c82a0d9e2c8e9"
+          "sha256": "f5b4d88779dafca74a998b64f45f8194079ce27e7007c24398abffbde99dd1c7"
         },
         "workers/nitro-enclave-host/src/compute_execute.rs": {
           "sha256": "2d6124e6f3098dbd24e3e3a366fd9a581dc13a552d53a9c331aa4f7319b37a05"
@@ -1396,7 +1396,7 @@
       "justification": "Validates explicit network/profile/audience/body limits, refuses plaintext master-key fallbacks, takes a filesystem lease, requires fresh attestation and exposes a sealed native router. Bootstrap exposes authorized custody APIs and retains their lease; it neither generates VRF game outcomes nor chooses payout beneficiaries. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers. Genesis source update: Boot accepts only the typed measured enrollment/profile binding and attaches it to the sealed router. This controls a security-sensitive custody bootstrap, not an economic random-result consumer. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval.",
       "inputs": {
         "workers/neo-signer/src/embedded.rs": {
-          "sha256": "5b43028c4d1cc0a83b5ffd675f03bf586322d6b2e8febc24156835d98ab7ddf3"
+          "sha256": "be2b1c3df4bed17ac3d8ada2414203d0c8c72bc95c375418fcd37f50e4d04fdd"
         }
       }
     },
@@ -1418,7 +1418,7 @@
       "justification": "Stores immutable vault profile and lease; checks admitted network/family and stored chain identity before key open/import and cached or fresh signing. Transaction policy, spend limits and signatures may move value, but this file does not interpret a VRF/random result to select a winner, recipient or reward amount. Current ERC-20 transferFrom handling binds the source to the custody account and fails closed on malformed calls. Auth tokens and key randomness are security material. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers; critical custody and authorization review remains separate.",
       "inputs": {
         "workers/neo-signer/src/service.rs": {
-          "sha256": "dbce8c2a42843394165bc09e9f1871440521179b6dc41efb9a67e580330be328"
+          "sha256": "87b7ab5214971832185bcb50b14668664a6d69fb9b7467718def186d874c65da"
         }
       }
     },
@@ -1473,7 +1473,7 @@
       "justification": "Expands actual RSA-OAEP session exchange to both networks, shares the canonical vector candidate and includes network decoder regressions. Protocol vectors and local synthetic session transport verify cryptographic bytes and refusal behavior, not economic outcome selection. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "workers/neo-signer/tests/unit/coordinator.rs": {
-          "sha256": "29a7e57b3c6fa1030763068c040d8923cbcffb72024b23cbcae4bfcf8919a9de"
+          "sha256": "af9307809606d4e762635da3d66e03f217f8501ef21ffd7cd1006646cb95918e"
         }
       }
     },
@@ -1517,7 +1517,7 @@
       "justification": "New fail-closed plan validates network, absolute paths, bounded profile bytes/digest, environment, internal URL and canonical workload audience. All plans are checked for cross-vault identity/root/path/audience reuse before guarded native boot. Plan validation and boot/router construction contain no random-output allocation rule. Deduplicating canonical audience protects authentication; it does not classify the transactions custody can authorize. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers. Genesis source update: The measured network map must provide the explicit TestNet enrollment mode and a bounded manifest with exact hash/profile binding before boot. Trusted measured configuration can authorize custody initialization, but does not consume VRF output for economic selection. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval.",
       "inputs": {
         "workers/nitro-enclave-host/src/custody_bootstrap.rs": {
-          "sha256": "eba0d542d048a956609ff65d502a101b44e6db8ff80a649b2416598fa697d017"
+          "sha256": "c9a3753c609aae060c7b3b41286cb50ac1c64071dbf707d0a76d0b643d4a7078"
         }
       }
     },
@@ -1528,7 +1528,7 @@
       "justification": "New in-process transport binds a literal network-specific internal origin to one router; preserves bearer and body; restricts host-facing methods/routes; bounds request/response sizes and refuses malformed replies. The adapter transports explicitly requested operations without interpreting random output. No award or transfer selection is performed by its routing/serialization logic. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "workers/nitro-enclave-host/src/embedded_custody.rs": {
-          "sha256": "74aaa7034edead98299c16f206c243b563fb1dd85118c190316c8a11cf97e998"
+          "sha256": "66ce1e763fe2197841a778e70bbcf272454a5ce8fa05f1f8983837a5ab045303"
         }
       }
     },
@@ -1687,7 +1687,7 @@
           "sha256": "8ea600f0088e35ad1dbe042ebc04e83e996ef691de5b7b111772154d9e1ffd87"
         },
         "deploy/nitro/dual_image_test.py": {
-          "sha256": "0ee195647e305339344fb84261a29f379d2c701031228084929e0ea4760d71dd"
+          "sha256": "76f180abd2e71a42806e4062eea4c2d542a24131931374f6d738276a9e858827"
         },
         "deploy/nitro/dual_prepare_test.py": {
           "sha256": "329b4cae19ca949ac11e0bc7414986663b18fe1ccabcb1495513baf35b175729"
@@ -1710,7 +1710,7 @@
           "sha256": "548e43b27a74211f6b1cbb4cbe3f420f00855432a4c4c1b02967127f7e729c5b"
         },
         "deploy/nitro/build-dual-enclave.py": {
-          "sha256": "8d22eb3c28f9397aad9b02ace9aad690b71213e905de1bf7e569a0ea29145580"
+          "sha256": "5446764690e320c4f632ca1a0caf9f4373e8dac013458e881b2d97277c8276e4"
         },
         "deploy/nitro/cross-inputs.lock.json": {
           "sha256": "a5086fffb3db277aa47b3ab475b0da0dc35d16ac070729b2a89a5ac6de3f824e"
@@ -1831,7 +1831,7 @@
           "sha256": "c30cffaff75eb2aa2bf96b731b3711dc7a17b3fe5240a51c4f55178b79b29300"
         },
         "workers/neo-signer/src/store/management.rs": {
-          "sha256": "81a3dc28bd6989f3c095562cf7f62386b44b4058237b4a473ae406d8837dcaed"
+          "sha256": "b13e7c86ce0cbb9961109236ca8e24a8f6fc0aca303a49841471b297e6857210"
         }
       }
     },
@@ -2577,7 +2577,7 @@
           "sha256": "3089086f88a4ff2e4d75db85f3612b104d6c060f8d5f9f7ed98dc04dbf05c18c"
         },
         "workers/neo-signer/src/migration.rs": {
-          "sha256": "23556967251da8951e45b38300de1c224fac3d026d3352be6ba5eee1fad4c1b5"
+          "sha256": "dce49fe9a97d6ba9f8ded8946b5270646e235a069ffc9ef0e3f96bd4341a7daf"
         },
         "workers/neo-signer/src/store/keys.rs": {
           "sha256": "48eaa29b868224fb23f7f36360ad250afa7b317c28cae3f44c69bbcc07288987"
@@ -2592,7 +2592,7 @@
           "sha256": "df5445fc9b3ed791214ed2393efc7af6f8ee8ddbdcd622246d0879bc8dfa3a22"
         },
         "workers/neo-signer/tests/unit/migration.rs": {
-          "sha256": "c061ae3f9dd9f9bb49fbed6f80980e0489cfd3dff7b6cda0e7b41e86a45d19bc"
+          "sha256": "59e3f903d11d203e510801bcb6847fed51a06d419f589652c0b544fdb1a09f01"
         }
       }
     }

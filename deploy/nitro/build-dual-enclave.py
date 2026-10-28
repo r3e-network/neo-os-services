@@ -50,6 +50,7 @@ SCHEMA = 'neoos/dual-image-input/v1'
 SOURCE_DIRS = ('vendor/', 'crates/', 'workers/neo-signer/', 'workers/nitro-enclave-host/', 'workers/neo-os-relayer/')
 PROFILE_FIELDS = ('profile_version vault_id environment networks custody_kms_key_arn root_key_version root_key_commitment snapshot_format_version signer_schema_version coordinator release_policy_version').split()
 MIGRATION_MODE = 'legacy-n3-two-role-root-caller/v1'
+MIGRATION_MODE_V2 = 'legacy-n3-two-role-root-caller/v2'
 MIGRATION_FILE = 'legacy-n3-migration.json'
 MIGRATION_SHA_ENV = 'NEOOS_LEGACY_N3_MIGRATION_SHA256'
 MIGRATION_RUNTIME_KEYS = (MIGRATION_SHA_ENV, 'MORPHEUS_CUSTODY_MIGRATION_MODE',
@@ -337,7 +338,7 @@ def public_inputs(path, expected_sha, registry):
         if 'migration' in spec:
             migration = spec['migration']
             fields(migration, ('mode', 'manifest_file', 'manifest_sha256'))
-            require(network == 'mainnet' and migration['mode'] == MIGRATION_MODE,
+            require(network == 'mainnet' and migration['mode'] in (MIGRATION_MODE, MIGRATION_MODE_V2),
                     'migration requires explicit Mainnet two-role opt-in')
             require(migration['manifest_file'] == MIGRATION_FILE, 'migration file must use fixed basename')
             manifest = regular(Path(path).parent / MIGRATION_FILE)
@@ -345,6 +346,7 @@ def public_inputs(path, expected_sha, registry):
             require(sha(manifest) == digest(migration['manifest_sha256']), 'migration manifest SHA mismatch')
             # Independent of release_policy_version. The Rust dual_prepare
             # checks the canonical profile hash and cryptographic identities.
+            require(parse(manifest)['purpose'] == migration['mode'], 'migration mode mismatch')
             validate_migration(parse(manifest), profile, spec['roles'])
             profiles['legacy-n3-migration'] = manifest
         overlay.update({'SIGNER_ROLE_' + role + '_KEY_ID': spec['roles'][role] for role in ROLES})
@@ -373,10 +375,20 @@ OUTPUT_LIMIT = 256 * 1024 * 1024
 def validate_migration(manifest, profile, role_map):
     # Packaging shape checks only: the image's exact Rust implementation is
     # authoritative for canonical profile/P256/script-hash semantics.
+    v2 = manifest.get('purpose') == MIGRATION_MODE_V2
     fields(manifest, ('schema', 'purpose', 'ceremony_id', 'profile_sha256', 'credential_epoch',
-                      'caller_id', 'legacy_checkpoint_sha256', 'external_authority_map_sha256', 'roles'))
-    require(profile['environment'] == 'mainnet' and manifest['schema'] == 'neoos/legacy-n3-migration/v1'
-            and manifest['purpose'] == MIGRATION_MODE, 'invalid migration contract')
+                      'caller_id', 'legacy_checkpoint_sha256', 'external_authority_map_sha256', 'roles')
+                      + (('semantic',) if v2 else ()))
+    require(profile['environment'] == 'mainnet' and manifest['schema'] == ('neoos/legacy-n3-migration/v2' if v2 else 'neoos/legacy-n3-migration/v1')
+            and manifest['purpose'] == (MIGRATION_MODE_V2 if v2 else MIGRATION_MODE), 'invalid migration contract')
+    if v2:
+        s = manifest['semantic']
+        fields(s, ('caller_id', 'max_system_fee', 'max_network_fee', 'max_signatures', 'window_seconds'))
+        role_id(s['caller_id'])
+        require(s['caller_id'] != manifest['caller_id'], 'distinct semantic caller required')
+        for key, ceiling in (('max_system_fee', 1000000000), ('max_network_fee', 200000000),
+                             ('max_signatures', 3600), ('window_seconds', 86400)):
+            require(type(s[key]) is int and 0 < s[key] <= ceiling, 'semantic bounds refused')
     for key in ('ceremony_id', 'credential_epoch', 'caller_id'):
         role_id(manifest[key])
     for key in ('profile_sha256', 'legacy_checkpoint_sha256', 'external_authority_map_sha256'):

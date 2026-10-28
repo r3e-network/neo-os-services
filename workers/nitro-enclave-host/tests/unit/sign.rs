@@ -262,6 +262,56 @@ fn a_configured_plane_still_refuses_to_blind_sign_without_the_image_opt_in() {
     );
 }
 
+#[test]
+fn semantic_v2_adapter_accepts_only_full_measured_network_transaction_preimages() {
+    let overlay = [
+        ("MORPHEUS_NETWORK", "mainnet"),
+        ("NITRO_API_TOKEN", "s3cret"),
+    ];
+    let harness = test_state(
+        &overlay,
+        FakeAttest::with_document(b"doc"),
+        FakeSigner::new(SignerConfig {
+            measured_n3_adapter: true,
+            ..SignerConfig::default()
+        }),
+        FakeBridge::new(),
+        FakeKms::default(),
+    );
+    let complete = format!(
+        "{}{}",
+        hex::encode(860_833_102_u32.to_le_bytes()),
+        VALID_UNSIGNED_N3
+    );
+    let response = handle_sign_payload(
+        &harness.state,
+        &serde_json::json!({"key_role":"updater", "data_hex":complete}),
+    )
+    .expect("measured v2 full-transaction adapter");
+    assert_eq!(response["status"], "ok");
+    assert_eq!(harness.signer.n3_transaction_calls().len(), 1);
+    assert_eq!(
+        harness.signer.n3_transaction_calls()[0].2,
+        VALID_UNSIGNED_N3
+    );
+    for refused in [
+        "cafe".to_string(),
+        "00".repeat(36),
+        valid_payload_preimage(),
+    ] {
+        assert!(handle_sign_payload(
+            &harness.state,
+            &serde_json::json!({"key_role":"updater", "data_hex":refused}),
+        )
+        .is_err());
+    }
+    assert_eq!(harness.signer.n3_transaction_calls().len(), 1);
+    assert!(
+        harness.signer.sign_calls().is_empty(),
+        "no raw signing fallback"
+    );
+}
+
 /// Only the exact value opens it. `true`/`yes`/`0`/empty all leave it closed:
 /// a lane this dangerous is not opened by something that merely looks truthy.
 #[test]

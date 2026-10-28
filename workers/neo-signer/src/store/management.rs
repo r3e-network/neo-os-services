@@ -157,19 +157,21 @@ impl Store {
             [], signer_audit_from_row)?;
         let imported_at = migration.validate_receipt(&audit)?;
         if generation == 1 {
-            Self::check_migration_tables(&connection)?;
+            Self::check_migration_tables(&connection, migration.has_semantic())?;
             let callers = Self::list_signer_callers_on(&connection)?;
-            anyhow::ensure!(
-                callers == [migration.initial_caller(root, imported_at)?],
-                "initial migration caller mismatch"
-            );
+            let mut initial = vec![migration.initial_caller(root, imported_at)?];
+            initial.extend(migration.initial_semantic_caller(root, imported_at)?);
+            initial.sort_by(|a, b| a.id.cmp(&b.id));
+            let mut callers = callers;
+            callers.sort_by(|a, b| a.id.cmp(&b.id));
+            anyhow::ensure!(callers == initial, "initial migration caller mismatch");
             for (index, id) in migration.key_ids().iter().enumerate() {
                 let key = Self::find_signer_key_on(&connection, id)?
                     .context("initial migration key missing")?;
                 migration.validate_initial_key(index, &key, root, imported_at)?;
                 anyhow::ensure!(
                     Self::load_signer_policy_on(&connection, id)?
-                        == Some(migration.initial_policy()),
+                        == Some(migration.initial_policy_for(index)),
                     "initial migration policy mismatch"
                 );
                 let updated_at: u64 = connection.query_row(
@@ -186,7 +188,7 @@ impl Store {
         Ok(())
     }
 
-    fn check_migration_tables(connection: &Connection) -> Result<()> {
+    fn check_migration_tables(connection: &Connection, semantic: bool) -> Result<()> {
         let mut statement = connection.prepare(
             "SELECT name FROM sqlite_schema WHERE type = 'table' AND substr(name, 1, 7) != 'sqlite_'",
         )?;
@@ -196,7 +198,14 @@ impl Store {
         for table in tables {
             let expected: i64 = match table.as_str() {
                 "signer_keys" | "signer_policies" => 2,
-                "signer_callers" | "signer_audit" => 1,
+                "signer_callers" => {
+                    if semantic {
+                        2
+                    } else {
+                        1
+                    }
+                }
+                "signer_audit" => 1,
                 _ => 0,
             };
             let query = format!("SELECT COUNT(*) FROM \"{}\"", table.replace('"', "\"\""));
@@ -222,16 +231,23 @@ impl Store {
         let transaction =
             connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         Self::check_enrollment_tables(&transaction, false)?;
-        for key in prepared.keys() {
+        for (index, key) in prepared.keys().iter().enumerate() {
             Self::create_signer_key_on(&transaction, key)?;
             Self::save_signer_policy_on(
                 &transaction,
                 &key.id,
-                prepared.policy(),
+                if index == 0 {
+                    prepared.policy()
+                } else {
+                    prepared.policy_for(index)
+                },
                 prepared.audit().recorded_at_unix,
             )?;
         }
         Self::create_signer_caller_on(&transaction, prepared.caller())?;
+        if let Some(caller) = prepared.semantic_caller() {
+            Self::create_signer_caller_on(&transaction, caller)?;
+        }
         let id = super::audit::insert_signer_audit(&transaction, prepared.audit())?;
         anyhow::ensure!(id == 1, "migration audit sequence is not virgin");
         transaction.commit()?;

@@ -65,6 +65,12 @@ pub struct Eip191FulfillmentRequest<'a> {
 /// host NEVER holds keys — that is the property `lib.rs` promises — so
 /// everything here is a request to the custody service.
 pub trait SignerPlane: Send + Sync {
+    /// Routing opt-in from an opaque measured v2 transport, never authority by
+    /// itself: canonical custody authentication/policy still decides each call.
+    fn measured_n3_transaction_adapter(&self) -> bool {
+        false
+    }
+
     fn role_report(&self, network: &str, role: &str) -> RoleReport;
 
     /// Blind-sign `data_hex` with the role's key. Errors become dispatch

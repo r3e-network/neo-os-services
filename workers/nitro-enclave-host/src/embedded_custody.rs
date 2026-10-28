@@ -27,6 +27,7 @@ pub struct InProcessCustodyTransport {
     prefix: String,
     router: Router,
     internal_raw: Option<crate::custody_bootstrap::InternalRawBridge>,
+    internal_semantic: Option<crate::custody_bootstrap::InternalSemanticBridge>,
 }
 
 impl InProcessCustodyTransport {
@@ -37,6 +38,7 @@ impl InProcessCustodyTransport {
             prefix: embedded_base_url(network)?,
             router,
             internal_raw: None,
+            internal_semantic: None,
         })
     }
 
@@ -49,6 +51,18 @@ impl InProcessCustodyTransport {
             return Err("internal raw migration requires mainnet");
         }
         self.internal_raw = Some(bridge);
+        Ok(self)
+    }
+
+    /// Supplied only by the measured v2 runtime, never by provisioning.
+    pub fn with_internal_semantic(
+        mut self,
+        bridge: crate::custody_bootstrap::InternalSemanticBridge,
+    ) -> Result<Self, &'static str> {
+        if self.prefix != embedded_base_url("mainnet")? || self.internal_raw.is_none() {
+            return Err("internal semantic migration requires the mainnet raw migration handle");
+        }
+        self.internal_semantic = Some(bridge);
         Ok(self)
     }
 
@@ -89,9 +103,17 @@ impl InProcessCustodyTransport {
     /// retain separate capacity for the custody router's own blocking tasks.
     pub async fn send_async(&self, request: CustodyRequest) -> Result<CustodyReply, String> {
         let request = self.request(request)?;
-        let response = match &self.internal_raw {
-            Some(bridge) => bridge.dispatch(request).await.map_err(str::to_string)?,
-            None => self
+        let semantic = self
+            .internal_semantic
+            .as_ref()
+            .filter(|_| request.uri().path() == "/signer/api/v1/sign/transaction");
+        let response = match (semantic, &self.internal_raw) {
+            (Some(bridge), _) => bridge
+                .dispatch(request)
+                .await
+                .map_err(str::to_string)?,
+            (None, Some(bridge)) => bridge.dispatch(request).await.map_err(str::to_string)?,
+            (None, None) => self
                 .router
                 .clone()
                 .oneshot(request)
@@ -111,6 +133,10 @@ impl InProcessCustodyTransport {
 impl CustodyTransport for InProcessCustodyTransport {
     fn has_private_raw_lane(&self) -> bool {
         self.internal_raw.is_some()
+    }
+
+    fn has_private_semantic_lane(&self) -> bool {
+        self.internal_semantic.is_some()
     }
 
     fn send(&self, request: CustodyRequest) -> Result<CustodyReply, String> {

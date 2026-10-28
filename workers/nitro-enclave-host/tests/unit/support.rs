@@ -133,6 +133,7 @@ pub struct SignerConfig {
     pub healthy: bool,
     pub unhealthy_roles: Vec<String>,
     pub shared_neox_identity: bool,
+    pub measured_n3_adapter: bool,
     pub public_key: String,
     pub identity: serde_json::Value,
     pub issues: Vec<String>,
@@ -148,6 +149,7 @@ impl Default for SignerConfig {
             healthy: true,
             unhealthy_roles: Vec::new(),
             shared_neox_identity: false,
+            measured_n3_adapter: false,
             public_key: "02f8a5a1e0f3b6c9d2e5f8a1b4c7d0e3f6a9b2c5d8e1f4a7b0c3d6e9f2a5b8c1"
                 .to_string(),
             identity: healthy_identity(),
@@ -230,6 +232,14 @@ impl FakeSigner {
 }
 
 impl SignerPlane for FakeSigner {
+    fn measured_n3_transaction_adapter(&self) -> bool {
+        self.inner
+            .config
+            .lock()
+            .expect("config lock")
+            .measured_n3_adapter
+    }
+
     fn role_report(&self, _network: &str, role: &str) -> RoleReport {
         let config = self.inner.config.lock().expect("config lock").clone();
         if config.healthy && !config.unhealthy_roles.iter().any(|value| value == role) {

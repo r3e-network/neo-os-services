@@ -105,6 +105,10 @@ pub trait CustodyTransport: Send + Sync {
         false
     }
 
+    fn has_private_semantic_lane(&self) -> bool {
+        false
+    }
+
     fn send(&self, request: CustodyRequest) -> Result<CustodyReply, String>;
 }
 
@@ -315,6 +319,9 @@ impl CustodySigner {
         if self.transport.has_private_raw_lane() {
             return match lane {
                 CustodyLane::Raw => CustodyConfig::new(&base_url, String::new()).map(Some),
+                CustodyLane::Semantic if self.transport.has_private_semantic_lane() => {
+                    CustodyConfig::new(&base_url, String::new()).map(Some)
+                }
                 CustodyLane::Semantic => Ok(None),
             };
         }
@@ -427,6 +434,10 @@ impl CustodySigner {
 }
 
 impl SignerPlane for CustodySigner {
+    fn measured_n3_transaction_adapter(&self) -> bool {
+        self.transport.has_private_raw_lane() && self.transport.has_private_semantic_lane()
+    }
+
     fn role_report(&self, network: &str, role: &str) -> RoleReport {
         // No custody connection configured: the fail-closed state every
         // surface already knew how to render.
