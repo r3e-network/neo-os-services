@@ -864,6 +864,296 @@ fn stale_local_database_is_refused_before_any_remote_recovery_call() {
     assert!(authority.calls.lock().unwrap().is_empty());
 }
 
+// Source-only synthetic additions for the dedicated migration restore seam.
+// No test or workload was run while authoring this candidate.
+struct MigrationRecoveryCase {
+    _directory: tempfile::TempDir,
+    profile: Arc<ValidatedVaultProfile>,
+    root: MasterKey,
+    cipher: SnapshotCipher,
+    migration: crate::migration::MeasuredMigration,
+    authority: Arc<RecoveryFixture>,
+}
+
+fn migration_recovery_case(generation: u64, keep_receipt: bool) -> MigrationRecoveryCase {
+    use crate::migration::tests::{manifest, permit, prepared, profile, validated};
+    let directory = tempfile::tempdir().unwrap();
+    let source = Store::open(directory.path().join("source.db")).unwrap();
+    let profile = Arc::new(profile());
+    let root = MasterKey::from_bytes([0x5a; 32]);
+    let cipher = SnapshotCipher::from_profile(&root, &profile).unwrap();
+    let migration = validated(&manifest(&profile), &profile).unwrap();
+    let state = prepared();
+    source
+        .stage_legacy_migration(&state, &permit(&state))
+        .unwrap();
+    if generation > 1 {
+        source
+            .set_signer_caller_digest("internal-n3-raw-r1", &[8; 32])
+            .unwrap();
+        source
+            .set_signer_caller_disabled("internal-n3-raw-r1", true)
+            .unwrap();
+        source
+            .set_signer_key_disabled("mn-updater-r1", true)
+            .unwrap();
+    }
+    if !keep_receipt {
+        let connection = rusqlite::Connection::open(source.db_path()).unwrap();
+        connection
+            .execute("DELETE FROM signer_audit WHERE id = 1", [])
+            .unwrap();
+    }
+    let previous_digest = if generation == 1 { [0; 32] } else { [9; 32] };
+    let (envelope, head) = source
+        .sealed_snapshot(
+            &cipher,
+            SnapshotPosition {
+                generation,
+                fence: 3,
+                previous_digest,
+            },
+        )
+        .unwrap();
+    let observed = AuthorityHead {
+        binding: cipher.binding().clone(),
+        generation,
+        snapshot_fence: 3,
+        previous_snapshot_sha256: previous_digest,
+        snapshot_sha256: head.digest,
+        epoch: 3,
+        owner_id: "prior-owner".into(),
+        head_fingerprint: [0x31; 32],
+        lease_expires_at_ms: 1,
+        commit_id: Some("committed-migration".into()),
+        snapshot: Some(AuthoritySnapshot {
+            bucket: "snapshot-bucket".into(),
+            key: "snapshots/migration.bin".into(),
+            version_id: "immutable-version".into(),
+            sha256: head.digest,
+            size_bytes: envelope.len(),
+        }),
+        updated_at: "2026-09-11T00:00:00.000Z".into(),
+    };
+    let leased = AuthorityHead {
+        epoch: 4,
+        owner_id: "new-owner".into(),
+        head_fingerprint: [0x41; 32],
+        lease_expires_at_ms: u64::MAX,
+        ..observed.clone()
+    };
+    let authority = Arc::new(RecoveryFixture {
+        target: directory.path().join("restored.db"),
+        observed,
+        leased,
+        envelope,
+        calls: Mutex::new(Vec::new()),
+    });
+    MigrationRecoveryCase {
+        _directory: directory,
+        profile,
+        root,
+        cipher,
+        migration,
+        authority,
+    }
+}
+
+#[test]
+fn migration_restore_uses_exact_snapshot_and_live_lease_without_import_or_commit() {
+    let case = migration_recovery_case(1, true);
+    let target = case.authority.target.clone();
+    let service = recover_migrated_with_authority(
+        case.profile,
+        case.root,
+        &target,
+        case.authority.clone(),
+        case.cipher,
+        &case.migration,
+    )
+    .unwrap();
+    assert_eq!(
+        *case.authority.calls.lock().unwrap(),
+        ["head", "takeover", "download", "renew"]
+    );
+    assert!(matches!(service.durable_status(),
+        Some(crate::durable::DurableStatus::Ready(head)) if head.generation == 1));
+    assert_eq!(service.repository().list_signer_keys().unwrap().len(), 2);
+    assert_eq!(
+        service
+            .repository()
+            .list_signer_audit(None, 10)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn migration_restore_preserves_rotated_disabled_caller_and_key() {
+    let case = migration_recovery_case(2, true);
+    let target = case.authority.target.clone();
+    let service = recover_migrated_with_authority(
+        case.profile,
+        case.root,
+        &target,
+        case.authority.clone(),
+        case.cipher,
+        &case.migration,
+    )
+    .unwrap();
+    let callers = service.repository().list_signer_callers().unwrap();
+    assert_eq!(callers.len(), 1);
+    assert_eq!(callers[0].token_digest, [8; 32]);
+    assert!(callers[0].disabled);
+    assert!(
+        service
+            .repository()
+            .get_signer_key("mn-updater-r1")
+            .unwrap()
+            .disabled
+    );
+    assert_eq!(
+        service
+            .repository()
+            .list_signer_audit(None, 10)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        *case.authority.calls.lock().unwrap(),
+        ["head", "takeover", "download", "renew"]
+    );
+}
+
+#[test]
+fn migration_restore_refuses_absent_or_genesis_head_before_takeover_or_database() {
+    let case = migration_recovery_case(1, true);
+    let target = case.authority.target.clone();
+    let genesis = AuthorityHead::genesis(case.cipher.binding().clone(), 1, "owner".into()).unwrap();
+    let authority = Arc::new(GenesisRecoveryFixture {
+        target: target.clone(),
+        leased: genesis,
+        calls: Mutex::new(Vec::new()),
+    });
+    assert!(recover_migrated_with_authority(
+        case.profile,
+        case.root,
+        &target,
+        authority.clone(),
+        case.cipher,
+        &case.migration
+    )
+    .is_err());
+    assert!(!target.exists());
+    assert_eq!(*authority.calls.lock().unwrap(), ["head-absent"]);
+
+    let mut case = migration_recovery_case(1, true);
+    let genesis = AuthorityHead::genesis(case.cipher.binding().clone(), 1, "owner".into()).unwrap();
+    Arc::get_mut(&mut case.authority).unwrap().observed = genesis;
+    let target = case.authority.target.clone();
+    assert!(recover_migrated_with_authority(
+        case.profile,
+        case.root,
+        &target,
+        case.authority.clone(),
+        case.cipher,
+        &case.migration
+    )
+    .is_err());
+    assert!(!target.exists());
+    assert_eq!(*case.authority.calls.lock().unwrap(), ["head"]);
+}
+
+#[test]
+fn migration_restore_refuses_expired_lease_or_changed_snapshot_before_download() {
+    for expired in [true, false] {
+        let mut case = migration_recovery_case(1, true);
+        let fixture = Arc::get_mut(&mut case.authority).unwrap();
+        if expired {
+            fixture.leased.lease_expires_at_ms = 1;
+        } else {
+            fixture.leased.commit_id = Some("different-commit".into());
+        }
+        let target = case.authority.target.clone();
+        assert!(recover_migrated_with_authority(
+            case.profile,
+            case.root,
+            &target,
+            case.authority.clone(),
+            case.cipher,
+            &case.migration
+        )
+        .is_err());
+        assert!(!target.exists());
+        assert_eq!(*case.authority.calls.lock().unwrap(), ["head", "takeover"]);
+    }
+}
+
+#[test]
+fn migration_restore_missing_historical_receipt_never_installs_database() {
+    let case = migration_recovery_case(2, false);
+    let target = case.authority.target.clone();
+    assert!(recover_migrated_with_authority(
+        case.profile,
+        case.root,
+        &target,
+        case.authority.clone(),
+        case.cipher,
+        &case.migration
+    )
+    .is_err());
+    assert!(!target.exists());
+    assert_eq!(
+        *case.authority.calls.lock().unwrap(),
+        ["head", "takeover", "download"]
+    );
+}
+
+struct MigrationLeaseFailure(Arc<RecoveryFixture>);
+impl RecoveryAuthority for MigrationLeaseFailure {
+    fn head(&self) -> Result<Option<AuthorityHead>> {
+        self.0.head()
+    }
+    fn takeover(&self, previous: Option<&AuthorityHead>) -> Result<AuthorityHead> {
+        self.0.takeover(previous)
+    }
+    fn download_snapshot(&self, head: &AuthorityHead) -> Result<Vec<u8>> {
+        self.0.download_snapshot(head)
+    }
+}
+impl DurableCoordinator for MigrationLeaseFailure {
+    fn commit(&self, _candidate: &CommitCandidate) -> Result<CommitResult> {
+        bail!("restore must not commit")
+    }
+    fn verify_lease(&self, _head: &AuthorityHead) -> Result<AuthorityHead> {
+        self.0.calls.lock().unwrap().push("renew-failed");
+        bail!("synthetic lease loss")
+    }
+}
+
+#[test]
+fn migration_restore_lease_loss_after_receipt_never_installs_or_publishes() {
+    let case = migration_recovery_case(1, true);
+    let target = case.authority.target.clone();
+    let authority = Arc::new(MigrationLeaseFailure(case.authority.clone()));
+    assert!(recover_migrated_with_authority(
+        case.profile,
+        case.root,
+        &target,
+        authority,
+        case.cipher,
+        &case.migration
+    )
+    .is_err());
+    assert!(!target.exists());
+    assert_eq!(
+        *case.authority.calls.lock().unwrap(),
+        ["head", "takeover", "download", "renew-failed"]
+    );
+}
+
 fn vector_candidate(vector: &ProtocolVector) -> CommitCandidate {
     let binding = VaultBinding {
         vault_id: hash(&vector.operation.vault_id),

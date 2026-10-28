@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 const ROOT: [u8; 32] = [0x5a; 32];
 const ARN: &str = "arn:aws:kms:us-east-1:736326664265:key/11111111-2222-3333-4444-555555555555";
 
-fn profile() -> ValidatedVaultProfile {
+pub(crate) fn profile() -> ValidatedVaultProfile {
     let mut document = crate::vault_profile::test_profile(ROOT).document().clone();
     document.environment = "mainnet".into();
     for binding in &mut document.networks {
@@ -26,7 +26,7 @@ fn scalar(index: usize) -> Zeroizing<[u8; 32]> {
     s
 }
 
-fn manifest(p: &ValidatedVaultProfile) -> Value {
+pub(crate) fn manifest(p: &ValidatedVaultProfile) -> Value {
     let roles = (0..2)
         .map(|i| {
             let public = crypto::public_key_from_private(&scalar(i)).unwrap();
@@ -46,7 +46,7 @@ fn manifest(p: &ValidatedVaultProfile) -> Value {
         "external_authority_map_sha256":"33".repeat(32), "roles":roles})
 }
 
-fn validated(v: &Value, p: &ValidatedVaultProfile) -> Result<MeasuredMigration> {
+pub(crate) fn validated(v: &Value, p: &ValidatedVaultProfile) -> Result<MeasuredMigration> {
     let bytes = serde_json::to_vec(v).unwrap();
     let pin: [u8; 32] = Sha256::digest(&bytes).into();
     MeasuredMigration::from_measured_bytes(&bytes, &pin, p)
@@ -60,7 +60,7 @@ fn material() -> [DecodedRoleMaterial; 2] {
     })
 }
 
-fn prepared() -> PreparedMigration {
+pub(crate) fn prepared() -> PreparedMigration {
     let p = profile();
     validated(&manifest(&p), &p)
         .unwrap()
@@ -69,7 +69,7 @@ fn prepared() -> PreparedMigration {
 }
 
 // Synthetic proof confined to this cfg(test) child. Production has no issuer.
-fn permit(p: &PreparedMigration) -> MigrationGenesisPermit {
+pub(crate) fn permit(p: &PreparedMigration) -> MigrationGenesisPermit {
     MigrationGenesisPermit {
         manifest_digest: p.manifest_digest,
         profile_hash: p.profile_hash,
@@ -307,6 +307,181 @@ fn unknown_preseeded_table_or_wrong_permit_refuses_all_writes() {
     assert!(store.stage_legacy_migration(&x, &permit(&x)).is_err());
     assert!(store.list_signer_keys().unwrap().is_empty());
     assert!(store.list_signer_callers().unwrap().is_empty());
+}
+
+fn seeded_restore_source() -> (tempfile::TempDir, Store, MeasuredMigration, MasterKey) {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path().join("source.db")).unwrap();
+    let p = profile();
+    let migration = validated(&manifest(&p), &p).unwrap();
+    let state = prepared();
+    store
+        .stage_legacy_migration(&state, &permit(&state))
+        .unwrap();
+    (directory, store, migration, MasterKey::from_bytes(ROOT))
+}
+
+fn validate_snapshot_source(
+    store: &Store,
+    migration: &MeasuredMigration,
+    root: &MasterKey,
+    generation: u64,
+) -> Result<()> {
+    let cipher = crate::snapshot::SnapshotCipher::from_profile(root, &profile())?;
+    let (envelope, head) = store.sealed_snapshot(
+        &cipher,
+        crate::snapshot::SnapshotPosition {
+            generation,
+            fence: 3,
+            previous_digest: if generation == 1 { [0; 32] } else { [9; 32] },
+        },
+    )?;
+    Store::validate_migration_snapshot(&cipher, &envelope, &head, migration, root)
+}
+
+#[test]
+fn receipt_requires_closed_schema_and_exact_import_statement() {
+    let p = profile();
+    let migration = validated(&manifest(&p), &p).unwrap();
+    let original = prepared().audit().clone();
+    assert_eq!(
+        migration.validate_receipt(&original).unwrap(),
+        original.recorded_at_unix
+    );
+    for field in [
+        "manifest_sha256",
+        "profile_sha256",
+        "ceremony_id",
+        "legacy_checkpoint_sha256",
+        "external_authority_map_sha256",
+        "caller_id",
+        "capability",
+    ] {
+        let mut audit = original.clone();
+        let mut detail: Value = serde_json::from_str(audit.detail.as_ref().unwrap()).unwrap();
+        detail[field] = json!("wrong");
+        audit.detail = Some(detail.to_string());
+        assert!(migration.validate_receipt(&audit).is_err(), "{field}");
+    }
+    for alteration in 0..5 {
+        let mut audit = original.clone();
+        let mut detail: Value = serde_json::from_str(audit.detail.as_ref().unwrap()).unwrap();
+        match alteration {
+            0 => detail["unexpected"] = json!(true),
+            1 => {
+                detail.as_object_mut().unwrap().remove("caller_id");
+            }
+            2 => detail["historical_native_actions_restored"] = json!(true),
+            3 => detail["imported_key_ids"].as_array_mut().unwrap().reverse(),
+            _ => detail["material_provenance_sha256"][0] = json!("55".repeat(32)),
+        }
+        audit.detail = Some(detail.to_string());
+        assert!(migration.validate_receipt(&audit).is_err());
+    }
+    let mut duplicate = original.clone();
+    let text = duplicate.detail.as_ref().unwrap();
+    duplicate.detail = Some(format!("{{\"schema\":\"duplicate\",{}", &text[1..]));
+    assert!(migration.validate_receipt(&duplicate).is_err());
+    let mut wrong_audit = original.clone();
+    wrong_audit.id = 2;
+    assert!(migration.validate_receipt(&wrong_audit).is_err());
+    wrong_audit = original.clone();
+    wrong_audit.key_id = Some(ROLE_IDS[0].into());
+    assert!(migration.validate_receipt(&wrong_audit).is_err());
+    wrong_audit = original;
+    wrong_audit.recorded_at_unix = 0;
+    assert!(migration.validate_receipt(&wrong_audit).is_err());
+}
+
+#[test]
+fn first_generation_requires_exact_caller_and_no_unrelated_rows() {
+    let (_directory, store, migration, root) = seeded_restore_source();
+    validate_snapshot_source(&store, &migration, &root, 1).unwrap();
+    store
+        .set_signer_caller_digest("internal-n3-raw-r1", &[7; 32])
+        .unwrap();
+    assert!(validate_snapshot_source(&store, &migration, &root, 1).is_err());
+    let state = prepared();
+    store
+        .set_signer_caller_digest("internal-n3-raw-r1", &state.caller().token_digest)
+        .unwrap();
+    store
+        .set_signer_caller_disabled("internal-n3-raw-r1", true)
+        .unwrap();
+    assert!(validate_snapshot_source(&store, &migration, &root, 1).is_err());
+    store
+        .set_signer_caller_disabled("internal-n3-raw-r1", false)
+        .unwrap();
+    store.record_signer_audit(state.audit()).unwrap();
+    assert!(validate_snapshot_source(&store, &migration, &root, 1).is_err());
+}
+
+#[test]
+fn first_generation_refuses_broader_policy_or_changed_timestamp() {
+    let (_directory, store, migration, root) = seeded_restore_source();
+    let mut policy = migration.initial_policy();
+    policy.allow_transfer = true;
+    store
+        .save_signer_policy(ROLE_IDS[0], &policy, 1_793_000_000)
+        .unwrap();
+    assert!(validate_snapshot_source(&store, &migration, &root, 1).is_err());
+    store
+        .save_signer_policy(ROLE_IDS[0], &migration.initial_policy(), 1_793_000_001)
+        .unwrap();
+    assert!(validate_snapshot_source(&store, &migration, &root, 1).is_err());
+    store
+        .save_signer_policy(ROLE_IDS[0], &migration.initial_policy(), 1_793_000_000)
+        .unwrap();
+    validate_snapshot_source(&store, &migration, &root, 1).unwrap();
+}
+
+#[test]
+fn first_generation_rechecks_sealed_identity_not_only_public_row() {
+    let (_directory, store, migration, root) = seeded_restore_source();
+    let other = root.seal(&scalar(1)).unwrap();
+    let connection = rusqlite::Connection::open(store.db_path()).unwrap();
+    connection
+        .execute(
+            "UPDATE signer_keys SET nonce = ?1, ciphertext = ?2 WHERE id = ?3",
+            rusqlite::params![other.nonce.to_vec(), other.ciphertext, ROLE_IDS[0]],
+        )
+        .unwrap();
+    assert!(validate_snapshot_source(&store, &migration, &root, 1).is_err());
+}
+
+#[test]
+fn later_generation_validates_history_without_reviving_current_authority() {
+    let (_directory, store, migration, root) = seeded_restore_source();
+    store
+        .set_signer_caller_digest("internal-n3-raw-r1", &[8; 32])
+        .unwrap();
+    store
+        .set_signer_caller_disabled("internal-n3-raw-r1", true)
+        .unwrap();
+    store.set_signer_key_disabled(ROLE_IDS[0], true).unwrap();
+    let callers = store.list_signer_callers().unwrap();
+    let keys = store.list_signer_keys().unwrap();
+    let audit = store.list_signer_audit(None, 10).unwrap();
+    validate_snapshot_source(&store, &migration, &root, 2).unwrap();
+    assert_eq!(store.list_signer_callers().unwrap(), callers);
+    assert_eq!(store.list_signer_keys().unwrap(), keys);
+    assert_eq!(store.list_signer_audit(None, 10).unwrap(), audit);
+    store.delete_signer_caller("internal-n3-raw-r1").unwrap();
+    store.delete_signer_key(ROLE_IDS[0]).unwrap();
+    store.delete_signer_key(ROLE_IDS[1]).unwrap();
+    validate_snapshot_source(&store, &migration, &root, 2).unwrap();
+    assert!(store.list_signer_callers().unwrap().is_empty());
+    assert!(store.list_signer_keys().unwrap().is_empty());
+}
+
+#[test]
+fn later_generation_never_substitutes_an_empty_vault_for_receipt() {
+    let (_directory, store, migration, root) = seeded_restore_source();
+    let connection = rusqlite::Connection::open(store.db_path()).unwrap();
+    connection
+        .execute("DELETE FROM signer_audit WHERE id = 1", [])
+        .unwrap();
+    assert!(validate_snapshot_source(&store, &migration, &root, 2).is_err());
 }
 
 // Real local RSA/CMS composition with deterministic public WIF fixtures only.

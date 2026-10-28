@@ -134,6 +134,81 @@ impl Store {
 }
 
 impl Store {
+    /// Read-only validation in the authenticated snapshot's in-memory database,
+    /// before installing any path or constructing a usable signer. Generation
+    /// one pins the complete initial batch. Later generations check historical
+    /// evidence only: no caller/key is recreated, enabled, or overwritten.
+    pub(crate) fn validate_migration_snapshot(
+        cipher: &crate::snapshot::SnapshotCipher,
+        envelope: &[u8],
+        expected: &crate::snapshot::SnapshotHead,
+        migration: &crate::migration::MeasuredMigration,
+        root: &crate::vault::MasterKey,
+    ) -> Result<()> {
+        let generation = expected.position.generation;
+        anyhow::ensure!(generation > 0, "migration restore requires committed state");
+        anyhow::ensure!(
+            &expected.binding.profile_hash == migration.profile_hash(),
+            "migration snapshot profile mismatch"
+        );
+        let connection = Self::restore_snapshot(cipher, envelope, expected)?;
+        let audit = connection.query_row(
+            "SELECT id, recorded_at_unix, action, outcome, caller_id, key_id, tx_id, reason, detail, origin FROM signer_audit WHERE id = 1",
+            [], signer_audit_from_row)?;
+        let imported_at = migration.validate_receipt(&audit)?;
+        if generation == 1 {
+            Self::check_migration_tables(&connection)?;
+            let callers = Self::list_signer_callers_on(&connection)?;
+            anyhow::ensure!(
+                callers == [migration.initial_caller(root, imported_at)?],
+                "initial migration caller mismatch"
+            );
+            for (index, id) in migration.key_ids().iter().enumerate() {
+                let key = Self::find_signer_key_on(&connection, id)?
+                    .context("initial migration key missing")?;
+                migration.validate_initial_key(index, &key, root, imported_at)?;
+                anyhow::ensure!(
+                    Self::load_signer_policy_on(&connection, id)?
+                        == Some(migration.initial_policy()),
+                    "initial migration policy mismatch"
+                );
+                let updated_at: u64 = connection.query_row(
+                    "SELECT updated_at_unix FROM signer_policies WHERE key_id = ?1",
+                    params![id],
+                    |row| row.get(0),
+                )?;
+                anyhow::ensure!(
+                    updated_at == imported_at,
+                    "initial migration policy timestamp mismatch"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn check_migration_tables(connection: &Connection) -> Result<()> {
+        let mut statement = connection.prepare(
+            "SELECT name FROM sqlite_schema WHERE type = 'table' AND substr(name, 1, 7) != 'sqlite_'",
+        )?;
+        let tables = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for table in tables {
+            let expected: i64 = match table.as_str() {
+                "signer_keys" | "signer_policies" => 2,
+                "signer_callers" | "signer_audit" => 1,
+                _ => 0,
+            };
+            let query = format!("SELECT COUNT(*) FROM \"{}\"", table.replace('"', "\"\""));
+            let count: i64 = connection.query_row(&query, [], |row| row.get(0))?;
+            anyhow::ensure!(
+                count == expected,
+                "migration requires exact initial application state"
+            );
+        }
+        Ok(())
+    }
+
     /// Preparation-only primitive, not wired to any runtime caller. The opaque
     /// permit currently has no production constructor. Coordinator integration
     /// must keep this store private until a complete durable receipt is verified.

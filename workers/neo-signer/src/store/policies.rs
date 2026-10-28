@@ -146,6 +146,13 @@ impl Store {
     /// reading and the one that matches a freshly created key.
     pub fn load_signer_policy(&self, key_id: &str) -> Result<Option<SignerPolicy>> {
         let connection = self.connection()?;
+        Self::load_signer_policy_on(&connection, key_id)
+    }
+
+    pub(super) fn load_signer_policy_on(
+        connection: &Connection,
+        key_id: &str,
+    ) -> Result<Option<SignerPolicy>> {
         connection
             .query_row(
                 "SELECT allow_consensus, allow_raw, allow_transfer, allow_contract_call,

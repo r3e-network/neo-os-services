@@ -76,6 +76,13 @@ impl Store {
     /// string is a poor way to tell them apart.
     pub fn find_signer_key(&self, id: &str) -> Result<Option<SignerKey>> {
         let connection = self.connection()?;
+        Self::find_signer_key_on(&connection, id)
+    }
+
+    pub(super) fn find_signer_key_on(
+        connection: &Connection,
+        id: &str,
+    ) -> Result<Option<SignerKey>> {
         connection
             .query_row(
                 "SELECT id, label, network, public_key, nonce, ciphertext, created_at_unix, disabled,

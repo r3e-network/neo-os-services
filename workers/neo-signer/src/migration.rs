@@ -62,6 +62,24 @@ struct RoleBinding {
     material_provenance_sha256: String,
 }
 
+/// Historical evidence inside an authenticated, committed snapshot. This is
+/// deliberately not an admission token and has no authority-bearing API.
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct MigrationReceipt {
+    schema: String,
+    manifest_sha256: String,
+    profile_sha256: String,
+    ceremony_id: String,
+    legacy_checkpoint_sha256: String,
+    external_authority_map_sha256: String,
+    material_provenance_sha256: Vec<String>,
+    imported_key_ids: Vec<String>,
+    caller_id: String,
+    capability: String,
+    historical_native_actions_restored: bool,
+}
+
 /// Public source binding for a future Recipient-bound adapter. This is a
 /// request contract, NOT evidence that a KMS call or attestation occurred.
 pub(crate) struct RoleReleaseRequest<'a> {
@@ -87,6 +105,142 @@ pub(crate) struct MeasuredMigration {
 }
 
 impl MeasuredMigration {
+    pub(crate) fn profile_hash(&self) -> &[u8; 32] {
+        &self.profile_hash
+    }
+
+    pub(crate) fn validate_profile(&self, profile: &ValidatedVaultProfile) -> Result<()> {
+        ensure!(
+            profile.environment() == Network::Mainnet
+                && *profile.profile_hash() == self.profile_hash,
+            "migration restore profile mismatch"
+        );
+        Ok(())
+    }
+
+    /// Validate the original import statement, not the current caller. Later
+    /// rotations, disables, deletions and policy changes must survive recovery.
+    pub(crate) fn validate_receipt(&self, audit: &SignerAuditRecord) -> Result<u64> {
+        ensure!(
+            audit.id == 1
+                && audit.recorded_at_unix > 0
+                && audit.recorded_at_unix <= i64::MAX as u64
+                && audit.action == SignerAuditAction::CallerCreated
+                && audit.outcome == SignerAuditOutcome::Allowed
+                && audit.caller_id.as_deref() == Some(self.manifest.caller_id.as_str())
+                && audit.key_id.is_none()
+                && audit.tx_id.is_none()
+                && audit.reason.is_none()
+                && audit.origin.is_none(),
+            "migration historical audit mismatch"
+        );
+        let detail = audit
+            .detail
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("migration receipt missing"))?;
+        ensure!(
+            detail.len() <= MAX_MANIFEST_BYTES,
+            "migration receipt size refused"
+        );
+        let receipt: MigrationReceipt = serde_json::from_str(detail)
+            .map_err(|_| anyhow::anyhow!("invalid migration receipt"))?;
+        let expected = MigrationReceipt {
+            schema: "neoos/legacy-n3-migration-receipt/v1".into(),
+            manifest_sha256: hex::encode(self.digest),
+            profile_sha256: hex::encode(self.profile_hash),
+            ceremony_id: self.manifest.ceremony_id.clone(),
+            legacy_checkpoint_sha256: self.manifest.legacy_checkpoint_sha256.clone(),
+            external_authority_map_sha256: self.manifest.external_authority_map_sha256.clone(),
+            material_provenance_sha256: self
+                .manifest
+                .roles
+                .iter()
+                .map(|role| role.material_provenance_sha256.clone())
+                .collect(),
+            imported_key_ids: ROLE_IDS.iter().map(|id| id.to_string()).collect(),
+            caller_id: self.manifest.caller_id.clone(),
+            capability: "raw_sign".into(),
+            historical_native_actions_restored: false,
+        };
+        ensure!(receipt == expected, "migration historical receipt mismatch");
+        Ok(audit.recorded_at_unix)
+    }
+
+    pub(crate) fn key_ids(&self) -> [&str; 2] {
+        ROLE_IDS
+    }
+
+    pub(crate) fn initial_policy(&self) -> SignerPolicy {
+        SignerPolicy {
+            chain_family: Some(ChainFamily::NeoN3),
+            allow_raw: true,
+            ..SignerPolicy::default()
+        }
+    }
+
+    /// Only generation one may compare the initial credential. This derives a
+    /// temporary zeroizing token for comparison; it publishes nothing.
+    pub(crate) fn initial_caller(
+        &self,
+        root: &MasterKey,
+        imported_at: u64,
+    ) -> Result<SignerCaller> {
+        let token = self.derive_internal_token(root, InternalLane::Raw)?;
+        Ok(SignerCaller {
+            id: self.manifest.caller_id.clone(),
+            label: "Migrated internal N3 raw lane".into(),
+            token_digest: auth::token_digest(token.as_str()),
+            workload_identity: None,
+            key_grant: KeyGrant::Only(ROLE_IDS.iter().map(|id| id.to_string()).collect()),
+            capabilities: vec![CallerCapability::RawSign],
+            allowed_origins: Vec::new(),
+            created_at_unix: imported_at,
+            disabled: false,
+        })
+    }
+
+    pub(crate) fn validate_initial_key(
+        &self,
+        index: usize,
+        key: &SignerKey,
+        root: &MasterKey,
+        imported_at: u64,
+    ) -> Result<()> {
+        let role = self
+            .manifest
+            .roles
+            .get(index)
+            .ok_or_else(|| anyhow::anyhow!("migration role index refused"))?;
+        let public_key = fixed_hex::<33>(&role.public_key)?;
+        let magic = network::network_magic(Network::Mainnet);
+        ensure!(
+            key.id == role.key_id
+                && key.label == role.role
+                && key.public_key == public_key
+                && key.network == Network::Mainnet
+                && key.chain_family == ChainFamily::NeoN3
+                && key.chain_id == u64::from(magic)
+                && key.network_magic == magic
+                && key.created_at_unix == imported_at
+                && !key.disabled,
+            "initial migration key mismatch"
+        );
+        let plaintext = root
+            .open_sealed(&key.sealed)
+            .map_err(|_| anyhow::anyhow!("initial migration key seal refused"))?;
+        let scalar: &[u8; 32] = plaintext
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("initial migration scalar size refused"))?;
+        ensure!(
+            crypto::public_key_from_private(scalar)
+                .map_err(|_| anyhow::anyhow!("initial migration scalar refused"))?
+                == public_key,
+            "initial migration sealed identity mismatch"
+        );
+        Ok(())
+    }
+
     /// `expected_digest` must eventually come from image-owned configuration,
     /// independently admitted by the owner-approved measured release/policy.
     /// Passing two matching runtime values is NOT that integration.
@@ -498,4 +652,4 @@ fn validate_key_arn(s: &str, region: &str) -> Result<()> {
 
 #[cfg(test)]
 #[path = "../tests/unit/migration.rs"]
-mod tests;
+pub(crate) mod tests;
