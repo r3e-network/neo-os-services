@@ -236,6 +236,9 @@ impl MeasuredMigration {
         let mut policy = self.initial_policy();
         if index == 1 {
             if let Some(s) = &self.manifest.semantic {
+                // A semantic key cannot also authorize raw preimages. The v1
+                // policies and v2 oracle key retain their raw-only boundary.
+                policy.allow_raw = false;
                 // Fixed measured Mainnet feed target; never a body/env override.
                 let contract = "0x03013f49c42a14546c8bbe58f9d434c3517fccab"
                     .parse::<crate::model::ScriptHash>()

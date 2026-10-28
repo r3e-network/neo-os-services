@@ -999,3 +999,43 @@ fn semantic_v2_restore_exact_initial_then_preserves_disabled_deleted_caller() {
     let old_state = prepared();
     assert!(m.validate_receipt(old_state.audit()).is_err());
 }
+
+#[test]
+fn semantic_v2_initial_and_restored_key_policies_keep_raw_and_semantic_separate() {
+    let p = profile();
+    let root = MasterKey::from_bytes(ROOT);
+    let old = validated(&manifest(&p), &p).unwrap();
+    for index in 0..2 {
+        let policy = old.initial_policy_for(index);
+        assert!(policy.allow_raw);
+        assert!(!policy.allow_contract_call);
+        assert!(!policy.mixes_raw_and_semantic_authority());
+    }
+    let migration = validated(&semantic_manifest(&p), &p).unwrap();
+    let prepared = migration.prepare(&p, &root, material(), 123).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().join("separated.db")).unwrap();
+    store
+        .stage_legacy_migration(&prepared, &permit(&prepared))
+        .unwrap();
+    for (index, id) in ROLE_IDS.iter().enumerate() {
+        let policy = store.load_signer_policy(id).unwrap().unwrap();
+        assert!(!policy.mixes_raw_and_semantic_authority(), "{id}");
+        assert_eq!(policy.allow_raw, index == 0, "{id}");
+        assert_eq!(policy.allow_contract_call, index == 1, "{id}");
+    }
+    let updater = store.load_signer_policy(ROLE_IDS[1]).unwrap().unwrap();
+    let receipt: Value =
+        serde_json::from_str(prepared.audit().detail.as_ref().unwrap()).unwrap();
+    assert_eq!(
+        receipt["semantic"]["policy_sha256"],
+        json!(hex::encode(updater.digest()))
+    );
+    validate_snapshot_source(&store, &migration, &root, 1).unwrap();
+    // Generation-one restore must refuse the previous mixed updater boundary.
+    let mut mixed = updater;
+    mixed.allow_raw = true;
+    assert!(mixed.mixes_raw_and_semantic_authority());
+    store.save_signer_policy(ROLE_IDS[1], &mixed, 123).unwrap();
+    assert!(validate_snapshot_source(&store, &migration, &root, 1).is_err());
+}

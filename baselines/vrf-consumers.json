@@ -1473,7 +1473,7 @@
       "justification": "Expands actual RSA-OAEP session exchange to both networks, shares the canonical vector candidate and includes network decoder regressions. Protocol vectors and local synthetic session transport verify cryptographic bytes and refusal behavior, not economic outcome selection. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "workers/neo-signer/tests/unit/coordinator.rs": {
-          "sha256": "af9307809606d4e762635da3d66e03f217f8501ef21ffd7cd1006646cb95918e"
+          "sha256": "4ba64ee751b925ca80b1c335fe3fe641b6dc541803cf1406cee5a959dc17f6c5"
         }
       }
     },
@@ -2577,7 +2577,7 @@
           "sha256": "3089086f88a4ff2e4d75db85f3612b104d6c060f8d5f9f7ed98dc04dbf05c18c"
         },
         "workers/neo-signer/src/migration.rs": {
-          "sha256": "dce49fe9a97d6ba9f8ded8946b5270646e235a069ffc9ef0e3f96bd4341a7daf"
+          "sha256": "8e2ce614fbfdd6c0531b27a2b11733c5fb79a13f49c0a04887699b3ef19d8467"
         },
         "workers/neo-signer/src/store/keys.rs": {
           "sha256": "48eaa29b868224fb23f7f36360ad250afa7b317c28cae3f44c69bbcc07288987"
@@ -2592,7 +2592,7 @@
           "sha256": "df5445fc9b3ed791214ed2393efc7af6f8ee8ddbdcd622246d0879bc8dfa3a22"
         },
         "workers/neo-signer/tests/unit/migration.rs": {
-          "sha256": "59e3f903d11d203e510801bcb6847fed51a06d419f589652c0b544fdb1a09f01"
+          "sha256": "c2f6bac1ecfb8ec9d28038afefdcb72c3c1aec0e18e4f912f7be8a2acc53cdb7"
         }
       }
     }

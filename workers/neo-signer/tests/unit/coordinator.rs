@@ -1834,6 +1834,90 @@ async fn semantic_v2_bridge_fulltx_policy_domain_durable_and_currentcaller() {
         .is_err());
 }
 
+#[tokio::test]
+async fn semantic_v2_updater_raw_is_denied_while_feed_and_oracle_raw_coexist() {
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Request, StatusCode},
+    };
+    let (dir, p, migration, authority) = semantic_v2_fixture();
+    let service = migration_genesis_run(
+        p.clone(),
+        &migration,
+        authority,
+        &dir.path().join("separated.db"),
+        &|| Ok(crate::migration::tests::material()),
+    )
+    .unwrap()
+    .with_vault_binding(p.clone(), None);
+    let state = crate::api::ApiState::new(service.clone());
+    let raw_migration =
+        crate::migration::tests::validated(&crate::migration::tests::semantic_manifest(&p), &p)
+            .unwrap();
+    let raw = crate::embedded::InternalRawBridge::fixture(state.clone(), raw_migration);
+    let semantic = crate::embedded::InternalSemanticBridge::fixture(state, migration);
+    // Raw signing of this exact preimage would bypass the transaction policy.
+    let mut collision = 860_833_102_u32.to_le_bytes().to_vec();
+    collision.extend_from_slice(&crate::crypto::transaction_hash(&semantic_v2_unsigned(
+        "updateFeed", 1000, 30,
+    )));
+    let collision_hex = hex::encode(collision);
+    let raw_call = |key: &str| {
+        Request::builder()
+            .method("POST")
+            .uri("/signer/api/v1/sign/raw")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({"key_id":key,"data_hex":collision_hex}).to_string(),
+            ))
+            .unwrap()
+    };
+    let denied = raw.dispatch(raw_call("mn-updater-r1")).await.unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let denied: serde_json::Value =
+        serde_json::from_slice(&to_bytes(denied.into_body(), 65536).await.unwrap()).unwrap();
+    assert_eq!(denied["allowed"], false);
+    assert_eq!(denied["code"], "raw-forbidden");
+    let allowed = raw.dispatch(raw_call("mn-oracle-verifier-r1")).await.unwrap();
+    assert_eq!(allowed.status(), StatusCode::OK);
+    let allowed: serde_json::Value =
+        serde_json::from_slice(&to_bytes(allowed.into_body(), 65536).await.unwrap()).unwrap();
+    assert_eq!(allowed["allowed"], true);
+    for (method, id, expected) in [
+        ("updateFeeds", "separated-feed", StatusCode::OK),
+        ("updateFeed", "separated-wrong-method", StatusCode::FORBIDDEN),
+    ] {
+        let response = semantic
+            .dispatch(
+                Request::builder()
+                    .method("POST")
+                    .uri("/signer/api/v1/sign/transaction")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "key_id":"mn-updater-r1",
+                            "unsigned_hex":hex::encode(semantic_v2_unsigned(method, 1000, 31)),
+                            "chain_family":"neo-n3",
+                            "request_id":id,
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected, "{method}");
+    }
+    for id in ["mn-oracle-verifier-r1", "mn-updater-r1"] {
+        assert!(!service
+            .repository()
+            .load_signer_policy(id)
+            .unwrap()
+            .unwrap()
+            .mixes_raw_and_semantic_authority());
+    }
+}
+
 #[test]
 fn semantic_v2_genesis_restore_never_reimports_or_attaches_revoked_caller() {
     let (dir, p, m, authority) = semantic_v2_fixture();
