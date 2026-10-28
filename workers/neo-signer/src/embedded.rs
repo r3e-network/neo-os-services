@@ -26,6 +26,18 @@ use std::{
 pub const DATABASE_FILE: &str = "signer.db";
 pub const PROCESS_LOCK_FILE: &str = "signer.lock";
 
+/// Public measured configuration facade; it cannot accept a runtime path or
+/// digest, or expose custody state or key material to the host.
+pub struct MeasuredEnrollment;
+
+impl MeasuredEnrollment {
+    pub fn from_image_owned(
+        profile: &ValidatedVaultProfile,
+    ) -> Result<Option<Arc<crate::enrollment::ValidatedGenesisEnrollment>>> {
+        crate::enrollment::ValidatedGenesisEnrollment::from_image_owned(profile)
+    }
+}
+
 /// Both the fixed path and expected digest belong to the measured build. There
 /// is no runtime env, HTTP body, path or expected-hash setter for this loader.
 pub const MIGRATION_MANIFEST_FILE: &str = "/opt/neoos/custody/legacy-n3-migration.json";

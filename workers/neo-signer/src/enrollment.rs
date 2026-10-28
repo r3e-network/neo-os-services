@@ -92,7 +92,7 @@ impl ValidatedGenesisEnrollment {
     /// The digest and fixed path are compiled into the measured image. No
     /// runtime environment, provision request or caller supplies either value.
     /// This separate opt-in preserves the original profile and KMS context.
-    pub fn from_image_owned(profile: &ValidatedVaultProfile) -> Result<Option<Arc<Self>>> {
+    pub(crate) fn from_image_owned(profile: &ValidatedVaultProfile) -> Result<Option<Arc<Self>>> {
         let Some(expected) = IMAGE_ENROLLMENT_SHA256 else {
             return Ok(None);
         };

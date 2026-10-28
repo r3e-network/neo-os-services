@@ -10,7 +10,9 @@ use std::sync::Arc;
 use axum::Router;
 use neo_signer::attestation::BootGuard;
 use neo_signer::auth::WorkloadAuthPolicy;
-use neo_signer::embedded::{EmbeddedCustodyConfig, EmbeddedCustodyRuntime, MeasuredMigration};
+use neo_signer::embedded::{
+    EmbeddedCustodyConfig, EmbeddedCustodyRuntime, MeasuredEnrollment, MeasuredMigration,
+};
 use neo_signer::network::Network;
 use neo_signer::vault_profile::VaultProfile;
 use sha2::{Digest, Sha256};
@@ -113,9 +115,8 @@ fn plan(network: &str, overlay: &EnvOverlay) -> Result<EmbeddedCustodyConfig, &'
         .map_err(|_| "invalid embedded custody workload audience")?;
     let migration = MeasuredMigration::from_image_owned(&profile)
         .map_err(|_| "image migration manifest/profile binding invalid")?;
-    let image_enrollment =
-        neo_signer::enrollment::ValidatedGenesisEnrollment::from_image_owned(&profile)
-            .map_err(|_| "image enrollment manifest/profile binding invalid")?;
+    let image_enrollment = MeasuredEnrollment::from_image_owned(&profile)
+        .map_err(|_| "image enrollment manifest/profile binding invalid")?;
     if image_enrollment.is_some() && ENROLLMENT_KEYS.iter().any(|key| overlay.get(key).is_some()) {
         return Err("image enrollment conflicts with runtime enrollment configuration");
     }
