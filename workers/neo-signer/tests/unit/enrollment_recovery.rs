@@ -353,6 +353,22 @@ fn recover_fixture(
 
 #[test]
 fn enrollment_ready_requires_signed_generation_one_and_fixed_admin() {
+    check_enrollment_ready_requires_signed_generation_one_and_fixed_admin(fixture);
+}
+
+#[test]
+fn image_enrollment_ready_requires_signed_generation_one_and_fixed_admin() {
+    check_enrollment_ready_requires_signed_generation_one_and_fixed_admin(
+        crate::enrollment::tests::image_fixture,
+    );
+}
+
+fn check_enrollment_ready_requires_signed_generation_one_and_fixed_admin(
+    fixture: fn() -> (
+        Arc<ValidatedVaultProfile>,
+        Arc<crate::enrollment::ValidatedGenesisEnrollment>,
+    ),
+) {
     let (profile, manifest) = fixture();
     let authority = Authority::new(profile);
     let dir = tempfile::tempdir().unwrap();
@@ -383,6 +399,22 @@ fn enrollment_ready_requires_signed_generation_one_and_fixed_admin() {
 
 #[test]
 fn enrollment_crashes_preserve_local_evidence_and_restart_exact_head() {
+    check_enrollment_crashes_preserve_local_evidence_and_restart_exact_head(fixture);
+}
+
+#[test]
+fn image_enrollment_crashes_preserve_local_evidence_and_restart_exact_head() {
+    check_enrollment_crashes_preserve_local_evidence_and_restart_exact_head(
+        crate::enrollment::tests::image_fixture,
+    );
+}
+
+fn check_enrollment_crashes_preserve_local_evidence_and_restart_exact_head(
+    fixture: fn() -> (
+        Arc<ValidatedVaultProfile>,
+        Arc<crate::enrollment::ValidatedGenesisEnrollment>,
+    ),
+) {
     for fault in [Fault::Upload, Fault::LostReply, Fault::BadReceipt] {
         let (profile, manifest) = fixture();
         let authority = Authority::new(profile);
@@ -430,6 +462,22 @@ fn enrollment_crashes_preserve_local_evidence_and_restart_exact_head() {
 
 #[test]
 fn enrollment_restore_never_reenrolls_adminless_initial_or_rotated_state() {
+    check_enrollment_restore_never_reenrolls_adminless_initial_or_rotated_state(fixture);
+}
+
+#[test]
+fn image_enrollment_restore_never_reenrolls_adminless_initial_or_rotated_state() {
+    check_enrollment_restore_never_reenrolls_adminless_initial_or_rotated_state(
+        crate::enrollment::tests::image_fixture,
+    );
+}
+
+fn check_enrollment_restore_never_reenrolls_adminless_initial_or_rotated_state(
+    fixture: fn() -> (
+        Arc<ValidatedVaultProfile>,
+        Arc<crate::enrollment::ValidatedGenesisEnrollment>,
+    ),
+) {
     let (profile, manifest) = fixture();
     let authority = Authority::new(profile);
     let dir = tempfile::tempdir().unwrap();

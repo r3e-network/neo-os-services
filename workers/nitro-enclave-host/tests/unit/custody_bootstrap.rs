@@ -57,6 +57,36 @@ fn complete_dual_plan_pins_profile_network_root_and_state() {
 }
 
 #[test]
+fn image_enrollment_compile_pin_cannot_be_a_runtime_override() {
+    let directory = tempfile::tempdir().unwrap();
+    for complete in [true, false] {
+        for network in ["mainnet", "testnet"] {
+            let selected = if complete {
+                let mut map = fixture(directory.path());
+                map[network][IMAGE_ENROLLMENT_OVERRIDE_KEY] = json!("");
+                profiles(&map)
+            } else {
+                NetworkProfiles::from_overlay(&EnvOverlay::new([
+                    ("MORPHEUS_NETWORK", network),
+                    (IMAGE_ENROLLMENT_OVERRIDE_KEY, ""),
+                ]))
+                .unwrap()
+            };
+            let mut started = 0;
+            let result = boot_using(&selected, |_, _| {
+                started += 1;
+                Err("runtime override reached boot")
+            });
+            assert_eq!(started, 0);
+            assert_eq!(
+                result.err(),
+                Some("enrollment digest must be compiled into the measured image")
+            );
+        }
+    }
+}
+
+#[test]
 fn migration_manifest_path_mode_and_digest_are_not_runtime_overlays() {
     let directory = tempfile::tempdir().unwrap();
     let original = fixture(directory.path());

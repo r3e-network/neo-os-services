@@ -28,6 +28,7 @@ pub const ENROLLMENT_MODE: &str = "MORPHEUS_CUSTODY_ENROLLMENT_MODE";
 pub const ENROLLMENT_FILE: &str = "MORPHEUS_CUSTODY_ENROLLMENT_FILE";
 pub const ENROLLMENT_HASH: &str = "MORPHEUS_CUSTODY_ENROLLMENT_SHA256";
 const ENROLLMENT_KEYS: [&str; 3] = [ENROLLMENT_MODE, ENROLLMENT_FILE, ENROLLMENT_HASH];
+const IMAGE_ENROLLMENT_OVERRIDE_KEY: &str = "NEOOS_TESTNET_ENROLLMENT_SHA256";
 const MIGRATION_OVERRIDE_KEYS: [&str; 4] = [
     "MORPHEUS_CUSTODY_MIGRATION_MODE",
     "MORPHEUS_CUSTODY_MIGRATION_FILE",
@@ -54,6 +55,9 @@ fn absolute_path(value: &str) -> Result<PathBuf, &'static str> {
 }
 
 fn plan(network: &str, overlay: &EnvOverlay) -> Result<EmbeddedCustodyConfig, &'static str> {
+    if overlay.get(IMAGE_ENROLLMENT_OVERRIDE_KEY).is_some() {
+        return Err("enrollment digest must be compiled into the measured image");
+    }
     // Migration has no runtime overlay mode/path/hash. Its optional opt-in is a
     // compiler input and fixed image file in neo-signer, never provision data.
     for name in MIGRATION_OVERRIDE_KEYS {
@@ -109,7 +113,15 @@ fn plan(network: &str, overlay: &EnvOverlay) -> Result<EmbeddedCustodyConfig, &'
         .map_err(|_| "invalid embedded custody workload audience")?;
     let migration = MeasuredMigration::from_image_owned(&profile)
         .map_err(|_| "image migration manifest/profile binding invalid")?;
-    let enrollment = if ENROLLMENT_KEYS.iter().any(|key| overlay.get(key).is_some()) {
+    let image_enrollment =
+        neo_signer::enrollment::ValidatedGenesisEnrollment::from_image_owned(&profile)
+            .map_err(|_| "image enrollment manifest/profile binding invalid")?;
+    if image_enrollment.is_some() && ENROLLMENT_KEYS.iter().any(|key| overlay.get(key).is_some()) {
+        return Err("image enrollment conflicts with runtime enrollment configuration");
+    }
+    let enrollment = if image_enrollment.is_some() {
+        image_enrollment
+    } else if ENROLLMENT_KEYS.iter().any(|key| overlay.get(key).is_some()) {
         use neo_signer::enrollment::{ValidatedGenesisEnrollment, MAX_MANIFEST_BYTES};
         if expected_network != Network::Testnet
             || value(ENROLLMENT_MODE)? != neo_signer::enrollment::ENROLLMENT_MODE
@@ -160,6 +172,7 @@ pub fn prepare(
         CONFIG_KEYS
             .iter()
             .chain(ENROLLMENT_KEYS.iter())
+            .chain(std::iter::once(&IMAGE_ENROLLMENT_OVERRIDE_KEY))
             .chain(MIGRATION_OVERRIDE_KEYS.iter())
             .any(|k| o.get(k).is_some())
     });

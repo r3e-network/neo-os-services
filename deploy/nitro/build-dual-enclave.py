@@ -49,6 +49,9 @@ LIMIT = 65536
 SCHEMA = 'neoos/dual-image-input/v1'
 SOURCE_DIRS = ('vendor/', 'crates/', 'workers/neo-signer/', 'workers/nitro-enclave-host/', 'workers/neo-os-relayer/')
 PROFILE_FIELDS = ('profile_version vault_id environment networks custody_kms_key_arn root_key_version root_key_commitment snapshot_format_version signer_schema_version coordinator release_policy_version').split()
+IMAGE_ENROLLMENT_MODE = 'image-owned-testnet-admin/v1'
+IMAGE_ENROLLMENT_FILE = 'testnet-image-enrollment.json'
+IMAGE_ENROLLMENT_SHA_ENV = 'NEOOS_TESTNET_ENROLLMENT_SHA256'
 MIGRATION_MODE = 'legacy-n3-two-role-root-caller/v1'
 MIGRATION_MODE_V2 = 'legacy-n3-two-role-root-caller/v2'
 MIGRATION_FILE = 'legacy-n3-migration.json'
@@ -321,20 +324,31 @@ def public_inputs(path, expected_sha, registry):
         if 'enrollment' in spec:
             enrollment = spec['enrollment']
             fields(enrollment, ('mode', 'manifest_file', 'manifest_sha256'))
-            require(network == 'testnet' and enrollment['mode'] == 'first-testnet-admin/v1', 'enrollment requires explicit TestNet opt-in')
-            require(enrollment['manifest_file'] == 'testnet-enrollment.json', 'enrollment file must use fixed basename')
-            manifest = regular(Path(path).parent / enrollment['manifest_file'])
-            require(len(manifest) <= 16384, 'enrollment manifest exceeds bound')
-            require(sha(manifest) == digest(enrollment['manifest_sha256']) == profile['release_policy_version'], 'enrollment manifest/profile digest mismatch')
-            # Authoritative semantic validation is also performed by dual_prepare
-            # against these exact staged bytes in both image recipes.
-            validate_enrollment(parse(manifest), profile)
-            profiles['testnet-enrollment'] = manifest
-            overlay.update({
-                'MORPHEUS_CUSTODY_ENROLLMENT_MODE': enrollment['mode'],
-                'MORPHEUS_CUSTODY_ENROLLMENT_FILE': '/app/config/custody/testnet-enrollment.json',
-                'MORPHEUS_CUSTODY_ENROLLMENT_SHA256': sha(manifest),
-            })
+            image_owned = enrollment['mode'] == IMAGE_ENROLLMENT_MODE
+            require(network == 'testnet' and enrollment['mode'] in ('first-testnet-admin/v1', IMAGE_ENROLLMENT_MODE), 'enrollment requires explicit TestNet opt-in')
+            basename = IMAGE_ENROLLMENT_FILE if image_owned else 'testnet-enrollment.json'
+            require(enrollment['manifest_file'] == basename, 'enrollment file must use fixed basename')
+            manifest = regular(Path(path).parent / basename)
+            require(0 < len(manifest) <= 16384, 'enrollment manifest exceeds bound')
+            require(sha(manifest) == digest(enrollment['manifest_sha256']), 'enrollment manifest digest mismatch')
+            # Rust dual_prepare validates the exact canonical profile hash. The
+            # independent image pin keeps old profile/KMS contexts unchanged.
+            if image_owned:
+                wrapper = parse(manifest)
+                fields(wrapper, ('schema', 'profile_sha256', 'enrollment'))
+                require(wrapper['schema'] == 'neoos/image-owned-testnet-enrollment/v1', 'invalid image enrollment contract')
+                digest(wrapper['profile_sha256'])
+                validate_enrollment(wrapper['enrollment'], profile)
+                profiles['testnet-image-enrollment'] = manifest
+            else:
+                require(sha(manifest) == profile['release_policy_version'], 'enrollment manifest/profile digest mismatch')
+                validate_enrollment(parse(manifest), profile)
+                profiles['testnet-enrollment'] = manifest
+                overlay.update({
+                    'MORPHEUS_CUSTODY_ENROLLMENT_MODE': enrollment['mode'],
+                    'MORPHEUS_CUSTODY_ENROLLMENT_FILE': '/app/config/custody/testnet-enrollment.json',
+                    'MORPHEUS_CUSTODY_ENROLLMENT_SHA256': sha(manifest),
+                })
         if 'migration' in spec:
             migration = spec['migration']
             fields(migration, ('mode', 'manifest_file', 'manifest_sha256'))
@@ -416,18 +430,20 @@ def validate_migration(manifest, profile, role_map):
         digest(role['material_provenance_sha256'])
 
 
-def migration_recipe(template, manifest_sha=None):
+def migration_recipe(template, manifest_sha=None, enrollment_sha=None):
     # A literal command-local assignment reaches cargo/rustc only. It is never
     # an ARG, persisted ENV, host environment input or dual_prepare runtime key.
     marker = '# DUAL_MIGRATION_BUILD_INPUT'
     anchor = marker + '\nRUN cargo build '
     require(MIGRATION_SHA_ENV not in template, 'migration SHA must not be a Docker ENV/ARG')
-    if manifest_sha is None and marker not in template:
+    require(IMAGE_ENROLLMENT_SHA_ENV not in template, 'enrollment SHA must not be a Docker ENV/ARG')
+    if manifest_sha is None and enrollment_sha is None and marker not in template:
         # Preserve staging of historical recipes when migration is not opted in.
         return template
     require(template.count(marker) == 1 and template.count(anchor) == 1,
             'migration cargo marker missing/ambiguous')
     prefix = '' if manifest_sha is None else MIGRATION_SHA_ENV + '=' + digest(manifest_sha) + ' '
+    prefix += '' if enrollment_sha is None else IMAGE_ENROLLMENT_SHA_ENV + '=' + digest(enrollment_sha) + ' '
     return template.replace(anchor, 'RUN ' + prefix + 'cargo build ')
 
 
@@ -704,7 +720,9 @@ def stage_into(repo, input_path, input_sha, env, publication, builder_platform="
     enabled = all('relayer' in spec['networks'][n] for n in NETWORKS)
     env_line = 'ENV MORPHEUS_NETWORK_PROFILES_JSON=' + json.dumps(map_bytes.decode().strip()) + ' MORPHEUS_EMBEDDED_RELAYER=' + str(enabled).lower()
     migration = spec['networks']['mainnet'].get('migration')
-    template = migration_recipe(template, migration['manifest_sha256'] if migration else None)
+    enrollment = spec['networks']['testnet'].get('enrollment')
+    enrollment_sha = enrollment['manifest_sha256'] if enrollment and enrollment['mode'] == IMAGE_ENROLLMENT_MODE else None
+    template = migration_recipe(template, migration['manifest_sha256'] if migration else None, enrollment_sha)
     files['Dockerfile'] = template.replace(marker, env_line).encode()
     files['public/network-profiles.json'] = map_bytes
     for n, data in profiles.items():
@@ -841,6 +859,13 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
             enrollment_file = 'public/custody/testnet-enrollment.json'
             if enrollment_file in manifest['files']:
                 require(sha(regular(exported / 'custody/testnet-enrollment.json')) == manifest['files'][enrollment_file], 'image enrollment digest mismatch')
+            image_enrollment_file = 'public/custody/' + IMAGE_ENROLLMENT_FILE
+            if image_enrollment_file in manifest['files']:
+                expected = manifest['files'][image_enrollment_file]
+                require(sha(regular(exported / 'custody' / IMAGE_ENROLLMENT_FILE)) == expected, 'image enrollment mirror digest mismatch')
+                measured_enrollment = context.parent / ('image-enrollment-' + str(attempt))
+                run([*docker_args, 'cp', cid + ':/opt/neoos/custody', measured_enrollment], env)
+                require(sha(regular(measured_enrollment / IMAGE_ENROLLMENT_FILE)) == expected, 'image measured enrollment digest mismatch')
             migration_file = 'public/custody/' + MIGRATION_FILE
             if migration_file in manifest['files']:
                 expected = manifest['files'][migration_file]
@@ -855,6 +880,10 @@ def build_into(repo, context, manifest, env, docker, nitro, blobs, publication):
             require(isinstance(image_env, list) and all(isinstance(v, str) and '=' in v for v in image_env), 'invalid image environment')
             env_map = unique([v.split('=', 1) for v in image_env])
             require(not any(key in env_map for key in MIGRATION_RUNTIME_KEYS), 'migration input must not be a runtime environment key')
+            require(IMAGE_ENROLLMENT_SHA_ENV not in env_map, 'enrollment compile pin must not be a runtime environment key')
+            if image_enrollment_file in manifest['files']:
+                require(not any('MORPHEUS_CUSTODY_ENROLLMENT_' + suffix in env_map for suffix in ('MODE', 'FILE', 'SHA256')),
+                        'image enrollment conflicts with runtime enrollment configuration')
             require(env_map.get('NODE_ENV') == 'production' and env_map.get('MORPHEUS_ATTESTED_BOOT') == 'require' and env_map.get('MORPHEUS_ALLOW_EPHEMERAL_KEY') == '0', 'image boot policy mismatch')
             require(encoded(parse(env_map.get('MORPHEUS_NETWORK_PROFILES_JSON', 'null'))) == regular(exported / 'network-profiles.json'), 'image runtime map differs from measured map')
             profiles_map = parse(regular(exported / 'network-profiles.json'))

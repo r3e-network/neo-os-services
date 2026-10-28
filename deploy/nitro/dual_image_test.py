@@ -344,6 +344,127 @@ class Packaging(unittest.TestCase):
         for pin in ('12' * 31, 'AA' * 32, '00' * 32, '12' * 32 + ' cargo bad'):
             with self.subTest(pin=pin), self.assertRaises(ValueError): dual.migration_recipe(template, pin)
 
+    def enable_image_enrollment(self):
+        # Synthetic public data only: no credential generation or KMS call.
+        old = {n: dual.encoded(p) for n, p in self.profiles.items()}
+        manifest, _ = self.enable_enrollment()
+        self.profiles = {n: json.loads(raw) for n, raw in old.items()}
+        wrapper = {'schema': 'neoos/image-owned-testnet-enrollment/v1',
+                   'profile_sha256': '34' * 32, 'enrollment': manifest}
+        raw = dual.encoded(wrapper)
+        (self.root / 'testnet-image-enrollment.json').write_bytes(raw)
+        self.input['networks']['testnet']['enrollment'] = {
+            'mode': 'image-owned-testnet-admin/v1',
+            'manifest_file': 'testnet-image-enrollment.json', 'manifest_sha256': dual.sha(raw)}
+        self.write()
+        return wrapper, raw, old
+
+    def test_image_enrollment_preserves_original_profiles_and_compiles_exact_pin(self):
+        wrapper, raw, original = self.enable_image_enrollment()
+        try:
+            result = self.stage()
+        except ValueError as error:
+            self.fail('image-owned enrollment must preserve the original profile: ' + str(error))
+        context = self.root / 'context'
+        for n in dual.NETWORKS:
+            self.assertEqual((context / 'public/custody' / (n + '.json')).read_bytes(), original[n])
+        self.assertEqual(result['files']['public/custody/testnet-image-enrollment.json'], dual.sha(raw))
+        self.assertEqual((context / 'public/custody/testnet-image-enrollment.json').read_bytes(), raw)
+        mapping = json.loads((context / 'public/network-profiles.json').read_bytes())
+        self.assertFalse(any('ENROLLMENT' in key for values in mapping.values() for key in values))
+        recipe = (context / 'Dockerfile').read_text()
+        self.assertIn('NEOOS_TESTNET_ENROLLMENT_SHA256=' + dual.sha(raw) + ' cargo build ', recipe)
+        self.assertEqual(recipe.count('NEOOS_TESTNET_ENROLLMENT_SHA256'), 1)
+        self.assertEqual(wrapper['enrollment']['caller']['capabilities'], ['admin'])
+
+    def test_image_enrollment_wrapper_destination_and_pin_refuse_before_publication(self):
+        wrapper, _, _ = self.enable_image_enrollment()
+        for field in ('schema', 'profile_sha256', 'unknown', 'environment', 'capabilities', 'duplicate', 'oversize', 'mainnet', 'filename'):
+            with self.subTest(field=field):
+                changed = copy.deepcopy(wrapper)
+                if field == 'schema': changed['schema'] = 'other'
+                if field == 'profile_sha256': changed['profile_sha256'] = '00' * 32
+                if field == 'unknown': changed['unknown'] = True
+                if field == 'environment': changed['enrollment']['environment'] = 'mainnet'
+                if field == 'capabilities': changed['enrollment']['caller']['capabilities'] = ['admin', 'sign']
+                raw = dual.encoded(changed)
+                if field == 'duplicate': raw = raw.replace(b'{', b'{"schema":"duplicate",', 1)
+                if field == 'oversize': raw += b' ' * 16384
+                (self.root / 'testnet-image-enrollment.json').write_bytes(raw)
+                spec = self.input['networks']['testnet']['enrollment']
+                spec['manifest_sha256'] = dual.sha(raw)
+                spec['manifest_file'] = 'other.json' if field == 'filename' else 'testnet-image-enrollment.json'
+                if field == 'mainnet':
+                    self.input['networks']['mainnet']['enrollment'] = copy.deepcopy(spec)
+                    del self.input['networks']['testnet']['enrollment']
+                self.write()
+                with self.assertRaises(ValueError): self.stage()
+                self.assertFalse((self.root / 'context').exists())
+                if field == 'mainnet':
+                    self.input['networks']['testnet']['enrollment'] = spec
+                    del self.input['networks']['mainnet']['enrollment']
+
+    def test_image_enrollment_composes_mainnet_pin_in_both_recipes(self):
+        _, enrollment, original = self.enable_image_enrollment()
+        _, migration = self.enable_migration()
+        with patch.dict(os.environ, {dual.IMAGE_ENROLLMENT_SHA_ENV: '99' * 32}):
+            result = self.stage()
+        for network in dual.NETWORKS:
+            self.assertEqual((self.root / 'context/public/custody' / (network + '.json')).read_bytes(), original[network])
+        self.assertEqual(result['files']['public/custody/' + dual.IMAGE_ENROLLMENT_FILE], dual.sha(enrollment))
+        self.assertEqual(result['files']['public/custody/' + dual.MIGRATION_FILE], dual.sha(migration))
+        mapping = json.loads((self.root / 'context/public/network-profiles.json').read_bytes())
+        self.assertFalse(any('ENROLLMENT' in key or 'MIGRATION' in key for overlay in mapping.values() for key in overlay))
+        for recipe in ('Dockerfile.dual-enclave', 'Dockerfile.dual-enclave.cross'):
+            template = (HERE / recipe).read_text()
+            rendered = dual.migration_recipe(template, dual.sha(migration), dual.sha(enrollment))
+            command = ('RUN ' + dual.MIGRATION_SHA_ENV + '=' + dual.sha(migration) + ' '
+                       + dual.IMAGE_ENROLLMENT_SHA_ENV + '=' + dual.sha(enrollment) + ' cargo build ')
+            self.assertEqual(rendered.count(command), 1)
+            self.assertEqual(rendered.count(dual.MIGRATION_SHA_ENV), 1)
+            self.assertEqual(rendered.count(dual.IMAGE_ENROLLMENT_SHA_ENV), 1)
+            self.assertLess(rendered.index('COPY public/custody /opt/neoos/custody'), rendered.index(command))
+            self.assertLess(rendered.index(command), rendered.index('/release/examples/dual_prepare'))
+            self.assertIn('COPY --from=rustbuild /opt/neoos/custody /opt/neoos/custody', rendered)
+            self.assertNotIn('99' * 32, rendered)
+
+    def test_image_enrollment_recipe_refuses_runtime_pin_and_ambiguous_injection(self):
+        for recipe in ('Dockerfile.dual-enclave', 'Dockerfile.dual-enclave.cross'):
+            template = (HERE / recipe).read_text()
+            for bad in (template.replace('# DUAL_MIGRATION_BUILD_INPUT', ''),
+                        template + '\n# DUAL_MIGRATION_BUILD_INPUT\n',
+                        template + '\nENV ' + dual.IMAGE_ENROLLMENT_SHA_ENV + '=runtime\n',
+                        template + '\nARG ' + dual.IMAGE_ENROLLMENT_SHA_ENV + '\n'):
+                with self.subTest(recipe=recipe, bad=bad[-100:]), self.assertRaises(ValueError):
+                    dual.migration_recipe(bad, '12' * 32, '34' * 32)
+            for pin in ('00' * 32, 'AA' * 32, 'short', '12' * 32 + ' cargo bad'):
+                with self.subTest(recipe=recipe, pin=pin), self.assertRaises(ValueError):
+                    dual.migration_recipe(template, '12' * 32, pin)
+
+    def test_image_enrollment_both_exports_and_mainnet_migration_verify(self):
+        _, raw, _ = self.enable_image_enrollment()
+        _, migration = self.enable_migration()
+        result, calls = self.simulate()
+        self.assertEqual(result['files']['public/custody/' + dual.IMAGE_ENROLLMENT_FILE], dual.sha(raw))
+        for attempt in (1, 2):
+            self.assertEqual((self.root / ('image-enrollment-' + str(attempt)) / dual.IMAGE_ENROLLMENT_FILE).read_bytes(), raw)
+            self.assertEqual((self.root / ('image-custody-' + str(attempt)) / dual.MIGRATION_FILE).read_bytes(), migration)
+        copies = [args for args in calls if args[3:4] == ['cp']]
+        self.assertEqual(len(copies), 6)
+        self.assertFalse(any('--build-arg' in args for args in calls))
+
+    def test_image_enrollment_substitution_missing_and_runtime_overrides_refuse(self):
+        self.enable_image_enrollment()
+        for fault in ('image-enrollment-fixed', 'image-enrollment-mirror', 'image-enrollment-missing',
+                      'image-enrollment-env', 'image-enrollment-legacy-env'):
+            with self.subTest(fault=fault):
+                with self.assertRaises((ValueError, FileNotFoundError)): self.simulate(fault)
+                self.assertFalse((self.root / 'result').exists())
+                self.assertFalse(any('build-enclave' in args for args in self.calls))
+                for path in list(self.root.iterdir()):
+                    if path.name.startswith(('context', 'image-config-', 'image-custody-', 'image-enrollment-', 'nitro-artifacts', 'build-')):
+                        shutil.rmtree(path) if path.is_dir() else path.unlink()
+
     def test_measured_enrollment_stages_exact_bytes_optin_and_profile_binding(self):
         mainnet = dual.encoded(self.profiles['mainnet'])
         _, raw = self.enable_enrollment()
@@ -1007,6 +1128,8 @@ m.build(root / 'source', root / 'context', manifest, root / 'result', m.safe_env
                     out=Path(a[-1]);shutil.copytree(context/'public/custody',out)
                     if fault=='migration-fixed':(out/dual.MIGRATION_FILE).write_text('{}')
                     if fault=='migration-missing':(out/dual.MIGRATION_FILE).unlink()
+                    if fault=='image-enrollment-fixed':(out/dual.IMAGE_ENROLLMENT_FILE).write_text('{}')
+                    if fault=='image-enrollment-missing':(out/dual.IMAGE_ENROLLMENT_FILE).unlink()
                     return b''
                 self.assertTrue(a[-2].endswith(':/app/config'))
                 out=Path(a[-1]);shutil.copytree(context/'public',out)
@@ -1016,6 +1139,7 @@ m.build(root / 'source', root / 'context', manifest, root / 'result', m.safe_env
                 if fault=='payload':(out/'custody/testnet.json').write_text('{}')
                 if fault=='enrollment':(out/'custody/testnet-enrollment.json').write_text('{}')
                 if fault=='migration-mirror':(out/'custody'/dual.MIGRATION_FILE).write_text('{}')
+                if fault=='image-enrollment-mirror':(out/'custody'/dual.IMAGE_ENROLLMENT_FILE).write_text('{}')
                 return b''
             if '{{json .Config.Env}}' in a:
                 m=(context/'public/network-profiles.json').read_text().strip()
@@ -1028,6 +1152,8 @@ m.build(root / 'source', root / 'context', manifest, root / 'result', m.safe_env
                 image_env=['NODE_ENV=production','MORPHEUS_ATTESTED_BOOT=require','MORPHEUS_ALLOW_EPHEMERAL_KEY=0','MORPHEUS_NETWORK_PROFILES_JSON='+m, 'MORPHEUS_EMBEDDED_RELAYER=' + gate]
                 if fault=='migration-env':image_env.append(dual.MIGRATION_SHA_ENV+'=12')
                 if fault=='migration-mode-env':image_env.append('MORPHEUS_CUSTODY_MIGRATION_MODE='+dual.MIGRATION_MODE)
+                if fault=='image-enrollment-env':image_env.append(dual.IMAGE_ENROLLMENT_SHA_ENV+'=12')
+                if fault=='image-enrollment-legacy-env':image_env.append('MORPHEUS_CUSTODY_ENROLLMENT_MODE=')
                 return dual.encoded(image_env)
             if 'build-enclave' in a or 'describe-eif' in a:
                 if 'build-enclave' in a:Path(a[-1]).write_bytes(b'synthetic EIF control '+str(counter).encode())

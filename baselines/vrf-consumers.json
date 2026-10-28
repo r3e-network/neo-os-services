@@ -1517,7 +1517,7 @@
       "justification": "New fail-closed plan validates network, absolute paths, bounded profile bytes/digest, environment, internal URL and canonical workload audience. All plans are checked for cross-vault identity/root/path/audience reuse before guarded native boot. Plan validation and boot/router construction contain no random-output allocation rule. Deduplicating canonical audience protects authentication; it does not classify the transactions custody can authorize. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers. Genesis source update: The measured network map must provide the explicit TestNet enrollment mode and a bounded manifest with exact hash/profile binding before boot. Trusted measured configuration can authorize custody initialization, but does not consume VRF output for economic selection. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval.",
       "inputs": {
         "workers/nitro-enclave-host/src/custody_bootstrap.rs": {
-          "sha256": "c9a3753c609aae060c7b3b41286cb50ac1c64071dbf707d0a76d0b643d4a7078"
+          "sha256": "56721d43036349b51b8da7f0842401dd14a573da4a646ae911f99419c2d240d5"
         }
       }
     },
@@ -1572,7 +1572,7 @@
       "justification": "New local profile/boot fixtures cover complete plans, canonical-equivalent audience refusal before any boot, shared identities, missing/digest/foreign configuration, failed attestation, distinct retained leases and partial-boot rollback. Synthetic profile hashes, local lease ownership and refusal assertions do not select economic rewards. Generated fixture material is not operator key evidence. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers. Genesis source update: Synthetic host fixtures test the explicit opt-in, exact manifest/profile binding and Mainnet refusal; fixture results are not admission or operator-credential evidence. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval.",
       "inputs": {
         "workers/nitro-enclave-host/tests/unit/custody_bootstrap.rs": {
-          "sha256": "0820a3665b16122ef6c1ab2161016d6f0765bc7d6e99c02bed30a918c68ec4ce"
+          "sha256": "4cf89e016eaede347943be5801cb51a86810a74ef9def3b89a7345f006c3d552"
         }
       }
     },
@@ -1687,7 +1687,7 @@
           "sha256": "8ea600f0088e35ad1dbe042ebc04e83e996ef691de5b7b111772154d9e1ffd87"
         },
         "deploy/nitro/dual_image_test.py": {
-          "sha256": "76f180abd2e71a42806e4062eea4c2d542a24131931374f6d738276a9e858827"
+          "sha256": "7c32033574271a0d339c3443fe967f78f1228acde5f9eb13a656ceadca342bb6"
         },
         "deploy/nitro/dual_prepare_test.py": {
           "sha256": "329b4cae19ca949ac11e0bc7414986663b18fe1ccabcb1495513baf35b175729"
@@ -1710,7 +1710,7 @@
           "sha256": "548e43b27a74211f6b1cbb4cbe3f420f00855432a4c4c1b02967127f7e729c5b"
         },
         "deploy/nitro/build-dual-enclave.py": {
-          "sha256": "5446764690e320c4f632ca1a0caf9f4373e8dac013458e881b2d97277c8276e4"
+          "sha256": "0c6c6a267228af6b7ff7f9b322d7323970c45d5f27ff89b91e9e51b555de9b16"
         },
         "deploy/nitro/cross-inputs.lock.json": {
           "sha256": "a5086fffb3db277aa47b3ab475b0da0dc35d16ac070729b2a89a5ac6de3f824e"
@@ -1825,7 +1825,7 @@
       "justification": "These production inputs are security-critical and authorize custody operations that can control value. Enrollment validates a fixed measured TestNet Admin manifest, exact profile/purpose and credential digest; provisioning defers purpose-separated attested credential release until authenticated genesis; store management atomically applies caller, key and policy changes with audit, checks full virgin state and validates historical enrollment on restore. They do not consume a VRF/random result to select an economic winner, payout recipient or amount. Credential generation, ciphertext nonces and commit identifiers are cryptographic security material, not economic-outcome randomness. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval. The exact change exports and reuses the same six authenticated custody context fields for the three typed envelope purposes. It preserves Recipient-bound Decrypt signed request bytes, KeyId/region and native profile/network hashes; it does not consume VRF output or choose an economic winner, payout recipient or amount. This is security-critical custody authorization code that can control value. Non-value classifies economic VRF selection only and does not reduce that authority or admit custody/deployment. Independent exact source review: ce3ea721f3395dc7d731383fc92c7c89fc19eea3, tree12202454dcc2ce03ab5576955b2ec6ef881a49fd; verdict SHA256 c08b2bd127f500af640deb21522aed818e26e0e92a80b6b2d836eee821326df4.",
       "inputs": {
         "workers/neo-signer/src/enrollment.rs": {
-          "sha256": "878b31bea50cc2ebe2e12bf9977dbf5fcb0c4f710d3cc48a9a43007b0c736b5d"
+          "sha256": "3d8c2649e49430b321da144869628f8bae67f6f12cb2ed51c8fbadbc474862ec"
         },
         "workers/neo-signer/src/provision.rs": {
           "sha256": "c30cffaff75eb2aa2bf96b731b3711dc7a17b3fe5240a51c4f55178b79b29300"
@@ -1842,10 +1842,10 @@
       "justification": "These local fixtures exercise manifest/token/profile restrictions, complete virgin-state checks, audit rollback, real recovery/snapshot/receipt paths, strict provisioning and KMS purpose contexts using synthetic external interfaces and temporary databases. They do not broadcast, award economic value or consume VRF output for settlement. Tests of privileged paths do not downgrade the production authority or establish live custody readiness. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval. The exact local synthetic regressions compare the exported context with actual production request construction and exercise native profile mutations. They do not broadcast, grant live authority, settle value or consume VRF output for economic selection. Coverage of privileged paths does not lower the security-critical custody meaning of the production code. Focused tests do not establish full CI or live admission. Independent exact source review: ce3ea721f3395dc7d731383fc92c7c89fc19eea3, tree12202454dcc2ce03ab5576955b2ec6ef881a49fd; verdict SHA256 c08b2bd127f500af640deb21522aed818e26e0e92a80b6b2d836eee821326df4.",
       "inputs": {
         "workers/neo-signer/tests/unit/enrollment.rs": {
-          "sha256": "4c983f258f740c9b9568040e4c037b6fecf8c217e6ee752803c835b5cf6ccc8e"
+          "sha256": "5ab191aeec90b2e2313f0eb8811a086d523f4f636b09313b5417ab113c793cf3"
         },
         "workers/neo-signer/tests/unit/enrollment_recovery.rs": {
-          "sha256": "80f8614f375cf702c45095410f59d8a69c2249e7c1970505adb761c190fe2176"
+          "sha256": "fabff61c52ec0ea749cf29021548f58016bdeb4093ea2807adb7cb1fe7be1d2d"
         },
         "workers/neo-signer/tests/unit/provision.rs": {
           "sha256": "aa927209c25f64516261fae23aa8874592f55f94bfbc301bebe13a3eba00ac12"

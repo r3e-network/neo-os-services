@@ -1,8 +1,9 @@
-//! One measured TestNet enrollment, bound into the existing vault profile.
+//! One measured TestNet enrollment, bound to an exact existing vault profile.
 //! This is configuration, never an HTTP-selected caller or a new signing root.
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 use crate::{
     auth,
@@ -16,6 +17,16 @@ use crate::{
 
 pub const MAX_MANIFEST_BYTES: usize = 16 * 1024;
 pub const ENROLLMENT_MODE: &str = "first-testnet-admin/v1";
+const IMAGE_ENROLLMENT_FILE: &str = "/opt/neoos/custody/testnet-image-enrollment.json";
+const IMAGE_ENROLLMENT_SHA256: Option<&str> = option_env!("NEOOS_TESTNET_ENROLLMENT_SHA256");
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImageManifest {
+    schema: String,
+    profile_sha256: String,
+    enrollment: Manifest,
+}
 
 // Struct deserialization rejects duplicate fields before any generic JSON map.
 #[derive(Deserialize)]
@@ -75,6 +86,78 @@ impl ValidatedGenesisEnrollment {
         );
         let manifest: Manifest =
             serde_json::from_slice(bytes).context("invalid enrollment manifest")?;
+        Self::from_manifest(manifest, profile, digest)
+    }
+
+    /// The digest and fixed path are compiled into the measured image. No
+    /// runtime environment, provision request or caller supplies either value.
+    /// This separate opt-in preserves the original profile and KMS context.
+    pub fn from_image_owned(profile: &ValidatedVaultProfile) -> Result<Option<Arc<Self>>> {
+        let Some(expected) = IMAGE_ENROLLMENT_SHA256 else {
+            return Ok(None);
+        };
+        if profile.environment() != Network::Testnet {
+            return Ok(None);
+        }
+        Self::load_pinned_file(
+            std::path::Path::new(IMAGE_ENROLLMENT_FILE),
+            expected,
+            profile,
+        )
+        .map(|value| Some(Arc::new(value)))
+    }
+
+    fn load_pinned_file(
+        path: &std::path::Path,
+        expected: &str,
+        profile: &ValidatedVaultProfile,
+    ) -> Result<Self> {
+        use std::io::Read;
+        anyhow::ensure!(
+            expected.len() == 64
+                && expected
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                && expected != "00".repeat(32),
+            "image enrollment requires an exact nonzero SHA-256 binding"
+        );
+        anyhow::ensure!(
+            profile.environment() == Network::Testnet,
+            "enrollment requires TestNet"
+        );
+        let metadata = std::fs::symlink_metadata(path).context("image enrollment unavailable")?;
+        anyhow::ensure!(
+            metadata.is_file() && metadata.len() <= MAX_MANIFEST_BYTES as u64,
+            "image enrollment must be a bounded regular file"
+        );
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)
+            .context("image enrollment unavailable")?
+            .take(MAX_MANIFEST_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .context("image enrollment unreadable")?;
+        let digest: [u8; 32] = Sha256::digest(&bytes).into();
+        anyhow::ensure!(
+            !bytes.is_empty()
+                && bytes.len() <= MAX_MANIFEST_BYTES
+                && hex::encode(digest) == expected,
+            "image enrollment digest mismatch"
+        );
+        let wrapper: ImageManifest =
+            serde_json::from_slice(&bytes).context("invalid image enrollment manifest")?;
+        anyhow::ensure!(
+            wrapper.schema == "neoos/image-owned-testnet-enrollment/v1"
+                && wrapper.profile_sha256 == hex::encode(profile.profile_hash()),
+            "image enrollment profile mismatch"
+        );
+        Self::from_manifest(wrapper.enrollment, profile, digest)
+    }
+
+    fn from_manifest(
+        manifest: Manifest,
+        profile: &ValidatedVaultProfile,
+        digest: [u8; 32],
+    ) -> Result<Self> {
         let document = profile.document();
         anyhow::ensure!(
             manifest.schema == "neoos/first-admin-enrollment/v1"

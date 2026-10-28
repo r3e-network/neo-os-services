@@ -161,3 +161,178 @@ fn enrollment_direct_parser_refuses_fully_self_consistent_mainnet_manifest() {
     let error = ValidatedGenesisEnrollment::from_json(&bytes, &mainnet).unwrap_err();
     assert_eq!(error.to_string(), "enrollment requires TestNet");
 }
+
+fn image_enrollment_bytes(profile: &ValidatedVaultProfile) -> Vec<u8> {
+    serde_json::to_vec(&json!({"schema":"neoos/image-owned-testnet-enrollment/v1",
+        "profile_sha256":hex::encode(profile.profile_hash()), "enrollment":manifest(profile.document())})).unwrap()
+}
+
+pub(crate) fn image_fixture() -> (Arc<ValidatedVaultProfile>, Arc<ValidatedGenesisEnrollment>) {
+    let profile = Arc::new(crate::vault_profile::test_profile(ROOT));
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("image.json");
+    let bytes = image_enrollment_bytes(&profile);
+    std::fs::write(&path, &bytes).unwrap();
+    let pin = hex::encode(Sha256::digest(&bytes));
+    let enrollment =
+        Arc::new(ValidatedGenesisEnrollment::load_pinned_file(&path, &pin, &profile).unwrap());
+    (profile, enrollment)
+}
+
+#[test]
+fn image_enrollment_keeps_original_profile_and_original_context() {
+    let profile = crate::vault_profile::test_profile(ROOT);
+    let before = serde_json::to_vec(profile.document()).unwrap();
+    use crate::provision::{custody_encryption_context, EnvelopePurpose};
+    let contexts = [
+        EnvelopePurpose::MasterKey,
+        EnvelopePurpose::TransportToken,
+        EnvelopePurpose::FirstAdmin,
+    ]
+    .map(|purpose| custody_encryption_context(&profile, purpose));
+    let profile_hash = *profile.profile_hash();
+    let network_set_hash = *profile.network_set_hash();
+    let root_commitment = *profile.root_key_commitment();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("image.json");
+    let bytes = image_enrollment_bytes(&profile);
+    std::fs::write(&path, &bytes).unwrap();
+    let pin = hex::encode(Sha256::digest(&bytes));
+    let enrollment = ValidatedGenesisEnrollment::load_pinned_file(&path, &pin, &profile).unwrap();
+    enrollment
+        .verify_token(ADMIN.as_bytes(), &auth::token_digest("transport"))
+        .unwrap();
+    assert_eq!(before, serde_json::to_vec(profile.document()).unwrap());
+    assert_eq!(
+        contexts,
+        [
+            EnvelopePurpose::MasterKey,
+            EnvelopePurpose::TransportToken,
+            EnvelopePurpose::FirstAdmin
+        ]
+        .map(|purpose| custody_encryption_context(&profile, purpose))
+    );
+    assert_eq!(*profile.profile_hash(), profile_hash);
+    assert_eq!(*profile.network_set_hash(), network_set_hash);
+    assert_eq!(*profile.root_key_commitment(), root_commitment);
+    assert_eq!(enrollment.digest, <[u8; 32]>::from(Sha256::digest(&bytes)));
+    let detail: Value = serde_json::from_str(enrollment.audit.detail.as_ref().unwrap()).unwrap();
+    assert_eq!(detail["manifest_sha256"], pin);
+    assert_eq!(detail["profile_sha256"], hex::encode(profile_hash));
+    assert_eq!(enrollment.profile_hash, *profile.profile_hash());
+    assert!(
+        ValidatedGenesisEnrollment::from_json(
+            &serde_json::to_vec(&manifest(profile.document())).unwrap(),
+            &profile
+        )
+        .is_err(),
+        "old release-policy admission remains required"
+    );
+}
+
+#[test]
+fn image_enrollment_requires_exact_pin_full_profile_and_admin_only() {
+    let profile = crate::vault_profile::test_profile(ROOT);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("image.json");
+    let original: Value = serde_json::from_slice(&image_enrollment_bytes(&profile)).unwrap();
+    for mode in [
+        "valid",
+        "schema",
+        "profile",
+        "caller",
+        "network",
+        "capability",
+        "duplicate",
+        "extra",
+    ] {
+        let mut changed = original.clone();
+        match mode {
+            "schema" => changed["schema"] = json!("other"),
+            "profile" => changed["profile_sha256"] = json!("11".repeat(32)),
+            "caller" => changed["enrollment"]["caller"]["disabled"] = json!(true),
+            "network" => changed["enrollment"]["environment"] = json!("mainnet"),
+            "capability" => {
+                changed["enrollment"]["caller"]["capabilities"] = json!(["admin", "sign"])
+            }
+            "extra" => changed["unknown"] = json!(true),
+            _ => {}
+        }
+        let mut bytes = serde_json::to_vec(&changed).unwrap();
+        if mode == "duplicate" {
+            bytes = String::from_utf8(bytes)
+                .unwrap()
+                .replacen("{", "{\"schema\":\"duplicate\",", 1)
+                .into_bytes();
+        }
+        std::fs::write(&path, &bytes).unwrap();
+        let pin = hex::encode(Sha256::digest(&bytes));
+        let result = ValidatedGenesisEnrollment::load_pinned_file(&path, &pin, &profile);
+        assert_eq!(result.is_ok(), mode == "valid", "{mode}");
+    }
+    let bytes = image_enrollment_bytes(&profile);
+    std::fs::write(&path, &bytes).unwrap();
+    for pin in [
+        "00".repeat(32),
+        "11".repeat(32),
+        "AA".repeat(32),
+        "short".into(),
+    ] {
+        assert!(ValidatedGenesisEnrollment::load_pinned_file(&path, &pin, &profile).is_err());
+    }
+    let pin = hex::encode(Sha256::digest(&bytes));
+    let mut altered = profile.document().clone();
+    altered.release_policy_version = "changed".into();
+    assert!(ValidatedGenesisEnrollment::load_pinned_file(
+        &path,
+        &pin,
+        &altered.validate().unwrap()
+    )
+    .is_err());
+    assert!(ValidatedGenesisEnrollment::load_pinned_file(&path, &pin, &mainnet_profile()).is_err());
+}
+
+#[test]
+fn image_enrollment_refuses_symlink_directory_empty_and_oversize() {
+    let profile = crate::vault_profile::test_profile(ROOT);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("image.json");
+    let pin = "11".repeat(32);
+    assert!(ValidatedGenesisEnrollment::load_pinned_file(dir.path(), &pin, &profile).is_err());
+    for bytes in [vec![], vec![b' '; MAX_MANIFEST_BYTES + 1]] {
+        std::fs::write(&path, bytes).unwrap();
+        assert!(ValidatedGenesisEnrollment::load_pinned_file(&path, &pin, &profile).is_err());
+    }
+    #[cfg(unix)]
+    {
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert!(ValidatedGenesisEnrollment::load_pinned_file(&link, &pin, &profile).is_err());
+    }
+}
+
+#[test]
+fn image_enrollment_keeps_existing_atomic_first_admin_admission() {
+    let profile = crate::vault_profile::test_profile(ROOT);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("image.json");
+    let bytes = image_enrollment_bytes(&profile);
+    std::fs::write(&path, &bytes).unwrap();
+    let pin = hex::encode(Sha256::digest(&bytes));
+    let enrollment = ValidatedGenesisEnrollment::load_pinned_file(&path, &pin, &profile).unwrap();
+    let store = Store::open(dir.path().join("signer.db")).unwrap();
+    let connection = rusqlite::Connection::open(store.db_path()).unwrap();
+    connection.execute_batch("CREATE TRIGGER refuse_image_admin BEFORE INSERT ON signer_audit BEGIN SELECT RAISE(ABORT, 'synthetic'); END;").unwrap();
+    assert!(store.enroll_genesis(&enrollment).is_err());
+    assert!(store.list_signer_callers().unwrap().is_empty());
+    connection
+        .execute_batch("DROP TRIGGER refuse_image_admin;")
+        .unwrap();
+    store.enroll_genesis(&enrollment).unwrap();
+    store.validate_enrollment(&enrollment, 1).unwrap();
+    assert!(store.enroll_genesis(&enrollment).is_err());
+    assert_eq!(store.list_signer_callers().unwrap().len(), 1);
+    assert!(enrollment
+        .verify_token(ADMIN.as_bytes(), &auth::token_digest(ADMIN))
+        .is_err());
+}
