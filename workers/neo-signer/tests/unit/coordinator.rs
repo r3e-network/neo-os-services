@@ -1859,7 +1859,9 @@ async fn semantic_v2_updater_raw_is_denied_while_feed_and_oracle_raw_coexist() {
     // Raw signing of this exact preimage would bypass the transaction policy.
     let mut collision = 860_833_102_u32.to_le_bytes().to_vec();
     collision.extend_from_slice(&crate::crypto::transaction_hash(&semantic_v2_unsigned(
-        "updateFeed", 1000, 30,
+        "updateFeed",
+        1000,
+        30,
     )));
     let collision_hex = hex::encode(collision);
     let raw_call = |key: &str| {
@@ -1878,14 +1880,21 @@ async fn semantic_v2_updater_raw_is_denied_while_feed_and_oracle_raw_coexist() {
         serde_json::from_slice(&to_bytes(denied.into_body(), 65536).await.unwrap()).unwrap();
     assert_eq!(denied["allowed"], false);
     assert_eq!(denied["code"], "raw-forbidden");
-    let allowed = raw.dispatch(raw_call("mn-oracle-verifier-r1")).await.unwrap();
+    let allowed = raw
+        .dispatch(raw_call("mn-oracle-verifier-r1"))
+        .await
+        .unwrap();
     assert_eq!(allowed.status(), StatusCode::OK);
     let allowed: serde_json::Value =
         serde_json::from_slice(&to_bytes(allowed.into_body(), 65536).await.unwrap()).unwrap();
     assert_eq!(allowed["allowed"], true);
     for (method, id, expected) in [
         ("updateFeeds", "separated-feed", StatusCode::OK),
-        ("updateFeed", "separated-wrong-method", StatusCode::FORBIDDEN),
+        (
+            "updateFeed",
+            "separated-wrong-method",
+            StatusCode::FORBIDDEN,
+        ),
     ] {
         let response = semantic
             .dispatch(

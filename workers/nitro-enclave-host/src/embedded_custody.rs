@@ -108,10 +108,7 @@ impl InProcessCustodyTransport {
             .as_ref()
             .filter(|_| request.uri().path() == "/signer/api/v1/sign/transaction");
         let response = match (semantic, &self.internal_raw) {
-            (Some(bridge), _) => bridge
-                .dispatch(request)
-                .await
-                .map_err(str::to_string)?,
+            (Some(bridge), _) => bridge.dispatch(request).await.map_err(str::to_string)?,
             (None, Some(bridge)) => bridge.dispatch(request).await.map_err(str::to_string)?,
             (None, None) => self
                 .router

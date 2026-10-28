@@ -1473,7 +1473,7 @@
       "justification": "Expands actual RSA-OAEP session exchange to both networks, shares the canonical vector candidate and includes network decoder regressions. Protocol vectors and local synthetic session transport verify cryptographic bytes and refusal behavior, not economic outcome selection. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "workers/neo-signer/tests/unit/coordinator.rs": {
-          "sha256": "4ba64ee751b925ca80b1c335fe3fe641b6dc541803cf1406cee5a959dc17f6c5"
+          "sha256": "c584a670ccd3f20289850d771834c431d060d39e646d1919c1eaffd0e6fcb77f"
         }
       }
     },
@@ -1528,7 +1528,7 @@
       "justification": "New in-process transport binds a literal network-specific internal origin to one router; preserves bearer and body; restricts host-facing methods/routes; bounds request/response sizes and refuses malformed replies. The adapter transports explicitly requested operations without interpreting random output. No award or transfer selection is performed by its routing/serialization logic. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
       "inputs": {
         "workers/nitro-enclave-host/src/embedded_custody.rs": {
-          "sha256": "66ce1e763fe2197841a778e70bbcf272454a5ce8fa05f1f8983837a5ab045303"
+          "sha256": "b07376d68e0a51fe7c414ae484ffc47573f4c61a63fad5b56c061a60cbd3d9d0"
         }
       }
     },
@@ -2592,7 +2592,7 @@
           "sha256": "df5445fc9b3ed791214ed2393efc7af6f8ee8ddbdcd622246d0879bc8dfa3a22"
         },
         "workers/neo-signer/tests/unit/migration.rs": {
-          "sha256": "c2f6bac1ecfb8ec9d28038afefdcb72c3c1aec0e18e4f912f7be8a2acc53cdb7"
+          "sha256": "2567f8d1908f0c9d0f384bf1f9302fc129f942393dc6c99941ad361def1d1968"
         }
       }
     }

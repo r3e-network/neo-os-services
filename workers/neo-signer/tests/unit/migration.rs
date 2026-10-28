@@ -1025,8 +1025,7 @@ fn semantic_v2_initial_and_restored_key_policies_keep_raw_and_semantic_separate(
         assert_eq!(policy.allow_contract_call, index == 1, "{id}");
     }
     let updater = store.load_signer_policy(ROLE_IDS[1]).unwrap().unwrap();
-    let receipt: Value =
-        serde_json::from_str(prepared.audit().detail.as_ref().unwrap()).unwrap();
+    let receipt: Value = serde_json::from_str(prepared.audit().detail.as_ref().unwrap()).unwrap();
     assert_eq!(
         receipt["semantic"]["policy_sha256"],
         json!(hex::encode(updater.digest()))
