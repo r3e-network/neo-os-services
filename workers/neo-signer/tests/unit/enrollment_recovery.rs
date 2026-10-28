@@ -198,7 +198,7 @@ impl DurableCoordinator for Authority {
         }
         let cfg = &self.profile.document().coordinator;
         let mut receipt = CommitReceipt {
-            network: "testnet".into(),
+            network: self.profile.environment().to_string(),
             vault_id: candidate.next.binding.vault_id,
             profile_hash: candidate.next.binding.profile_hash,
             network_set_hash: candidate.next.binding.network_set_hash,

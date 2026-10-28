@@ -342,6 +342,29 @@ impl MeasuredMigration {
         })
     }
 
+    /// The opaque proof is minted only by the coordinator after authenticated
+    /// HEAD/takeover and a fresh remote lease check. Runtime input cannot create
+    /// it. A prepared batch is still private until its durable receipt verifies.
+    pub(crate) fn admit_genesis(
+        &self,
+        proof: &crate::coordinator::AuthenticatedMigrationGenesis,
+    ) -> Result<MigrationGenesisPermit> {
+        let head = proof.head();
+        head.validate()?;
+        ensure!(
+            head.is_genesis() && head.binding.profile_hash == self.profile_hash,
+            "migration requires the authenticated genesis binding"
+        );
+        Ok(MigrationGenesisPermit {
+            manifest_digest: self.digest,
+            profile_hash: self.profile_hash,
+            operation_digest: crate::durable::operation_digest(
+                PURPOSE,
+                Some(&hex::encode(self.digest)),
+            ),
+        })
+    }
+
     /// Release exactly the admitted legacy role through the existing Nitro
     /// Recipient flow. A fresh ephemeral key/NSM document and a matching KMS
     /// response KeyId are required by that implementation. No key search,
@@ -550,10 +573,9 @@ impl InternalLane {
     }
 }
 
-/// Not a runtime admission API. There is deliberately NO production constructor,
-/// Default, Deserialize, or public field. A future measured coordinator adapter
-/// must mint this only after authenticated genesis HEAD plus live fenced lease,
-/// exact owner admission and release provenance checks. Tests may synthesize it.
+/// Not a request-body admission API. No Default, Deserialize, or public field.
+/// Production construction requires the coordinator's opaque genesis proof.
+/// Tests may synthesize this binding without invoking a remote authority.
 pub(crate) struct MigrationGenesisPermit {
     manifest_digest: [u8; 32],
     profile_hash: [u8; 32],
@@ -572,6 +594,9 @@ pub(crate) struct PreparedMigration {
 }
 
 impl PreparedMigration {
+    pub(crate) fn operation_digest(&self) -> [u8; 32] {
+        self.operation_digest
+    }
     pub(crate) fn check_permit(&self, permit: &MigrationGenesisPermit) -> Result<()> {
         ensure!(
             permit.manifest_digest == self.manifest_digest

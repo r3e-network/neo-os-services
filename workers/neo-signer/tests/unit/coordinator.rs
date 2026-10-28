@@ -1205,3 +1205,285 @@ fn vector_candidate(vector: &ProtocolVector) -> CommitCandidate {
 
 #[path = "coordinator_network.rs"]
 mod network_binding;
+
+// Real snapshot/receipt verification with a synthetic authority. No remote KMS,
+// protected scalar or deployed authority is used by these migration cases.
+fn migration_genesis_fixture() -> (
+    tempfile::TempDir,
+    Arc<ValidatedVaultProfile>,
+    crate::migration::MeasuredMigration,
+    Arc<super::enrollment_fixture::Authority>,
+) {
+    use crate::migration::tests::{manifest, profile, validated};
+    let dir = tempfile::tempdir().unwrap();
+    let profile = Arc::new(profile());
+    let migration = validated(&manifest(&profile), &profile).unwrap();
+    let authority = super::enrollment_fixture::Authority::new(profile.clone());
+    (dir, profile, migration, authority)
+}
+
+fn migration_genesis_run<A>(
+    profile: Arc<ValidatedVaultProfile>,
+    migration: &crate::migration::MeasuredMigration,
+    authority: Arc<A>,
+    target: &Path,
+    release: RoleRelease<'_>,
+) -> Result<SignerService>
+where
+    A: RecoveryAuthority + DurableCoordinator + 'static,
+{
+    let root = MasterKey::from_bytes([0x5a; 32]);
+    let cipher = SnapshotCipher::from_profile(&root, &profile)?;
+    recover_migration_with_authority(
+        profile,
+        root,
+        target,
+        authority,
+        cipher,
+        migration,
+        Some(release),
+    )
+}
+
+#[test]
+fn migration_genesis_ready_requires_one_complete_committed_readback() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (dir, profile, migration, authority) = migration_genesis_fixture();
+    let target = dir.path().join("genesis.db");
+    let releases = AtomicUsize::new(0);
+    let release = || {
+        assert!(
+            !target.exists(),
+            "role release must precede local DB creation"
+        );
+        assert!(authority
+            .head
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .is_genesis());
+        releases.fetch_add(1, Ordering::SeqCst);
+        Ok(crate::migration::tests::material())
+    };
+    let service =
+        migration_genesis_run(profile, &migration, authority.clone(), &target, &release).unwrap();
+    assert_eq!(releases.load(Ordering::SeqCst), 1);
+    assert_eq!(authority.candidates.lock().unwrap().len(), 1);
+    assert_eq!(authority.downloads.load(Ordering::SeqCst), 1);
+    assert!(
+        matches!(service.durable_status(), Some(crate::durable::DurableStatus::Ready(h)) if h.generation == 1)
+    );
+    let callers = service.repository().list_signer_callers().unwrap();
+    assert_eq!(callers.len(), 1);
+    assert_eq!(
+        callers[0].capabilities,
+        vec![crate::model::CallerCapability::RawSign]
+    );
+    assert_eq!(service.repository().list_signer_keys().unwrap().len(), 2);
+    assert_eq!(
+        service
+            .repository()
+            .list_signer_audit(None, 10)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn migration_genesis_release_failure_or_identity_mismatch_never_opens_database() {
+    for wrong_identity in [false, true] {
+        let (dir, profile, migration, authority) = migration_genesis_fixture();
+        let target = dir.path().join("genesis.db");
+        let release = || {
+            if !wrong_identity {
+                return Err("synthetic secret transport detail".into());
+            }
+            let mut material = crate::migration::tests::material();
+            material[0].scalar[31] = 9;
+            Ok(material)
+        };
+        let result =
+            migration_genesis_run(profile, &migration, authority.clone(), &target, &release);
+        assert!(result.is_err());
+        assert!(!result.err().unwrap().to_string().contains("secret"));
+        assert!(!target.exists());
+        assert!(authority.candidates.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn migration_genesis_lease_loss_during_release_prevents_database_or_commit() {
+    let (dir, profile, migration, authority) = migration_genesis_fixture();
+    let target = dir.path().join("genesis.db");
+    let release = || {
+        authority.expire();
+        Ok(crate::migration::tests::material())
+    };
+    assert!(
+        migration_genesis_run(profile, &migration, authority.clone(), &target, &release).is_err()
+    );
+    assert!(!target.exists());
+    assert!(authority.candidates.lock().unwrap().is_empty());
+}
+
+#[test]
+fn migration_genesis_durable_failures_are_one_attempt_without_ready_or_same_path_retry() {
+    use super::enrollment_fixture::Fault;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    for fault in [
+        Fault::Upload,
+        Fault::LostReply,
+        Fault::BadReceipt,
+        Fault::ExpiredReceipt,
+    ] {
+        let (dir, profile, migration, authority) = migration_genesis_fixture();
+        let target = dir.path().join("genesis.db");
+        *authority.fault.lock().unwrap() = fault;
+        let releases = AtomicUsize::new(0);
+        let release = || {
+            releases.fetch_add(1, Ordering::SeqCst);
+            Ok(crate::migration::tests::material())
+        };
+        assert!(migration_genesis_run(
+            profile.clone(),
+            &migration,
+            authority.clone(),
+            &target,
+            &release
+        )
+        .is_err());
+        assert!(
+            target.exists(),
+            "retain failed staged state as a retry fence"
+        );
+        assert_eq!(authority.candidates.lock().unwrap().len(), 1);
+        assert!(
+            migration_genesis_run(profile, &migration, authority.clone(), &target, &release)
+                .is_err()
+        );
+        assert_eq!(releases.load(Ordering::SeqCst), 1);
+        assert_eq!(authority.candidates.lock().unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn migration_genesis_lost_reply_restores_exact_commit_without_legacy_release() {
+    use super::enrollment_fixture::Fault;
+    use std::sync::atomic::Ordering;
+    let (dir, profile, migration, authority) = migration_genesis_fixture();
+    let first = dir.path().join("failed.db");
+    *authority.fault.lock().unwrap() = Fault::LostReply;
+    assert!(migration_genesis_run(
+        profile.clone(),
+        &migration,
+        authority.clone(),
+        &first,
+        &|| Ok(crate::migration::tests::material())
+    )
+    .is_err());
+    let digest = authority
+        .head
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .snapshot_sha256;
+    authority.expire();
+    *authority.fault.lock().unwrap() = Fault::None;
+    let second = dir.path().join("restored.db");
+    let service = migration_genesis_run(profile, &migration, authority.clone(), &second, &|| {
+        panic!("committed restore must never release original material")
+    })
+    .unwrap();
+    assert!(
+        matches!(service.durable_status(), Some(crate::durable::DurableStatus::Ready(h)) if h.snapshot_sha256 == digest)
+    );
+    assert_eq!(authority.candidates.lock().unwrap().len(), 1);
+    assert_eq!(authority.downloads.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        service
+            .repository()
+            .list_signer_audit(None, 10)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+struct MigrationReadbackFailure(Arc<super::enrollment_fixture::Authority>);
+impl RecoveryAuthority for MigrationReadbackFailure {
+    fn head(&self) -> Result<Option<AuthorityHead>> {
+        self.0.head()
+    }
+    fn takeover(&self, previous: Option<&AuthorityHead>) -> Result<AuthorityHead> {
+        self.0.takeover(previous)
+    }
+    fn download_snapshot(&self, _: &AuthorityHead) -> Result<Vec<u8>> {
+        bail!("synthetic readback failure")
+    }
+}
+impl DurableCoordinator for MigrationReadbackFailure {
+    fn verify_lease(&self, head: &AuthorityHead) -> Result<AuthorityHead> {
+        self.0.verify_lease(head)
+    }
+    fn commit(&self, candidate: &CommitCandidate) -> Result<CommitResult> {
+        self.0.commit(candidate)
+    }
+}
+
+#[test]
+fn migration_genesis_readback_failure_never_returns_service_even_after_commit() {
+    let (dir, profile, migration, authority) = migration_genesis_fixture();
+    let target = dir.path().join("genesis.db");
+    assert!(migration_genesis_run(
+        profile,
+        &migration,
+        Arc::new(MigrationReadbackFailure(authority.clone())),
+        &target,
+        &|| Ok(crate::migration::tests::material())
+    )
+    .is_err());
+    assert!(target.exists());
+    assert_eq!(authority.candidates.lock().unwrap().len(), 1);
+    assert_eq!(
+        authority.head.lock().unwrap().as_ref().unwrap().generation,
+        1
+    );
+}
+
+#[test]
+fn migration_genesis_two_owners_cannot_both_release_or_commit() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (dir, profile, migration, authority) = migration_genesis_fixture();
+    let migration = Arc::new(migration);
+    *authority.head_race.lock().unwrap() =
+        Some(Arc::new((Mutex::new(0), std::sync::Condvar::new())));
+    let releases = Arc::new(AtomicUsize::new(0));
+    let mut threads = Vec::new();
+    for i in 0..2 {
+        let (profile, migration, authority, releases) = (
+            profile.clone(),
+            migration.clone(),
+            authority.clone(),
+            releases.clone(),
+        );
+        let target = dir.path().join(format!("boot-{i}.db"));
+        threads.push(std::thread::spawn(move || {
+            migration_genesis_run(profile, &migration, authority, &target, &|| {
+                releases.fetch_add(1, Ordering::SeqCst);
+                Ok(crate::migration::tests::material())
+            })
+            .is_ok()
+        }));
+    }
+    let successes = threads
+        .into_iter()
+        .map(|t| t.join().unwrap())
+        .filter(|ok| *ok)
+        .count();
+    assert_eq!(successes, 1);
+    assert_eq!(releases.load(Ordering::SeqCst), 1);
+    assert_eq!(authority.candidates.lock().unwrap().len(), 1);
+}

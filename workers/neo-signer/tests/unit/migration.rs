@@ -52,7 +52,7 @@ pub(crate) fn validated(v: &Value, p: &ValidatedVaultProfile) -> Result<Measured
     MeasuredMigration::from_measured_bytes(&bytes, &pin, p)
 }
 
-fn material() -> [DecodedRoleMaterial; 2] {
+pub(crate) fn material() -> [DecodedRoleMaterial; 2] {
     std::array::from_fn(|i| DecodedRoleMaterial {
         key_id: ROLE_IDS[i].into(),
         response_kms_key_arn: ARN.into(),

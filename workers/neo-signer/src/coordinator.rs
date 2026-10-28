@@ -835,6 +835,49 @@ pub(crate) fn recover_with_migration_restore(
     )
 }
 
+/// This proof has no request/serde/clone constructor. Its only production
+/// issuer below has authenticated HEAD, a fenced takeover and a fresh lease.
+pub(crate) struct AuthenticatedMigrationGenesis {
+    head: AuthorityHead,
+}
+impl AuthenticatedMigrationGenesis {
+    pub(crate) fn head(&self) -> &AuthorityHead {
+        &self.head
+    }
+}
+
+pub(crate) fn recover_with_migration(
+    profile: Arc<ValidatedVaultProfile>,
+    credentials: AwsCredentials,
+    master_key: MasterKey,
+    database_path: &Path,
+    attestation: Arc<dyn AttestationSource>,
+    migration: &crate::migration::MeasuredMigration,
+    release_roles: &dyn Fn() -> std::result::Result<
+        [crate::migration::DecodedRoleMaterial; 2],
+        String,
+    >,
+) -> Result<SignerService> {
+    ensure_fresh_database_target(database_path)?;
+    migration.validate_profile(&profile)?;
+    let cipher = SnapshotCipher::from_profile(&master_key, &profile)?;
+    let client = Arc::new(CoordinatorClient::establish(
+        Arc::clone(&profile),
+        cipher.binding().clone(),
+        credentials,
+        attestation,
+    )?);
+    recover_migration_with_authority(
+        profile,
+        master_key,
+        database_path,
+        client,
+        cipher,
+        migration,
+        Some(release_roles),
+    )
+}
+
 fn recover_migrated_with_authority<A>(
     profile: Arc<ValidatedVaultProfile>,
     master_key: MasterKey,
@@ -846,42 +889,126 @@ fn recover_migrated_with_authority<A>(
 where
     A: RecoveryAuthority + DurableCoordinator + 'static,
 {
+    recover_migration_with_authority(
+        profile,
+        master_key,
+        database_path,
+        authority,
+        cipher,
+        migration,
+        None,
+    )
+}
+
+type RoleRelease<'a> =
+    &'a dyn Fn() -> std::result::Result<[crate::migration::DecodedRoleMaterial; 2], String>;
+
+fn recover_migration_with_authority<A>(
+    profile: Arc<ValidatedVaultProfile>,
+    master_key: MasterKey,
+    database_path: &Path,
+    authority: Arc<A>,
+    cipher: SnapshotCipher,
+    migration: &crate::migration::MeasuredMigration,
+    release_roles: Option<RoleRelease<'_>>,
+) -> Result<SignerService>
+where
+    A: RecoveryAuthority + DurableCoordinator + 'static,
+{
     ensure_fresh_database_target(database_path)?;
     migration.validate_profile(&profile)?;
-    let observed = authority
-        .head()?
-        .context("migration restore requires an authenticated committed HEAD")?;
-    observed.validate()?;
-    anyhow::ensure!(
-        &observed.binding == cipher.binding(),
-        "migration observed HEAD binding mismatch"
-    );
-    anyhow::ensure!(
-        !observed.is_genesis(),
-        "migration genesis admission is not implemented"
-    );
-    let leased = authority.takeover(Some(&observed))?;
+    let observed = authority.head()?;
+    if let Some(previous) = &observed {
+        previous.validate()?;
+        anyhow::ensure!(
+            &previous.binding == cipher.binding(),
+            "migration observed HEAD binding mismatch"
+        );
+    }
+    // The restore-only entry point cannot initialize an absent/genesis HEAD.
+    if release_roles.is_none() {
+        anyhow::ensure!(
+            observed.as_ref().is_some_and(|h| !h.is_genesis()),
+            "migration restore requires an authenticated committed HEAD"
+        );
+    }
+    let leased = authority.takeover(observed.as_ref())?;
     leased.validate()?;
     anyhow::ensure!(
-        &leased.binding == cipher.binding() && leased.same_snapshot(&observed),
-        "migration takeover changed committed state"
+        &leased.binding == cipher.binding(),
+        "migration leased binding mismatch"
     );
+    if let Some(previous) = &observed {
+        anyhow::ensure!(
+            leased.same_snapshot(previous),
+            "migration takeover changed committed state"
+        );
+    } else {
+        anyhow::ensure!(
+            leased.is_genesis(),
+            "migration absent HEAD requires genesis takeover"
+        );
+    }
     leased.ensure_live(now_millis()?)?;
-    let envelope = authority.download_snapshot(&leased)?;
-    let expected = leased.snapshot_head()?;
-    Store::validate_migration_snapshot(&cipher, &envelope, &expected, migration, &master_key)?;
-
     let install_cipher = SnapshotCipher::from_profile(&master_key, &profile)?;
-    let durable = DurableState::from_verified_lease(profile, cipher, authority, leased)?;
-    // Refresh the real fenced lease after download and receipt validation. The
-    // verified snapshot is installed only after this succeeds. A failure or an
-    // expired lease never publishes a service and never falls back to genesis.
-    let renewed = durable.verify_remote_lease()?;
-    renewed.validate()?;
-    renewed.ensure_live(now_millis()?)?;
-    durable.ensure_ready()?;
-    let repository = Store::install_snapshot(database_path, &install_cipher, &envelope, &expected)
-        .context("failed to install the verified migration snapshot")?;
+    let durable = DurableState::from_verified_lease(
+        Arc::clone(&profile),
+        cipher,
+        authority.clone(),
+        leased.clone(),
+    )?;
+    let repository = if leased.is_genesis() {
+        let release = release_roles.context("migration genesis admission is disabled")?;
+        let refreshed = durable.verify_remote_lease()?;
+        refreshed.ensure_live(now_millis()?)?;
+        durable.ensure_ready()?;
+        let proof = AuthenticatedMigrationGenesis { head: refreshed };
+        let permit = migration.admit_genesis(&proof)?;
+        // Never release legacy material on a committed-state restore. Suppress
+        // arbitrary transport diagnostics that could accidentally contain input.
+        let material = release().map_err(|_| anyhow::anyhow!("migration role release refused"))?;
+        let prepared = migration.prepare(&profile, &master_key, material, now_millis()? / 1000)?;
+        // Role KMS/NSM work can consume or lose the lease: refresh again before
+        // creating any database, then attempt exactly one immutable commit.
+        durable.verify_remote_lease()?.ensure_live(now_millis()?)?;
+        durable.ensure_ready()?;
+        let repository =
+            Store::open(database_path).context("failed to create the admitted migration store")?;
+        repository.stage_legacy_migration(&prepared, &permit)?;
+        let committed = durable.commit(&repository, prepared.operation_digest())?;
+        anyhow::ensure!(
+            committed.generation == 1,
+            "migration initial commit must be generation one"
+        );
+        // Read back the exact immutable committed snapshot before publishing
+        // this local store. Lost upload/commit/readback/receipt is a HOLD; the
+        // existing database is retained and cannot be silently initialized again.
+        let envelope = authority.download_snapshot(&committed)?;
+        let expected = committed.snapshot_head()?;
+        Store::validate_migration_snapshot(
+            &install_cipher,
+            &envelope,
+            &expected,
+            migration,
+            &master_key,
+        )?;
+        durable.verify_remote_lease()?.ensure_live(now_millis()?)?;
+        repository
+    } else {
+        let envelope = authority.download_snapshot(&leased)?;
+        let expected = leased.snapshot_head()?;
+        Store::validate_migration_snapshot(
+            &install_cipher,
+            &envelope,
+            &expected,
+            migration,
+            &master_key,
+        )?;
+        durable.verify_remote_lease()?.ensure_live(now_millis()?)?;
+        durable.ensure_ready()?;
+        Store::install_snapshot(database_path, &install_cipher, &envelope, &expected)
+            .context("failed to install the verified migration snapshot")?
+    };
     durable.ensure_ready()?;
     Ok(SignerService::new(repository, master_key).with_durable_state(Arc::new(durable)))
 }
