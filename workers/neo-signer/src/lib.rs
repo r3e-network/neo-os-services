@@ -18,6 +18,7 @@ pub mod durable;
 pub mod embedded;
 pub mod enrollment;
 pub mod evm_tx;
+pub mod legacy_material;
 pub mod metrics;
 pub mod model;
 pub mod neo_block;
