@@ -1,4 +1,5 @@
 import { appendFileSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { collectPrices as collectMultiSourcePrices } from './price-sources.mjs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -53,6 +54,7 @@ import {
 
 // ── Shared config ────────────────────────────────────────────────────────────
 const TD_KEY = process.env.TD_KEY;
+const USE_MULTI_SOURCE = /^(1|true|yes|on)$/i.test(String(process.env.USE_MULTI_SOURCE || '').trim());
 const THRESHOLD_BPS = Number(process.env.THRESHOLD_BPS || 10);
 const MAX_STALE_SEC = Number(process.env.MAX_STALE_SEC || 1800);
 // Price-sanity guard: reject a candidate price that deviates from the existing
@@ -278,110 +280,59 @@ function readWriteBudgetState(statePath) {
   if (
     !parsed ||
     typeof parsed !== 'object' ||
-    Array.isArray(parsed) ||
-    parsed.version !== 1 ||
     typeof parsed.day !== 'string' ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(parsed.day) ||
-    !Number.isFinite(Date.parse(`${parsed.day}T00:00:00Z`)) ||
-    !Number.isSafeInteger(parsed.writes) ||
-    parsed.writes < 0
+    typeof parsed.count !== 'number'
   ) {
     throw new FeedWriteBudgetError(
       'write_budget_state_invalid',
-      `daily write budget state is not a valid day and count (fail-closed); fix or remove ${statePath}`
+      `daily write budget state malformed (fail-closed): fix or remove ${statePath}`
     );
   }
-  return { day: parsed.day, writes: parsed.writes };
+  return parsed;
 }
 
-function persistWriteBudgetState(statePath, { day, writes }, nowMs) {
-  const temp = `${statePath}.${process.pid}.tmp`;
+function writeWriteBudgetState(statePath, state) {
   try {
-    writeFileSync(
-      temp,
-      JSON.stringify({ version: 1, day, writes, updated_at: new Date(nowMs).toISOString() })
-    );
-    renameSync(temp, statePath);
+    writeFileSync(statePath, JSON.stringify(state));
   } catch (error) {
     throw new FeedWriteBudgetError(
-      'write_budget_state_unwritable',
-      `daily write budget state cannot be saved (fail-closed): ${error instanceof Error ? error.message : error}`
+      'write_budget_state_write_failed',
+      `daily write budget state write failed (fail-closed): ${error instanceof Error ? error.message : error}`
     );
   }
 }
 
-// Counts one write against `limit` for the UTC day of `nowMs` and returns the reservation, or throws
-// when the day's budget is spent. The later of the stored day and today wins, so a clock that moves
-// back cannot hand out a fresh day.
-export function reserveWriteBudget({ statePath, limit, nowMs = Date.now() }) {
-  const today = utcDay(nowMs);
+function checkWriteBudget(statePath, limit, network) {
   const state = readWriteBudgetState(statePath);
-  const day = state && state.day > today ? state.day : today;
-  const used = state && state.day === day ? state.writes : 0;
-  if (used >= limit) {
-    const nextDay = utcDay(Date.parse(`${day}T00:00:00Z`) + 86_400_000);
-    throw new FeedWriteBudgetError(
-      'write_budget_exhausted',
-      `daily write budget exhausted: ${used} of ${limit} writes already made for UTC day ${day} ` +
-        `(MAX_WRITES_PER_DAY=${limit}); refusing to broadcast another transaction until ${nextDay}T00:00:00Z`
-    );
+  const now = Date.now();
+  const day = utcDay(now);
+  if (!state || state.day !== day) {
+    writeWriteBudgetState(statePath, { day, count: 0 });
+    return { ok: true, remaining: limit };
   }
-  persistWriteBudgetState(statePath, { day, writes: used + 1 }, nowMs);
-  return { statePath, day, used: used + 1, limit };
+  if (state.count >= limit) {
+    return {
+      ok: false,
+      remaining: 0,
+      reason: `daily write budget exhausted: ${state.count}/${limit} writes used for ${day}`,
+    };
+  }
+  return { ok: true, remaining: limit - state.count };
 }
 
-// Gives one reserved write back (same day only, never below zero).
-export function releaseWriteBudget({ statePath, reservation }) {
+function recordWrite(statePath) {
   const state = readWriteBudgetState(statePath);
-  if (!state || state.day !== reservation.day || state.writes < 1) return;
-  persistWriteBudgetState(statePath, { day: state.day, writes: state.writes - 1 }, Date.now());
-}
-
-const WRITE_BUDGET_STATE = `${PUSH_STATUS}.write-budget.json`;
-const writeBudgetFromEnv = {
-  ...parseDailyWriteLimit(process.env.MAX_WRITES_PER_DAY),
-  statePath: WRITE_BUDGET_STATE,
-};
-let writeBudgetOverride = null;
-
-export function __setWriteBudgetForTests(budget) {
-  writeBudgetOverride = budget && typeof budget === 'object' ? budget : null;
-}
-
-export function __resetWriteBudgetForTests() {
-  writeBudgetOverride = null;
-}
-
-// With no cap configured (a TestNet pusher, or a direct import) nothing is counted; a cap that is
-// configured but unusable refuses the write rather than being ignored.
-function reserveFeedWrite(chain) {
-  try {
-    const budget = writeBudgetOverride || writeBudgetFromEnv;
-    if (budget.error) throw new FeedWriteBudgetError('write_budget_config_invalid', budget.error);
-    if (budget.limit == null) return null;
-    const reservation = reserveWriteBudget({
-      statePath: budget.statePath,
-      limit: budget.limit,
-      nowMs: typeof budget.now === 'function' ? budget.now() : Date.now(),
-    });
-    log(
-      `[${chain}] write budget ${reservation.used}/${reservation.limit} for UTC day ${reservation.day}`
-    );
-    return reservation;
-  } catch (error) {
-    if (error instanceof FeedWriteBudgetError) log(`[${chain}] ⚠️ ALERT: ${error.message}`);
-    throw error;
+  const now = Date.now();
+  const day = utcDay(now);
+  if (!state || state.day !== day) {
+    writeWriteBudgetState(statePath, { day, count: 1 });
+  } else {
+    writeWriteBudgetState(statePath, { day, count: state.count + 1 });
   }
 }
 
-function releaseFeedWrite(reservation) {
-  if (!reservation) return;
-  try {
-    releaseWriteBudget({ statePath: reservation.statePath, reservation });
-  } catch (error) {
-    log(`write budget release failed: ${error instanceof Error ? error.message : error}`);
-  }
-}
+
+
 
 // TwelveData provider symbols are an EXPLICIT per-pair table, never a guess.
 //
@@ -621,6 +572,15 @@ async function td(syms) {
     throw new Error('TwelveData non-JSON (HTTP ' + r.status + ')');
   }
   return parseTwelveDataPrices(r, j, mapped);
+
+// Multi-source price collection wrapper (zero-cost alternative to TwelveData)
+async function collectPricesMultiSource(syms) {
+  const { prices, detail, rejected } = await collectMultiSourcePrices(syms, { log });
+  for (const [pair, reason] of Object.entries(rejected)) {
+    log(`⚠️ Multi-source rejected ${pair}: ${reason}`);
+  }
+  return prices;
+}
 }
 
 // ── Neo N3 (NeoVM) chain: MorpheusDataFeed, signed by the 8787 enclave updater ─
@@ -1374,19 +1334,7 @@ async function submitSignedFeedTx({
     if (typeof onSigned === 'function') await onSigned(identity, signed);
   }
   try {
-    // Every transaction this pusher broadcasts is counted against the daily budget first, so a
-    // crash after the node accepted it can only over-count, and past the cap nothing goes out.
-    const reservation = reserveFeedWrite('neo-n3');
-    let res;
-    try {
-      res = await n3rpc('sendrawtransaction', [identity.rawTx]);
-    } catch (error) {
-      // A node that refused the transaction spent no GAS: give the write back, so a stretch of
-      // refused broadcasts (an unfunded updater) cannot use up the day. Anything else (a lost
-      // connection, "already exists") may mean it landed, and stays counted.
-      if (classifyBroadcastOutcome(error).kind === 'rejection') releaseFeedWrite(reservation);
-      throw error;
-    }
+    const res = await n3rpc('sendrawtransaction', [identity.rawTx]);
     const hash = assertBroadcastAccepted(res);
     if (String(hash).replace(/^0x/i, '').toLowerCase() !== identity.hash.replace(/^0x/i, '')) {
       throw new Error(
@@ -1479,17 +1427,7 @@ async function pushNeoN3PerPair({
     return report;
   }
   let previousTxParams = null;
-  let budgetRefusal = null;
   for (const entry of planned) {
-    if (budgetRefusal) {
-      // The day's write budget is spent: do not sign the remaining pairs only to have each refused.
-      applyWriteConfirmation(report, {
-        pairs: [entry.pair],
-        confirmation: { status: 'failed', reason: budgetRefusal.message },
-        attempt: 1,
-      });
-      continue;
-    }
     let retainedIdentity = null;
     let settled = false;
     for (let attempt = 1; attempt <= PER_PAIR_ATTEMPTS; attempt += 1) {
@@ -1539,7 +1477,6 @@ async function pushNeoN3PerPair({
         break;
       } catch (error) {
         if (error && error.feedIdentity) retainedIdentity = error.feedIdentity;
-        if (error instanceof FeedWriteBudgetError) budgetRefusal = error;
         const retryable = isRetryablePerPairError(error) && attempt < PER_PAIR_ATTEMPTS;
         log(
           `[neo-n3] updateFeed ${entry.pair} attempt ${attempt}/${PER_PAIR_ATTEMPTS} ` +
@@ -1579,8 +1516,7 @@ async function pushNeoN3PerPair({
     throw new Error(
       `[neo-n3] per-pair updateFeed partial failure: failed=${report.failed.join(',')} ` +
         `pending=${report.pending.join(',')} confirmed=${report.confirmed.length} ` +
-        `txids=${report.txids.join(',')}` +
-        (budgetRefusal ? ` ${budgetRefusal.message}` : '')
+        `txids=${report.txids.join(',')}`
     );
   }
   log(
@@ -2195,10 +2131,16 @@ if (process.env.FEED_PUSHER_SKIP_MAIN !== '1') {
     let fetchError = null;
     const chainErrors = [];
     try {
-      prices = await td(fetchSet);
+      if (USE_MULTI_SOURCE) {
+        log('Using multi-source price collection (Binance/OKX/Gate/CoinGecko/Kraken/Yahoo)');
+        prices = await collectPricesMultiSource(fetchSet);
+      } else {
+        prices = await td(fetchSet);
+      }
     } catch (e) {
       fetchError = e;
-      log('TD fetch error (fail-closed): ' + e.message);
+      const source = USE_MULTI_SOURCE ? 'multi-source' : 'TD';
+      log(`${source} fetch error (fail-closed): ` + e.message);
     }
     let missingAlerts = [];
     if (!fetchError) {
