@@ -55,6 +55,25 @@ impl AttestationSource for NsmAttestation {
     }
 }
 
+/// A stub attestation source for host mode (when MORPHEUS_ATTESTED_BOOT=allow).
+/// Returns an empty document, which will be caught by the /attestation handler
+/// and labeled as trust_tier=host-unattested.
+pub struct HostAttestation;
+
+impl AttestationSource for HostAttestation {
+    fn attest(
+        &self,
+        _nonce: Option<&[u8]>,
+        _user_data: Option<&[u8]>,
+        _public_key: Option<&[u8]>,
+    ) -> AttestResult<Vec<u8>> {
+        // In host mode, we have no NSM device. Return an empty document.
+        // The /attestation handler will treat this as host-unattested.
+        Ok(Vec::new())
+    }
+}
+
+
 /// Executes a signed KMS request and returns the raw HTTP status and body. The
 /// response's JSON is parsed (and its status judged) by
 /// [`kms::parse_kms_decrypt_response`], so the trait stays transport-shaped.
