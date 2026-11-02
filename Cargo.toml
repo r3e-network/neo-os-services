@@ -13,6 +13,7 @@ members = [
     "crates/neo-os-relayer-store",
     "crates/neo-os-service-runtime",
     "workers/neo-os-relayer",
+    "intent-trading",
 ]
 # The cross-repository CI job checks NeoNexus out here after this workspace's
 # own gates. Keep that standalone package outside this workspace so Cargo can

@@ -116,6 +116,7 @@ COPY workers/neo-signer/src workers/neo-signer/src
 COPY workers/neo-signer/build.rs workers/neo-signer/build.rs
 COPY workers/neo-signer/proto workers/neo-signer/proto
 COPY workers/nitro-enclave-host/src workers/nitro-enclave-host/src
+COPY intent-trading/src intent-trading/src
 COPY config/networks/mainnet.json config/networks/mainnet.json
 COPY config/networks/testnet.json config/networks/testnet.json
 # Release build of the two binaries this image runs: the frontier and its PID 1
