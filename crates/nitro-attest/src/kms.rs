@@ -366,6 +366,187 @@ pub fn parse_kms_decrypt_response_for_key(
     Ok(ciphertext.to_string())
 }
 
+/// Builds a plain KMS Decrypt request (no `Recipient`): the response's
+/// `Plaintext` comes back directly. Host-mode releases use this path — the
+/// frontier process has no NSM device and no attestation document, so the
+/// ciphertext is bound by its encryption context and the pinned key id alone.
+pub fn build_kms_decrypt_request_plain(
+    region: &str,
+    credentials: &Credentials,
+    amz_date: &str,
+    ciphertext_b64: &str,
+    encryption_context: &[(&str, &str)],
+    key_id: Option<&str>,
+) -> AttestResult<SignedRequest> {
+    if region.len() < 5
+        || region.len() > 63
+        || !region
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        || region.split('-').any(str::is_empty)
+        || !region.contains('-')
+        || !region.as_bytes().last().is_some_and(u8::is_ascii_digit)
+    {
+        return Err("invalid AWS region".to_string());
+    }
+    let date = amz_date.as_bytes();
+    if date.len() != 16
+        || date[8] != b'T'
+        || date[15] != b'Z'
+        || !date[..8].iter().chain(&date[9..15]).all(u8::is_ascii_digit)
+    {
+        return Err("amz date must be YYYYMMDDTHHMMSSZ".to_string());
+    }
+
+    let host = format!("kms.{region}.amazonaws.com");
+    let mut body_map = Map::new();
+    body_map.insert(
+        "CiphertextBlob".to_string(),
+        Value::String(ciphertext_b64.to_string()),
+    );
+    if !encryption_context.is_empty() {
+        let mut context = std::collections::BTreeMap::new();
+        for &(name, value) in encryption_context {
+            if name.is_empty() || value.is_empty() || context.insert(name, value).is_some() {
+                return Err("encryption context must contain unique, nonempty entries".to_string());
+            }
+        }
+        body_map.insert(
+            "EncryptionContext".to_string(),
+            serde_json::to_value(context).map_err(|_| "invalid encryption context".to_string())?,
+        );
+    }
+    if let Some(key_id) = key_id {
+        if !key_id.starts_with("arn:")
+            || key_id.bytes().any(|byte| byte.is_ascii_whitespace())
+            || key_id.len() > 2048
+        {
+            return Err("invalid expected KMS key id".to_string());
+        }
+        body_map.insert("KeyId".to_string(), Value::String(key_id.to_string()));
+    }
+    let body = Value::Object(body_map).to_string();
+
+    let datestamp = &amz_date[..8];
+    let mut headers: Vec<(String, String)> = vec![
+        (
+            "content-type".to_string(),
+            "application/x-amz-json-1.1".to_string(),
+        ),
+        ("host".to_string(), host.clone()),
+        ("x-amz-date".to_string(), amz_date.to_string()),
+    ];
+    if let Some(token) = &credentials.session_token {
+        headers.push(("x-amz-security-token".to_string(), token.clone()));
+    }
+    headers.push((
+        "x-amz-target".to_string(),
+        "TrentService.Decrypt".to_string(),
+    ));
+
+    let canonical_headers: String = headers
+        .iter()
+        .map(|(name, value)| format!("{name}:{value}\n"))
+        .collect();
+    let signed_headers: String = headers
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>()
+        .join(";");
+
+    let canonical_request = format!(
+        "POST\n/\n\n{canonical_headers}\n{signed_headers}\n{}",
+        sha256_hex(body.as_bytes())
+    );
+    let scope = format!("{datestamp}/{region}/kms/aws4_request");
+    let string_to_sign = format!(
+        "AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{}",
+        sha256_hex(canonical_request.as_bytes())
+    );
+
+    let k_date = hmac_sha256(
+        format!("AWS4{}", credentials.secret_access_key).as_bytes(),
+        datestamp.as_bytes(),
+    );
+    let k_region = hmac_sha256(&k_date, region.as_bytes());
+    let k_service = hmac_sha256(&k_region, b"kms");
+    let k_signing = hmac_sha256(&k_service, b"aws4_request");
+    let signature = hex_encode(&hmac_sha256(&k_signing, string_to_sign.as_bytes()));
+
+    headers.push((
+        "authorization".to_string(),
+        format!(
+            "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
+            credentials.access_key_id, scope, signed_headers, signature
+        ),
+    ));
+
+    Ok(SignedRequest {
+        url: format!("https://{host}/"),
+        headers,
+        body,
+    })
+}
+
+/// Parses a plain KMS Decrypt JSON response, returning the released
+/// `Plaintext` (base64). Host-mode counterpart of
+/// [`parse_kms_decrypt_response_for_key`].
+pub fn parse_kms_decrypt_response_plain(
+    status: u16,
+    body: &str,
+    expected_key_id: Option<&str>,
+) -> AttestResult<String> {
+    if status != 200 {
+        let parsed: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+        let typ = parsed["__type"]
+            .as_str()
+            .unwrap_or("")
+            .rsplit('#')
+            .next()
+            .unwrap_or("");
+        let code = match typ {
+            "AccessDeniedException"
+            | "DisabledException"
+            | "InvalidCiphertextException"
+            | "IncorrectKeyException"
+            | "InvalidKeyUsageException"
+            | "KMSInvalidStateException"
+            | "KMSInternalException"
+            | "KeyUnavailableException"
+            | "NotFoundException"
+            | "DependencyTimeoutException"
+            | "InvalidGrantTokenException"
+            | "DryRunOperationException"
+            | "InvalidArnException"
+            | "ValidationException"
+            | "InvalidSignatureException"
+            | "UnrecognizedClientException"
+            | "ExpiredTokenException"
+            | "RequestExpired"
+            | "ThrottlingException"
+            | "InternalFailure"
+            | "ServiceUnavailable"
+            | "IncompleteSignatureException"
+            | "MissingAuthenticationTokenException" => typ,
+            _ => "unknown",
+        };
+        return Err(format!("kms decrypt: HTTP {status} {code}"));
+    }
+    let parsed: Value =
+        serde_json::from_str(body).map_err(|e| format!("kms decrypt: parse response: {e}"))?;
+    if let Some(expected) = expected_key_id {
+        let actual = parsed["KeyId"].as_str().unwrap_or("");
+        if actual != expected {
+            return Err("kms decrypt: response key id did not match the pinned key".to_string());
+        }
+    }
+    let plaintext = parsed["Plaintext"].as_str().unwrap_or("");
+    if plaintext.is_empty() {
+        return Err("kms returned an empty Plaintext".to_string());
+    }
+    Ok(plaintext.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

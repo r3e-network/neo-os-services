@@ -61,6 +61,7 @@ fn params() -> KmsReleaseParams {
 
 fn capturing_kms(source: Result<Vec<u8>, String>, transport: CapturingTransport) -> ProductionKms {
     ProductionKms {
+        host_mode: false,
         source: Box::new(StubSource { result: source }),
         transport: Box::new(transport),
     }

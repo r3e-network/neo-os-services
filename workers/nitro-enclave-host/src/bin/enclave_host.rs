@@ -365,7 +365,14 @@ fn build_app(base: EnvOverlay, transport: Box<dyn CustodyTransport>) -> Arc<AppS
         runtime_token_kms_version: AtomicU64::new(0),
         attest: attestation_source,
         signer: Box::new(CustodySigner::new(overlay.clone(), transport)),
-        kms: Box::new(ProductionKms::new()),
+        // Host mode pairs the plain-release KMS path with the HostAttestation
+        // stub: releases run without a Recipient, so the runtime-token key
+        // must grant plain kms:Decrypt to the host's instance role.
+        kms: if attested_boot_env.as_deref() == Some("allow") {
+            Box::new(ProductionKms::new_host_mode())
+        } else {
+            Box::new(ProductionKms::new())
+        },
         price: price_plane_impl,
         oracle_io: Box::new(ProductionOracleIo),
         jwks_fetcher: Box::new(ReqwestJwksFetcher),

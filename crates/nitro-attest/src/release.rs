@@ -183,6 +183,37 @@ pub fn release_bytes_with_context_and_key(
     cms::decrypt_cms_enveloped_data(&cms_der, &priv_key)
 }
 
+/// Host-mode release: a plain KMS Decrypt with no `Recipient`. The caller has
+/// no NSM device, so the ciphertext's binding comes from its encryption
+/// context and the pinned key id instead of an attestation document. The
+/// response's `Plaintext` is the released bytes, base64-encoded.
+///
+/// Testnet-only: production custody keeps the full Recipient flow
+/// ([`release_bytes_with_context_and_key`]) — never call this on a key whose
+/// policy is attestation-gated, the release will be refused server-side.
+pub fn release_bytes_plain(
+    transport: &dyn KmsTransport,
+    params: &ReleaseParams<'_>,
+    encryption_context: &[(&str, &str)],
+    expected_key_id: Option<&str>,
+) -> AttestResult<Zeroizing<Vec<u8>>> {
+    let amz_date = kms::utc_amz_date_now();
+    let signed = kms::build_kms_decrypt_request_plain(
+        params.region,
+        params.credentials,
+        &amz_date,
+        params.ciphertext_b64,
+        encryption_context,
+        expected_key_id,
+    )?;
+    let (status, body) = transport.post_json(&signed.url, &signed.headers, &signed.body)?;
+    let plaintext_b64 = kms::parse_kms_decrypt_response_plain(status, &body, expected_key_id)?;
+    let plaintext = BASE64
+        .decode(plaintext_b64.as_bytes())
+        .map_err(|error| format!("kms decrypt: decode Plaintext: {error}"))?;
+    Ok(Zeroizing::new(plaintext))
+}
+
 /// [`release_bytes`] pinned to the custody vault's 32-byte master key.
 pub fn release_master_key(
     source: &dyn AttestationSource,
