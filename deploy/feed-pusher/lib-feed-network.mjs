@@ -923,11 +923,11 @@ export function assertPriceFreshness(prices, now) {
     throw new Error('price freshness not proven: cycle clock is ahead of host time');
   }
   if (!prices || typeof prices !== 'object' || Array.isArray(prices)) {
-    throw new Error('price freshness not proven: TwelveData payload missing');
+    throw new Error('price freshness not proven: price payload missing');
   }
   const fresh = Object.entries(prices).filter(([, value]) => Number.isFinite(value) && value > 0);
   if (!fresh.length) {
-    throw new Error('price freshness not proven: no positive TwelveData quotes this cycle');
+    throw new Error('price freshness not proven: no positive quotes this cycle');
   }
   return fresh.length;
 }
