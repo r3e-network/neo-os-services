@@ -1,0 +1,23 @@
+[package]
+name = "intent-trading"
+version = "0.1.0"
+edition = "2021"
+authors = ["NeoOS Team"]
+
+[dependencies]
+tokio = { version = "1.40", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest = { version = "0.12", features = ["json"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Neo blockchain integration
+neo-os-chain-n3 = { path = "../crates/neo-os-chain-n3" }
+neo-os-core = { path = "../crates/neo-os-core" }
+
+[dev-dependencies]
+tokio-test = "0.4"
