@@ -27,7 +27,7 @@ use axum::http::{Method, Request, StatusCode};
 use axum::response::Response;
 use axum::routing::any;
 use axum::Router;
-use nitro_attest::release::NsmAttestation;
+use nitro_attest::release::{NsmAttestation, HostAttestation};
 use tower::ServiceExt;
 
 use nitro_enclave_host::custody::{CustodySigner, CustodyTransport, ReqwestCustodyTransport};
@@ -350,10 +350,20 @@ fn build_app(base: EnvOverlay, transport: Box<dyn CustodyTransport>) -> Arc<AppS
         ),
     };
 
+    // Host mode: when MORPHEUS_ATTESTED_BOOT=allow, use HostAttestation stub
+    // instead of NsmAttestation. This allows testnet to run on non-enclave hosts.
+    let attested_boot_env = std::env::var("MORPHEUS_ATTESTED_BOOT").ok();
+    let attestation_source: Box<dyn nitro_attest::release::AttestationSource> = 
+        if attested_boot_env.as_deref() == Some("allow") {
+            Box::new(HostAttestation)
+        } else {
+            Box::new(NsmAttestation)
+        };
+
     let app_state = Arc::new(AppState {
         overlay: overlay.clone(),
         runtime_token_kms_version: AtomicU64::new(0),
-        attest: Box::new(NsmAttestation),
+        attest: attestation_source,
         signer: Box::new(CustodySigner::new(overlay.clone(), transport)),
         kms: Box::new(ProductionKms::new()),
         price: price_plane_impl,
@@ -375,6 +385,8 @@ fn build_app(base: EnvOverlay, transport: Box<dyn CustodyTransport>) -> Arc<AppS
     // refuse to release keys, but nothing in this process said so, and
     // /attestation is public. Refusing to serve is the honest answer; the
     // exit code and message are the operator's signal.
+    // Host mode: skip assert_attested_boot when MORPHEUS_ATTESTED_BOOT=allow
+    if attested_boot_env.as_deref() != Some("allow") {
     match nitro_enclave_host::attestation::assert_attested_boot(&app_state) {
         Ok(None) => {}
         Ok(Some(pcr0)) => {
@@ -384,6 +396,7 @@ fn build_app(base: EnvOverlay, transport: Box<dyn CustodyTransport>) -> Arc<AppS
             eprintln!("enclave_host: refusing to serve — {message}");
             std::process::exit(1);
         }
+    }
     }
 
     // MORPHEUS_NETWORK is fixed at boot (it is not provisionable), and every

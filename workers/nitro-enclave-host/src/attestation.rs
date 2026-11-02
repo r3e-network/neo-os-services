@@ -294,6 +294,10 @@ pub fn assert_attested_boot(state: &AppState) -> Result<Option<String>, String> 
     let Some(demanded) = demanded else {
         return Ok(None);
     };
+    if demanded == "allow" {
+        // Host mode: explicitly allow unattested boot
+        return Ok(None);
+    }
     if demanded != "require" {
         return Err(format!(
             "{ATTESTED_BOOT_ENV} must be unset or exactly `require`; got `{demanded}` — an \
