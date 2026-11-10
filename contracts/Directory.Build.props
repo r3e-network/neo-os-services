@@ -6,6 +6,6 @@
   </PropertyGroup>
 
   <ItemGroup Condition="'$(MSBuildProjectName)' != 'NeoContracts.Tests'">
-    <PackageReference Include="Neo.SmartContract.Framework" Version="3.9.1" />
+    <PackageReference Include="Neo.SmartContract.Framework" Version="3.10.1" />
   </ItemGroup>
 </Project>
