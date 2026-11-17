@@ -18,7 +18,9 @@ const tags = ['Ref', 'GetAtt', 'Sub', 'If', 'Equals'].flatMap((name) =>
 );
 const template = yaml.load(
   readFileSync(new URL('../deploy/custody-state-authority/template.yaml', import.meta.url), 'utf8'),
-  { schema: yaml.Schema.create(yaml.DEFAULT_SCHEMA, tags) }
+  // js-yaml 4 removed Schema.create(); the v4 constructor takes the custom
+  // Type list plus the schema to extend.
+  { schema: new yaml.Schema(tags, yaml.DEFAULT_SCHEMA) }
 );
 const vault = '10'.repeat(32);
 const profile = '20'.repeat(32);
