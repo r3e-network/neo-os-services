@@ -52,11 +52,31 @@ test('audit gate accepts exactly the reviewed unmaintained warnings', () => {
       unmaintained: [
         { advisory: { id: 'RUSTSEC-2024-0436' } },
         { advisory: { id: 'RUSTSEC-2021-0127' } },
+        { advisory: { id: 'RUSTSEC-2026-0543' } },
+        { advisory: { id: 'RUSTSEC-2026-0441' } },
       ],
     },
   });
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /2 reviewed unmaintained warnings/);
+  assert.match(result.stdout, /4 reviewed unmaintained warnings/);
+});
+
+test('audit gate refuses an unmaintained warning outside the reviewed policy', () => {
+  const result = runWithReport({
+    database: { 'last-updated': new Date().toISOString() },
+    vulnerabilities: { list: [] },
+    warnings: {
+      unmaintained: [
+        { advisory: { id: 'RUSTSEC-2024-0436' } },
+        { advisory: { id: 'RUSTSEC-2021-0127' } },
+        { advisory: { id: 'RUSTSEC-2026-0543' } },
+        { advisory: { id: 'RUSTSEC-2026-0441' } },
+        { advisory: { id: 'RUSTSEC-2026-9999' } },
+      ],
+    },
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /unreviewed unmaintained warnings remain/);
 });
 
 test('audit gate rejects a project cargo audit configuration', () => {

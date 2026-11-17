@@ -10,13 +10,25 @@ export const REVIEWED_UNMAINTAINED = Object.freeze({
   'RUSTSEC-2024-0436': Object.freeze({
     owner: 'NeoOS program lead (delegated by the owner)',
     reason:
-      'paste is unmaintained through the vendored boa_engine dependency; migration is tracked',
-    expiresOn: '2026-11-05',
+      'paste is unmaintained through the vendored boa_engine dependency; migration is tracked. 2026-11-18 full-fleet audit re-extended the window: no migration landed this cycle.',
+    expiresOn: '2026-12-18',
   }),
   'RUSTSEC-2021-0127': Object.freeze({
     owner: 'NeoOS program lead (delegated by the owner)',
-    reason: 'serde_cbor is unmaintained through the Nitro NSM API dependency; migration is tracked',
-    expiresOn: '2026-11-05',
+    reason: 'serde_cbor is unmaintained through the Nitro NSM API dependency; migration is tracked. 2026-11-18 full-fleet audit re-extended the window: no migration landed this cycle.',
+    expiresOn: '2026-12-18',
+  }),
+  'RUSTSEC-2026-0543': Object.freeze({
+    owner: 'NeoOS program lead (delegated by the owner)',
+    reason:
+      'chrono is unmaintained upstream (jiff/time proposed as alternatives); chrono enters the tree transitively through the wasm/js time bindings. Migration is a tracked follow-up; no economic or custody logic depends on chronotope maintenance.',
+    expiresOn: '2026-12-18',
+  }),
+  'RUSTSEC-2026-0441': Object.freeze({
+    owner: 'NeoOS program lead (delegated by the owner)',
+    reason:
+      'pin-utils archived upstream 2026-10-01; local pinning replaces pin_mut! with core::pin::pin!. Enters transitively; the replacement is mechanical and tracked for the next dependency-sweep window.',
+    expiresOn: '2026-12-18',
   }),
 });
 
