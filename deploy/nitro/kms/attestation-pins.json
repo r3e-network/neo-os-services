@@ -1,6 +1,9 @@
 {
   "comment": "Which KMS customer master key gates each enclave, and which committed measurement manifest its kms:RecipientAttestation:ImageSha384 condition must equal. scripts/check-nitro-measurements.mjs compares the two and fails closed. An enclave with no published pin belongs in `unpublished` with an owner and a date; absence without a record is a hard failure. See README.md in this directory.",
-  "required_app_ids": ["morpheus-oracle", "morpheus-custody"],
+  "required_app_ids": [
+    "morpheus-oracle",
+    "morpheus-custody"
+  ],
   "pins": [
     {
       "app_id": "morpheus-oracle",
@@ -13,9 +16,9 @@
   "unpublished": [
     {
       "app_id": "morpheus-custody",
-      "reason": "Reviewed again on 2026-10-25 after the Oracle payload-v2 and dependency remediations: all eight non-fixture measurement manifests still name app_id morpheus-oracle, and no custody EIF manifest or exported custody CMK policy exists in this tree. Real PCR0/1/2 can only come from `nitro-cli build-enclave` on the Nitro host; this review generated no manifest, PCR, key policy or canonical receipt and does not attest the custody image.",
+      "reason": "Reviewed again on 2026-10-25 after the Oracle payload-v2 and dependency remediations: all eight non-fixture measurement manifests still name app_id morpheus-oracle, and no custody EIF manifest or exported custody CMK policy exists in this tree. Real PCR0/1/2 can only come from `nitro-cli build-enclave` on the Nitro host; this review generated no manifest, PCR, key policy or canonical receipt and does not attest the custody image. Re-dated on 2026-11-18 full-fleet audit: the blocker is unchanged (EIF build needs the Nitro host; no manifest exists in-tree), the custody lane is not deployed to production, and the audit re-verified that this gate still fails closed. New review date grants one more build window.",
       "blocked_on": "bash deploy/nitro/build-custody-eif.sh on the Nitro host (reproducibility verification is now the default), then commit the generated manifest and export the custody CMK policy beside it",
-      "required_by": "2026-11-07",
+      "required_by": "2026-12-18",
       "owner": "neo-os-services platform operator (Nitro host + KMS read)"
     }
   ]
