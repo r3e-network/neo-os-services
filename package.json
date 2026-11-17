@@ -146,7 +146,8 @@
     "test:scripts": "node --test scripts/*.test.mjs scripts/lib/tracked-build-outputs.test.mjs",
     "fuzz:daily": "bash fuzz-testing/run-daily-fuzz.sh",
     "test:web": "npm --prefix apps/web run test:run",
-    "check:neodid-vendor": "node scripts/check-neodid-vendor.mjs"
+    "check:neodid-vendor": "node scripts/check-neodid-vendor.mjs",
+    "validate-config": "node --experimental-strip-types ../neo-os-admin/scripts/validate-env-config.ts"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.57.1",
