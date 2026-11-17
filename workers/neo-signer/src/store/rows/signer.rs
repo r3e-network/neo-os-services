@@ -39,7 +39,7 @@ pub(in crate::store) fn signer_key_from_row(
             nonce,
             ciphertext: row.get(5)?,
         },
-        created_at_unix: row.get(6)?,
+        created_at_unix: i64::from(row.get::<_, i64>(6)?) as u64,
         disabled: row.get(7)?,
         network_magic: row.get(8)?,
         chain_family: parse_field::<ChainFamily>(&chain_family_raw)?,
@@ -175,7 +175,7 @@ pub(in crate::store) fn signer_caller_from_row(
         key_grant: KeyGrant::from_mode(&mode, decode_args_field(&grants_raw)),
         capabilities: decode_capabilities(8, &capabilities_raw)?,
         allowed_origins: decode_args_field(&origins_raw),
-        created_at_unix: row.get(6)?,
+        created_at_unix: i64::from(row.get::<_, i64>(6)?) as u64,
         disabled: row.get(7)?,
     })
 }
@@ -187,7 +187,7 @@ pub(in crate::store) fn signer_audit_from_row(
     let outcome_raw: String = row.get(3)?;
     Ok(SignerAuditRecord {
         id: row.get(0)?,
-        recorded_at_unix: row.get(1)?,
+        recorded_at_unix: i64::from(row.get::<_, i64>(1)?) as u64,
         action: parse_field::<SignerAuditAction>(&action_raw)?,
         outcome: parse_field::<SignerAuditOutcome>(&outcome_raw)?,
         caller_id: row.get(4)?,
@@ -206,7 +206,7 @@ pub(in crate::store) fn signer_value_event_from_row(
     Ok(SignerValueEvent {
         id: row.get(0)?,
         key_id: row.get(1)?,
-        recorded_at_unix: row.get(2)?,
+        recorded_at_unix: i64::from(row.get::<_, i64>(2)?) as u64,
         asset: account(3, row.get(3)?)?,
         amount: parse_i128(4, &amount_raw)?,
         audit_id: row.get(5)?,

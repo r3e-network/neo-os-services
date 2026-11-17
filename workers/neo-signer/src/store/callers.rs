@@ -24,7 +24,7 @@ impl Store {
                 caller.key_grant.mode(),
                 encode_grants(&caller.key_grant),
                 encode_origins(&caller.allowed_origins),
-                caller.created_at_unix,
+                caller.created_at_unix as i64,
                 caller.disabled,
                 encode_capabilities(&caller.capabilities),
                 caller

@@ -17,14 +17,14 @@ impl Store {
         let transaction = connection.transaction()?;
         transaction.execute(
             "DELETE FROM signer_workload_nonces WHERE expires_at_unix < ?1",
-            params![now_unix],
+            params![now_unix as i64],
         )?;
         let inserted = transaction.execute(
             "INSERT OR IGNORE INTO signer_workload_nonces (
                 caller_id, nonce, expires_at_unix
              )
              VALUES (?1, ?2, ?3)",
-            params![caller_id, nonce, expires_at_unix],
+            params![caller_id, nonce, expires_at_unix as i64],
         )?;
         transaction.commit()?;
         Ok(inserted == 1)

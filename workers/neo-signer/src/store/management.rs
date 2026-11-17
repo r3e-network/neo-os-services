@@ -174,11 +174,11 @@ impl Store {
                         == Some(migration.initial_policy_for(index)),
                     "initial migration policy mismatch"
                 );
-                let updated_at: u64 = connection.query_row(
+                let updated_at: u64 = i64::from(connection.query_row(
                     "SELECT updated_at_unix FROM signer_policies WHERE key_id = ?1",
                     params![id],
-                    |row| row.get(0),
-                )?;
+                    |row| row.get::<_, i64>(0),
+                )?) as u64;
                 anyhow::ensure!(
                     updated_at == imported_at,
                     "initial migration policy timestamp mismatch"

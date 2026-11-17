@@ -52,7 +52,7 @@ p256 = { version = "0.14", features = ["ecdsa", "getrandom"] }
 prost = "0.13"
 rlp = "0.5"
 ripemd = "0.1"
-rusqlite = { version = "0.37", features = ["bundled", "backup", "serialize"] }
+rusqlite = { version = "0.41", features = ["bundled", "backup", "serialize"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 scrypt = "0.11"
 serde = { version = "1", features = ["derive"] }

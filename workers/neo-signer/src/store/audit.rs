@@ -11,7 +11,7 @@ pub(super) fn insert_signer_audit(
          )
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
-            record.recorded_at_unix,
+            record.recorded_at_unix as i64,
             record.action.to_string(),
             record.outcome.to_string(),
             &record.caller_id,
@@ -122,7 +122,7 @@ impl Store {
                    'signer-raw-signed',
                    'signer-eip191-fulfillment-signed'
                )",
-            params![key_id, since_unix],
+            params![key_id, since_unix as i64],
             |row| row.get(0),
         )?;
         u64::try_from(count).context("signature audit count was negative")

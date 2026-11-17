@@ -180,8 +180,8 @@ impl Store {
         source.query_row("SELECT COUNT(*) FROM sqlite_schema", [], |row| {
             row.get::<_, i64>(0)
         })?;
-        let pages: u64 = source.query_row("PRAGMA page_count", [], |row| row.get(0))?;
-        let page_size: u64 = source.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+        let pages: u64 = i64::from(source.query_row("PRAGMA page_count", [], |row| row.get::<_, i64>(0))?) as u64;
+        let page_size: u64 = i64::from(source.query_row("PRAGMA page_size", [], |row| row.get::<_, i64>(0))?) as u64;
         anyhow::ensure!(
             pages
                 .checked_mul(page_size)

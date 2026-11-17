@@ -17,7 +17,7 @@ pub(super) fn insert_signer_value_event(
          VALUES (?1, ?2, ?3, ?4, ?5)",
         params![
             &event.key_id,
-            event.recorded_at_unix,
+            event.recorded_at_unix as i64,
             event.asset.as_bytes().to_vec(),
             event.amount.to_string(),
             audit_id,
@@ -58,7 +58,7 @@ impl Store {
              WHERE key_id = ?1 AND recorded_at_unix >= ?2
              ORDER BY recorded_at_unix ASC, id ASC",
         )?;
-        let rows = statement.query_map(params![key_id, since_unix], signer_value_event_from_row)?;
+        let rows = statement.query_map(params![key_id, since_unix as i64], signer_value_event_from_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .context("failed to load signer value events")
     }

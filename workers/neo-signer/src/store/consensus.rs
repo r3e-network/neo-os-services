@@ -51,7 +51,7 @@ pub(super) fn insert_consensus_reservation(
         if !same_checkpoint(&stored, reservation) {
             anyhow::bail!(
                 "consensus slot conflict at height {}, phase 0x{:02x}, validator {}, view {}",
-                reservation.block_index,
+                reservation.block_index as i64,
                 reservation.phase,
                 reservation.validator_index,
                 reservation.view_number
@@ -68,10 +68,10 @@ pub(super) fn insert_consensus_reservation(
             params![
                 reservation.public_key.to_vec(),
                 reservation.network_magic,
-                reservation.block_index,
-                reservation.phase,
-                reservation.view_number,
-                audit_id,
+                reservation.block_index as i64,
+                reservation.phase as i64,
+                reservation.view_number as i64,
+                audit_id as i64,
             ],
         )?;
         return Ok(());
@@ -93,12 +93,12 @@ fn insert_row(
         params![
             reservation.public_key.to_vec(),
             reservation.network_magic,
-            reservation.block_index,
-            reservation.phase,
-            reservation.validator_index,
-            reservation.view_number,
+            reservation.block_index as i64,
+            reservation.phase as i64,
+            reservation.validator_index as i64,
+            reservation.view_number as i64,
             reservation.checkpoint.to_vec(),
-            reservation.recorded_at_unix,
+            reservation.recorded_at_unix as i64,
             audit_id,
         ],
     )?;
@@ -139,10 +139,10 @@ fn reservation_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SignerConse
         block_index: row.get(2)?,
         phase: row.get(3)?,
         validator_index: row.get(4)?,
-        view_number: row.get(5)?,
+        view_number: i64::from(row.get::<_, i64>(5)?) as u8,
         checkpoint,
-        recorded_at_unix: row.get(7)?,
-        audit_id: row.get(8)?,
+        recorded_at_unix: i64::from(row.get::<_, i64>(7)?) as u64,
+        audit_id: row.get::<_, Option<i64>>(8)?,
     })
 }
 

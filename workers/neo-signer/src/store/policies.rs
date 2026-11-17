@@ -132,7 +132,7 @@ impl Store {
                 evm_method_whitelist,
                 evm_method_blacklist,
                 evm_chain_id,
-                updated_at_unix,
+                updated_at_unix as i64,
             ],
         )?;
         Ok(())

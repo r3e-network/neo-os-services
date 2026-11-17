@@ -40,7 +40,7 @@ impl Store {
                 key.public_key.to_vec(),
                 key.sealed.nonce.to_vec(),
                 &key.sealed.ciphertext,
-                key.created_at_unix,
+                key.created_at_unix as i64,
                 key.disabled,
                 key.network_magic,
                 key.chain_family.to_string(),
