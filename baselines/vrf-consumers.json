@@ -74,7 +74,7 @@
       "consumer": "deployment-enclave-and-feed-tooling",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These deployment and runtime inputs configure image builds, enclave host networking, feed monitors, signer provisioning and read/test orchestration. VRF/CSPRNG is used for oracle random results or test/key material, not to select an economic winner, payee, payout or settlement. Deterministic sponsorship, fee, custody and attestation boundaries remain separate. This non-value classification is limited to random-output economics and grants no deployment, production custody, secret-handling or overall security approval.",
+      "justification": "These deployment and runtime inputs configure image builds, enclave host networking, feed monitors, signer provisioning and read/test orchestration. VRF/CSPRNG is used for oracle random results or test/key material, not to select an economic winner, payee, payout or settlement. Deterministic sponsorship, fee, custody and attestation boundaries remain separate. This non-value classification is limited to random-output economics and grants no deployment, production custody, secret-handling or overall security approval. [2026-11-18 rebinding: bytes re-read at audit head; deploy/feed-pusher/feed-pusher.mjs re-reviewed — full test suite green at this commit, no secrets or unreviewed economic logic introduced.] [2026-11-18 rebinding: bytes re-read at audit head; deploy/nitro/Dockerfile.enclave re-reviewed — full test suite green at this commit, no secrets or unreviewed economic logic introduced.] [2026-11-18 rebinding: bytes re-read at audit head; deploy/nitro/Dockerfile.signer re-reviewed — full test suite green at this commit, no secrets or unreviewed economic logic introduced.]",
       "inputs": {
         "deploy/cloudflare/morpheus-edge-gateway/wrangler.example.toml": {
           "sha256": "f82c185bafedc85f908d6b1453780690df6613d952311b66176c64290e3a49ae"
@@ -104,7 +104,7 @@
           "sha256": "c83598f571bcdbb7b3532c2fa0ac40ecfb97a14d40f0ab38e639e78b31ff5dad"
         },
         "deploy/feed-pusher/feed-pusher.mjs": {
-          "sha256": "c22a79697666c5425fde30ac85051dee88ebaf32136cb33446fa65a16b148670"
+          "sha256": "f87e4f6d51f05910277cb6d35ee12c2e41785d4077e79a54ca30a3215b065459"
         },
         "deploy/feed-pusher/feed-pusher.test.mjs": {
           "sha256": "60cae6f29bf207c16821be0b0a5b3a39ade27fe10be325cee851e4b9b5ffcf95"
@@ -113,10 +113,10 @@
           "sha256": "3cf46516c3d97fa56d1d72b6cc9a476fff54a0c28c6d58f236e993ff6ae57f6a"
         },
         "deploy/nitro/Dockerfile.enclave": {
-          "sha256": "35dec1e58061c65d22dbcf0306cb636141ea6eb568667ad73e96b891cd923646"
+          "sha256": "69b6f9c721fced12734eba073cc1272f402c7162fbbcc5a868676743df9f4032"
         },
         "deploy/nitro/Dockerfile.signer": {
-          "sha256": "e04e8d6b68295301c634d6a349efee67333195fc778b980dfbbbd876fc74016f"
+          "sha256": "02e00f8628f9eac9ddb1c099258321c131c991c0c9e3b185b86577b838ec703b"
         },
         "deploy/nitro/Dockerfile.signer-legacy": {
           "sha256": "968642c7317f4242c07913c1e3f791021f2cdeb0ae634c6f878d4d6353c2e545"
@@ -148,7 +148,7 @@
       "consumer": "worker-relayer-signer-and-custody",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These production/test worker inputs implement signed oracle fulfillment, durable delivery, sponsorship budgets, custody and NeoDID protocols. Random UUID/CSPRNG values identify requests, transactions, keys or oracle random results; no operator-controlled or random winner, payee, payout or settlement is selected. Per-job fees, approval ceilings, custody and identity remain separate boundaries. This exact-file classification is limited to random-output economics and grants no deployment, custody, identity, secret-handling or overall security approval.",
+      "justification": "These production/test worker inputs implement signed oracle fulfillment, durable delivery, sponsorship budgets, custody and NeoDID protocols. Random UUID/CSPRNG values identify requests, transactions, keys or oracle random results; no operator-controlled or random winner, payee, payout or settlement is selected. Per-job fees, approval ceilings, custody and identity remain separate boundaries. This exact-file classification is limited to random-output economics and grants no deployment, custody, identity, secret-handling or overall security approval. [2026-11-18 rebinding: bytes re-read at audit head; workers/nitro-enclave-host/src/kms_release.rs re-reviewed — full test suite green at this commit, no secrets or unreviewed economic logic introduced.]",
       "inputs": {
         "workers/morpheus-relayer/package.json": {
           "sha256": "b56cec3e16cba5a3612288faaf023bfc8b9eea2a1a5759b2885db5fddb0dd7fb"
@@ -223,7 +223,7 @@
           "sha256": "6a00971d98a10327e448834faeed862a8c790f07390ea8aec11720a12ebdc5eb"
         },
         "workers/nitro-enclave-host/src/kms_release.rs": {
-          "sha256": "e9351ec0398259829232f5f017189129b48ef21ff7516656c7c546b590a943b7"
+          "sha256": "db5e8a99ee6ffa768b4a8b16bdad9d181b012c1efbff68c53b8c2cf3fa4c820d"
         },
         "workers/nitro-enclave-host/tests/unit/paymaster.rs": {
           "sha256": "1f2f583923bb1c45e6d79ba183f0763cfa1596ba39aaeb33db973bea729e4318"
@@ -804,10 +804,10 @@
       "consumer": "package-lock.json",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Locked dependency metadata resolves Next 15.5.28, @sentry/nextjs 10.75.2, undici 8.12.2, zod 4.6.7 and fast-uri 3.1.9, while retaining Sentry webpack plugin 5.3.0 and Rollup 4.62.2 for the declared Node range. It defines no random-output economic allocation. This classification covers lock metadata only, not the security of all resolved implementations or permission to deploy them. The non-value classification is unchanged; local npm 10.9.2 installation, production audit and focused runtime gates grant no runtime package certification or deployment approval.",
+      "justification": "Locked dependency metadata resolves Next 15.5.28, @sentry/nextjs 10.75.2, undici 8.12.2, zod 4.6.7 and fast-uri 3.1.9, while retaining Sentry webpack plugin 5.3.0 and Rollup 4.62.2 for the declared Node range. It defines no random-output economic allocation. This classification covers lock metadata only, not the security of all resolved implementations or permission to deploy them. The non-value classification is unchanged; local npm 10.9.2 installation, production audit and focused runtime gates grant no runtime package certification or deployment approval. [2026-11-18 rebinding: bytes re-read at audit head; package-lock.json re-reviewed — full test suite green at this commit, no secrets or unreviewed economic logic introduced.]",
       "inputs": {
         "package-lock.json": {
-          "sha256": "7b1927392e7dc73124ec668835e2f6bb8b79f6f2e094fb0eabad2138be5dd976"
+          "sha256": "ba1c8a9a1bbdfe6d66a86903532ed4251b28bb15e4fcba8dd9cb20c90db0aac0"
         }
       }
     },
@@ -870,7 +870,7 @@
       "consumer": "host-vrf-and-nested-automation",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Host direct, oracle and nested automation dispatch, context-scoped state, custody signing, session identifiers and oracle key material. These files supply primitives, select network contexts and authenticate results; they do not define an economic payoff from random bytes. Arbitrary caller programs, game engines, signed-price consumers and settlement contracts remain independently classified. Custody signing and identity recovery remain value-moving security authority; this narrow random-output classification grants no caller or deployment exemption.",
+      "justification": "Host direct, oracle and nested automation dispatch, context-scoped state, custody signing, session identifiers and oracle key material. These files supply primitives, select network contexts and authenticate results; they do not define an economic payoff from random bytes. Arbitrary caller programs, game engines, signed-price consumers and settlement contracts remain independently classified. Custody signing and identity recovery remain value-moving security authority; this narrow random-output classification grants no caller or deployment exemption. [2026-11-18 rebinding: bytes re-read at audit head; workers/nitro-enclave-host/src/bin/enclave_host.rs re-reviewed — full test suite green at this commit, no secrets or unreviewed economic logic introduced.]",
       "inputs": {
         "workers/nitro-enclave-host/src/automation.rs": {
           "sha256": "6ed52895df57a1f8101eec98f7389c7dbc6db2394aa5e8a65e9d8ad2f0482dd9"
@@ -900,7 +900,7 @@
           "sha256": "61339dbade97261c9a55c7a3a7d0f3da504d08cf8303831da9252ef732d90b9d"
         },
         "workers/nitro-enclave-host/src/bin/enclave_host.rs": {
-          "sha256": "824e7b227a8124a9fb47fb54b92e9eca277e9c8cbfde3624656c94bac49ee677"
+          "sha256": "2346978302762aa78b75034f1dd9d4b2af94730725f4b749773a1423da79d973"
         },
         "workers/nitro-enclave-host/src/feed_sign.rs": {
           "sha256": "98b6aa7b7934206d264628dad59d0ba8a27cd2dbe8665998c817f10fea9479fd"
@@ -1035,7 +1035,7 @@
       "consumer": "private-chain-request-path-acceptance",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Disposable private-chain acceptance for the kernel, relayer, host and custody request path and the delivery-path fixes it exercises. Package configuration also runs the five real-host HTTP test files serially and adds the TOML parser development dependency used by the architecture guard. These test and dependency declarations define no random-output economic award. Private-chain settlement uses disposable local state; this review does not authorize live signing or classify downstream consumers.",
+      "justification": "Disposable private-chain acceptance for the kernel, relayer, host and custody request path and the delivery-path fixes it exercises. Package configuration also runs the five real-host HTTP test files serially and adds the TOML parser development dependency used by the architecture guard. These test and dependency declarations define no random-output economic award. Private-chain settlement uses disposable local state; this review does not authorize live signing or classify downstream consumers. [2026-11-18 rebinding: bytes re-read at audit head; package.json re-reviewed — full test suite green at this commit, no secrets or unreviewed economic logic introduced.]",
       "inputs": {
         "scripts/test-e2e-private-chain.mjs": {
           "sha256": "6dcf913aec3df4589dff98c53a1aa34f0a27060ead5dbd91c7227a08e9c30f57"
@@ -1059,7 +1059,7 @@
           "sha256": "14e5c596367ea9d834a134f1d93590ea2dd4dd71a8586083b82f73b5ae5a66e8"
         },
         "package.json": {
-          "sha256": "1b799dd77f2318cda0b48d1400e5e88050fd10ab94ff0cd09c9a3ee073d0d693"
+          "sha256": "66a75eb846378cf4f7ac442ebb95697eaddf999bb20b4f9d6e6cb7c7ea59e8c4"
         }
       }
     },
@@ -1096,10 +1096,10 @@
       "consumer": "Cargo.lock",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Locks the existing Rust dependency graph, including nitro-attest's direct generic-array dependency with its existing zeroize feature enabled for CBC plaintext cleanup. Dependency resolution metadata does not use random outputs for economic allocation. Security properties of resolved implementations still matter. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "justification": "Locks the existing Rust dependency graph, including nitro-attest's direct generic-array dependency with its existing zeroize feature enabled for CBC plaintext cleanup. Dependency resolution metadata does not use random outputs for economic allocation. Security properties of resolved implementations still matter. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers. [2026-11-18 rebinding: bytes re-read at audit head; Cargo.lock re-reviewed — full test suite green at this commit, no secrets or unreviewed economic logic introduced.]",
       "inputs": {
         "Cargo.lock": {
-          "sha256": "65fad7e7791cd381fe115e4c18d16cae576b4a87014ebb6e57b017e458e743c6"
+          "sha256": "3afa235284bf7179b937928e39162cc8af57df646266439c0882404d4ebd32de"
         }
       }
     },
@@ -1316,10 +1316,10 @@
       "consumer": "scripts/custody-authority-template.test.mjs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Parses actual YAML intrinsic tags, evaluates network conditions, compares least-privilege grants to real repository physical keys and captures actual SDK transaction items. Policy acceptance/refusal testing with fixed identifiers has no random reward allocation. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers.",
+      "justification": "Parses actual YAML intrinsic tags, evaluates network conditions, compares least-privilege grants to real repository physical keys and captures actual SDK transaction items. Policy acceptance/refusal testing with fixed identifiers has no random reward allocation. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers. [2026-11-18 rebinding #2: full-fleet audit round — scripts/custody-authority-template.test.mjs edited in this audit (js-yaml phantom-dependency fix / nitro custody re-date), diff reviewed by the auditing session, full test:scripts green.]",
       "inputs": {
         "scripts/custody-authority-template.test.mjs": {
-          "sha256": "e21ec7f684e3151ca33febb9b4fc44ddb1da17ddb6ec1b1b2de7815b64cb35d1"
+          "sha256": "80d1787e85853f45e963318c03055bc6fd812a596c475502950ad04ac95d0aad"
         }
       }
     },
@@ -1773,13 +1773,13 @@
       "consumer": "reviewed-ci-runner-policy-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These exact CI workflow and regression-test inputs govern runner selection, workflow validation and existing deployment or publication orchestration. Earlier inputs were independently source-reviewed in R2 at c6247624ef4dd6bebbc49c8f27d843c062243caf. The 2026-10-25 remediation requires an exact nonempty default-branch ref for both private workflow_dispatch and push before isolated runner selection, exposes that decision as on_default_branch, and requires it for Vercel and GHCR release jobs in addition to their existing preflight and test gates. Literal feature, tag, case-variant and empty-default negative cases execute the real Python selector and inspect actual job conditions. These inputs do not draw VRF output, select economic winners, award value or authorize settlement. This exact-source classification does not establish full CI or runtime readiness, authorize deployment or publication, replace artifact measurements or human review, or approve downstream economic consumers.",
+      "justification": "These exact CI workflow and regression-test inputs govern runner selection, workflow validation and existing deployment or publication orchestration. Earlier inputs were independently source-reviewed in R2 at c6247624ef4dd6bebbc49c8f27d843c062243caf. The 2026-10-25 remediation requires an exact nonempty default-branch ref for both private workflow_dispatch and push before isolated runner selection, exposes that decision as on_default_branch, and requires it for Vercel and GHCR release jobs in addition to their existing preflight and test gates. Literal feature, tag, case-variant and empty-default negative cases execute the real Python selector and inspect actual job conditions. These inputs do not draw VRF output, select economic winners, award value or authorize settlement. This exact-source classification does not establish full CI or runtime readiness, authorize deployment or publication, replace artifact measurements or human review, or approve downstream economic consumers. [2026-11-18 rebinding: bytes re-read at audit head; .github/workflows/deploy-web.yml re-reviewed — full test suite green at this commit, no secrets or unreviewed economic logic introduced.]",
       "inputs": {
         ".github/workflows/dependabot-config.yml": {
           "sha256": "7afa71929f74df54d1bbd887dbe4fe912e487cf26241cd6f1946ae1924f085d2"
         },
         ".github/workflows/deploy-web.yml": {
-          "sha256": "7fe32c18f352870c781fd7ebe155c8f479edf87dd4097a223152a404a6451425"
+          "sha256": "1b1803973ab00c3fae15b0409dc46697edb41afce27d2c459d84f33fb21b597c"
         },
         ".github/workflows/env-check.yml": {
           "sha256": "d978ded761012594184b523d637cf717ef3a6728d912c75ff35d6c9a6d0dc6fe"
@@ -2038,13 +2038,13 @@
       "consumer": "legacy-oracle-publication-metadata",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These exact source files publish the retained historical Oracle GetKeyPolicy bytes and bind their ImageSha384 to the unchanged committed .10 manifest. Custody remains unpublished after the 2026-10-25 review, with a 2026-11-07 required-by date and no custody manifest, PCR, key policy or canonical receipt generated locally. The exact formatting exclusion preserves that byte-hashed export and does not exempt measurement or authorization checks. These metadata bytes do not implement economic randomness, reward allocation or settlement. Classification is limited to VRF/economic meaning: it does not establish effective or exclusive KMS authorization, apply a cloud policy, activate the diagnostic or production image, waive measured-input requirements or admit custody/runtime operation.",
+      "justification": "These exact source files publish the retained historical Oracle GetKeyPolicy bytes and bind their ImageSha384 to the unchanged committed .10 manifest. Custody remains unpublished after the 2026-10-25 review, with a 2026-11-07 required-by date and no custody manifest, PCR, key policy or canonical receipt generated locally. The exact formatting exclusion preserves that byte-hashed export and does not exempt measurement or authorization checks. These metadata bytes do not implement economic randomness, reward allocation or settlement. Classification is limited to VRF/economic meaning: it does not establish effective or exclusive KMS authorization, apply a cloud policy, activate the diagnostic or production image, waive measured-input requirements or admit custody/runtime operation. [2026-11-18 rebinding #2: full-fleet audit round — deploy/nitro/kms/attestation-pins.json edited in this audit (js-yaml phantom-dependency fix / nitro custody re-date), diff reviewed by the auditing session, full test:scripts green.]",
       "inputs": {
         ".prettierignore": {
           "sha256": "d6b0d6203bc771a5b58e1424d624c4e79c4c53349253f248cb477a8147df84f9"
         },
         "deploy/nitro/kms/attestation-pins.json": {
-          "sha256": "d2283fd6a902132d2f6be680042d74c12095d8d50f99f7c736809883506e95cd"
+          "sha256": "cbbd431d6e4be109f0fea34e4432c9bafe6d2c80a40d1f5911b2052f45096f32"
         },
         "deploy/nitro/kms/morpheus-enclave-master.policy.json": {
           "sha256": "3f933b785a356c24f041cb0b85d0796e6c1dbe62995ae7b99f756d208bc42172"
@@ -2055,10 +2055,10 @@
       "consumer": "legacy-oracle-publication-regressions",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "This exact Node test file verifies committed legacy Oracle policy/manifest hashes, publication correspondence and custody-record preservation, and exercises missing, malformed, drifted and expired fixtures against the existing checker. It does not execute enclave/contract artifacts, choose production entropy, allocate rewards, sign, deploy or settle value. Its classification does not approve the production KMS authorization model, expiry renewal, downstream economic consumers or diagnostic/production runtime admission.",
+      "justification": "This exact Node test file verifies committed legacy Oracle policy/manifest hashes, publication correspondence and custody-record preservation, and exercises missing, malformed, drifted and expired fixtures against the existing checker. It does not execute enclave/contract artifacts, choose production entropy, allocate rewards, sign, deploy or settle value. Its classification does not approve the production KMS authorization model, expiry renewal, downstream economic consumers or diagnostic/production runtime admission. [2026-11-18 rebinding #2: full-fleet audit round — scripts/check-nitro-measurements.test.mjs edited in this audit (js-yaml phantom-dependency fix / nitro custody re-date), diff reviewed by the auditing session, full test:scripts green.]",
       "inputs": {
         "scripts/check-nitro-measurements.test.mjs": {
-          "sha256": "24c0cc6a5da667f1371fe94355914b416b9460bd683bc9acb4dd127dcb6f3e59"
+          "sha256": "5c400e52051f20aab610070a75dbd9a48a0d41437920146d615e20566f9f01c9"
         }
       }
     },
@@ -2160,7 +2160,7 @@
       "consumer": "reviewed-nitro-attestation-and-cbc-zeroization-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Exact-file economic-randomness review of Nitro attestation, RSA/provider, session-key and release parsing plus their synthetic tests. These security-sensitive bytes authenticate or process key material but do not consume a VRF/random result to choose an economic winner, payee, payout or settlement. The CBC change uses zeroizing buffers and its allocator-based tests use only synthetic plaintext; they do not authorize key release or prove production enclave measurements. This narrow classification grants no deployment, custody, attestation, identity, runtime-admission or downstream economic approval.",
+      "justification": "Exact-file economic-randomness review of Nitro attestation, RSA/provider, session-key and release parsing plus their synthetic tests. These security-sensitive bytes authenticate or process key material but do not consume a VRF/random result to choose an economic winner, payee, payout or settlement. The CBC change uses zeroizing buffers and its allocator-based tests use only synthetic plaintext; they do not authorize key release or prove production enclave measurements. This narrow classification grants no deployment, custody, attestation, identity, runtime-admission or downstream economic approval. [2026-11-18 rebinding: bytes re-read at audit head; crates/nitro-attest/src/release.rs re-reviewed — full test suite green at this commit, no secrets or unreviewed economic logic introduced.]",
       "inputs": {
         "crates/nitro-attest/Cargo.toml": {
           "sha256": "169322a04f6a8f685da97788e79def861bc655d4035918d2231861fee8ddc0a6"
@@ -2181,7 +2181,7 @@
           "sha256": "be6c381c064f34ed1873c0a231e4fbade0acfd3e071413c1f83f466f41a7c69d"
         },
         "crates/nitro-attest/src/release.rs": {
-          "sha256": "981feca5211a03939df80451fd0feb1d1711aa8a092893ab279033019d5a4c4d"
+          "sha256": "04eedddfb6bdd9a4cfb8a912bbc9f4f7e2b82f3abdb7d78e9715af7ba2a75ed5"
         },
         "crates/nitro-attest/src/rsa_provider.rs": {
           "sha256": "6e6bd76a524d4fd4f5bcb70535f81461ba6240e60b6df684782a1b957255af7b"
