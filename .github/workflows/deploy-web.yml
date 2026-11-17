@@ -5,9 +5,13 @@ concurrency:
   cancel-in-progress: true
 
 on:
+  # Deploy on demand only. The Morpheus web console duplicates the explorer's
+  # public dashboard/docs/explorer surface, and every push to main paid for a
+  # full test suite plus two per-network web builds plus a Vercel build. The
+  # fleet policy is that explorer is the single app entry and web/admin are
+  # the management entrances, so this deployment now happens only when an
+  # operator explicitly runs the workflow.
   workflow_dispatch:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
