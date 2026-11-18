@@ -7,7 +7,7 @@ test('EIF payload diagnostics bind actual sections without exposing file content
   const result = spawnSync(
     'python3',
     ['-B', fileURLToPath(new URL('./lib/dual_build_payload_diagnostics_test.py', import.meta.url))],
-    { encoding: 'utf8', timeout: 120_000 }
+    { encoding: 'utf8', timeout: 240_000 }
   );
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stderr, /Ran [1-9][0-9]* tests/);

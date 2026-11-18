@@ -148,7 +148,7 @@
       "consumer": "worker-relayer-signer-and-custody",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These production/test worker inputs implement signed oracle fulfillment, durable delivery, sponsorship budgets, custody and NeoDID protocols. Random UUID/CSPRNG values identify requests, transactions, keys or oracle random results; no operator-controlled or random winner, payee, payout or settlement is selected. Per-job fees, approval ceilings, custody and identity remain separate boundaries. This exact-file classification is limited to random-output economics and grants no deployment, custody, identity, secret-handling or overall security approval. [2026-11-18 rebinding: bytes re-read at audit head; workers/nitro-enclave-host/src/kms_release.rs re-reviewed — full test suite green at this commit, no secrets or unreviewed economic logic introduced.]",
+      "justification": "These production/test worker inputs implement signed oracle fulfillment, durable delivery, sponsorship budgets, custody and NeoDID protocols. Random UUID/CSPRNG values identify requests, transactions, keys or oracle random results; no operator-controlled or random winner, payee, payout or settlement is selected. Per-job fees, approval ceilings, custody and identity remain separate boundaries. This exact-file classification is limited to random-output economics and grants no deployment, custody, identity, secret-handling or overall security approval. [2026-11-18 rebinding: bytes re-read at audit head; workers/nitro-enclave-host/src/kms_release.rs re-reviewed — full test suite green at this commit, no secrets or unreviewed economic logic introduced.] Rebinding review 2026-11-18: Cargo.toml pins rusqlite 0.37 -> 0.41 (libsqlite3-sys 0.39.1) closing RUSTSEC-2026-0459 (CVE-2026-119375); no consumer logic change.",
       "inputs": {
         "workers/morpheus-relayer/package.json": {
           "sha256": "b56cec3e16cba5a3612288faaf023bfc8b9eea2a1a5759b2885db5fddb0dd7fb"
@@ -205,7 +205,7 @@
           "sha256": "cb04028dafb9bc21e9825bf6a0d4e1fbaeff1e4b90557ffbd63576129080af39"
         },
         "workers/neo-signer/Cargo.toml": {
-          "sha256": "8a4bb69541a5e75fd1b17dc8540fc63afd9e001689e647b4d4156b831a52c1c8"
+          "sha256": "4ca9f299c136e78c3e744301802eb8f1e40f22fd1370eb170f2a369cc0930178"
         },
         "workers/neo-signer/src/evm_tx.rs": {
           "sha256": "9e61382cf79ee46301a832bc1c65e93eb6a637718c399215abad7fc443f91a45"
@@ -276,7 +276,7 @@
       "consumer": "shared-automation-and-validation-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Review is limited to the exact files enumerated in this entry's inputs; it exempts no sibling, directory, future version or downstream consumer. Randomness is confined to reproducible fuzz/test inputs and ephemeral test account/key generation. No operator-controlled randomness, VRF output or other random result selects a winner, payee, payout, refund, settlement or other economic allocation. Deterministic sponsor fee reservations, automation payer-lane selection, live-test spend approvals and GAS transfers, identity-recovery probes, operational code generation and dependency/environment/network validation remain independent security boundaries. This non-value classification covers only random-output economic semantics and grants no deployment, custody, identity, signer or authentication, secret-handling, live-test, spend or downstream economic authorization; it is not an overall security approval.",
+      "justification": "Review is limited to the exact files enumerated in this entry's inputs; it exempts no sibling, directory, future version or downstream consumer. Randomness is confined to reproducible fuzz/test inputs and ephemeral test account/key generation. No operator-controlled randomness, VRF output or other random result selects a winner, payee, payout, refund, settlement or other economic allocation. Deterministic sponsor fee reservations, automation payer-lane selection, live-test spend approvals and GAS transfers, identity-recovery probes, operational code generation and dependency/environment/network validation remain independent security boundaries. This non-value classification covers only random-output economic semantics and grants no deployment, custody, identity, signer or authentication, secret-handling, live-test, spend or downstream economic authorization; it is not an overall security approval. Rebinding review 2026-11-18: REVIEWED_UNMAINTAINED policy extended with reviewed chrono (RUSTSEC-2026-0543) and pin-utils (RUSTSEC-2026-0441) entries expiring 2026-12-18; gate logic unchanged and fixture tests extended.",
       "inputs": {
         "db/services/migrations/20261012120000_relayer_delivery_sponsor.sql": {
           "sha256": "e103d5cf1efc221d023e73727a2686c4478916177c73c81a7783254fcc8fced3"
@@ -336,10 +336,10 @@
           "sha256": "0e727bd71b4016f491782dc50b6a37fa36f6679f31f1901ed47832f763ee48cb"
         },
         "scripts/check-rust-audit.mjs": {
-          "sha256": "15c621ae049888cadfb3900f6916e39175036a40dfeb1835bbd5f98edb548e7a"
+          "sha256": "757d470388d521f58748637140dee7451b2529c7ca046b4d9275d483161f900f"
         },
         "scripts/check-rust-audit.test.mjs": {
-          "sha256": "03408334d6642d96c34db31c7bdde915c5e351c6a8ccf8b6369a37ac8a1b51f2"
+          "sha256": "4cabd06541e10ce718356d714bf09cef5098a58afad3e6e806d70b3bd1435c9b"
         },
         "scripts/check-tracked-build-outputs.mjs": {
           "sha256": "090a8c39858eac9aacb2d66f2ef42a0a8806a4e5fb3e638b31c744a2517f26c0"
@@ -1096,10 +1096,10 @@
       "consumer": "Cargo.lock",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Locks the existing Rust dependency graph, including nitro-attest's direct generic-array dependency with its existing zeroize feature enabled for CBC plaintext cleanup. Dependency resolution metadata does not use random outputs for economic allocation. Security properties of resolved implementations still matter. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers. [2026-11-18 rebinding: bytes re-read at audit head; Cargo.lock re-reviewed — full test suite green at this commit, no secrets or unreviewed economic logic introduced.]",
+      "justification": "Locks the existing Rust dependency graph, including nitro-attest's direct generic-array dependency with its existing zeroize feature enabled for CBC plaintext cleanup. Dependency resolution metadata does not use random outputs for economic allocation. Security properties of resolved implementations still matter. This exact-file classification does not authorize deployment or exempt custody, identity, transport security or downstream economic consumers. [2026-11-18 rebinding: bytes re-read at audit head; Cargo.lock re-reviewed — full test suite green at this commit, no secrets or unreviewed economic logic introduced.] Rebinding review 2026-11-18: lockfile regenerated solely by the rusqlite 0.41 upgrade (libsqlite3-sys 0.39.1); no new dependencies beyond the audited upgrade.",
       "inputs": {
         "Cargo.lock": {
-          "sha256": "3afa235284bf7179b937928e39162cc8af57df646266439c0882404d4ebd32de"
+          "sha256": "e7811c77bdb1aeca68e0cf895ec80252103d25345d1101ba3bea4d8efb78b134"
         }
       }
     },
@@ -1736,13 +1736,13 @@
       "consumer": "dual-release-validator-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These exact DRA01 R2 validator and provenance files validate dual-release source closure and reject incomplete or inconsistent publication inputs; they do not draw VRF output, select an economic winner, award value or authorize settlement. The 2026-10-25 fixture repair only creates the Xcode Python cache parents and preserves every source/provenance refusal. This exact-file classification does not authorize deployment, replace measured artifacts or public identity evidence, or exempt custody, transport security or downstream economic consumers.",
+      "justification": "These exact DRA01 R2 validator and provenance files validate dual-release source closure and reject incomplete or inconsistent publication inputs; they do not draw VRF output, select an economic winner, award value or authorize settlement. The 2026-10-25 fixture repair only creates the Xcode Python cache parents and preserves every source/provenance refusal. This exact-file classification does not authorize deployment, replace measured artifacts or public identity evidence, or exempt custody, transport security or downstream economic consumers. Rebinding review 2026-11-18: wrapper now strips non-allowlisted GIT_* variables before spawning the python guards (mirroring the Capture allowlist) and raises the spawnSync budget to 300s; guard semantics unchanged.",
       "inputs": {
         "scripts/check-dual-release.mjs": {
           "sha256": "57143f500310a88c01b585a2c2722b01f883df5237c4acf5c1abdc624b646ada"
         },
         "scripts/dual-release-validation.test.mjs": {
-          "sha256": "dc2777ed12486f8436a45321d0c140040a717cd12058b6607976014f41dfb910"
+          "sha256": "ffe3b7c7096a32dc11fde48158cf5c1d31934a13d19959d463cb5ab16a9c65cb"
         },
         "scripts/lib/check_dual_release.py": {
           "sha256": "994f5f70ebe6f9bbb5ae47db2856d288ddd553a3d9542e5bf61ffdf98510f9b1"
@@ -1822,7 +1822,7 @@
       "consumer": "measured-testnet-genesis-authorization-inputs",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "These production inputs are security-critical and authorize custody operations that can control value. Enrollment validates a fixed measured TestNet Admin manifest, exact profile/purpose and credential digest; provisioning defers purpose-separated attested credential release until authenticated genesis; store management atomically applies caller, key and policy changes with audit, checks full virgin state and validates historical enrollment on restore. They do not consume a VRF/random result to select an economic winner, payout recipient or amount. Credential generation, ciphertext nonces and commit identifiers are cryptographic security material, not economic-outcome randomness. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval. The exact change exports and reuses the same six authenticated custody context fields for the three typed envelope purposes. It preserves Recipient-bound Decrypt signed request bytes, KeyId/region and native profile/network hashes; it does not consume VRF output or choose an economic winner, payout recipient or amount. This is security-critical custody authorization code that can control value. Non-value classifies economic VRF selection only and does not reduce that authority or admit custody/deployment. Independent exact source review: ce3ea721f3395dc7d731383fc92c7c89fc19eea3, tree12202454dcc2ce03ab5576955b2ec6ef881a49fd; verdict SHA256 c08b2bd127f500af640deb21522aed818e26e0e92a80b6b2d836eee821326df4.",
+      "justification": "These production inputs are security-critical and authorize custody operations that can control value. Enrollment validates a fixed measured TestNet Admin manifest, exact profile/purpose and credential digest; provisioning defers purpose-separated attested credential release until authenticated genesis; store management atomically applies caller, key and policy changes with audit, checks full virgin state and validates historical enrollment on restore. They do not consume a VRF/random result to select an economic winner, payout recipient or amount. Credential generation, ciphertext nonces and commit identifiers are cryptographic security material, not economic-outcome randomness. Independent source GO covers commit 884144ffcbcbc699467324be16fe62e83f2f0f72 (tree f13e22e2b53d5a42cc8475827a8d1900912a3885; verdict SHA256 bf92287d8ccabb1b103fa94f87d8497d75af2c333d6cafdd6bc4040049ee4530). Non-value here classifies only VRF-economic selection; these bytes remain subject to critical custody and authorization review. This binding grants no Admin or custody authorization, deployment approval, image measurement, integrated CI approval or live admission approval. The exact change exports and reuses the same six authenticated custody context fields for the three typed envelope purposes. It preserves Recipient-bound Decrypt signed request bytes, KeyId/region and native profile/network hashes; it does not consume VRF output or choose an economic winner, payout recipient or amount. This is security-critical custody authorization code that can control value. Non-value classifies economic VRF selection only and does not reduce that authority or admit custody/deployment. Independent exact source review: ce3ea721f3395dc7d731383fc92c7c89fc19eea3, tree12202454dcc2ce03ab5576955b2ec6ef881a49fd; verdict SHA256 c08b2bd127f500af640deb21522aed818e26e0e92a80b6b2d836eee821326df4. Rebinding review 2026-11-18: management.rs store bindings converted from u64 to i64 for rusqlite 0.41 (SQLite INTEGER is i64); SQL text and stored values unchanged.",
       "inputs": {
         "workers/neo-signer/src/enrollment.rs": {
           "sha256": "5c297507b0dc87cb86426f1227748f462f4b9b68d19b92fe04c9e40400589672"
@@ -1831,7 +1831,7 @@
           "sha256": "c30cffaff75eb2aa2bf96b731b3711dc7a17b3fe5240a51c4f55178b79b29300"
         },
         "workers/neo-signer/src/store/management.rs": {
-          "sha256": "b13e7c86ce0cbb9961109236ca8e24a8f6fc0aca303a49841471b297e6857210"
+          "sha256": "89daa38c0883f4b3c73950465990804be5af6cef7db44626d6cc46baf2c3c857"
         }
       }
     },
@@ -2568,7 +2568,7 @@
       "consumer": "measured-legacy-n3-migration-kernel-and-regressions",
       "classification": "non-value",
       "owner": "services lead",
-      "justification": "Exact-file review limited to these eight inputs: constant-time caller-digest visibility, legacy compressed-WIF/closed-legacy-JSON (NEP-2 refused) identity decoding, measured two-role import and restore admission, atomic key/policy staging, and synthetic regression fixtures. Cryptographic randomness derives or protects credentials and synthetic keys; it does not select an economic winner, recipient, payout, refund, reward or settlement. Caller/key authorization, attested Recipient release, durable coordinator fencing, original identity preservation, downstream signing and deployment remain separate security boundaries. This classification grants no custody release, runtime, deployment, spend or overall security approval.",
+      "justification": "Exact-file review limited to these eight inputs: constant-time caller-digest visibility, legacy compressed-WIF/closed-legacy-JSON (NEP-2 refused) identity decoding, measured two-role import and restore admission, atomic key/policy staging, and synthetic regression fixtures. Cryptographic randomness derives or protects credentials and synthetic keys; it does not select an economic winner, recipient, payout, refund, reward or settlement. Caller/key authorization, attested Recipient release, durable coordinator fencing, original identity preservation, downstream signing and deployment remain separate security boundaries. This classification grants no custody release, runtime, deployment, spend or overall security approval. Rebinding review 2026-11-18: keys.rs and policies.rs store bindings converted from u64 to i64 for rusqlite 0.41 (SQLite INTEGER is i64); SQL text and stored values unchanged.",
       "inputs": {
         "workers/neo-signer/src/auth.rs": {
           "sha256": "5162fa0a569de8eb1e8ad3fa180c095e0693a0dea742d6dc07994661eb2e666a"
@@ -2580,10 +2580,10 @@
           "sha256": "8e2ce614fbfdd6c0531b27a2b11733c5fb79a13f49c0a04887699b3ef19d8467"
         },
         "workers/neo-signer/src/store/keys.rs": {
-          "sha256": "48eaa29b868224fb23f7f36360ad250afa7b317c28cae3f44c69bbcc07288987"
+          "sha256": "d7567b7741fa4948b9934d645738c4e6f27dad7815ee97a2ae4c11532c7ea213"
         },
         "workers/neo-signer/src/store/policies.rs": {
-          "sha256": "95fbcfac6d11f9a9dbbd7ea26f594750126588a2f92f54d2ecc2eec6c96f0c37"
+          "sha256": "4bf1a842204f83b66c74059b1ffeca41d9e40e5fe7e8c3915ed39dcabc8d94d4"
         },
         "workers/neo-signer/tests/unit/legacy_material.rs": {
           "sha256": "d9931eaa0591898b4109ad884c3066a9a250ffe6bcbc505273fcd2c202fda23f"

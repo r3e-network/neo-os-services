@@ -11,7 +11,9 @@ const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), 'audit-feed-
 test('audit-feed-health CLI rejects an unknown network before touching RPC', () => {
   const result = spawnSync(process.execPath, [CLI, '--network', 'devnet'], {
     encoding: 'utf8',
-    timeout: 15000,
+    // Cold CLI start is ~0.6s standalone but slows ~10x when the suite runs
+    // test files in parallel on busy machines; budget generously.
+    timeout: 60_000,
   });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /--network must be all, mainnet, or testnet/);
