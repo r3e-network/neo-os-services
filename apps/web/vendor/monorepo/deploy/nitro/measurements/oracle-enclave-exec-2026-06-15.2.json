@@ -1,0 +1,13 @@
+{
+  "release": "oracle-enclave-exec-2026-06-15.2",
+  "app_id": "morpheus-oracle",
+  "network": "testnet",
+  "git_commit": "1b435fcf720bcd4036ba25313cceecdcc6e10b81",
+  "image_id": "sha256:6f2a4bbe9eca6b8a6433a89e9c3db47fb8dc1d934e00be0eb909d30c0716e803",
+  "eif_sha256": "772e20195bede53f0924db5f2f4e6ba4bd7843052318257b72ba19c8148617f1",
+  "hash_algorithm": "SHA384",
+  "pcr0": "387a69cd1f6e9a69fb616bd326cab9f85f928439972ea1bfd88e1aefb767f3d6a3277272a1ffe4f43bb46d998384f0e2",
+  "pcr1": "4b4d5b3661b3efc12920900c80e126e4ce783c522de6c02a2a5bf7af3a2b9327b86776f188e4be1c1c404a129dbda493",
+  "pcr2": "ad57794b0aba723ec17b403ea3f2150ba92909ba09f4539955db4eeb4ffc463fb5c009d235cbf9bc5aca714188c68303",
+  "built_at": "2026-06-15T00:31:33Z"
+}

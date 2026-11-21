@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@cityofzion/neon-js": "^5.8.1",
-    "@r3e-network/neo-os-services-shared": "file:../../packages/shared",
+    "@r3e-network/neo-os-services-shared": "file:vendor/neo-shared",
     "@sentry/nextjs": "10.75.2",
     "@supabase/supabase-js": "^2.89.0",
     "@upstash/redis": "^1.38.0",

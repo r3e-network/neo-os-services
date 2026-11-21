@@ -23,14 +23,14 @@ import { COMMITTED_DUAL_NITRO_MEASUREMENTS } from './nitro-dual-release-registry
  * and a new deployment, and the verifier can still name a document whose
  * measurement was recorded but cannot be rebuilt.
  */
-import exec20260615 from '../../../deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.json';
-import exec20260615r2 from '../../../deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.2.json';
-import exec20260615r3 from '../../../deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.3.json';
-import exec20260615r4 from '../../../deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.4.json';
-import exec20260615r5 from '../../../deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.5.json';
-import exec20260615r9 from '../../../deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.9.json';
-import exec20260615r10 from '../../../deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.10.json';
-import testnet20260614r1 from '../../../deploy/nitro/measurements/oracle-enclave-testnet-2026-06-14.1.json';
+import exec20260615 from '../vendor/monorepo/deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.json';
+import exec20260615r2 from '../vendor/monorepo/deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.2.json';
+import exec20260615r3 from '../vendor/monorepo/deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.3.json';
+import exec20260615r4 from '../vendor/monorepo/deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.4.json';
+import exec20260615r5 from '../vendor/monorepo/deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.5.json';
+import exec20260615r9 from '../vendor/monorepo/deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.9.json';
+import exec20260615r10 from '../vendor/monorepo/deploy/nitro/measurements/oracle-enclave-exec-2026-06-15.10.json';
+import testnet20260614r1 from '../vendor/monorepo/deploy/nitro/measurements/oracle-enclave-testnet-2026-06-14.1.json';
 
 /**
  * Committed morpheus-oracle manifests whose `git_commit` HEAD descends from.

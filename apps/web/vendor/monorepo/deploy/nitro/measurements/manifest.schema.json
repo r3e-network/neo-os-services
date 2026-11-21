@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://morpheus-oracle/deploy/nitro/measurements/manifest.schema.json",
+  "title": "Morpheus Oracle enclave measurements manifest",
+  "description": "Pinned PCR0/1/2 measurements for one enclave EIF release; the attestation verifier compares a live attestation document's PCRs against this committed source of truth.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "release",
+    "app_id",
+    "network",
+    "git_commit",
+    "hash_algorithm",
+    "pcr0",
+    "pcr1",
+    "pcr2",
+    "built_at"
+  ],
+  "properties": {
+    "release": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Release id, e.g. oracle-2026-06-14."
+    },
+    "app_id": {
+      "type": "string",
+      "enum": ["morpheus-oracle", "morpheus-custody"],
+      "description": "morpheus-oracle for the merged compute+sign enclave (Dockerfile.enclave), morpheus-custody for the key-custody enclave (Dockerfile.signer)."
+    },
+    "network": {
+      "type": "string",
+      "enum": ["testnet", "mainnet"]
+    },
+    "git_commit": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Full commit SHA (or 'unknown') the EIF was built from."
+    },
+    "image_id": {
+      "type": ["string", "null"],
+      "description": "Docker image id (sha256:...) the EIF was built from."
+    },
+    "superseded_by": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Release id that retired this one. Set by hand when a release is rotated out; a verifier must not pin a superseded manifest."
+    },
+    "custody_boundary": {
+      "type": "object",
+      "description": "Signer service URL and the six SIGNER_ROLE_*_KEY_ID trust anchors baked into PCR0. Written by build-enclave-eif.sh for morpheus-oracle releases."
+    },
+    "vault_profile": {
+      "type": "object",
+      "description": "Measured custody vault profile identity (schema, environment, file_sha256, required_egress). Written by build-custody-eif.sh for morpheus-custody releases."
+    },
+    "reproducible_verified": {
+      "type": "boolean",
+      "description": "True when the build script re-derived these PCRs from a second from-scratch build. Required on every manifest built on or after the cutover in scripts/check-nitro-measurements.mjs; a manifest produced with --allow-unverified must record false."
+    },
+    "eif_sha256": {
+      "type": ["string", "null"],
+      "description": "sha256 of the .eif file.",
+      "pattern": "^[0-9a-f]{64}$|^$"
+    },
+    "hash_algorithm": {
+      "type": "string",
+      "const": "SHA384",
+      "description": "Nitro PCRs are always SHA384."
+    },
+    "pcr0": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{96}$",
+      "description": "Enclave image measurement (kernel + app). SHA384 = 96 hex chars."
+    },
+    "pcr1": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{96}$",
+      "description": "Linux kernel + bootstrap measurement."
+    },
+    "pcr2": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{96}$",
+      "description": "Application measurement."
+    },
+    "pcr8": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{96}$",
+      "description": "Optional signing-cert measurement; present only if the EIF is signed."
+    },
+    "built_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC build timestamp."
+    }
+  }
+}

@@ -1,6 +1,6 @@
 import { trimString } from '@r3e-network/neo-os-services-shared/utils';
-import testnet from '../../../config/networks/testnet.json';
-import mainnet from '../../../config/networks/mainnet.json';
+import testnet from '../vendor/monorepo/config/networks/testnet.json';
+import mainnet from '../vendor/monorepo/config/networks/mainnet.json';
 
 export const networkRegistry = {
   testnet,

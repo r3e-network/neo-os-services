@@ -20,7 +20,9 @@
     ],
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@r3e-network/neo-os-services-shared": ["./vendor/neo-shared/src/index"],
+      "@r3e-network/neo-os-services-shared/*": ["./vendor/neo-shared/src/*"]
     }
   },
   "include": [
@@ -30,5 +32,5 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "vendor/neo-shared/src/**/*.test.mjs"]
 }

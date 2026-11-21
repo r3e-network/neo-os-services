@@ -36,7 +36,9 @@ function buildSecurityHeaders() {
 
 /** @type {import('next').NextConfig} */
 export const nextConfig = {
-  outputFileTracingRoot: path.resolve(__dirname, '../../'),
+  // Self-contained build: trace from the app root only. The Vercel build
+  // container no longer materializes monorepo siblings (see vendor/neo-shared).
+  outputFileTracingRoot: __dirname,
   devIndicators: false,
   images: {
     formats: ['image/avif', 'image/webp'],
@@ -57,6 +59,7 @@ export const nextConfig = {
     config.resolve.alias = {
       ...(config.resolve.alias || {}),
       '@react-native-async-storage/async-storage': false,
+      '@r3e-network/neo-os-services-shared': path.resolve(__dirname, 'vendor/neo-shared/src'),
     };
     return config;
   },
